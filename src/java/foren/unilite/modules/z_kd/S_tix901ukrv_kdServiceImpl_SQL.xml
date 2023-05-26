@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_tix901ukrv_kdServiceImpl">
+    
+    <select id="s_tix901ukrv_kdServiceImpl.selectFormMaster" parameterType="Map" resultType="rMap">
+        SELECT A.COMP_CODE     
+             , A.DIV_CODE  
+             , A.SO_SER_NO                                  AS OFFER_NO       --수입OFFER번호    
+             , A.EXPORTER                                   AS CUSTOM_CODE    --거래처
+             , B.CUSTOM_NAME                                                  --거래처명
+             , A.DATE_DEPART                                                  --오퍼일자
+             , A.AMT_UNIT                                   AS MONEY_UNIT     --화폐 히든처리
+             , A.EXCHANGE_RATE                              AS EXCHG_RATE_O   --환율 히든처리
+             , A.TERMS_PRICE                                                  --가격조건
+             , ISNULL ((SELECT MAX(X.DELIVERY_DATE) DELIVERY_DATE
+                          FROM TIA110T X 
+                         WHERE A.COMP_CODE = X.COMP_CODE
+                           AND A.DIV_CODE  = X.DIV_CODE 
+                           AND A.SO_SER_NO = X.SO_SER_NO)
+                        ,'')                                AS DELIVERY_DATE  --입고예정일(가장늦은예정일)
+             , A.SO_AMT                                                       --외화금액(총금액)
+             , A.SO_AMT_WON                                                   --자사금액(총금액)
+          FROM TIA100T A WITH(NOLOCK)
+               INNER JOIN BCM100T B WITH(NOLOCK)
+                       ON A.COMP_CODE = B.COMP_CODE
+                      AND A.EXPORTER  = B.CUSTOM_CODE 
+         WHERE A.COMP_CODE = #{S_COMP_CODE}
+           AND A.DIV_CODE  = #{DIV_CODE} 
+           AND A.SO_SER_NO = #{OFFER_NO} 
+    </select>
+
+	<select id="s_tix901ukrv_kdServiceImpl.selectFormDetail" parameterType="Map" resultType="rMap">
+        SELECT A.COMP_CODE                                                                                                                      AS COMP_CODE       --법인코드
+             , A.SO_SER_NO                                                                                                                      AS OFFER_NO        --오퍼번호
+             , B.SO_AMT_WON                                                                                                                     AS SO_AMT_WON      --오퍼금액(A)
+             , ISNULL(A.EXCHG_RATE_O,1)                                                                                                         AS EXCHG_RATE_O    --환율(B)
+             , (B.SO_AMT_WON * ISNULL(A.EXCHG_RATE_O,1))                                                                                        AS CAL_MUL_DAE     --물대(C)
+             , A.LC_RATE                                                                                                                        AS LC_RATE         --LC요율(D)
+             , (B.SO_AMT_WON * ISNULL(A.EXCHG_RATE_O,1)) * A.LC_RATE                                                                            AS CAL_LC_FEE      --LC수수료(E)
+             , A.FOB_FOR_AMT                                                                                                                    AS FOB_FOR_AMT     --FOB가격(F)
+             , A.CBM                                                                                                                            AS CBM             --CBM(G)
+             , ISNULL(A.EXCHG_RATE_O,1) * A.FOB_FOR_AMT * A.CBM                                                                                  AS CAL_SUNIM       --선임(H)
+             , A.IMPORT_TAX_RATE                                                                                                                AS IMPORT_TAX_RATE --수입세율(I)
+             , (B.SO_AMT_WON * ISNULL(A.EXCHG_RATE_O,1)) * A.IMPORT_TAX_RATE                                                                     AS CAL_DUTY_FEE    --관세(J)
+             , (((B.SO_AMT_WON * ISNULL(A.EXCHG_RATE_O,1)) * A.IMPORT_TAX_RATE) 
+               + (B.SO_AMT_WON * ISNULL(A.EXCHG_RATE_O,1))) * 10/100                                                                            AS CAL_TAX_AMT     --부가세(K)
+             , A.UNLOAD_AMT                                                                                                                     AS UNLOAD_AMT      --하역기준료(L)
+             , CASE WHEN 20000 - ISNULL((A.UNLOAD_AMT* A.CBM),0) &gt; 0 THEN ISNULL((A.UNLOAD_AMT * A.CBM),0)
+                    ELSE 20000 END                                                                                                              AS CAL_UNLOAD_AMT  --하역료계산(M)
+             , ((((B.SO_AMT_WON * ISNULL(A.EXCHG_RATE_O,1)) * A.IMPORT_TAX_RATE)
+               + (B.SO_AMT_WON * ISNULL(A.EXCHG_RATE_O,1)) )
+               * 0.84/1000) 
+               + (630*A.CBM)                                                                                                                    AS CAL_STOCK_AMT  --보관료계산(N)
+             , CASE WHEN 30000 - (28770 * A.CBM) &gt; 0 
+                            THEN (28770 * A.CBM) 
+                            ELSE 30000 END                                                                                                      AS CAL_WORK_AMT   --작업료계산(O)
+             , CASE WHEN 30000 - ((((B.SO_AMT_WON * ISNULL(A.EXCHG_RATE_O,1)) * A.IMPORT_TAX_RATE) 
+                                     + (B.SO_AMT_WON * ISNULL(A.EXCHG_RATE_O,1))) 
+                                     * 2/1000) &gt; 0 
+                            THEN ((((B.SO_AMT_WON * ISNULL(A.EXCHG_RATE_O,1)) * A.IMPORT_TAX_RATE) 
+                                     + (B.SO_AMT_WON * ISNULL(A.EXCHG_RATE_O,1))) 
+                                     * 2/1000) 
+                            ELSE 30000 END                                                                                                      AS CAL_CLEAR_AMT --통관료계산(P)
+        
+             , A.UNLOAD_PLACE                                                                                                                   AS UNLOAD_PLACE  --하적지(Q)
+             , CAST (ISNULL((SELECT REF_CODE1 FROM BSA100T X WHERE X.MAIN_CODE = 'WT01' AND X.SUB_CODE = A.UNLOAD_PLACE ),0)AS NUMERIC(18,6)) 
+                                                                                                                                                AS CAL_UNIM      --운임(R)
+             , CAST (ISNULL((SELECT REF_CODE2 FROM BSA100T X WHERE X.MAIN_CODE = 'WT01' AND X.SUB_CODE = A.UNLOAD_PLACE ),0)AS NUMERIC(18,6)) 
+                                                                                                                                                AS CAL_CFS       --C.F.S(S)
+             , A.ETC_AMT                                                                                                                        AS ETC_AMT       --기타(T)
+             , (((B.SO_AMT_WON * ISNULL(A.EXCHG_RATE_O,1)) * A.IMPORT_TAX_RATE) 
+               + (B.SO_AMT_WON * ISNULL(A.EXCHG_RATE_O,1))) * 10/100                                                                            AS CAL_RETURN    --환급(U)
+          FROM S_TIX901T_KD A WITH(NOLOCK)
+               INNER JOIN TIA100T B WITH(NOLOCK)
+                       ON A.COMP_CODE = B.COMP_CODE
+                      AND A.DIV_CODE  = B.DIV_CODE
+                      AND A.SO_SER_NO = B.SO_SER_NO
+         WHERE A.COMP_CODE  = #{S_COMP_CODE}
+           AND A.DIV_CODE   = #{DIV_CODE}
+           AND A.SO_SER_NO  = #{OFFER_NO}
+    </select>
+    
+    <select id="s_tix901ukrv_kdServiceImpl.selectUnloadPlace" parameterType="Map" resultType="rMap">    
+        /* bsa100ukrvService.selectDetailCodeList */
+        SELECT  MAIN_CODE
+                , SUB_CODE
+                , CODE_NAME
+                , CODE_NAME_EN                                 
+                , CODE_NAME_CN                                 
+                , CODE_NAME_JP                                 
+                , SUB_LENGTH
+                , SYSTEM_CODE_YN
+                , REF_CODE1                                 
+                , REF_CODE2                                 
+                , REF_CODE3                                 
+                , REF_CODE4                                 
+                , REF_CODE5                                 
+                , REF_CODE6                                 
+                , REF_CODE7                                 
+                , REF_CODE8                                 
+                , REF_CODE9                                 
+                , REF_CODE10                                 
+                , UPDATE_DB_USER
+                , UPDATE_DB_TIME
+                , COMP_CODE
+                , SORT_SEQ
+                , USE_YN
+            FROM BSA100T WITH (NOLOCK)
+           WHERE COMP_CODE    = #{S_COMP_CODE}
+             AND SUB_CODE       != N'$'
+             AND MAIN_CODE      = 'WT01'
+             AND SUB_CODE       = #{UNLOAD_PLACE}
+            order by SORT_SEQ, SUB_CODE     
+    </select>
+    
+    <select id="s_tix901ukrv_kdServiceImpl.selectS_TIX901T_KD" parameterType="Map" resultType="String">    
+         SELECT SO_SER_NO   AS OFFER_NO
+           FROM S_TIX901T_KD WITH (NOLOCK)  
+          WHERE COMP_CODE    = #{COMP_CODE}
+            AND DIV_CODE     = #{DIV_CODE}
+            AND SO_SER_NO    = #{OFFER_NO}        
+    </select>
+    
+    <insert id="s_tix901ukrv_kdServiceImpl.insertForm" parameterType="foren.unilite.modules.z_kd.S_tix901ukrv_kdModel">
+        INSERT INTO S_TIX901T_KD
+            (   COMP_CODE      
+              , DIV_CODE       
+              , SO_SER_NO      
+              , EXCHG_RATE_O   
+              , LC_RATE        
+              , FOB_FOR_AMT    
+              , CBM            
+              , IMPORT_TAX_RATE
+              , UNLOAD_AMT     
+              , UNLOAD_PLACE   
+              , ETC_AMT        
+              , REMARK         
+              , UPDATE_DB_USER 
+              , UPDATE_DB_TIME 
+            )
+         VALUES
+            (   #{COMP_CODE}      
+              , #{DIV_CODE}       
+              , #{OFFER_NO}      
+              , #{EXCHG_RATE_O}   
+              , #{LC_RATE}        
+              , #{FOB_FOR_AMT}    
+              , #{CBM}            
+              , #{IMPORT_TAX_RATE}
+              , #{UNLOAD_AMT}     
+              , #{UNLOAD_PLACE}   
+              , #{ETC_AMT}        
+              , #{REMARK}         
+              , #{S_USER_ID} 
+              , GETDATE()
+            )             
+    </insert>
+	
+	<update id="s_tix901ukrv_kdServiceImpl.updateForm" parameterType="foren.unilite.modules.z_kd.S_tix901ukrv_kdModel">
+        UPDATE S_TIX901T_KD SET 
+               COMP_CODE           = #{COMP_CODE}
+             , DIV_CODE            = #{DIV_CODE}
+             , SO_SER_NO           = #{OFFER_NO}
+             , EXCHG_RATE_O        = #{EXCHG_RATE_O}
+             , LC_RATE             = #{LC_RATE}
+             , FOB_FOR_AMT         = #{FOB_FOR_AMT}
+             , CBM                 = #{CBM}
+             , IMPORT_TAX_RATE     = #{IMPORT_TAX_RATE}
+             , UNLOAD_AMT          = #{UNLOAD_AMT}
+             , UNLOAD_PLACE        = #{UNLOAD_PLACE}
+             , ETC_AMT             = #{ETC_AMT}
+             , REMARK              = #{REMARK}
+             , UPDATE_DB_USER      = #{S_USER_ID}
+             , UPDATE_DB_TIME      = GETDATE() 
+         WHERE COMP_CODE  = #{COMP_CODE} 
+           AND DIV_CODE   = #{DIV_CODE}
+           AND SO_SER_NO  = #{OFFER_NO}             
+    </update>
+    
+</mapper>

@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ssa720skrvServiceImpl">
+	
+	<select id="ssa720skrvServiceImpl.selectMaster" parameterType="Map" resultType="rMap">		/* 일별 매출현황 조회(ssa720skrv)*/
+             BEGIN
+				SET NOCOUNT ON
+				SET ARITHABORT ON
+
+				DECLARE 
+					 @COMP_CODE     	NVARCHAR(08)
+				    ,@DIV_CODE          NVARCHAR(08)
+				    ,@SALE_DATE_FR   	NVARCHAR(08)
+				    ,@SALE_DATE_TO   	NVARCHAR(08)
+				    ,@DEPT_CODE       	NVARCHAR(08)
+				    ,@ITEM_LEVEL1       NVARCHAR(08)
+				    ,@ITEM_LEVEL2       NVARCHAR(08)
+				    ,@ITEM_LEVEL3       NVARCHAR(08)
+				    ,@CUSTOM_CODE  		NVARCHAR(20)
+				    ,@GUBUN             NVARCHAR(01)
+				
+				 SET @GUBUN         = #{GUBUN}     		  /* 조회옵션-1)부서별 / 2)품목분류별 / 3)매입처별 */
+				 SET @COMP_CODE     = #{S_COMP_CODE}      /* 법인 -필수 */
+				 SET @DIV_CODE      = #{DIV_CODE}      	  /* 사업장 -필수 */
+				 SET @SALE_DATE_FR  = #{SALE_DATE_FR}  	  /* 매출일자(FROM) - 필수 */
+				 SET @SALE_DATE_TO  = #{SALE_DATE_TO}     /* 매출일자(TO) - 필수 */
+				 SET @DEPT_CODE     = #{DEPT_CODE}        /*부서 - 옵션 */
+				 SET @ITEM_LEVEL1   = #{ITEM_LEVEL1}      /*품목분류1 - 옵션 */
+				 SET @ITEM_LEVEL2   = #{ITEM_LEVEL2}      /*품목분류2 - 옵션 */
+				 SET @ITEM_LEVEL3   = #{ITEM_LEVEL3}      /* 품목분류3 - 옵션 */
+				 SET @CUSTOM_CODE   = #{CUSTOM_CODE}      /* 매입처 - 옵션 */
+				
+				/* 1)부서별 / 2)품목분류별 / 3)매입처별 */
+				
+				  SELECT
+				  MAX(CASE WHEN @GUBUN = '1' THEN ISNULL(A.DEPT_CODE, '') ELSE '' END)     AS DEPT_CODE
+				 ,MAX(CASE WHEN @GUBUN = '1' THEN ISNULL(C.TREE_NAME, '') ELSE '' END)     AS DEPT_NAME
+				 ,MAX(CASE WHEN @GUBUN = '2' THEN ISNULL(E.ITEM_LEVEL1, '')  ELSE '' END)  AS ITEM_LEVEL1
+				 ,MAX(CASE WHEN @GUBUN = '2' THEN ISNULL(E.ITEM_LEVEL2, '')  ELSE '' END)  AS ITEM_LEVEL2
+				 ,MAX(CASE WHEN @GUBUN = '2' THEN ISNULL(E.ITEM_LEVEL3, '')  ELSE '' END)  AS ITEM_LEVEL3
+				 ,MAX(CASE WHEN @GUBUN = '3' THEN ISNULL(F.CUSTOM_CODE, '') ELSE '' END)   AS CUSTOM_CODE
+				 ,MAX(CASE WHEN @GUBUN = '3' THEN ISNULL(F.CUSTOM_NAME, '') ELSE '' END)   AS CUSTOM_NAME
+				 ,A.SALE_DATE
+				 ,SUM(ISNULL(B.SALE_Q, 0))                          AS SALE_Q
+				 ,SUM(ISNULL(B.DISCOUNT_P, 0)*ISNULL(B.SALE_Q, 0))  AS DISCOUNT_AMT 
+				 ,SUM(B.SALE_AMT_O) 								AS SALE_AMT_O
+				 ,SUM(B.TAX_AMT_O)   								AS TAX_AMT_O
+				 ,SUM(B.SALE_AMT_O + B.TAX_AMT_O) 					AS SALE_AMT_TOT
+				
+				  FROM        SSA100T A WITH(NOLOCK)
+				  INNER JOIN  SSA110T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE 
+				                                    AND A.DIV_CODE  = B.DIV_CODE 
+				                                    AND A.BILL_NUM  = B.BILL_NUM
+				  INNER JOIN  BSA210T C WITH(NOLOCK) ON A.COMP_CODE = C.COMP_CODE 
+				                                    AND A.DIV_CODE  = C.TYPE_LEVEL 
+				                 					AND A.DEPT_CODE = C.TREE_CODE
+				                 					AND ((@DEPT_CODE = '' ) OR (@DEPT_CODE != '' AND C.TREE_LEVEL LIKE (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) 
+				                                                                                                      WHERE COMP_CODE  = @COMP_CODE 
+				                                                                                                        AND TYPE_LEVEL = @DIV_CODE 
+				                                                                                                        AND TREE_CODE  = @DEPT_CODE) + '%'))
+				 LEFT   JOIN  BTR100T D WITH(NOLOCK) ON B.COMP_CODE  = D.COMP_CODE 
+				                                    AND B.DIV_CODE   = D.DIV_CODE 
+				                                    AND B.INOUT_NUM  = D.INOUT_NUM
+				                                    AND B.INOUT_SEQ  = D.INOUT_SEQ
+				                                    AND B.INOUT_TYPE = D.INOUT_TYPE
+				 INNER JOIN BPR100T  E  WITH(NOLOCK) ON B.COMP_CODE = E.COMP_CODE AND B.ITEM_CODE = E.ITEM_CODE
+				 LEFT   JOIN BCM100T F  WITH(NOLOCK) ON B.COMP_CODE = F.COMP_CODE AND B.PURCHASE_CUSTOM_CODE = F.CUSTOM_CODE
+				 /*
+				 LEFT   JOIN BPR000T G1 WITH(NOLOCK) ON E.COMP_CODE = G1.COMP_CODE AND E.ITEM_LEVEL1 = G1.LEVEL1 AND  G1.LEVEL2 = '*' AND G1.LEVEL3 = '*'
+				 LEFT   JOIN BPR000T G2 WITH(NOLOCK) ON E.COMP_CODE = G2.COMP_CODE AND E.ITEM_LEVEL1 = G2.LEVEL1 AND  E.ITEM_LEVEL2 = G2.LEVEL2 AND G2.LEVEL3 = '*'
+				 LEFT   JOIN BPR000T G3 WITH(NOLOCK) ON E.COMP_CODE = G3.COMP_CODE AND E.ITEM_LEVEL1 = G3.LEVEL1 AND  E.ITEM_LEVEL2 = G3.LEVEL2 AND  E.ITEM_LEVEL3 = G3.LEVEL3
+				*/
+				 WHERE  A.COMP_CODE   = @COMP_CODE
+				  	AND A.DIV_CODE    = @DIV_CODE
+				  	AND A.SALE_DATE &gt;= @SALE_DATE_FR
+				  	AND A.SALE_DATE &lt;= @SALE_DATE_TO
+				  
+				  <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)">
+				  AND E.ITEM_LEVEL1 = @ITEM_LEVEL1
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL2)">
+				  AND E.ITEM_LEVEL2 = @ITEM_LEVEL2
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL3)">
+				  AND E.ITEM_LEVEL3 = @ITEM_LEVEL3
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+				  AND F.CUSTOM_CODE = @CUSTOM_CODE
+				  </if>
+				 GROUP BY (CASE WHEN @GUBUN = '1' THEN A.DEPT_CODE 
+				                WHEN @GUBUN = '2' THEN ISNULL(E.ITEM_LEVEL1, '') + ISNULL(E.ITEM_LEVEL2, '')  + ISNULL(E.ITEM_LEVEL3, '') ELSE ISNULL(F.CUSTOM_CODE, '') END), A.SALE_DATE
+				
+				 ORDER BY (CASE WHEN @GUBUN = '1' THEN A.DEPT_CODE 
+				                WHEN @GUBUN = '2' THEN ISNULL(E.ITEM_LEVEL1, '') + ISNULL(E.ITEM_LEVEL2, '')  + ISNULL(E.ITEM_LEVEL3, '') ELSE ISNULL(F.CUSTOM_CODE, '') END), A.SALE_DATE
+				
+			  SET ARITHABORT OFF
+			  SET NOCOUNT OFF
+
+			END         
+	</select>
+</mapper>

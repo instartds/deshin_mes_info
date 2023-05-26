@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="arc200skrServiceImpl">
+					
+	<select id="arc200skrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+        /* arc200ukr[fnArc100QStd] Query01 이관및진행정보 조회 */
+        BEGIN
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+        
+            DECLARE @CompCode       NVARCHAR(08)    /* 법인코드  */
+                  , @UserId         NVARCHAR(100)    /* 사용자ID */
+                  , @LangType       NVARCHAR(2)     /* 언어구분 */
+                  , @RefItem        NVARCHAR(01)
+                  , @DateFormat     NVARCHAR(10)
+        
+            SET @CompCode = #{S_COMP_CODE}
+            SET @UserId   = #{S_USER_ID}
+            SET @LangType = #{S_LANG_CODE}
+        
+            /* 명칭 참조 유형 */
+            SELECT TOP 1 @RefItem = REF_ITEM
+              FROM BSA300T WITH (NOLOCK)
+             WHERE USER_ID = @UserId
+        
+            SET @RefItem = ISNULL(@RefItem, N'0')
+        
+            /* 날짜 포맷 유형 설정 */
+            SELECT TOP 1 @DateFormat = CODE_NAME
+              FROM BSA100T WITH (NOLOCK)
+             WHERE COMP_CODE = @CompCode
+               AND MAIN_CODE = N'B044'
+               AND REF_CODE1 = N'Y'
+        
+            SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+        
+            /* 데이터 조회 */
+            SELECT A.COMP_CODE
+                 , A.CONF_RECE_NO
+                 , (CASE WHEN ISNULL(A.CONF_RECE_DATE, '') = ''
+                         THEN ''
+                         ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.CONF_RECE_DATE, 1, 4))
+                                                                 , 'MM'  , SUBSTRING(A.CONF_RECE_DATE, 5, 2))
+                                                                 , 'DD'  , SUBSTRING(A.CONF_RECE_DATE, 7, 2))
+                     END) AS CONF_RECE_DATE
+                 , A.RECE_COMP_CODE
+                 , Y.COMP_NAME AS RECE_COMP_NAME
+                 , A.CUSTOM_CODE
+                 , (CASE WHEN @RefItem = '1' THEN V.CUSTOM_NAME1
+                         WHEN @RefItem = '2' THEN V.CUSTOM_NAME2
+                                             ELSE V.CUSTOM_NAME
+                     END) AS CUSTOM_NAME
+                 , A.TOP_NAME
+                 , C.MNG_GUBUN
+                 , ISNULL(X1.CODE_NAME, '') AS MNG_GUBUN_NAME
+                 , A.RECE_GUBUN
+                 , ISNULL(X2.CODE_NAME, '') AS RECE_GUBUN_NAME
+        
+                 , SUM(CASE WHEN X.REF_CODE2 = '01' THEN B.COLLECT_AMT ELSE 0 END) AS TOT_RECEIVE_AMT       /* 접수금액 */
+                 , SUM(CASE WHEN X.REF_CODE2 = '02' THEN B.COLLECT_AMT ELSE 0 END) AS TOT_COLLECT_AMT       /* 수금액   */
+                 , SUM(CASE WHEN X.REF_CODE2 = '03' THEN B.COLLECT_AMT ELSE 0 END) AS TOT_ADJUST_AMT        /* 조정액   */
+                                                                                            
+                 , SUM(CASE WHEN X.REF_CODE2 = '01' THEN B.COLLECT_AMT ELSE 0 END)
+                 - SUM(CASE WHEN X.REF_CODE2 = '02' THEN B.COLLECT_AMT ELSE 0 END)
+                 - SUM(CASE WHEN X.REF_CODE2 = '03' THEN B.COLLECT_AMT ELSE 0 END) AS TOT_BALANCE_AMT       /* 잔액     */
+                                                                                    
+                 , SUM(CASE WHEN X.REF_CODE2 = '04' THEN B.COLLECT_AMT ELSE 0 END) AS TOT_DISPOSAL_AMT      /* 대손처리 */
+                                                                                    
+                 , SUM(CASE WHEN X.REF_CODE2 = '01' THEN B.COLLECT_AMT ELSE 0 END)
+                 - SUM(CASE WHEN X.REF_CODE2 = '02' THEN B.COLLECT_AMT ELSE 0 END)
+                 - SUM(CASE WHEN X.REF_CODE2 = '03' THEN B.COLLECT_AMT ELSE 0 END)
+                 - SUM(CASE WHEN X.REF_CODE2 = '04' THEN B.COLLECT_AMT ELSE 0 END) AS TOT_BOOKVALUE_AMT     /* 장부가액 */
+        
+                 , A.CONF_DRAFTER
+                 , ISNULL(U.NAME,'') AS CONF_DRAFTER_NAME
+                 , A.RECE_AMT
+              FROM            ARC200T A  WITH (NOLOCK)
+                   LEFT  JOIN ARC210T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+                                                      AND B.CONF_RECE_NO = A.CONF_RECE_NO
+                   LEFT  JOIN (SELECT A.COMP_CODE, A.CONF_RECE_NO, A.MNG_GUBUN
+                                 FROM ARC210T A WITH (NOLOCK)
+                                      INNER JOIN (SELECT A.COMP_CODE, A.CONF_RECE_NO, MAX(A.SEQ) AS SEQ
+                                                    FROM ARC210T A WITH (NOLOCK)
+                                                         INNER JOIN (SELECT COMP_CODE, CONF_RECE_NO, MAX(MNG_DATE) AS MNG_DATE
+                                                                       FROM ARC210T WITH (NOLOCK)
+                                                                      GROUP BY COMP_CODE, CONF_RECE_NO) B ON B.COMP_CODE    = A.COMP_CODE
+                                                                                                         AND B.CONF_RECE_NO = A.CONF_RECE_NO
+                                                                                                         AND B.MNG_DATE     = A.MNG_DATE
+                                                   GROUP BY A.COMP_CODE, A.CONF_RECE_NO) B ON B.COMP_CODE    = A.COMP_CODE
+                                                                                          AND B.CONF_RECE_NO = A.CONF_RECE_NO
+                                                                                          AND B.SEQ          = A.SEQ) C ON C.COMP_CODE    = A.COMP_CODE
+                                                                                                                       AND C.CONF_RECE_NO = A.CONF_RECE_NO
+                   LEFT  JOIN BCM100T V  WITH (NOLOCK) ON V.COMP_CODE   = A.COMP_CODE  
+                                                      AND V.CUSTOM_CODE = A.CUSTOM_CODE
+                   LEFT  JOIN BSA100T X  WITH (NOLOCK) ON X.COMP_CODE   = B.COMP_CODE
+                                                      AND X.MAIN_CODE   = 'J504'
+                                                      AND X.SUB_CODE    = B.MNG_GUBUN
+                   LEFT  JOIN BSA100T X1 WITH (NOLOCK) ON X1.COMP_CODE  = C.COMP_CODE
+                                                      AND X1.MAIN_CODE  = 'J504'
+                                                      AND X1.SUB_CODE   = C.MNG_GUBUN
+                   LEFT  JOIN BSA100T X2 WITH (NOLOCK) ON X2.COMP_CODE  = A.COMP_CODE
+                                                      AND X2.MAIN_CODE  = 'J501'
+                                                      AND X2.SUB_CODE   = A.RECE_GUBUN
+                   LEFT  JOIN BSA100T X3 WITH (NOLOCK) ON X3.COMP_CODE  = X.COMP_CODE
+                                                      AND X3.MAIN_CODE  = 'J505'
+                                                      AND X3.SUB_CODE   = X.REF_CODE2
+                   LEFT  JOIN HUM100T U WITH (NOLOCK) ON U.COMP_CODE    = A.COMP_CODE  
+                                                     AND U.PERSON_NUMB  = A.CONF_DRAFTER
+                   LEFT  JOIN BOR100T Y WITH (NOLOCK) ON Y.COMP_CODE    = A.RECE_COMP_CODE  
+             WHERE A.COMP_CODE    = @CompCode
+             <if test="@foren.Ognl@isNotEmpty(CONF_RECE_DATE_FR)">
+                AND A.CONF_RECE_DATE &gt;= #{CONF_RECE_DATE_FR}
+             </if>
+             <if test="@foren.Ognl@isNotEmpty(CONF_RECE_DATE_TO)">
+                AND A.CONF_RECE_DATE &lt;= #{CONF_RECE_DATE_TO}
+             </if>
+             <if test="@foren.Ognl@isNotEmpty(RECE_COMP_CODE)">
+                 AND A.RECE_COMP_CODE = #{RECE_COMP_CODE}
+             </if>
+             <if test="@foren.Ognl@isNotEmpty(RECE_COMP_NAME)">      
+                AND Y.COMP_NAME LIKE  #{RECE_COMP_NAME} + '%'
+             </if>
+             <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+                 AND A.CUSTOM_CODE = #{CUSTOM_CODE}
+             </if>
+             <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">  
+                 AND V.CUSTOM_NAME LIKE  #{CUSTOM_NAME} + '%'        
+             </if>
+             <if test="@foren.Ognl@isNotEmpty(CONF_DRAFTER)">
+                 AND A.CONF_DRAFTER = #{CONF_DRAFTER}
+             </if>
+             <if test="@foren.Ognl@isNotEmpty(RECE_GUBUN)">
+                 AND A.RECE_GUBUN = #{RECE_GUBUN}
+             </if>
+             <if test="@foren.Ognl@isNotEmpty(COLL_MANA)">
+                 AND X3.SUB_CODE = #{COLL_MANA}
+             </if>
+             <if test="@foren.Ognl@isNotEmpty(CONF_RECE_NO)">
+                 AND A.CONF_RECE_NO = #{CONF_RECE_NO}
+             </if>
+             <if test="@foren.Ognl@isNotEmpty(MNG_GUBUN)">
+                 AND C.MNG_GUBUN = #{MNG_GUBUN}
+             </if>
+             
+             GROUP BY A.COMP_CODE   , A.CONF_RECE_NO, A.CONF_RECE_DATE, A.CONF_DRAFTER, U.NAME
+                    , C.MNG_GUBUN   , A.RECE_GUBUN  , A.CUSTOM_CODE   , V.CUSTOM_NAME1, V.CUSTOM_NAME2
+                    , V.CUSTOM_NAME , A.TOP_NAME    , A.RECE_COMP_CODE, Y.COMP_NAME   , X1.CODE_NAME
+                    , X2.CODE_NAME  
+                    , A.RECE_AMT
+        
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END
+
+	</select>
+
+
+
+</mapper>

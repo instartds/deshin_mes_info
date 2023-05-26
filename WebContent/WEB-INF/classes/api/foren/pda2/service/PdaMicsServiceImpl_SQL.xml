@@ -1,0 +1,340 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace = "pdaMicsService">
+	
+	<!-- 바코드 데이터 조회 -->
+	<select id="pdaMicsService.getBarcodeData" parameterType="Map" resultType="rMap">
+	SELECT *
+	  FROM unilite.fnGetBarcodeInfo_SITE(#{COMP_CODE}, #{DIV_CODE}, #{BARCODE})
+	</select>
+	
+	<!-- 패킹 번호 오류체크 -->
+	<update id="pdaMicsService.spCallCheckPds510ukrv" parameterType="Map" statementType="CALLABLE">
+		{call USP_PDA_Srq510ukrv_Check (
+			#{COMP_CODE		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{DIV_CODE		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{ISSUE_REQ_NUM	, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{ISSUE_REQ_SEQ	, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{BARCODE		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{ErrorDesc		, mode=OUT	, jdbcType=VARCHAR	, javaType=java.lang.String}
+		)}
+	</update>
+	
+	<!-- 패킹 출고 체크 -->
+	<update id="pdaMicsService.spCallCheckPds600ukrv" parameterType="Map" statementType="CALLABLE">
+		{call USP_PDA_Srq600ukrv_Check (
+			#{COMP_CODE		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{DIV_CODE		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{ISSUE_REQ_NUM	, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{BARCODE		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{ErrorDesc		, mode=OUT	, jdbcType=VARCHAR	, javaType=java.lang.String}
+		)}
+	</update>
+	
+	<!-- 월별 출하지시서 조회 -->
+	<select id="pdaMicsService.searchListPds510ukrvSub1" parameterType="Map" resultType="rMap">
+	SELECT X.ISSUE_DATE
+		 , X.CUSTOM_CODE
+		 , M1.CUSTOM_NAME
+		 , X.ITEM_CODE
+		 , M2.ITEM_NAME
+		 , X.ISSUE_REQ_NUM
+		 , X.ISSUE_REQ_QTY
+		 , ISNULL(A.PACK_QTY,0) AS TOT_PACK_QTY
+		 
+	  FROM SRQ100T X WITH (NOLOCK) 
+	  LEFT JOIN (SELECT S1.COMP_CODE
+					  , S1.DIV_CODE
+					  , S2.ISSUE_REQ_NUM
+					  , S2.ISSUE_REQ_SEQ
+					  , SUM(S2.PACK_QTY) AS PACK_QTY
+				   FROM SRQ500T S1 WITH (NOLOCK)
+				  INNER JOIN SRQ510T S2 WITH (NOLOCK) ON S2.COMP_CODE = S1.COMP_CODE
+													 AND S2.DIV_CODE = S1.DIV_CODE
+													 AND S2.PACK_NO = S1.PACK_NO
+				  GROUP BY S1.COMP_CODE, S1.DIV_CODE, S2.ISSUE_REQ_NUM, S2.ISSUE_REQ_SEQ
+				 ) A ON X.COMP_CODE = A.COMP_CODE
+					AND X.DIV_CODE = A.DIV_CODE
+					AND X.ISSUE_REQ_NUM = A.ISSUE_REQ_NUM
+					AND X.ISSUE_REQ_SEQ = A.ISSUE_REQ_SEQ
+	 INNER JOIN BCM100T M1 WITH (NOLOCK) ON M1.COMP_CODE	= X.COMP_CODE
+										AND M1.CUSTOM_CODE	= X.CUSTOM_CODE
+	 INNER JOIN BPR100T M2 WITH (NOLOCK) ON M2.COMP_CODE	= X.COMP_CODE
+										AND M2.ITEM_CODE	= X.ITEM_CODE
+	
+	 WHERE X.COMP_CODE	= #{COMP_CODE}
+	   AND X.DIV_CODE	= #{DIV_CODE}
+	   AND X.ISSUE_DATE LIKE #{ISSUE_DATE} + '%'
+	   AND X.ISSUE_REQ_QTY - ISNULL(A.PACK_QTY,0) > 0
+	</select>
+	
+	
+	<!-- 메인 조회 -->
+	<select id="pdaMicsService.searchListPds510ukrvMain" parameterType="Map" resultType="rMap">
+	SELECT X.ISSUE_REQ_NUM
+		 , X.ISSUE_REQ_SEQ
+		 , A.CUSTOM_CODE
+		 , M1.CUSTOM_NAME
+		 , B.ITEM_CODE
+		 , M2.ITEM_NAME
+		 , M2.SPEC														-- 규격
+		 , X.ISSUE_REQ_QTY												-- 출하지시량
+		 , ISNULL(E.PACK_QTY,0)						AS PDA_PACK_QTY		-- PDA패킹수량
+		 , ISNULL(D.PACK_QTY,0)						AS MES_PACK_QTY		-- 패킹수량
+		 , X.ISSUE_REQ_QTY - ISNULL(D.PACK_QTY,0)	AS REMAIN_Q			-- 잔량
+		 , X.ORDER_UNIT
+		 
+	  FROM SRQ100T X WITH (NOLOCK)
+	 INNER JOIN SOF100T A  WITH (NOLOCK) ON A.COMP_CODE		= X.COMP_CODE 
+										AND A.DIV_CODE		= X.DIV_CODE
+										AND A.ORDER_NUM		= X.ORDER_NUM
+	 INNER JOIN SOF110T B  WITH (NOLOCK) ON B.COMP_CODE		= X.COMP_CODE
+										AND B.DIV_CODE		= X.DIV_CODE
+										AND B.ORDER_NUM		= X.ORDER_NUM
+										AND B.SER_NO		= X.SER_NO
+	 INNER JOIN BCM100T M1 WITH (NOLOCK) ON M1.COMP_CODE	= X.COMP_CODE
+										AND M1.CUSTOM_CODE	= X.CUSTOM_CODE
+	 INNER JOIN BPR100T M2 WITH (NOLOCK) ON M2.COMP_CODE	= X.COMP_CODE 
+										AND M2.ITEM_CODE	= X.ITEM_CODE
+	  LEFT  JOIN (
+				SELECT COMP_CODE
+					 , DIV_CODE
+					 , ISSUE_REQ_NUM
+					 , ISSUE_REQ_SEQ
+					 , SUM(PACK_QTY) PACK_QTY
+				  FROM SRQ510T WITH (NOLOCK)
+				 WHERE COMP_CODE	= #{COMP_CODE}
+				   AND DIV_CODE		= #{DIV_CODE}
+				 GROUP BY COMP_CODE, DIV_CODE, ISSUE_REQ_NUM, ISSUE_REQ_SEQ ) D  ON D.COMP_CODE		= X.COMP_CODE
+																				AND D.DIV_CODE		= X.DIV_CODE
+																				AND D.ISSUE_REQ_NUM	= X.ISSUE_REQ_NUM
+																				AND D.ISSUE_REQ_SEQ	= X.ISSUE_REQ_SEQ
+	   LEFT  JOIN (
+				SELECT COMP_CODE
+					 , DIV_CODE
+					 , ISSUE_REQ_NUM
+					 , ISSUE_REQ_SEQ
+					 , SUM(PACK_QTY) PACK_QTY
+				   FROM L_PDA_SRQ510T WITH (NOLOCK)
+				  WHERE COMP_CODE	= #{COMP_CODE}
+					AND DIV_CODE	= #{DIV_CODE}
+				  GROUP BY COMP_CODE, DIV_CODE, ISSUE_REQ_NUM, ISSUE_REQ_SEQ ) E ON E.COMP_CODE		= X.COMP_CODE
+																				AND E.DIV_CODE		= X.DIV_CODE
+																				AND E.ISSUE_REQ_NUM	= X.ISSUE_REQ_NUM
+																				AND E.ISSUE_REQ_SEQ	= X.ISSUE_REQ_SEQ
+	 WHERE X.COMP_CODE	= #{COMP_CODE}
+	   AND X.DIV_CODE	= #{DIV_CODE}
+	   AND X.ISSUE_REQ_NUM = #{ISSUE_REQ_NUM}
+	</select>
+	
+	<!-- 패킹리스트 조회 -->
+	<select id="pdaMicsService.searchListPds510ukrvSub2" parameterType="Map" resultType="rMap">
+	DECLARE @COMP_CODE		NVARCHAR(08)
+	      , @DIV_CODE		NVARCHAR(08)
+		  , @ISSUE_REQ_NUM	NVARCHAR(20)
+		  , @ISSUE_REQ_SEQ	NUMERIC
+
+		SET @COMP_CODE		= #{COMP_CODE}
+	    SET @DIV_CODE		= #{DIV_CODE}
+		SET @ISSUE_REQ_NUM	= #{ISSUE_REQ_NUM}
+		SET @ISSUE_REQ_SEQ	= #{ISSUE_REQ_SEQ}
+	
+	
+	SELECT A.ISSUE_REQ_NUM
+		 , A.ISSUE_REQ_SEQ
+		 , A.PACK_NO													-- 패킹번호
+		 , SUM(A.PACK_QTY)							AS PACK_QTY			-- 패킹수량
+		 , SUM(CASE A.APPLY_YN WHEN 'Y' THEN A.PACK_QTY
+						   ELSE 0
+						   END)						AS PACK_CONFIRM_QTY	-- 확정수량
+						   
+		 , SUM(ISNULL(B.PACK_QTY,0))				AS TOT_CONFIRM_QRT	-- 총 확정수량
+	  FROM L_PDA_SRQ510T A WITH (NOLOCK)
+	  LEFT  JOIN SRQ510T B WITH (NOLOCK) ON B.COMP_CODE		= A.COMP_CODE
+										AND B.DIV_CODE		= A.DIV_CODE
+										AND B.ISSUE_REQ_NUM	= A.ISSUE_REQ_NUM
+										AND B.ISSUE_REQ_SEQ	= A.ISSUE_REQ_SEQ
+										AND B.LOT_NO		= A.LOT_NO
+	 WHERE A.COMP_CODE		= @COMP_CODE
+	   AND A.DIV_CODE		= @DIV_CODE
+	   AND A.ISSUE_REQ_NUM	= @ISSUE_REQ_NUM
+	   AND A.ISSUE_REQ_SEQ	= @ISSUE_REQ_SEQ 
+	GROUP BY A.COMP_CODE, A.DIV_CODE, A.ISSUE_REQ_NUM, A.ISSUE_REQ_SEQ, A.PACK_NO
+	</select>
+	
+	<!-- 제품 리스트 조회 -->
+	<select id="pdaMicsService.searchListPds510ukrvSub3" parameterType="Map" resultType="rMap">
+	SELECT A.COMP_CODE
+		 , A.DIV_CODE
+		 , A.ISSUE_REQ_NUM
+		 , A.ISSUE_REQ_SEQ
+		 , A.PACK_NO
+		 , A.ITEM_CODE
+		 , A.LOT_NO
+		 , A.PACK_QTY
+		 , A.APPLY_YN
+		 , A.WH_CODE
+		 , A.WH_CELL_CODE
+	
+	  FROM L_PDA_SRQ510T A WITH (NOLOCK)
+	 WHERE A.COMP_CODE		= #{COMP_CODE}
+	   AND A.DIV_CODE		= #{DIV_CODE}
+	   AND A.ISSUE_REQ_NUM	= #{ISSUE_REQ_NUM}
+	   AND A.ISSUE_REQ_SEQ	= #{ISSUE_REQ_SEQ}
+	   AND A.PACK_NO		= #{PACK_NO}
+	</select>
+	
+	<!-- 제품 패킹 -->
+	<insert id="pdaMicsService.savePds510ukrvPack" parameterType="Map">
+		
+	INSERT INTO L_PDA_SRQ510T
+			(
+				  COMP_CODE						-- 법인
+				, DIV_CODE						-- 사업장
+				, ISSUE_REQ_NUM					-- 출하지시번호
+				, ISSUE_REQ_SEQ					-- 출하지시순번
+				, PACK_NO						-- 패킹번호
+				, ITEM_CODE						-- 품목코드
+				, LOT_NO						-- SN(LOT_NO)
+				, PACK_QTY						-- 패킹수량
+				, PACK_USER						-- 패킹자
+				, PACK_DATE						-- 패킹일
+				, APPLY_YN						-- 적용여부
+				
+				, PACK_CODE
+				, PACK_CELL_CODE
+				, INSERT_DB_USER
+				, INSERT_DB_TIME
+				, UPDATE_DB_USER
+				, UPDATE_DB_TIME
+		
+			) VALUES (
+				  #{compCode}
+				, #{divCode}
+				, #{issueReqNum}
+				, #{issueReqSeq}
+				, #{packNo}
+				, #{itemCode}
+				, #{lotNo}
+				, #{packQty}
+				, #{S_USER_ID}
+				,  CONVERT(CHAR(8), GETDATE(), 112)
+				, 'N'
+				
+				, #{packCode}
+				, #{packCellCode}
+				
+				,#{S_USER_ID}
+				,GETDATE()
+				,#{S_USER_ID}
+				,GETDATE()
+	)
+	</insert>
+	
+	<!-- 패킹제품 삭제 -->
+	<delete id="pdaMicsService.deletePds510ukrvPack" parameterType="Map">
+	DELETE L_PDA_SRQ510T
+	 WHERE COMP_CODE		= #{compCode}
+	   AND DIV_CODE			= #{divCode}
+	   AND ISSUE_REQ_NUM	= #{issueReqNum}
+	   AND ISSUE_REQ_SEQ	= #{issueReqSeq}
+	   AND PACK_NO			= #{packNo}
+	   AND ITEM_CODE		= #{itemCode}
+	   AND LOT_NO			= #{lotNo}
+	   AND APPLY_YN			= 'N'
+	</delete>
+	
+	
+	<!-- 패킹제품 전체삭제 -->
+	<delete id="pdaMicsService.deleteAllPds510ukrvPack" parameterType="Map">
+	DELETE L_PDA_SRQ510T
+	 WHERE COMP_CODE		= #{compCode}
+	   AND DIV_CODE			= #{divCode}
+	   AND ISSUE_REQ_NUM	= #{issueReqNum}
+	   AND ISSUE_REQ_SEQ	= #{issueReqSeq}
+	   AND PACK_NO			= #{packNo}
+	   AND APPLY_YN			= 'N'
+	</delete>
+	
+	
+	<!-- 패킹 확정 -->
+	<update id="pdaMicsService.spCallPds510ukrv" parameterType="Map" statementType="CALLABLE">
+		{call USP_PDA_Srq510ukrv (
+			#{compCode		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{divCode		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{packNo		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{S_USER_ID		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{ErrorDesc		, mode=OUT	, jdbcType=VARCHAR	, javaType=java.lang.String}
+		)}
+	</update>
+	
+	
+	<!-- 패킹번호 리스트 조회 -->
+	<select id="pdaMicsService.searchListPds600ukrvMain" parameterType="Map" resultType="rMap">
+	SELECT ISSUE_REQ_NUM
+		 , PACK_NO
+		 , APPLY_YN
+	  FROM L_PDA_SRQ600T WITH (NOLOCK)
+	 WHERE COMP_CODE		= #{COMP_CODE}
+	   AND DIV_CODE			= #{DIV_CODE}
+	   AND ISSUE_REQ_NUM	= #{ISSUE_REQ_NUM}
+	</select>
+	
+	
+	<!-- 제품 패킹 -->
+	<insert id="pdaMicsService.savePds600ukrvPack" parameterType="Map">
+	INSERT INTO L_PDA_SRQ600T
+			(
+				  COMP_CODE						-- 법인
+				, DIV_CODE						-- 사업장
+				, ISSUE_REQ_NUM					-- 출하지시번호
+				, PACK_NO						-- 패킹번호
+				, ISSUE_DATE					-- 츌고일자
+				, CUSTOM_CODE					-- 거래처
+				, ISSUE_PRSN					-- 담당자
+				, APPLY_YN						-- 적용여부
+				
+				, INSERT_DB_USER
+				, INSERT_DB_TIME
+				, UPDATE_DB_USER
+				, UPDATE_DB_TIME
+		
+			) VALUES (
+				  #{compCode}
+				, #{divCode}
+				, #{issueReqNum}
+				, #{packNo}
+				, #{issueDate}
+				, #{customCode}
+				, #{issuePrsn}
+				, 'N'
+				
+				,#{S_USER_ID}
+				,GETDATE()
+				,#{S_USER_ID}
+				,GETDATE()
+	)
+	</insert>
+	
+	<!-- 패킹제품 삭제 -->
+	<delete id="pdaMicsService.deletePds600ukrvPack" parameterType="Map">
+	DELETE L_PDA_SRQ600T
+	 WHERE COMP_CODE		= #{compCode}
+	   AND DIV_CODE			= #{divCode}
+	   AND ISSUE_REQ_NUM	= #{issueReqNum}
+	   AND PACK_NO			= #{packNo}
+	   AND APPLY_YN			= 'N'
+	</delete>
+	
+	<!-- 패킹 확정 -->
+	<update id="pdaMicsService.spCallPds600ukrv" parameterType="Map" statementType="CALLABLE">
+		{call USP_PDA_Srq600ukrv (
+			#{compCode		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{divCode		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{issueReqNum	, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{KEY_VALUE		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{S_USER_ID		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{ErrorDesc		, mode=OUT	, jdbcType=VARCHAR	, javaType=java.lang.String}
+		)}
+	</update>
+</mapper>

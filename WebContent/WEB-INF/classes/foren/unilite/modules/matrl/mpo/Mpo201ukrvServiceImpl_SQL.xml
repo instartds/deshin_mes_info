@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mpo201ukrvServiceImpl">
+					
+	<select id="mpo201ukrvServiceImpl.gridUp" parameterType="Map" resultType="rMap">
+		/*구매오더확정 위*/
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+    DECLARE @CompCode       NVARCHAR(08) /* 법인코드    */
+		   ,@DivCode        NVARCHAR(08) /* 사업장    */
+
+    SET @CompCode = #{S_COMP_CODE}
+    SET @DivCode  = #{DIV_CODE}
+
+	SELECT
+		 S.COMP_CODE 
+		,S.DIV_CODE 
+		,S.CUSTOM_CODE
+		,G.CUSTOM_NAME
+		,S.ORDER_REQ_DATE										AS ORDER_DATE
+		,S.ORDER_PRSN_CODE										AS ORDER_PRSN			
+		,'1'													AS CONFIRM_YN
+		, CASE WHEN ISNULL(G.MONEY_UNIT, '') = '' THEN
+	            ISNULL((SELECT TOP 1 SUB_CODE FROM BSA100T WITH(NOLOCK) 
+	                                         WHERE COMP_CODE = S.COMP_CODE AND MAIN_CODE = 'B004' AND SUB_CODE != '$' AND UPPER(REF_CODE1) = 'Y' ), 'KRW') 
+	           ELSE G.MONEY_UNIT END            				AS MONEY_UNIT
+	    , (SELECT TOP 1 REF_CODE1
+	   			FROM BSA100T WITH(NOLOCK) 
+					WHERE COMP_CODE = 'MASTER' 
+					   AND MAIN_CODE = 'M201' 
+					   AND SUB_CODE != '$' 
+					   AND SUB_CODE = S.ORDER_PRSN_CODE) 		AS AGREE_PRSN	  
+	
+		FROM		    MPO000T	S WITH (NOLOCK)
+			INNER JOIN	BPR100T	C WITH (NOLOCK) ON C.COMP_CODE	=	S.COMP_CODE
+											   AND C.ITEM_CODE	=	S.ITEM_CODE
+			LEFT  JOIN	BIV100T	D WITH (NOLOCK) ON D.COMP_CODE	=	S.COMP_CODE
+											   AND D.DIV_CODE	=	S.DIV_CODE
+											   AND D.ITEM_CODE	=	S.ITEM_CODE
+			INNER JOIN	BCM100T G WITH (NOLOCK) ON G.COMP_CODE	=	S.COMP_CODE
+											   AND G.CUSTOM_CODE=	S.CUSTOM_CODE
+			INNER JOIN  BSA210T H WITH (NOLOCK) ON H.COMP_CODE	=	S.COMP_CODE
+											   AND H.TYPE_LEVEL =	S.DIV_CODE
+											   AND H.TREE_CODE	=	S.DEPT_CODE									
+													
+		WHERE 	S.COMP_CODE			= @CompCode
+			AND	S.ORDER_STATUS		='1'
+	
+	<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">		
+			AND S.DIV_CODE			= @DivCode
+		</if>
+	<if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">		
+			AND H.TREE_LEVEL        LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =H.COMP_CODE AND TYPE_LEVEL=H.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+		</if>
+	<if test="@foren.Ognl@isNotEmpty(ORDER_PRSN)">		
+			AND S.ORDER_PRSN_CODE	= #{ORDER_PRSN}
+		</if>
+	<if test="@foren.Ognl@isNotEmpty(ORDER_EXPECTED_FR)">		
+			AND S.ORDER_REQ_DATE	&gt;= #{ORDER_EXPECTED_FR}
+		</if>
+	<if test="@foren.Ognl@isNotEmpty(ORDER_EXPECTED_TO)">		
+			AND S.ORDER_REQ_DATE	&lt;= #{ORDER_EXPECTED_TO}
+	</if>
+	<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">		
+			AND S.CUSTOM_CODE		=#{CUSTOM_CODE}
+	</if>
+	<if test="@foren.Ognl@isNotEmpty(WH_CODE)">		
+			AND S.WH_CODE			= #{WH_CODE}
+		</if>
+	
+	GROUP BY 
+		S.COMP_CODE ,S.DIV_CODE ,S.CUSTOM_CODE ,G.CUSTOM_NAME ,S.ORDER_REQ_DATE					
+		,S.ORDER_PRSN_CODE ,G.MONEY_UNIT
+	
+	SET NOCOUNT OFF
+    SET ARITHABORT OFF
+END
+    </select>
+
+<select id="mpo201ukrvServiceImpl.gridDown" parameterType="Map" resultType="rMap">
+	/*구매오더확정 아래 */
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+    DECLARE @CompCode       NVARCHAR(08) /* 법인코드    */
+		   ,@DivCode        NVARCHAR(08) /* 사업장    */
+
+    SET @CompCode = #{S_COMP_CODE}
+	SET @DivCode  = #{DIV_CODE}
+
+	SELECT
+		 S.COMP_CODE 
+		,S.DIV_CODE 
+		,ISNULL(C.ITEM_LEVEL1, '')         AS ITEM_LEVEL1
+		,ISNULL(C.ITEM_LEVEL2, '')         AS ITEM_LEVEL2
+		,S.ITEM_CODE
+		,C.ITEM_NAME
+		,C.AUTHOR1
+		,C.PUBLISHER
+		,S.CUSTOM_CODE
+		,G.CUSTOM_NAME
+		,S.ORDER_REQ_Q						AS ORDER_Q
+		,S.REMARK
+		,CONVERT(NVARCHAR(08), DATEADD(DAY, 1, S.ORDER_REQ_DATE), 112) AS DVRY_DATE	
+		,S.ORDER_PRSN_CODE
+		,X.ORDER_UNIT
+		,X.ITEM_P AS ORDER_UNIT_P
+		,S.WH_CODE
+		,S.ORDER_REQ_Q * X.ITEM_P AS ORDER_O
+		,S.REMARK
+		,X.MONEY_UNIT
+		,ROW_NUMBER() OVER(ORDER BY S.COMP_CODE) AS ORDER_SEQ
+		FROM	    	MPO000T	S WITH (NOLOCK)
+			INNER JOIN	BPR100T	C WITH (NOLOCK) ON C.COMP_CODE	= S.COMP_CODE
+										       AND C.ITEM_CODE	= S.ITEM_CODE
+			LEFT JOIN (SELECT F.COMP_CODE, F.DIV_CODE, F.ITEM_CODE, F.ITEM_P, F.MONEY_UNIT,F.ORDER_UNIT
+							FROM BPR400T F WITH (NOLOCK)
+							WHERE F.COMP_CODE   = @CompCode
+							  AND F.DIV_CODE    = @DivCode
+							  AND F.CUSTOM_CODE = #{CUSTOM_CODE_G}
+							  AND F.MONEY_UNIT  = #{MONEY_UNIT_G}
+							  AND F.TYPE        = '1' 
+							  AND F.APLY_END_DATE &gt;= CONVERT(NVARCHAR(08), GETDATE(), 112)
+							  AND F.APLY_START_DATE &lt;= CONVERT(NVARCHAR(08), GETDATE(), 112)
+							  AND F.APLY_START_DATE = (SELECT TOP 1 MAX(APLY_START_DATE) AS APLY_START_DATE
+															FROM BPR400T WITH(NOLOCK)
+															WHERE COMP_CODE   = F.COMP_CODE
+															  AND DIV_CODE    = F.DIV_CODE
+															  AND TYPE        = F.TYPE
+															  AND ITEM_CODE   = F.ITEM_CODE
+															  AND CUSTOM_CODE = F.CUSTOM_CODE
+															  AND ORDER_UNIT  = F.ORDER_UNIT
+															  AND MONEY_UNIT  = F.MONEY_UNIT
+															  AND APLY_START_DATE &lt;= CONVERT(NVARCHAR(08), GETDATE(), 112)
+	                                                   )
+	              GROUP BY F.COMP_CODE, F.DIV_CODE, F.ITEM_CODE, F.ITEM_P, F.MONEY_UNIT,F.ORDER_UNIT
+						) X ON X.COMP_CODE = S.COMP_CODE 
+						   AND X.DIV_CODE  = S.DIV_CODE 
+						   AND X.ITEM_CODE = S.ITEM_CODE
+	
+			INNER JOIN	BCM100T G WITH (NOLOCK) ON G.COMP_CODE	 =	S.COMP_CODE
+										   	   AND G.CUSTOM_CODE =	S.CUSTOM_CODE
+		WHERE 	S.COMP_CODE		= @CompCode
+			AND	S.ORDER_STATUS	= '1'
+		<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">		
+			AND S.DIV_CODE		= @DivCode
+			</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_G)">		
+			AND S.CUSTOM_CODE	= #{CUSTOM_CODE_G}
+			</if>
+		<if test="@foren.Ognl@isNotEmpty(ORDER_REQ_DATE_G)">		
+			AND S.ORDER_REQ_DATE = #{ORDER_REQ_DATE_G}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(DEPT_CODE_F)">		
+			AND S.DEPT_CODE		= #{DEPT_CODE_F}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(WH_CODE)">		
+			AND S.WH_CODE		= #{WH_CODE}
+		</if>
+
+    SET ARITHABORT OFF 
+    SET NOCOUNT OFF
+END 	
+</select>
+	
+<insert id="mpo201ukrvServiceImpl.insertLogDetail" parameterType="Map">    	
+ 	INSERT INTO L_MPO200T
+     ( KEY_VALUE	, OPR_FLAG     
+     , DIV_CODE     , CUSTOM_CODE	, ORDER_NUM     	, ORDER_SEQ     	, ITEM_CODE     
+     , ORDER_UNIT_Q , ORDER_UNIT    , UNIT_PRICE_TYPE   , MONEY_UNIT     	, ORDER_UNIT_P     
+     , ORDER_O      , EXCHG_RATE_O  , ORDER_LOC_P       , ORDER_LOC_O     	, DVRY_DATE     
+     , WH_CODE      , TRNS_RATE     , ORDER_Q     		, ORDER_P     		, CONTROL_STATUS     
+     , INSTOCK_Q    , INSPEC_FLAG   , COMP_CODE 
+     
+	 , DVRY_TIME	, ORDER_REQ_NUM	, PROJECT_NO		, PJT_CODE          , LOT_NO                
+	 , REMARK       , RECEIPT_Q		, BAD_RETURN_Q      , ADVAN_AMOUNT      , MAP_Q                 
+	 , SO_NUM       , SO_SEQ		, BL_NUM            , DVRY_ESTI_NO      , DVRY_ESTI_QTY         
+	 , DVRY_TOT_QTY , DVRY_ESTI_DATE, DVRY_PRINT_YN     , SUPP_REMARK       , IF_NO                 
+	 , IF_YN        , IF_DATETIME   , UPDATE_DB_USER	, UPDATE_DB_TIME	, INSERT_DB_USER    	, INSERT_DB_TIME
+     ) 
+VALUES
+    (  #{KEY_VALUE}    , #{OPR_FLAG}
+     , #{DIV_CODE}     , #{CUSTOM_CODE}   , #{ORDER_NUM}     	, #{ORDER_SEQ}   , #{ITEM_CODE}
+     , #{ORDER_Q} 	   , #{ORDER_UNIT}    , 'Y'  				, #{MONEY_UNIT}  , #{ORDER_UNIT_P}
+     , #{ORDER_O}      , '1'  			  , #{ORDER_UNIT_P}     , #{ORDER_O}     , #{DVRY_DATE}
+     , #{WH_CODE}      , '1'              , #{ORDER_Q}     		, #{ORDER_UNIT_P}, '1'
+     , '0'    		   , #{INSPEC_FLAG}   , #{S_COMP_CODE} 
+     
+     , #{DVRY_TIME}		, #{ORDER_REQ_NUM}	, #{PROJECT_NO}		, #{PJT_CODE}     , #{LOT_NO}                
+	 , #{REMARK}      	, #{RECEIPT_Q}		, #{BAD_RETURN_Q}   , #{ADVAN_AMOUNT} , #{MAP_Q}                
+	 , #{SO_NUM}       	, #{SO_SEQ}			, #{BL_NUM}         , #{DVRY_ESTI_NO} , #{DVRY_ESTI_QTY}         
+	 , #{DVRY_TOT_QTY} 	, #{DVRY_ESTI_DATE}	, #{DVRY_PRINT_YN}  , #{SUPP_REMARK}  , #{IF_NO}                 
+	 , #{IF_YN}        	, #{IF_DATETIME} 	, #{S_USER_ID}     	, GETDATE()	      , #{S_USER_ID}     , GETDATE()
+     ) 
+</insert>
+	  	
+<insert id="mpo201ukrvServiceImpl.insertLogMaster" parameterType="Map">    	
+ 	INSERT INTO L_MPO100T
+     ( KEY_VALUE      , OPR_FLAG 
+     , ORDER_DATE     , ORDER_TYPE     , CUSTOM_CODE     , ORDER_NUM     , ORDER_PRSN
+     , AGREE_STATUS   , MONEY_UNIT     , EXCHG_RATE_O    , DIV_CODE      , COMP_CODE 
+     
+     , CONTRACT_NUM   , CONTRACT_NAME  , LC_NUM          , RECEIPT_TYPE  , DEPT_CODE             
+	 , PROJECT_NO	  , PJT_CODE       , REMARK          , AGREE_PRSN    , AGREE_DATE
+     , DRAFT_YN       , MAIL_YN        , SUPP_CONFIRM_YN 
+     , UPDATE_DB_USER , UPDATE_DB_TIME , INSERT_DB_USER  , INSERT_DB_TIME)
+	VALUES
+    (  #{KEY_VALUE}      , #{OPR_FLAG}
+     , #{ORDER_REQ_DATE_G} , #{ORDER_TYPE}      , #{CUSTOM_CODE_G}      , #{ORDER_NUM_G}    , #{ORDER_PRSN_G}
+     , #{AGREE_STATUS_G}   , #{MONEY_UNIT_G}    , '1'    				, #{DIV_CODE}       , #{COMP_CODE}
+      
+     , #{CONTRACT_NUM}     , #{CONTRACT_NAME}   , #{LC_NUM}             , #{RECEIPT_TYPE}   , #{DEPT_CODE}             
+	 , #{PROJECT_NO}	   , #{PJT_CODE}        , #{REMARK}             , #{AGREE_PRSN_G}   , #{AGREE_DATE_G}
+     , 'N'                 , #{MAIL_YN}         , #{SUPP_CONFIRM_YN} 
+     , #{S_USER_ID}        , GETDATE()	        , #{S_USER_ID}     	    , GETDATE()) 
+</insert>	
+
+<update id="spPurchaseOrder2" parameterType="Map" statementType="CALLABLE">
+
+	{call SP_MATRL_PurchaseOrder (
+		#{KeyValue, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+		#{LangCode, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+		#{OrderNum, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String},
+		#{ErrorDesc, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+	)}
+
+</update>	
+<update id="mpo201ukrvServiceImpl.mpo000Update" parameterType="Map">
+UPDATE A
+      SET  A.ORDER_STATUS = '2'
+       ,A.ORDER_NUM    = B.ORDER_NUM
+       ,A.ORDER_SEQ    = B.ORDER_SEQ
+       ,UPDATE_DB_USER = #{S_USER_ID}
+       ,UPDATE_DB_TIME = GETDATE()
+ FROM         MPO000T A
+ 	INNER JOIN (SELECT A.COMP_CODE, A.DIV_CODE, A.ORDER_DATE, A.ORDER_PRSN
+        ,A.DEPT_CODE, B.ITEM_CODE, B.WH_CODE, B.ORDER_NUM, B.ORDER_SEQ
+        FROM        MPO100T A WITH(NOLOCK)
+        INNER JOIN  MPO200T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE 
+                    					  AND A.DIV_CODE  = B.DIV_CODE 
+                                          AND A.ORDER_NUM = B.ORDER_NUM
+        WHERE A.COMP_CODE = #{COMP_CODE}
+        AND A.DIV_CODE     = #{DIV_CODE}
+        AND A.ORDER_NUM  = #{ORDER_NUM}
+
+      ) B  ON A.COMP_CODE       = B.COMP_CODE   AND A.DIV_CODE        = B.DIV_CODE 
+          AND A.ORDER_REQ_DATE  = B.ORDER_DATE  AND A.ORDER_PRSN_CODE = B.ORDER_PRSN 
+          AND A.DEPT_CODE       = B.DEPT_CODE   AND A.ITEM_CODE       = B.ITEM_CODE     AND A.WH_CODE = B.WH_CODE
+
+WHERE A.COMP_CODE = #{COMP_CODE}
+  AND A.DIV_CODE  = #{DIV_CODE}
+</update>	
+
+<select id="mpo201ukrvServiceImpl.userWhcode" parameterType="Map" resultType="rMap">
+SELECT
+	A.WH_CODE
+FROM BSA210T A WITH(NOLOCK)
+	LEFT JOIN BSA300T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+									AND B.DEPT_CODE = A.TREE_CODE
+WHERE A.COMP_CODE = #{S_COMP_CODE}
+  AND B.USER_ID   = #{S_USER_ID}
+
+</select>
+
+</mapper>

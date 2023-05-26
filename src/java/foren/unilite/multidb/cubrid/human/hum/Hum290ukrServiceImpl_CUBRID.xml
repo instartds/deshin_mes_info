@@ -1,0 +1,690 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="hum290ukrServiceImpl">
+	<select id="hum290ukrServiceImpl.selectColumns" parameterType="Map" resultType="rMap">
+	<!-- hum290ukr.Chum290ukr[fnHum290QStd] Query00 -->
+	
+		SELECT  SUB_CODE, CODE_NAME, REF_CODE1
+	    FROM    BSA100T
+	    WHERE   COMP_CODE    = #{S_COMP_CODE}
+	    AND     MAIN_CODE    = 'HP05'
+	    AND     SUB_CODE    != '$'
+	    AND     USE_YN       = 'Y'
+	    ORDER BY SORT_SEQ
+	</select>
+
+	<select id="hum290ukrServiceImpl.select1" parameterType="Map" resultType="rMap">
+		<!-- hum290ukr.Chum290ukr[fnHum290QStd] Query01 -->
+                    
+
+                SET         @COMP_CODE          = #{S_COMP_CODE} + ';'
+                SET         @DIV_CODE           = #{DIV_CODE} + ';'
+                SET         @GRADE_PERSON_NUMB1 = #{GRADE_PERSON_NUMB1} + ';'
+                SET         @GRADE_PERSON1      = #{GRADE_PERSON1} + ';'
+                SET         @GRADE_PERSON_NUMB2 = #{GRADE_PERSON_NUMB2} + ';'
+                SET         @GRADE_PERSON2      = #{GRADE_PERSON2} + ';'
+                SET         @SEARCH_TYPE        = 1;
+                SET         @BASE_DATE          = #{BASE_DATE} + ';'
+
+            
+                SET  @YYYY     = #{DUTY_YYYY} + ';'
+                SET  @GUBUN    = #{MERITS_GUBUN} + ';'         
+                SET  @MAIN_DT  = @YYYY + RIGHT('0' + CAST(CASE    WHEN CAST(@GUBUN AS INT) &gt; 85 THEN CAST(@GUBUN AS INT) - 85  <!-- 종합 -->
+                                                                                              WHEN CAST(@GUBUN AS INT) &gt; 70 THEN CAST(@GUBUN AS INT) - 70  <!-- 포상.자격 -->
+                                                                                              WHEN CAST(@GUBUN AS INT) &gt; 50 THEN CAST(@GUBUN AS INT) - 50  <!-- 훈평 -->
+                                                                                              WHEN CAST(@GUBUN AS INT) &gt; 30 THEN CAST(@GUBUN AS INT) - 30  <!-- 경평 -->
+                                                                                              WHEN CAST(@GUBUN AS INT) &gt; 10 THEN CAST(@GUBUN AS INT) - 10  <!-- 근평 -->
+                                                                                              ELSE 1
+                                                                                   END AS VARCHAR), 2) + '01';
+
+                SET @TypeKey  = LEFT(TO_CHAR(SYSDATETIME, 'yyyymmddhh24missff') + LEFT(TO_CHAR(TO_NUMBER(RAND()) * 10000), 3), 20);         
+            
+                
+                
+            <!--  [최종승진 데이터 ] -->
+                INSERT  INTO T_HUM290UKR1(TYPE_KEY, COMP_CODE, PERSON_NUMB, JOIN_DATE, ANNOUNCE_DATE)
+                SELECT  @TypeKey
+                      , A.COMP_CODE
+                      , A.PERSON_NUMB
+                      , A.JOIN_DATE
+                      , MAX(CASE WHEN M.REF_CODE1 = 'Y' THEN B.ANNOUNCE_DATE END)   AS ANNOUNCE_DATE
+                FROM               HUM100T A
+                        LEFT  JOIN HUM760T B ON B.COMP_CODE      = A.COMP_CODE
+                                                        AND B.PERSON_NUMB    = A.PERSON_NUMB
+                        LEFT  JOIN BSA100T M ON M.COMP_CODE      = B.COMP_CODE
+                                                       AND M.MAIN_CODE      = 'H094'
+                                                       AND M.SUB_CODE       = B.ANNOUNCE_CODE
+                WHERE   A.COMP_CODE = @COMP_CODE
+                AND     A.RETR_DATE = '00000000'
+                GROUP BY A.COMP_CODE, A.PERSON_NUMB, A.JOIN_DATE;
+            
+            
+            <!--  [ 데이터 조회 ] -->
+                SELECT    ROW_NUMBER() OVER(ORDER BY A.PERSON_NUMB) AS SEQ                                          <!-- 순번 -->
+                        , A.DEPT_NAME                                                                               <!-- 부서 -->
+                        , A.PAY_GRADE_01                                                                            <!-- 급 -->
+                        , A.PAY_GRADE_02                                                                            <!-- 호 -->
+                        , A.PERSON_NUMB                                                                             <!-- 사번 -->
+                        , A.NAME                                                                                    <!-- 성명 -->
+            
+                        <!-- 근무성적평정 -->
+                        , B1.REAL_GRADE_1
+                        , B1.CONV_GRADE_1
+                        , B1.REAL_GRADE_2
+                        , B1.CONV_GRADE_2
+                        , B1.REAL_GRADE_3
+                        , B1.CONV_GRADE_3
+                        , CASE @SEARCH_TYPE
+                               WHEN 1 THEN B.MERITS_GRADE
+                          END                                                     AS WORK_GRADE                      <!-- 합계 -->
+            
+                        <!-- 경력평정 -->
+                        , CASE WHEN NVL(B2.MERITS_GRADE    , '') = ''
+                               THEN CASE WHEN F.BAS_CAREER &lt;= 0
+                                         THEN NULL
+                                         ELSE TO_CHAR(F.BAS_CAREER)
+                                      END
+                               ELSE CASE WHEN F.VALIDITY_MONTH &gt; 0
+                                         THEN CASE WHEN TO_NUMBER(B2.MERITS_PER_GRADE) &lt; F.VALIDITY_MONTH
+                                                   THEN CASE WHEN TO_NUMBER(B2.MERITS_GRADE) - (TO_NUMBER(F.VALIDITY_MONTH - B2.MERITS_PER_GRADE)) &lt;=0 
+                                                             THEN NULL
+                                                             ELSE TO_CHAR(TO_NUMBER(B2.MERITS_GRADE) - (TO_NUMBER(F.VALIDITY_MONTH - B2.MERITS_PER_GRADE)))
+                                                         END
+                                                   ELSE B2.MERITS_GRADE
+                                               END 
+                                         ELSE B2.MERITS_GRADE
+                                     END
+                          END + ' 개월'                                          AS BAS_CAREER                      <!-- 기본경력 -->
+                       
+                        , CASE WHEN NVL(B2.MERITS_PER_GRADE, '') = ''
+                               THEN CASE WHEN F.EXC_CAREER &lt;=0 
+                                         THEN NULL
+                                         ELSE TO_CHAR(F.EXC_CAREER)
+                                     END
+                               ELSE CASE WHEN F.VALIDITY_MONTH &gt; 0
+                                         THEN CASE WHEN TO_NUMBER(B2.MERITS_PER_GRADE) &lt;= F.VALIDITY_MONTH
+                                                   THEN NULL
+                                                   ELSE TO_CHAR(TO_NUMBER(B2.MERITS_PER_GRADE) - F.VALIDITY_MONTH)
+                                               END
+                                         ELSE B2.MERITS_PER_GRADE
+                                      END                              
+                          END + ' 개월'                                          AS EXC_CAREER                      <!-- 초과경력 -->
+                          
+                        , CASE WHEN F.VALIDITY_MONTH &lt;= 0 
+                               THEN NULL
+                               ELSE TO_CHAR(F.VALIDITY_MONTH)
+                           END + ' 개월'                                         AS VALID_MONTHS                    <!-- 제외경력 -->
+                           
+                        , CASE WHEN F.VALIDITY_MONTH &lt;= 0 
+                               THEN 0
+                               ELSE TO_CHAR(F.VALIDITY_MONTH)
+                           END                                                    AS DEFER_MONTHS                    <!-- 제외경력 -->
+                        , CASE @SEARCH_TYPE
+                               WHEN 2 THEN CASE WHEN NVL(B.MERITS_GRADE     , '') = ''
+                                                THEN CASE WHEN F.EXC_YEAR = 0 THEN F1.CODE_NAME
+                                                          WHEN F.EXC_YEAR = 1 THEN F1.REF_CODE1
+                                                          WHEN F.EXC_YEAR = 2 THEN F1.REF_CODE2
+                                                          WHEN F.EXC_YEAR = 3 THEN F1.REF_CODE3
+                                                          WHEN F.EXC_YEAR = 4 THEN F1.REF_CODE4
+                                                          WHEN F.EXC_YEAR = 5 THEN F1.REF_CODE5
+                                                          ELSE '0' END   
+                                                ELSE B.MERITS_GRADE
+                                           END
+                          END                                                    AS CAREER_GRADE                    <!-- 점수 -->
+            
+                        <!-- 훈련평정 -->
+                        , D.EDU_TIME                                             AS EDU_TIME                        <!-- 교육시간 -->
+                        , D1.REF_CODE4                                           AS EDU_TIME_LIMIT                  <!-- 최저목표시간 -->
+                        , TO_CHAR(D.EDU_TIME / TO_NUMBER(D1.REF_CODE4) * 100) + '%' AS EDU_PERCENT                  <!-- 달성율 -->
+            
+                        <!-- 포상 및 자격 -->
+                        , NVL(E3.QUAL_NAME, '')                               AS QUAL_NAME                          <!-- 자격명 -->
+                        , NVL(E4.PRIZE_PENALTY_NAME, '')                      AS PRIZE_PENALTY_NAME                 <!-- 포상명 -->
+            
+                        <!-- (공통) -->
+                        , CASE @SEARCH_TYPE 
+                               WHEN 1 THEN NVL(B.MERITS_GRADE, '0')
+                               WHEN 2 THEN NVL(B.MERITS_GRADE, '0')
+                               WHEN 3 THEN NVL(B.MERITS_GRADE, NVL(D2.REF_CODE3, '0'))
+                               WHEN 4 THEN NVL(B.MERITS_GRADE, NVL(TO_CHAR((NVL(E3.QUAL_TOT, 0) + NVL(E4.PRIZE_TOT, 0))), '0'))
+                          END                                                   AS MERITS_GRADE                     <!-- 점수 -->
+                        , NVL(B.MERITS_CLASS, '')                            AS MERITS_CLASS                        <!-- 등급 -->
+                        , CASE WHEN NVL(B.GRADE_PERSON_NUMB, '') = ''
+                               THEN @GRADE_PERSON_NUMB1
+                               ELSE B.GRADE_PERSON_NUMB
+                          END                                                   AS GRADE_PERSON_NUMB                <!-- 평정자 -->
+                        , CASE WHEN NVL(C1.NAME, '') = ''
+                               THEN @GRADE_PERSON1
+                               ELSE C1.NAME
+                          END                                                   AS GRADE_PERSON_NAME                <!-- 평정자명 -->
+                        , CASE WHEN NVL(B.GRADE_PERSON_NUMB2, '') = ''
+                               THEN @GRADE_PERSON_NUMB2
+                               ELSE B.GRADE_PERSON_NUMB2
+                          END                                                   AS GRADE_PERSON_NUMB2               <!-- 확인자 -->
+                        , CASE WHEN NVL(C2.NAME, '') = ''
+                               THEN @GRADE_PERSON2
+                               ELSE C2.NAME
+                          END                                                   AS GRADE_PERSON_NAME2               <!-- 확인자명 -->
+                        , CASE WHEN NVL(B.PERSON_NUMB, '') = ''
+                               THEN 'N'
+                               ELSE ''
+                          END                                                   AS UPDATE_TYPE                      <!-- 신규생성할자료인지, 업데이트할 자료인지 여부 -->
+                        , NVL(B.COMP_CODE, A.COMP_CODE)                         AS COMP_CODE
+                        , @YYYY                                                 AS MERITS_YEARS
+                        , @GUBUN                                                AS MERITS_GUBUN
+                        , B.INSERT_DB_USER
+                        , B.INSERT_DB_TIME
+                        , B.UPDATE_DB_USER
+                        , B.UPDATE_DB_TIME
+
+                FROM                HUM100T A  
+                        LEFT JOIN   HUM770T B   ON B.COMP_CODE     = A.COMP_CODE
+                                                             AND B.PERSON_NUMB   = A.PERSON_NUMB
+                                                             AND B.MERITS_YEARS  = @YYYY
+                                                             AND B.MERITS_GUBUN  = @GUBUN
+                        LEFT JOIN   (   <!-- 근무성적평정 -->
+                                    SELECT  S1.COMP_CODE, S2.PERSON_NUMB, S2.MERITS_YEARS, S2.MERITS_GUBUN
+                                          , SUM(CASE WHEN S1.SUB_CODE = '1' THEN TO_NUMBER(S2.MERITS_GRADE)     ELSE 0.0 END)    AS REAL_GRADE_1
+                                          , SUM(CASE WHEN S1.SUB_CODE = '1' THEN TO_NUMBER(S2.MERITS_PER_GRADE) ELSE 0.0 END)    AS CONV_GRADE_1
+                                          , SUM(CASE WHEN S1.SUB_CODE = '2' THEN TO_NUMBER(S2.MERITS_GRADE)     ELSE 0.0 END)    AS REAL_GRADE_2
+                                          , SUM(CASE WHEN S1.SUB_CODE = '2' THEN TO_NUMBER(S2.MERITS_PER_GRADE) ELSE 0.0 END)    AS CONV_GRADE_2
+                                          , SUM(CASE WHEN S1.SUB_CODE = '3' THEN TO_NUMBER(S2.MERITS_GRADE)     ELSE 0.0 END)    AS REAL_GRADE_3
+                                          , SUM(CASE WHEN S1.SUB_CODE = '3' THEN TO_NUMBER(S2.MERITS_PER_GRADE) ELSE 0.0 END)    AS CONV_GRADE_3
+                                    FROM              BSA100T S1
+                                            LEFT JOIN HUM290T S2 ON S2.COMP_CODE     = S1.COMP_CODE
+                                                                              AND S2.MERITS_GUBUN2 = S1.SUB_CODE
+                                    WHERE   S1.COMP_CODE     = @COMP_CODE
+                                    AND     S1.MAIN_CODE     = 'HP05'
+                                    AND     S1.SUB_CODE     &lt;&gt; '$'
+                                    GROUP BY S1.COMP_CODE, S2.PERSON_NUMB, S2.MERITS_YEARS, S2.MERITS_GUBUN
+                                    
+                                    )       B1                ON B1.COMP_CODE     = B.COMP_CODE
+                                                             AND B1.PERSON_NUMB   = B.PERSON_NUMB
+                                                             AND B1.MERITS_YEARS  = B.MERITS_YEARS
+                                                             AND B1.MERITS_GUBUN  = B.MERITS_GUBUN
+                        LEFT JOIN   HUM290T B2  ON B2.COMP_CODE     = B.COMP_CODE
+                                                             AND B2.PERSON_NUMB   = B.PERSON_NUMB
+                                                             AND B2.MERITS_YEARS  = B.MERITS_YEARS
+                                                             AND B2.MERITS_GUBUN  = B.MERITS_GUBUN
+                                                             AND B2.MERITS_GUBUN2 = 'C'
+                                                             
+                        LEFT JOIN   HUM100T C1 ON C1.COMP_CODE     = B.COMP_CODE
+                                                             AND C1.PERSON_NUMB   = B.GRADE_PERSON_NUMB
+                        LEFT JOIN   HUM100T C2 ON C2.COMP_CODE     = B.COMP_CODE
+                                                             AND C2.PERSON_NUMB   = B.GRADE_PERSON_NUMB2
+                        LEFT JOIN   (   <!-- 교육사항 -->
+                                        SELECT  COMP_CODE, PERSON_NUMB, LEFT(EDU_FR_DATE, 4) AS EDU_YEAR, TO_CHAR(SUM(EDU_TIME)) AS EDU_TIME
+                                        FROM    HUM740T
+                                        WHERE   COMP_CODE   = @COMP_CODE
+                                        GROUP BY COMP_CODE, PERSON_NUMB, LEFT(EDU_FR_DATE, 4)
+                                    )   D                     ON D.COMP_CODE    = A.COMP_CODE
+                                                             AND D.PERSON_NUMB  = A.PERSON_NUMB
+                                                             AND D.EDU_YEAR     = @YYYY
+                        LEFT JOIN   BSA100T D1 ON D1.COMP_CODE   = A.COMP_CODE
+                                                             AND D1.MAIN_CODE   = 'HP01'
+                                                             AND D1.SUB_CODE    = A.POST_CODE
+                        LEFT JOIN   BSA100T D2 ON D2.COMP_CODE   = A.COMP_CODE
+                                                             AND D2.MAIN_CODE   = 'HP02'
+                                                             AND TO_NUMBER(D2.REF_CODE1) &lt;= D.EDU_TIME / TO_NUMBER(D1.REF_CODE4) * 100
+                                                             AND TO_NUMBER(D2.REF_CODE2) &gt;  D.EDU_TIME / TO_NUMBER(D1.REF_CODE4) * 100
+                        LEFT JOIN   (   <!-- 자격면허등록 -->
+                                        SELECT    A.COMP_CODE
+                                                , A.PERSON_NUMB
+                                                , A.QUAL_NAME + CASE NVL(B.CNT, 0) WHEN 0 THEN '' ELSE ' 외 ' + TO_CHAR(B.CNT) + '건' END    AS QUAL_NAME
+                                                , B.QUAL_TOT
+                                        FROM                (
+                                                            SELECT  ROW_NUMBER() OVER(PARTITION BY A.COMP_CODE, A.PERSON_NUMB  ORDER BY A.QUAL_KIND) AS IDX
+                                                                     , A.COMP_CODE
+                                                                     , A.PERSON_NUMB
+                                                                     , B.CODE_NAME                                                                                     AS QUAL_NAME
+                                                            FROM                HUM600T     A
+                                                                    LEFT JOIN   BSA100T     B    ON B.COMP_CODE    = A.COMP_CODE
+                                                                                                             AND B.MAIN_CODE    = 'H022'
+                                                                                                             AND B.SUB_CODE     = A.QUAL_KIND
+                                                                    LEFT JOIN  T_HUM290UKR1 C  ON C.TYPE_KEY     = @TypeKey
+                                                                                                             AND C.COMP_CODE    = A.COMP_CODE
+                                                                                                             AND C.PERSON_NUMB  = A.PERSON_NUMB
+                                                            WHERE   A.COMP_CODE  = @COMP_CODE
+                                                            AND     A.ACQ_DATE  &gt;= NVL(C.ANNOUNCE_DATE, C.JOIN_DATE)
+                                                            AND     A.ACQ_DATE  &lt;= @BASE_DATE
+                                                            ) A
+                                                LEFT JOIN   (
+                                                            SELECT  A.COMP_CODE
+                                                                  , A.PERSON_NUMB
+                                                                  , COUNT(A.COMP_CODE) - 1                              AS CNT
+                                                                  , NVL(SUM(TO_NUMBER(B.REF_CODE3)), 0) AS QUAL_TOT
+                                                            FROM                HUM600T     A
+                                                                    LEFT JOIN   BSA100T     B   ON B.COMP_CODE    = A.COMP_CODE
+                                                                                                             AND B.MAIN_CODE    = 'H022'
+                                                                                                             AND B.SUB_CODE     = A.QUAL_KIND
+                                                                    LEFT JOIN  T_HUM290UKR1 C ON C.TYPE_KEY     = @TypeKey
+                                                                                                             AND C.COMP_CODE    = A.COMP_CODE
+                                                                                                             AND C.PERSON_NUMB  = A.PERSON_NUMB
+                                                            WHERE   A.COMP_CODE  = @COMP_CODE
+                                                            AND     A.ACQ_DATE  &gt;= NVL(C.ANNOUNCE_DATE, C.JOIN_DATE)
+                                                            AND     A.ACQ_DATE  &lt;= @BASE_DATE
+                                                            GROUP BY A.COMP_CODE, A.PERSON_NUMB
+                                                            ) B  ON B.COMP_CODE   = A.COMP_CODE
+                                                                AND B.PERSON_NUMB = A.PERSON_NUMB
+                                        WHERE A.IDX = 1
+                                    ) E3                      ON E3.COMP_CODE   = A.COMP_CODE
+                                                             AND E3.PERSON_NUMB = A.PERSON_NUMB
+                        LEFT JOIN   (   <!--상벌사항 -->
+                                        SELECT    A.COMP_CODE
+                                                , A.PERSON_NUMB
+                                                , A.PRIZE_PENALTY_NAME + CASE NVL(B.CNT, 0) WHEN 0 THEN '' ELSE ' 외 ' + TO_CHAR(B.CNT) + '건' END AS PRIZE_PENALTY_NAME
+                                                , B.PRIZE_TOT
+                                        FROM   (
+                                                            SELECT  ROW_NUMBER() OVER(PARTITION BY A.COMP_CODE, A.PERSON_NUMB  ORDER BY A.KIND_PRIZE_PENALTY) AS IDX
+                                                                  , A.COMP_CODE
+                                                                  , A.PERSON_NUMB
+                                                                  , B.CODE_NAME                                                                                                     AS PRIZE_PENALTY_NAME
+                                                            FROM                HUM810T     A   
+                                                                    LEFT JOIN   BSA100T     B    ON B.COMP_CODE    = A.COMP_CODE
+                                                                                                             AND B.MAIN_CODE    = 'H096'
+                                                                                                             AND B.SUB_CODE     = A.KIND_PRIZE_PENALTY
+                                                                    LEFT JOIN  T_HUM290UKR1 C   ON C.TYPE_KEY     = @TypeKey
+                                                                                                             AND C.COMP_CODE    = A.COMP_CODE
+                                                                                                             AND C.PERSON_NUMB  = A.PERSON_NUMB
+                                                            WHERE   A.COMP_CODE      = @COMP_CODE
+                                                            AND     A.OCCUR_DATE    &gt;= NVL(C.ANNOUNCE_DATE, C.JOIN_DATE)
+                                                            AND     A.OCCUR_DATE    &lt;= @BASE_DATE
+                                                            AND     LEFT(A.KIND_PRIZE_PENALTY, 1) = '1'
+                                                ) A
+                                                LEFT JOIN   (
+                                                            SELECT  A.COMP_CODE
+                                                                  , A.PERSON_NUMB
+                                                                  , COUNT(A.COMP_CODE) - 1                              AS CNT
+                                                                  , NVL(SUM(TO_NUMBER(B.REF_CODE2)), 0) AS PRIZE_TOT
+                                                            FROM                HUM810T     A   
+                                                                    LEFT JOIN   BSA100T     B    ON B.COMP_CODE    = A.COMP_CODE
+                                                                                                             AND B.MAIN_CODE    = 'H096'
+                                                                                                             AND B.SUB_CODE     = A.KIND_PRIZE_PENALTY
+                                                                    LEFT JOIN  T_HUM290UKR1 C   ON C.TYPE_KEY     = @TypeKey
+                                                                                                             AND C.COMP_CODE    = A.COMP_CODE
+                                                                                                             AND C.PERSON_NUMB  = A.PERSON_NUMB
+                                                            WHERE   A.COMP_CODE      = @COMP_CODE
+                                                            AND     A.OCCUR_DATE    &gt;= NVL(C.ANNOUNCE_DATE, C.JOIN_DATE)
+                                                            AND     A.OCCUR_DATE    &lt;= @BASE_DATE
+                                                            AND     LEFT(A.KIND_PRIZE_PENALTY, 1) = '1'
+                                                            GROUP BY A.COMP_CODE, A.PERSON_NUMB
+                                                            ) B  ON B.COMP_CODE   = A.COMP_CODE
+                                                                AND B.PERSON_NUMB = A.PERSON_NUMB
+                                        WHERE A.IDX = 1
+                                    ) E4                      ON E4.COMP_CODE   = A.COMP_CODE
+                                                             AND E4.PERSON_NUMB = A.PERSON_NUMB
+                        LEFT JOIN   (   <!--재직기간 -->
+                                        SELECT A.COMP_CODE
+                                                 , A.PERSON_NUMB
+                                                 , A.VALIDITY_MONTH
+                                                 
+                                                 , CASE WHEN fnGetCareer(NVL(A.ANNOUNCE_DATE, A.JOIN_DATE), @BASE_DATE, A.REF_CODE2, 'EXC') &lt; A.VALIDITY_MONTH
+                                                           THEN fnGetCareer(NVL(A.ANNOUNCE_DATE, A.JOIN_DATE), @BASE_DATE, A.REF_CODE2, 'BAS') 
+                                                                 - (A.VALIDITY_MONTH - fnGetCareer(NVL(A.ANNOUNCE_DATE, A.JOIN_DATE), @BASE_DATE, A.REF_CODE2, 'EXC'))
+                                                           ELSE fnGetCareer(NVL(A.ANNOUNCE_DATE, A.JOIN_DATE), @BASE_DATE, A.REF_CODE2, 'BAS')        
+                                                   END AS BAS_CAREER
+
+                                                 , CASE WHEN NVL(A.VALIDITY_MONTH, 0) &gt; 0 
+                                                           THEN CASE WHEN fnGetCareer(NVL(A.ANNOUNCE_DATE, A.JOIN_DATE), @BASE_DATE, A.REF_CODE2, 'EXC') &lt;= A.VALIDITY_MONTH THEN NULL
+                                                                            ELSE fnGetCareer(NVL(A.ANNOUNCE_DATE, A.JOIN_DATE), @BASE_DATE, A.REF_CODE2, 'EXC') - A.VALIDITY_MONTH
+                                                                    END
+                                                           ELSE fnGetCareer(NVL(A.ANNOUNCE_DATE, A.JOIN_DATE), @BASE_DATE, A.REF_CODE2, 'EXC')
+                                                   END AS EXC_CAREER
+                                                         
+                                                 , CASE WHEN NVL(A.VALIDITY_MONTH, 0) &gt; 0  THEN CASE WHEN fnGetCareer(NVL(A.ANNOUNCE_DATE, A.JOIN_DATE), @BASE_DATE, A.REF_CODE2, 'EXC') &lt;= A.VALIDITY_MONTH
+                                                                                                                                       THEN NULL
+                                                                                                                                       ELSE ((fnGetCareer(NVL(A.ANNOUNCE_DATE, A.JOIN_DATE), @BASE_DATE, A.REF_CODE2, 'EXC') - A.VALIDITY_MONTH)) % 12
+                                                                                                                               END
+                                                           ELSE fnGetCareer(NVL(A.ANNOUNCE_DATE, A.JOIN_DATE), @BASE_DATE, A.REF_CODE2, 'EXC') % 12
+                                                  END AS EXC_CODE
+                                                         
+                                                 , CASE WHEN NVL(A.VALIDITY_MONTH, 0) &gt; 0 THEN CASE WHEN fnGetCareer(NVL(A.ANNOUNCE_DATE, A.JOIN_DATE), @BASE_DATE, A.REF_CODE2, 'EXC') &lt;= A.VALIDITY_MONTH
+                                                                                                                                      THEN NULL
+                                                                                                                                      ELSE CEILING((fnGetCareer(NVL(A.ANNOUNCE_DATE, A.JOIN_DATE), @BASE_DATE, A.REF_CODE2, 'EXC') - A.VALIDITY_MONTH) / 12)
+                                                                                                                              END
+                                                           ELSE CEILING(fnGetCareer(NVL(A.ANNOUNCE_DATE, A.JOIN_DATE), @BASE_DATE, A.REF_CODE2, 'EXC') / 12)
+                                                   END AS EXC_YEAR
+                                                 
+
+                                        
+                                        FROM (
+                                                    SELECT S1.COMP_CODE
+                                                             , S1.PERSON_NUMB
+                                                             , S4.VALIDITY_MONTH
+                                                             
+                                                             , S2.ANNOUNCE_DATE
+                                                             , S1.JOIN_DATE
+                                                             , S3.REF_CODE2
+                                                    FROM                HUM100T     S1
+                                                            LEFT JOIN  T_HUM290UKR1 S2  ON S2.TYPE_KEY    = @TypeKey
+                                                                                                    AND S2.COMP_CODE   = S1.COMP_CODE
+                                                                                                    AND S2.PERSON_NUMB = S1.PERSON_NUMB
+                                                            LEFT JOIN   BSA100T     S3  ON S3.COMP_CODE   = S1.COMP_CODE
+                                                                                                    AND S3.MAIN_CODE   = 'HP01'
+                                                                                                    AND S3.SUB_CODE    = S1.POST_CODE
+                                                                                                    
+                                                            LEFT JOIN (SELECT ROW_NUMBER() OVER(PARTITION BY A.COMP_CODE, A.PERSON_NUMB  ORDER BY A.KIND_PRIZE_PENALTY) AS IDX
+                                                                                      , A.COMP_CODE
+                                                                                      , A.PERSON_NUMB
+                                                                                      , CAST(MONTHS_BETWEEN(A.VALIDITYTO_DATE, A.VALIDITYFR_DATE) AS INT) AS VALIDITY_MONTH
+                                                                                      , A.VALIDITYFR_DATE
+                                                                            FROM        HUM810T A
+                                                                            LEFT JOIN   BSA100T B ON B.COMP_CODE = A.COMP_CODE
+                                                                                                           AND B.MAIN_CODE = 'H096'
+                                                                                                           AND B.SUB_CODE  = A.KIND_PRIZE_PENALTY
+                                                                            WHERE A.COMP_CODE      = @COMP_CODE
+                                                                            AND A.OCCUR_DATE       &lt;= @BASE_DATE
+                                                                            AND A.EX_DATE                &gt; @BASE_DATE
+                                                                            AND LEFT(A.KIND_PRIZE_PENALTY, 1) = '2'
+                                                                   ) S4  ON S4.COMP_CODE   = S1.COMP_CODE
+                                                                        AND S4.PERSON_NUMB = S1.PERSON_NUMB
+                                                                        AND S4.IDX = 1
+                                                                        AND S4.VALIDITYFR_DATE &gt; S2.ANNOUNCE_DATE
+                                                                     
+                                                    WHERE   S1.COMP_CODE    = @COMP_CODE
+                                                    AND     S1.RETR_DATE    = '00000000'
+                                                    AND     NVL(S1.PAY_GRADE_01, '') &lt;&gt; ''
+                                                    AND     NVL(S2.ANNOUNCE_DATE, S1.JOIN_DATE) &lt;= @BASE_DATE
+                                                ) A
+                                    ) F                      ON F.COMP_CODE     = A.COMP_CODE
+                                                            AND F.PERSON_NUMB   = A.PERSON_NUMB
+                        LEFT JOIN   BSA100T F1  ON F1.COMP_CODE    = F.COMP_CODE
+                                                            AND F1.MAIN_CODE    = 'HP06'
+                                                            AND F1.SUB_CODE     = TO_CHAR(CASE WHEN F.EXC_YEAR = 0 THEN F.EXC_YEAR
+                                                                                                                     WHEN F.EXC_CODE = 0 THEN 12
+                                                                                                                     ELSE F.EXC_CODE
+                                                                                                             END)
+            
+                WHERE   NVL(A.PAY_GRADE_01, '') &lt;&gt; '' 
+                  AND   A.COMP_CODE       = @COMP_CODE 
+                  AND   A.RETR_DATE       = '00000000' -- AND (DATEDIFF(mm, NVL(F.ANNOUNCE_DATE, A.JOIN_DATE), @MAIN_DT) + 1) &gt; CONVERT(NUMERIC, D1.REF_CODE3) * 12)   --재직자
+                  AND   (A.DIV_CODE       = @DIV_CODE                           OR @DIV_CODE     = '')
+                  AND   (A.PAY_CODE       = #{PAY_CODE}                           OR #{PAY_CODE}     = '')
+                  AND   (TO_NUMBER(A.DEPT_CODE) &gt;= TO_NUMBER(#{DEPT_CODE1}) OR #{DEPT_CODE1}   = '')
+                  AND   (TO_NUMBER(A.DEPT_CODE) &lt;= TO_NUMBER(#{DEPT_CODE2})   OR #{DEPT_CODE2}     = '')
+                  AND   (A.PERSON_NUMB LIKE #{PERSON_NUMB} + '%'                 OR #{PERSON_NUMB}  = '')
+                  AND   (A.NAME        LIKE #{NAME} + '%'                 OR #{NAME}  = '');
+                  
+                  DELETE FROM T_HUM290UKR1 WHERE TYPE_KEY = @TypeKey;
+                  
+
+
+	</select>
+	
+	<select id="hum290ukrServiceImpl.select2" parameterType="Map" resultType="rMap">
+		--hum290ukr.Chum290ukr[fnHum290QStd2] Query01  -- 평점 우선 보류....재설계후 작업예정..
+        
+--          DECLARE       @ACCYEAR              NVARCHAR(04)    <!-- 평정년도    (필수)-->
+--                      , @GUBUN                NVARCHAR(02)    <!-- 구분코드    (필수)-->
+--                      , @PAY_GRADE_01         NVARCHAR(40)    <!-- 급          (필수)-->
+--                      , @MINRANK              NVARCHAR(10)    <!-- 최소랭크    (필수)-->
+--                      , @MAXRANK              NVARCHAR(10)    <!-- 최대랭크    (필수)-->
+--                      , @BASE_DATE            NVARCHAR(10)    <!-- 기준일자    (필수, yyyymmdd)-->
+--                      , @GRADE_PERSON_NUMB1   NVARCHAR(20)    <!-- 평정자코드  (선택)-->
+--                      , @GRADE_PERSON1        NVARCHAR(20)    <!-- 평정자명    (선택)-->
+--                      , @GRADE_PERSON_NUMB2   NVARCHAR(20)    <!-- 확인자코드  (선택)-->
+--                      , @GRADE_PERSON2        NVARCHAR(20)    <!-- 확인자명    (선택)-->
+--                      , @COMP_CODE            NVARCHAR(10)    <!-- 법인코드    (필수)-->
+       
+                --<!--  <1. 변수 값 할당> -->
+                SET         @ACCYEAR            = '2016'; --#{DUTY_YYYY}
+                SET         @GUBUN               = '22';  --#{MERITS_GUBUN}
+                SET         @PAY_GRADE_01    = '';  --#{PAY_GRADE_01}
+                
+<!--
+              <choose>            
+                  <when test='MINRANK.equals("")'>
+-->
+                        SET         @MINRANK            =   '0';
+<!--
+                  </when>
+                  <otherwise>
+                      SET         @MINRANK            =   #{MINRANK}
+                  </otherwise>
+              </choose>
+              <choose>            
+                  <when test='MAXRANK.equals("")'>
+-->
+                        SET         @MAXRANK            =   '0';
+<!--
+                  </when>
+                  <otherwise>
+                      SET         @MAXRANK            =   #{MAXRANK}
+                  </otherwise>
+              </choose>      
+-->         
+                SET         @BASE_DATE                    = #{BASE_DATE}  --'20170522'
+--              SET         @GRADE_PERSON_NUMB1 = #{GRADE_PERSON_NUMB1}
+--              SET         @GRADE_PERSON1           = #{GRADE_PERSON1}
+--              SET         @GRADE_PERSON_NUMB2 = #{GRADE_PERSON_NUMB2}
+--              SET         @GRADE_PERSON2           = #{GRADE_PERSON2}
+                SET         @COMP_CODE                 = #{S_COMP_CODE}  --
+                
+        
+            SET  @MAIN_DT = @ACCYEAR + RIGHT('0' + CAST(    CASE    WHEN CAST(@GUBUN AS INT) > 85 THEN CAST(@GUBUN AS INT) - 85   -- 종합 
+                                                                                                     WHEN CAST(@GUBUN AS INT) > 70 THEN CAST(@GUBUN AS INT) - 70  -- 포상/자격 
+                                                                                                     WHEN CAST(@GUBUN AS INT) > 50 THEN CAST(@GUBUN AS INT) - 50  -- 훈평 
+                                                                                                     WHEN CAST(@GUBUN AS INT) > 30 THEN CAST(@GUBUN AS INT) - 30  -- 경평 
+                                                                                                     WHEN CAST(@GUBUN AS INT) > 10 THEN CAST(@GUBUN AS INT) - 10  -- 근평 
+                                                                                                     ELSE 1
+                                                                                          END AS VARCHAR), 2) + '01';
+
+        
+            SET @MM = (SELECT CASE WHEN LENGTH(A.REF_CODE9) = 1 THEN '0' + A.REF_CODE9 ELSE A.REF_CODE9 END
+                                     FROM   BSA100T A
+                                     WHERE  A.MAIN_CODE = 'H095'
+                                     AND    A.SUB_CODE  = '22');
+        
+        
+            SET @GGUBUN = (SELECT A.SUB_CODE
+                                      FROM   BSA100T A
+                                      WHERE  A.MAIN_CODE  = 'H095'
+                                      AND    A.REF_CODE9  = CAST(CAST(@MM AS INT) AS VARCHAR)
+                                      AND    A.REF_CODE10 = '2');
+        
+            SET @HGUBUN = (SELECT A.SUB_CODE
+                                      FROM   BSA100T A
+                                      WHERE  A.MAIN_CODE  = 'H095'
+                                      AND    A.REF_CODE9  = CAST(CAST(@MM AS INT) AS VARCHAR)
+                                      AND    A.REF_CODE10 = '3');
+        
+            SET @PGUBUN = (SELECT A.SUB_CODE
+                                     FROM   BSA100T A
+                                     WHERE  A.MAIN_CODE  = 'H095'
+                                     AND    A.REF_CODE9  = CAST(CAST(@MM AS INT) AS VARCHAR)
+                                     AND    A.REF_CODE10 = '4');
+        
+            SET @FROMDATE1 = TO_NUMBER(TO_CHAR(TO_DATE(DATE_ADD(@ACCYEAR + '-' + @MM + '-01', INTERVAL '-1:0' year_month)), 'YYYYMM'));
+            SET @TODATE1   = TO_NUMBER(TO_CHAR(TO_DATE(DATE_ADD(@ACCYEAR + '-' + @MM + '-01', INTERVAL '0:0' year_month)), 'YYYYMM'));
+            SET @FROMDATE2 = TO_NUMBER(TO_CHAR(TO_DATE(DATE_ADD(@ACCYEAR + '-' + @MM + '-01', INTERVAL '-2:0' year_month)), 'YYYYMM'));
+            SET @TODATE2   = TO_NUMBER(TO_CHAR(TO_DATE(DATE_ADD(@ACCYEAR + '-' + @MM + '-01', INTERVAL '-1:0' year_month)), 'YYYYMM'));
+            SET @FROMDATE3 = TO_NUMBER(TO_CHAR(TO_DATE(DATE_ADD(@ACCYEAR + '-' + @MM + '-01', INTERVAL '-3:0' year_month)), 'YYYYMM'));
+            SET @TODATE3   = TO_NUMBER(TO_CHAR(TO_DATE(DATE_ADD(@ACCYEAR + '-' + @MM + '-01', INTERVAL '-2:0' year_month)), 'YYYYMM'));
+        
+            SELECT   
+                    ROW_NUMBER() OVER (ORDER BY K.PERSON_NUMB) AS SEQ
+                  , K.RANKNUM AS SYNTHETIC_EVAL
+                  , K.DEPT_NAME
+                  , K.PAY_GRADE_01
+                  , K.PAY_GRADE_02
+                  , K.PERSON_NUMB
+                  , K.NAME
+                  , K.AVG1
+                  , K.AVG2
+                  , K.AVG3
+                  , K.AVGTOT
+                  , K.GTOT
+                  , K.HTOT
+                  , K.PTOT
+                  , K.TOTAL AS MERITS_GRADE
+                  , '서열 ' + CAST(K.RANKNUM AS VARCHAR) + '위' AS RANKNAME
+                  , K.GRADE_PERSON_NUMB
+                  , K.GRADE_PERSON_NAME
+                  , K.GRADE_PERSON_NUMB2
+                  , K.GRADE_PERSON_NAME2
+                  , K.UPDATE_TYPE
+                  , K.COMP_CODE
+                  , K.MERITS_YEARS
+                  , K.MERITS_GUBUN
+                  , K.INSERT_DB_USER
+                  , K.INSERT_DB_TIME
+                  , K.UPDATE_DB_USER
+                  , K.UPDATE_DB_TIME
+            FROM    (
+                    SELECT  RANK() OVER(ORDER BY 
+                                                        NVL(C1.AVG0TO1, 0) * (CASE WHEN CAST(NVL(A.PAY_GRADE_01, '') AS INT) &lt;= 5 THEN 0.5 ELSE 0.6 END) +
+                                                        NVL(C2.AVG1TO2, 0) * (CASE WHEN CAST(NVL(A.PAY_GRADE_01, '') AS INT) &lt;= 5 THEN 0.3 ELSE 0.4 END) +
+                                                        NVL(C3.AVG2TO3, 0) * (CASE WHEN CAST(NVL(A.PAY_GRADE_01, '') AS INT) &lt;= 5 THEN 0.2 ELSE 0.0 END) +
+                                                        NVL(D.GTOT, 0) +
+                                                        NVL(E.HTOT, 0) +
+                                                        NVL(F.PTOT, 0) DESC) RANKNUM
+                          , A.DEPT_NAME                                                   <!-- 부서 -->
+                          , A.PAY_GRADE_01                                                <!-- 급 -->
+                          , A.PAY_GRADE_02                                                <!-- 호 -->
+                          , A.PERSON_NUMB                                                 <!-- 사번 -->
+                          , A.NAME                                                        <!-- 성명 -->
+                          , NVL(C1.AVG0TO1, 0) * (CASE WHEN CAST(NVL(A.PAY_GRADE_01, '') AS INT) &lt;= 5 THEN 0.5 ELSE 0.6 END) AS AVG1 <!--최근1년 평균-->
+                          , NVL(C2.AVG1TO2, 0) * (CASE WHEN CAST(NVL(A.PAY_GRADE_01, '') AS INT) &lt;= 5 THEN 0.3 ELSE 0.4 END) AS AVG2 <!--최근2년 평균-->
+                          , NVL(C3.AVG2TO3, 0) * (CASE WHEN CAST(NVL(A.PAY_GRADE_01, '') AS INT) &lt;= 5 THEN 0.2 ELSE 0.0 END) AS AVG3 <!--최근3년 평균-->
+                          , NVL(C1.AVG0TO1, 0) * (CASE WHEN CAST(NVL(A.PAY_GRADE_01, '') AS INT) &lt;= 5 THEN 0.5 ELSE 0.6 END) +
+                            NVL(C2.AVG1TO2, 0) * (CASE WHEN CAST(NVL(A.PAY_GRADE_01, '') AS INT) &lt;= 5 THEN 0.3 ELSE 0.4 END) +
+                            NVL(C3.AVG2TO3, 0) * (CASE WHEN CAST(NVL(A.PAY_GRADE_01, '') AS INT) &lt;= 5 THEN 0.2 ELSE 0.0 END) AS AVGTOT <!--평균합-->
+                          , NVL(D.GTOT, 0.0) AS GTOT
+                          , NVL(E.HTOT, 0.0) AS HTOT
+                          , NVL(F.PTOT, 0.0) AS PTOT
+                          , NVL(C1.AVG0TO1, 0) * (CASE WHEN CAST(NVL(A.PAY_GRADE_01, '') AS INT) &lt;= 5 THEN 0.5 ELSE 0.6 END) +
+                            NVL(C2.AVG1TO2, 0) * (CASE WHEN CAST(NVL(A.PAY_GRADE_01, '') AS INT) &lt;= 5 THEN 0.3 ELSE 0.4 END) +
+                            NVL(C3.AVG2TO3, 0) * (CASE WHEN CAST(NVL(A.PAY_GRADE_01, '') AS INT) &lt;= 5 THEN 0.2 ELSE 0.0 END) +
+                            NVL(D.GTOT, 0.0) +
+                            NVL(E.HTOT, 0.0) +
+                            NVL(F.PTOT, 0.0) AS TOTAL <!--평정합 -->
+                          , CASE WHEN NVL(B.GRADE_PERSON_NUMB, '') = ''
+                                 THEN @GRADE_PERSON_NUMB1
+                                 ELSE B.GRADE_PERSON_NUMB
+                            END                                       AS GRADE_PERSON_NUMB <!-- 평정자 -->
+                          , CASE WHEN NVL(G1.NAME, '') = ''
+                                 THEN @GRADE_PERSON1
+                                 ELSE G1.NAME
+                            END                                       AS GRADE_PERSON_NAME <!-- 평정자명 -->
+                          , CASE WHEN NVL(B.GRADE_PERSON_NUMB2, '') = ''
+                                 THEN @GRADE_PERSON_NUMB2
+                                 ELSE B.GRADE_PERSON_NUMB2
+                            END                                       AS GRADE_PERSON_NUMB2 <!-- 확인자 -->
+                          , CASE WHEN NVL(G2.NAME, '') = ''
+                                 THEN @GRADE_PERSON2
+                                 ELSE G2.NAME
+                            END                                       AS GRADE_PERSON_NAME2 <!-- 확인자명 -->
+                          , CASE WHEN NVL(B.PERSON_NUMB, '') = ''
+                                 THEN 'N'
+                                 ELSE ''
+                            END                                       AS UPDATE_TYPE        <!-- 신규생성할자료인지, 업데이트할 자료인지 여부 -->
+                          , NVL(B.COMP_CODE, A.COMP_CODE)          AS COMP_CODE
+                          , @ACCYEAR                                  AS MERITS_YEARS
+                          , @GUBUN                                    AS MERITS_GUBUN
+                          , B.INSERT_DB_USER
+                          , B.INSERT_DB_TIME
+                          , B.UPDATE_DB_USER
+                          , B.UPDATE_DB_TIME
+                    FROM                HUM100T A
+                            LEFT JOIN   HUM770T B ON B.COMP_CODE      = A.COMP_CODE
+                                                               AND B.PERSON_NUMB    = A.PERSON_NUMB
+                                                               AND B.MERITS_YEARS   = @ACCYEAR
+                                                               AND B.MERITS_GUBUN   = @GUBUN
+                            LEFT JOIN   (
+                                        SELECT  A.COMP_CODE, A.PERSON_NUMB, SUM(CAST(MERITS_GRADE AS NUMERIC(7, 4))) / COUNT(MERITS_GRADE) AS AVG0TO1
+                                        FROM    HUM770T A 
+                                        WHERE   A.COMP_CODE     = @COMP_CODE
+                                        AND     CAST(LEFT(REPLACE(CONVERT(NVARCHAR, CAST(MERITS_YEARS + '-' + CAST(CAST(MERITS_GUBUN AS INT) - 10 AS NVARCHAR) + '-01' AS DATETIME), 23), '-', ''), 6) AS INT) > @FROMDATE1
+                                        AND     CAST(LEFT(REPLACE(CONVERT(NVARCHAR, CAST(MERITS_YEARS + '-' + CAST(CAST(MERITS_GUBUN AS INT) - 10 AS NVARCHAR) + '-01' AS DATETIME), 23), '-', ''), 6) AS INT) &lt;= @TODATE1
+                                        AND     A.MERITS_GUBUN  &lt; 23
+                                        GROUP BY A.COMP_CODE, A.PERSON_NUMB
+                                        )   C1                  ON C1.COMP_CODE     = A.COMP_CODE
+                                                               AND C1.PERSON_NUMB   = A.PERSON_NUMB
+                            LEFT JOIN   (
+                                        SELECT  A.COMP_CODE, A.PERSON_NUMB, SUM(CAST(MERITS_GRADE AS NUMERIC(7, 4))) / COUNT(MERITS_GRADE) AS AVG1TO2
+                                        FROM    HUM770T A 
+                                        WHERE   A.COMP_CODE     = @COMP_CODE
+                                        AND     CAST(LEFT(REPLACE(CONVERT(NVARCHAR, CAST(MERITS_YEARS + '-' + CAST(CAST(MERITS_GUBUN AS INT) - 10 AS NVARCHAR) + '-01' AS DATETIME), 23), '-', ''), 6) AS INT) > @FROMDATE2
+                                        AND     CAST(LEFT(REPLACE(CONVERT(NVARCHAR, CAST(MERITS_YEARS + '-' + CAST(CAST(MERITS_GUBUN AS INT) - 10 AS NVARCHAR) + '-01' AS DATETIME), 23), '-', ''), 6) AS INT) &lt;= @TODATE2
+                                        AND     A.MERITS_GUBUN  &lt; 23
+                                        GROUP BY A.COMP_CODE, A.PERSON_NUMB
+                                        )   C2                  ON C2.COMP_CODE     = A.COMP_CODE
+                                                               AND C2.PERSON_NUMB   = A.PERSON_NUMB
+                            LEFT JOIN   (
+                                        SELECT  A.COMP_CODE, A.PERSON_NUMB, SUM(CAST(MERITS_GRADE AS NUMERIC(7, 4))) / COUNT(MERITS_GRADE) AS AVG2TO3
+                                        FROM    HUM770T A 
+                                        WHERE   A.COMP_CODE     = @COMP_CODE
+                                        AND     CAST(LEFT(REPLACE(TO_CHAR(CAST(MERITS_YEARS + '-' + CAST(CAST(MERITS_GUBUN AS INT) - 10 AS VARCHAR) + '-01' AS DATETIME), 23), '-', ''), 6) AS INT) > @FROMDATE3
+                                        AND     CAST(LEFT(REPLACE(TO_CHAR(CAST(MERITS_YEARS + '-' + CAST(CAST(MERITS_GUBUN AS INT) - 10 AS VARCHAR) + '-01' AS DATETIME), 23), '-', ''), 6) AS INT) &lt;= @TODATE3
+                                        AND     A.MERITS_GUBUN  &lt; 23
+                                        GROUP BY A.COMP_CODE, A.PERSON_NUMB
+                                        )   C3                  ON C3.COMP_CODE     = A.COMP_CODE
+                                                               AND C3.PERSON_NUMB   = A.PERSON_NUMB
+                            LEFT JOIN   (
+                                        SELECT  A.COMP_CODE, A.PERSON_NUMB, SUM(CAST(MERITS_GRADE AS NUMERIC(7, 4))) AS GTOT
+                                        FROM    HUM770T A 
+                                        WHERE   A.COMP_CODE     = @COMP_CODE
+                                        AND     A.MERITS_YEARS  = @ACCYEAR
+                                        AND     A.MERITS_GUBUN  = @GGUBUN
+                                        GROUP BY A.COMP_CODE, A.PERSON_NUMB
+                                        )   D                   ON D.COMP_CODE      = A.COMP_CODE
+                                                               AND D.PERSON_NUMB    = A.PERSON_NUMB
+                            LEFT JOIN   (
+                                        SELECT  A.COMP_CODE, A.PERSON_NUMB, SUM(CAST(MERITS_GRADE AS NUMERIC(7, 4))) AS HTOT
+                                        FROM    HUM770T A 
+                                        WHERE   A.COMP_CODE     = @COMP_CODE
+                                        AND     A.MERITS_YEARS  = @ACCYEAR
+                                        AND     A.MERITS_GUBUN  = @HGUBUN
+                                        GROUP BY A.COMP_CODE, A.PERSON_NUMB
+                                        )   E                   ON E.COMP_CODE      = A.COMP_CODE
+                                                               AND E.PERSON_NUMB    = A.PERSON_NUMB
+                            LEFT JOIN   (
+                                        SELECT  A.COMP_CODE, A.PERSON_NUMB, SUM(CAST(MERITS_GRADE AS NUMERIC(7, 4))) AS PTOT
+                                        FROM    HUM770T A 
+                                        WHERE   A.COMP_CODE     = @COMP_CODE
+                                        AND     A.MERITS_YEARS  = @ACCYEAR
+                                        AND     A.MERITS_GUBUN  = @PGUBUN
+                                        GROUP BY A.COMP_CODE, A.PERSON_NUMB
+                                        )   F                   ON F.COMP_CODE      = A.COMP_CODE
+                                                               AND F.PERSON_NUMB    = A.PERSON_NUMB
+                            LEFT JOIN   HUM100T G1   ON G1.COMP_CODE   = B.COMP_CODE
+                                                                 AND G1.PERSON_NUMB = B.GRADE_PERSON_NUMB
+                            LEFT JOIN   HUM100T G2   ON G2.COMP_CODE   = B.COMP_CODE
+                                                                 AND G2.PERSON_NUMB = B.GRADE_PERSON_NUMB2
+                            LEFT JOIN   HUM810T W1   ON W1.COMP_CODE   = A.COMP_CODE
+                                                                 AND W1.PERSON_NUMB = A.PERSON_NUMB
+                                                                 AND LEFT(W1.KIND_PRIZE_PENALTY, 1) = '2'
+                                                                 AND CAST(NVL(W1.VALIDITYFR_DATE, '') AS INT) &lt;= CAST(@BASE_DATE AS INT)
+                                                                 AND CAST(NVL(W1.VALIDITY_DATE, '') AS INT) > CAST(@BASE_DATE AS INT)
+                            LEFT JOIN   HUM840T W2   ON W2.COMP_CODE   = A.COMP_CODE
+                                                                 AND W2.PERSON_NUMB = A.PERSON_NUMB
+                                                                 AND CAST(NVL(W2.CONTRACT_FRDATE, '') AS INT) &lt;= CAST(@BASE_DATE AS INT) <!--현재 계약중 -->
+                                                                 AND CAST(NVL(W2.CONTRACT_TODATE, '') AS INT) &gt;= CAST(@BASE_DATE AS INT) <!--현재 계약중 -->
+                            LEFT JOIN   BSA100T W3   ON W3.COMP_CODE   = W2.COMP_CODE
+                                                                 AND W3.MAIN_CODE   = 'H164'
+                                                                 AND W3.SUB_CODE    = W2.CONTRACT_GUBUN
+                            LEFT JOIN   (
+                                        SELECT  S1.COMP_CODE, S1.PERSON_NUMB, MAX(S1.ANNOUNCE_DATE) AS ANNOUNCE_DATE
+                                        FROM               HUM760T S1 
+                                                INNER JOIN BSA100T S2  ON S2.COMP_CODE = S1.COMP_CODE
+                                                                                   AND S2.MAIN_CODE = 'H094'
+                                                                                   AND S2.SUB_CODE  = S1.ANNOUNCE_CODE
+                                                                                   AND S2.REF_CODE1 = 'Y'
+                                        WHERE   S1.COMP_CODE  = 'MASTER' --@COMP_CODE
+                                        GROUP BY S1.COMP_CODE, S1.PERSON_NUMB
+                                        ) H                       ON H.COMP_CODE    = A.COMP_CODE
+                                                                 AND H.PERSON_NUMB  = A.PERSON_NUMB
+                            LEFT JOIN   BSA100T D1   ON D1.COMP_CODE   = A.COMP_CODE
+                                                                 AND D1.MAIN_CODE   = 'HP01'
+                                                                 AND D1.SUB_CODE    = A.POST_CODE
+                    WHERE   NVL(A.PAY_GRADE_01, '') != ''
+                    AND     (A.RETR_DATE = '00000000' AND (DATEDIFF(mm, NVL(H.ANNOUNCE_DATE, A.JOIN_DATE), @MAIN_DT) + 1) > CAST(D1.REF_CODE3 AS INT) * 12)  <!---재직자 -->
+                    AND     W1.COMP_CODE IS NULL        <!-- 징계기간이 아닌인원 -->
+                    AND     (W3.REF_CODE2 != '2' OR W2.COMP_CODE IS NULL)       <!-- 휴직기간이 아닌인원 -->
+                    AND     (A.PAY_GRADE_01 = @PAY_GRADE_01 OR @PAY_GRADE_01 = '')
+                    ) K
+            WHERE   K.RANKNUM BETWEEN @MINRANK AND @MAXRANK;
+
+
+	</select>
+</mapper>

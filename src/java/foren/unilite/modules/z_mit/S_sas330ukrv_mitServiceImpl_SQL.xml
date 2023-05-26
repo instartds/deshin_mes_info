@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_sas330ukrv_mitServiceImpl">
+	
+	<select id="s_sas330ukrv_mitServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		DECLARE @CompCode       NVARCHAR(08)   /* 법인코드            */
+	          , @DivCode        NVARCHAR(08)   /* 사업장코드          */
+	          , @InspecDateFr   NVARCHAR(08)   /* 출고검사일Fr    */
+	          , @InspecDateTo   NVARCHAR(08)   /* 출고검사일To    */
+	          , @AsStatus       NVARCHAR(10)   /* 출고상태             */
+	
+	          , @UserId         NVARCHAR(100)  /* 사용자ID       */
+	          , @RefItem        NVARCHAR(01)   /* 명칭 참조 유형      */
+	
+	    SET @CompCode     = #{S_COMP_CODE}
+	    SET @DivCode      = #{DIV_CODE}
+	    SET @InspecDateFr = #{INSPEC_DATE_FR}
+	    SET @InspecDateTo = #{INSPEC_DATE_TO}
+	    SET @AsStatus     = #{AS_STATUS}
+	
+	    SET @UserId       = #{S_USER_ID}
+	
+	    /* 명칭 참조 유형 */
+	    SELECT TOP 1 @RefItem = REF_ITEM
+	      FROM BSA300T WITH (NOLOCK)
+	     WHERE USER_ID = @UserId
+	
+	    SET @RefItem = ISNULL(@RefItem, N'0')
+	
+	    /* 조회 */
+	    SELECT A.COMP_CODE                                      /* 법인코드       	*/
+	         , A.DIV_CODE                                       /* 사업장         	*/
+	         , A.REPAIR_NUM                                     /* 수리번호       	*/
+	         , A.REPAIR_DATE                                    /* 수리일         	*/
+	         , B.CUSTOM_CODE                                    /* 거래처         	*/
+			 , CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+			        WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+			                            ELSE C1.CUSTOM_NAME
+			    END AS CUSTOM_NAME                              /* 거래처명       	*/
+	         , B.ITEM_CODE                                      /* 품목코드       	*/
+	         , CASE WHEN @RefItem = '1' THEN C2.ITEM_NAME1
+			        WHEN @RefItem = '2' THEN C2.ITEM_NAME2
+			                            ELSE C2.ITEM_NAME
+			    END AS ITEM_NAME                                /* 품목명        		*/
+			 , ISNULL(C2.SPEC,'') AS SPEC                       /* 규격          		*/
+	         , B.SERIAL_NO                                      /* Serial No 	*/
+			 , B.OUT_DATE                                       /* 출고일         	*/
+	         , B.OUT_PRSN                                       /* 출고담당자 	    */
+	         , C3.USER_NAME                                     /* 출고담당자명  	*/
+	         , A.REPAIR_RANK                                    /* 수리랭크       	*/
+			 , B.AS_STATUS										/* 진행상태       	*/
+			 , A.RECEIPT_NUM                                    /* 접수번효       	*/
+			 , C.QUOT_NUM                                       /* 견적번호       	*/
+             , CASE WHEN ISNULL(C4.ORDER_NUM, '') = '' 
+                         THEN 'N'
+                    ELSE 'Y'
+                END     AS ORDER_YN                             /* 매출등록 여부	 */
+	      FROM            SAS300T A  WITH (NOLOCK)
+	           INNER JOIN SAS100T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+	                                              AND B.DIV_CODE     = A.DIV_CODE
+	                                              AND B.RECEIPT_NUM  = A.RECEIPT_NUM
+	           INNER JOIN SAS200T C  WITH (NOLOCK) ON C.COMP_CODE    = A.COMP_CODE
+	                                              AND C.DIV_CODE     = A.DIV_CODE
+	                                              AND C.RECEIPT_NUM  = A.RECEIPT_NUM
+	           INNER JOIN BCM100T C1 WITH (NOLOCK) ON C1.COMP_CODE   = B.COMP_CODE
+	                                              AND C1.CUSTOM_CODE = B.CUSTOM_CODE
+	           INNER JOIN BPR100T C2 WITH (NOLOCK) ON C2.COMP_CODE   = B.COMP_CODE
+	                                              AND C2.ITEM_CODE   = B.ITEM_CODE
+			   LEFT  JOIN BSA300T C3 WITH (NOLOCK) ON C3.COMP_CODE   = B.COMP_CODE
+			                                      AND C3.USER_ID     = B.OUT_PRSN
+			   LEFT  JOIN SSA110T C4 WITH (NOLOCK) ON C4.COMP_CODE   = A.COMP_CODE
+			                                      AND C4.DIV_CODE    = A.DIV_CODE
+			                                      AND C4.ORDER_NUM   = A.REPAIR_NUM
+	     WHERE A.COMP_CODE  = @CompCode
+	       AND A.DIV_CODE   = @DivCode
+	       <if test="AS_STATUS == &quot;90&quot;">
+	       AND B.AS_STATUS  = @AsStatus
+	       </if>
+	       <if test="AS_STATUS != &quot;90&quot;">
+	       AND B.AS_STATUS  IN ('31','40')
+	       </if>
+	       <if test="@foren.Ognl@isNotEmpty(INSPEC_DATE_FR)">
+	       AND A.INSPEC_DATE &gt;= @InspecDateFr
+	       </if>
+	       <if test="@foren.Ognl@isNotEmpty(INSPEC_DATE_TO)">
+	       AND A.INSPEC_DATE &lt;= @InspecDateTo
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(RECEIPT_NUM)">
+	       AND B.RECEIPT_NUM =  #{RECEIPT_NUM}
+		   </if>
+	     ORDER BY A.COMP_CODE, A.DIV_CODE, A.REPAIR_DATE, A.REPAIR_NUM
+		
+	</select>
+	<update id="s_sas330ukrv_mitServiceImpl.updateList" parameterType="Map">	
+		/* s_sas330ukrv_mitServiceImpl.updateList */
+		
+		--AS_STATUS 변수:40  출고상태에서 미출고 상태로 변경, 90:미출고상태에서 출고상태로
+		UPDATE A SET AS_STATUS      = CASE WHEN #{AS_STATUS} = '40' AND ISNULL(B.INSPEC_FLAG,'') = 'Z' THEN '31' ELSE #{AS_STATUS} END
+					,OUT_PRSN       = #{OUT_PRSN}
+					,OUT_DATE       = #{OUT_DATE}
+					,UPDATE_DB_USER = #{S_USER_ID}
+					,UPDATE_DB_TIME = GETDATE()
+		FROM SAS100T A
+			 LEFT JOIN SAS300T B ON A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE=B.DIV_CODE AND A.RECEIPT_NUM=B.RECEIPT_NUM
+		WHERE A.COMP_CODE=#{S_COMP_CODE}
+		AND A.DIV_CODE=#{DIV_CODE}	
+		AND A.RECEIPT_NUM = #{RECEIPT_NUM}
+			  
+	</update>
+</mapper>

@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_eis000skrv_ypServiceImpl">
+	<select id="s_eis000skrv_ypServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* s_eis000skrv_ypServiceImpl.selectList */
+		DECLARE @QUERY_YEAR		NVARCHAR(04)
+			  , @QUERY_MONTH	NVARCHAR(06)
+			  , @AMOUNT_UNIT	INT
+
+		SET @QUERY_MONTH	= #{QUERY_MONTH}
+		SET @QUERY_YEAR		= SUBSTRING(@QUERY_MONTH, 1, 4)
+		
+		--입력된 금액단위로 보여줌
+		SELECT @AMOUNT_UNIT	= REF_CODE1
+		  FROM BSA100T WITH(NOLOCK)
+		 WHERE MAIN_CODE	= 'B042'
+		   AND SUB_CODE		= #{MONEY_UNIT}
+		   
+		SET @AMOUNT_UNIT	= ISNULL(@AMOUNT_UNIT, 1000000)
+
+		SELECT * FROM (
+			--누적 매출
+			SELECT A.COMP_CODE
+				 , A.CODE_NAME																										AS GUBUN
+				 , ISNULL((D.PLAN_AMT1 + D.PLAN_AMT2 + D.PLAN_AMT3 + D.PLAN_AMT4 + D.PLAN_AMT5 + D.PLAN_AMT6 
+				 + D.PLAN_AMT7 + D.PLAN_AMT8 + D.PLAN_AMT9 + D.PLAN_AMT10 + D.PLAN_AMT11 + D.PLAN_AMT12)	/ @AMOUNT_UNIT	, 0)	AS 'PLAN'
+				 , ISNULL(SUM(ISNULL(B1.SALE_LOC_AMT_I, 0) + ISNULL(B1.TAX_AMT_O, 0))						/ @AMOUNT_UNIT	, 0)	AS PERFORM
+				 , ISNULL(SUM(ISNULL(B1.SALE_LOC_AMT_I, 0) + ISNULL(B1.TAX_AMT_O, 0)) 
+				 / ISNULL((D.PLAN_AMT1 + D.PLAN_AMT2 + D.PLAN_AMT3 + D.PLAN_AMT4 + D.PLAN_AMT5 + D.PLAN_AMT6 
+					 + D.PLAN_AMT7 + D.PLAN_AMT8 + D.PLAN_AMT9 + D.PLAN_AMT10 + D.PLAN_AMT11 + D.PLAN_AMT12)				, 1)
+				 / @AMOUNT_UNIT	 * 100																						, 0)	AS ACHIEVE_RATE
+				 , ISNULL(SUM(ISNULL(C.SALE_LOC_AMT_I, 0) + ISNULL(C.TAX_AMT_O, 0))							/ @AMOUNT_UNIT	, 0)	AS SAME_PERI_PERFORM
+				 , CASE WHEN SUM(ISNULL(C.SALE_LOC_AMT_I, 0) + ISNULL(C.TAX_AMT_O, 0)) = 0 THEN 0
+						ELSE ISNULL((SUM(ISNULL(B1.SALE_LOC_AMT_I, 0) + ISNULL(B1.TAX_AMT_O, 0)) - SUM(ISNULL(C.SALE_LOC_AMT_I, 0) + ISNULL(C.TAX_AMT_O, 0))) / SUM(ISNULL(C.SALE_LOC_AMT_I, 0) + ISNULL(C.TAX_AMT_O, 0)) * 100, 0)
+				   END																												AS RATE_OF_CHANGE
+			  FROM		BSA100T A  WITH (NOLOCK)	
+			  LEFT JOIN SSA100T B  WITH (NOLOCK) ON B.COMP_CODE	= A.COMP_CODE
+												AND B.ORDER_TYPE= A.SUB_CODE
+			  LEFT JOIN SSA110T B1 WITH (NOLOCK) ON B1.COMP_CODE= B.COMP_CODE
+												AND B1.DIV_CODE	= B.DIV_CODE
+												AND B1.BILL_NUM	= B.BILL_NUM
+												AND SUBSTRING(B.SALE_DATE, 1, 4)	= @QUERY_YEAR
+			  LEFT JOIN SSA110T C  WITH (NOLOCK) ON C.COMP_CODE	= B.COMP_CODE				--전년 동월 data
+												AND C.DIV_CODE	= B.DIV_CODE
+												AND C.BILL_NUM	= B.BILL_NUM
+												AND SUBSTRING(B.SALE_DATE, 1, 4)	= @QUERY_YEAR - 1
+			  LEFT JOIN SSP100T D  WITH (NOLOCK) ON D.COMP_CODE	= A.COMP_CODE
+												--AND D.DIV_CODE	= B.DIV_CODE
+												AND D.PLAN_YEAR	= @QUERY_YEAR
+												AND D.PLAN_TYPE1= A.SUB_CODE
+			 WHERE A.COMP_CODE	= #{S_COMP_CODE}
+			   AND A.MAIN_CODE	= 'S002'
+			   AND A.REF_CODE10	= 'Y'
+			 GROUP BY A.COMP_CODE, A.CODE_NAME, D.PLAN_AMT1, D.PLAN_AMT2, D.PLAN_AMT3, D.PLAN_AMT4, D.PLAN_AMT5, D.PLAN_AMT6
+					, D.PLAN_AMT7, D.PLAN_AMT8, D.PLAN_AMT9, D.PLAN_AMT10, D.PLAN_AMT11, D.PLAN_AMT12
+		) ZZZ0	
+		<foreach collection="MONTH" item="item" index="index">
+		LEFT JOIN (
+			SELECT A.COMP_CODE
+				 , A.CODE_NAME																										AS GUBUN${index + 1}
+				 , ISNULL(D.PLAN_AMT${index + 1}															/ @AMOUNT_UNIT	, 0)	AS PLAN${index + 1}
+				 , ISNULL(SUM(ISNULL(B1.SALE_LOC_AMT_I, 0) + ISNULL(B1.TAX_AMT_O, 0))						/ @AMOUNT_UNIT	, 0)	AS PERFORM${index + 1}
+				 , CASE WHEN ISNULL(D.PLAN_AMT${index + 1}, 0) = 0 THEN 0
+						ELSE ISNULL(SUM(ISNULL(B1.SALE_LOC_AMT_I, 0) + ISNULL(B1.TAX_AMT_O, 0)) / D.PLAN_AMT${index + 1} * 100		, 0)
+				   END																												AS ACHIEVE_RATE${index + 1}
+				 , ISNULL(SUM(ISNULL(C.SALE_LOC_AMT_I, 0) + ISNULL(C.TAX_AMT_O, 0))							/ @AMOUNT_UNIT	, 0)	AS SAME_PERI_PERFORM${index + 1}
+				 , CASE WHEN SUM(ISNULL(C.SALE_LOC_AMT_I, 0) + ISNULL(C.TAX_AMT_O, 0)) = 0 THEN 0
+						ELSE ISNULL((SUM(ISNULL(B1.SALE_LOC_AMT_I, 0) + ISNULL(B1.TAX_AMT_O, 0)) - SUM(ISNULL(C.SALE_LOC_AMT_I, 0) + ISNULL(C.TAX_AMT_O, 0))) / SUM(ISNULL(C.SALE_LOC_AMT_I, 0) + ISNULL(C.TAX_AMT_O, 0)) * 100, 0)
+				   END																												AS RATE_OF_CHANGE${index + 1}
+			  FROM		BSA100T A  WITH (NOLOCK)	
+			  LEFT JOIN SSA100T B  WITH (NOLOCK) ON B.COMP_CODE	= A.COMP_CODE
+												AND B.ORDER_TYPE= A.SUB_CODE
+			  LEFT JOIN SSA110T B1 WITH (NOLOCK) ON B1.COMP_CODE= B.COMP_CODE				--조회년 data
+												AND B1.DIV_CODE	= B.DIV_CODE
+												AND B1.BILL_NUM	= B.BILL_NUM
+												AND B.SALE_DATE	BETWEEN @QUERY_YEAR + #{item} + '01' AND unilite.fnGetLastDate(@QUERY_YEAR + #{item} + '01')
+			  LEFT JOIN SSA110T C  WITH (NOLOCK) ON C.COMP_CODE	= B.COMP_CODE				--전년 동월 data
+												AND C.DIV_CODE	= B.DIV_CODE
+												AND C.BILL_NUM	= B.BILL_NUM
+												AND B.SALE_DATE	BETWEEN CONVERT(NVARCHAR(08), DATEADD(YEAR, -1, (@QUERY_YEAR + #{item} + '01')), 112) AND unilite.fnGetLastDate(CONVERT(NVARCHAR(08), DATEADD(YEAR, -1, (@QUERY_YEAR + #{item} + '01')), 112))
+			  LEFT JOIN SSP100T D  WITH (NOLOCK) ON D.COMP_CODE	= A.COMP_CODE
+												--AND D.DIV_CODE	= B.DIV_CODE
+												AND D.PLAN_YEAR	= @QUERY_YEAR
+												AND D.PLAN_TYPE1= A.SUB_CODE
+			 WHERE A.COMP_CODE	= #{S_COMP_CODE}
+			   AND A.MAIN_CODE	= 'S002'
+			   AND A.REF_CODE10	= 'Y'
+			 GROUP BY A.COMP_CODE, A.CODE_NAME, D.PLAN_AMT${index + 1}
+		) ZZZ${index + 1}									ON ZZZ${index + 1}.COMP_CODE		= ZZZ0.COMP_CODE
+														   AND ZZZ${index + 1}.GUBUN${index + 1}= ZZZ0.GUBUN
+		</foreach>
+	</select>
+</mapper>

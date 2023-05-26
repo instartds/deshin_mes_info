@@ -1,0 +1,374 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_afb520skrServiceImpl_KOCIS">
+<select id="s_afb520skrServiceImpl_KOCIS.selectBudgName" parameterType="Map" resultType="rMap">		/* BUDG_NAME 컬럼수*/
+--UAccntPopupKrv.CAccntPopupKR[fnGetBudgCode] Query02
+BEGIN
+    DECLARE         @COMP_CODE          NVARCHAR(08)
+
+--  [ 변수 값 할당 ] ------------------------------------------------------------------------------------------
+    SET @COMP_CODE  = #{S_COMP_CODE}
+--  [ 데이터 조회 ] -------------------------------------------------------------------------------------------
+    SELECT  *
+    FROM    uniLITE.fnGetBudgLevelName(@COMP_CODE, #{ST_DATE})
+END	
+</select>	
+
+<select id="s_afb520skrServiceImpl_KOCIS.selectDeptBudg" parameterType="Map" resultType="rMap">		/* 부서정보, 예산현황 조회*/
+--afb500skr.Cafb500skr[fnAfb500QStd] Query03
+SELECT CASE WHEN ISNULL(B.DEPT_CODE, '') = '' THEN ISNULL(E.BUDG_TREE_CODE, A.DEPT_CODE)
+            ELSE ISNULL(F.BUDG_TREE_CODE, B.DEPT_CODE)
+       END                          AS DEPT_CODE2
+     , M1.REF_CODE2                 AS CHARGE_GUBUN      --현업부서구분(1:회계부서, 2:현업부서)
+     , ISNULL(M2.REF_CODE1, 'Y')    AS ACCDEPT_GUBUN     --예산현황_실적부서 구분여부
+     , ISNULL(M3.REF_CODE1, 'N')    AS ACCDEPT_USEYN     --예산현황_사용예산코드만 조회
+  FROM            BSA300T AS A  WITH (NOLOCK)
+       LEFT  JOIN HUM100T AS B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+                                             AND B.PERSON_NUMB  = A.PERSON_NUMB
+       LEFT  JOIN BSA210T AS E  WITH (NOLOCK) ON E.COMP_CODE    = A.COMP_CODE
+                                             AND E.TREE_CODE    = A.DEPT_CODE
+       LEFT  JOIN BSA210T AS F  WITH (NOLOCK) ON F.COMP_CODE    = B.COMP_CODE
+                                             AND F.TREE_CODE    = B.DEPT_CODE
+       LEFT  JOIN BSA100T AS M1 WITH (NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE
+                                             AND M1.MAIN_CODE   = N'A009'
+                                             AND M1.REF_CODE1   = A.USER_ID
+       LEFT  JOIN BSA100T AS M2 WITH (NOLOCK) ON M2.COMP_CODE   = A.COMP_CODE
+                                             AND M2.MAIN_CODE   = N'A169'
+                                             AND M2.SUB_CODE    = N'60'
+       LEFT  JOIN BSA100T AS M3 WITH (NOLOCK) ON M3.COMP_CODE   = A.COMP_CODE
+                                             AND M3.MAIN_CODE   = N'A169'
+                                             AND M3.SUB_CODE    = N'61'
+
+ WHERE A.COMP_CODE = #{S_COMP_CODE}
+   AND A.USER_ID   = #{S_USER_ID}
+</select>
+
+<select id="s_afb520skrServiceImpl_KOCIS.selectAmtPoint" parameterType="Map" resultType="rMap">
+--afb540skr.Cafb540skr[fnAfb540QStd]Query01                  
+SELECT AMT_POINT
+ FROM ABA100T     WITH (NOLOCK)           
+WHERE COMP_CODE = #{S_COMP_CODE}
+</select>
+
+<select id="s_afb520skrServiceImpl_KOCIS.selectRefCode1" parameterType="Map" resultType="rMap">
+SELECT REF_CODE1 
+  FROM BSA100T WITH (NOLOCK)
+ WHERE COMP_CODE = #{S_COMP_CODE}
+   AND MAIN_CODE = 'B042' 
+   AND SUB_CODE  = #{MONEY_UNIT}
+</select>
+	
+<select id="s_afb520skrServiceImpl_KOCIS.selectList" parameterType="Map" resultType="rMap">		/* 메인*/
+--afb520skr.Cafb520skr[fnAfb520QStd] Query02
+BEGIN
+    SET NOCOUNT ON
+
+    DECLARE @COMP_CODE         NVARCHAR(08)   --(필수) 법인코드 
+          , @AC_YYYY           NVARCHAR(04)   --(필수) 예산년도
+          , @DEPT_CODE         NVARCHAR(08)   --(선택) 부서코드
+          , @BUDG_CODE         NVARCHAR(30)   --(선택) FROM 예산과목
+          , @BUDG_TYPE         NVARCHAR(01)   --(선택) 수지구분
+          , @LOWER_DEPT        NVARCHAR(01)   --(선택) 하위부서포함
+
+          , @FnDate            NVARCHAR(08)   -- 회계시작년월
+          , @ToDate            NVARCHAR(08)   -- 회계종료년월
+          , @FrBudgYyyyMm      NVARCHAR(08)   -- 당기 시작 예산년월
+          , @ToBudgYyyyMm      NVARCHAR(08)   -- 당기 종료 예산년월
+          , @LastFrBudgYyyyMm  NVARCHAR(08)   -- 전기 시작 예산년월
+          , @LastToBudgYyyyMm  NVARCHAR(08)   -- 전기 종료 예산년월
+          , @DataType          NVARCHAR(01)   -- 예산확정테이블의 데이터 존재여부
+          , @LEN               NUMERIC(2,0)   
+          , @TREE_LEVEL        NVARCHAR(08)   -- 부서코드레벨
+          , @LEVEL_LEN         NUMERIC(2,0)   -- 부서코드레벨 길이
+
+          , @LEVEL_LEN1        NUMERIC(2,0)
+          , @LEVEL_LEN2        NUMERIC(2,0)
+          , @LEVEL_LEN3        NUMERIC(2,0)
+          , @LEVEL_LEN4        NUMERIC(2,0)
+          , @LEVEL_LEN5        NUMERIC(2,0)
+          , @LEVEL_LEN6        NUMERIC(2,0)
+          , @LEVEL_LEN7        NUMERIC(2,0)
+          , @LEVEL_LEN8        NUMERIC(2,0)
+    
+          , @PROJECT_NO      NVARCHAR(20)   --(선택) 프로젝트
+          , @BUDG_GUBUN      NVARCHAR(01)   --(선택) 예산실적집계
+          
+          , @slUnit 		NVARCHAR(10)
+		  , @lUnit 			NVARCHAR(10)
+		SELECT @slUnit = REF_CODE1 
+		  FROM BSA100T WITH (NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND MAIN_CODE = 'B042' 
+		   AND SUB_CODE  = #{MONEY_UNIT}
+		   
+		IF EXISTS(SELECT TOP 1 REF_CODE1 FROM BSA100T WITH (NOLOCK) WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'B042' AND SUB_CODE  = #{MONEY_UNIT})
+			BEGIN
+				SET @lUnit = @slUnit
+			END
+		
+		IF NOT EXISTS(SELECT TOP 1 REF_CODE1 FROM BSA100T WITH (NOLOCK) WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'B042' AND SUB_CODE  = #{MONEY_UNIT})
+			BEGIN
+				SET @lUnit = '1'
+			END
+    
+
+    SET @COMP_CODE          = #{S_COMP_CODE}
+    SET @AC_YYYY            = #{AC_YYYY}
+    SET @FrBudgYyyyMm       = #{FR_YYYYMM}
+    SET @ToBudgYyyyMm       = #{TO_YYYYMM}
+    SET @LastFrBudgYyyyMm   = #{FR_BEFORE_YYYYMM}
+    SET @LastToBudgYyyyMm   = #{TO_BEFORE_YYYYMM}
+    SET @DEPT_CODE          = #{DEPT_CODE}
+    SET @BUDG_CODE          = #{BUDG_CODE}
+    SET @BUDG_TYPE          = #{BUDG_TYPE}
+    SET @LOWER_DEPT         = #{LOWER_DEPT}
+    
+    SET @PROJECT_NO   = #{AC_PROJECT_CODE}
+    <if test="BUDG_GUBUN == &quot;3&quot;">
+    SET @BUDG_GUBUN   = ''
+    </if>
+    <if test="BUDG_GUBUN != &quot;3&quot;">
+    SET @BUDG_GUBUN   = #{BUDG_GUBUN}
+    </if>
+
+    SET @LEN          = LEN(@BUDG_CODE)
+
+    IF ( @DEPT_CODE != '' )
+        --부서코드레벨 및 길이 가져오기
+        SELECT @TREE_LEVEL = TREE_LEVEL
+             , @LEVEL_LEN  = LEN(TREE_LEVEL)
+          FROM BSA210T  WITH (NOLOCK)
+         WHERE COMP_CODE   = @COMP_CODE
+           AND TREE_CODE   = @DEPT_CODE
+           AND USE_YN      = 'Y'
+
+    --회계기간 가져오기
+    SELECT @FnDate  = LEFT(FN_DATE,6)
+         , @ToDate  = LEFT(TO_DATE,6)
+      FROM BOR100T  WITH (NOLOCK)
+     WHERE COMP_CODE = @COMP_CODE
+
+    --예산코드자릿수 가져오기
+    SELECT @LEVEL_LEN1 = ISNULL(LEVEL_NUM1, 0)
+         , @LEVEL_LEN2 = ISNULL(LEVEL_NUM1, 0) + ISNULL(LEVEL_NUM2, 0)
+         , @LEVEL_LEN3 = ISNULL(LEVEL_NUM1, 0) + ISNULL(LEVEL_NUM2, 0) + ISNULL(LEVEL_NUM3, 0)
+         , @LEVEL_LEN4 = ISNULL(LEVEL_NUM1, 0) + ISNULL(LEVEL_NUM2, 0) + ISNULL(LEVEL_NUM3, 0) + ISNULL(LEVEL_NUM4, 0)
+         , @LEVEL_LEN5 = ISNULL(LEVEL_NUM1, 0) + ISNULL(LEVEL_NUM2, 0) + ISNULL(LEVEL_NUM3, 0) + ISNULL(LEVEL_NUM4, 0)
+                       + ISNULL(LEVEL_NUM5, 0)
+         , @LEVEL_LEN6 = ISNULL(LEVEL_NUM1, 0) + ISNULL(LEVEL_NUM2, 0) + ISNULL(LEVEL_NUM3, 0) + ISNULL(LEVEL_NUM4, 0)
+                       + ISNULL(LEVEL_NUM5, 0) + ISNULL(LEVEL_NUM6, 0)
+         , @LEVEL_LEN7 = ISNULL(LEVEL_NUM1, 0) + ISNULL(LEVEL_NUM2, 0) + ISNULL(LEVEL_NUM3, 0) + ISNULL(LEVEL_NUM4, 0)
+                       + ISNULL(LEVEL_NUM5, 0) + ISNULL(LEVEL_NUM6, 0) + ISNULL(LEVEL_NUM7, 0)
+         , @LEVEL_LEN8 = ISNULL(LEVEL_NUM1, 0) + ISNULL(LEVEL_NUM2, 0) + ISNULL(LEVEL_NUM3, 0) + ISNULL(LEVEL_NUM4, 0)
+                       + ISNULL(LEVEL_NUM5, 0) + ISNULL(LEVEL_NUM6, 0) + ISNULL(LEVEL_NUM7, 0) + ISNULL(LEVEL_NUM8, 0)
+      FROM AFB300T  WITH (NOLOCK)
+     WHERE COMP_CODE = @COMP_CODE
+       AND AC_YYYY   = @AC_YYYY
+
+
+--  [ 임시 테이블 처리 ] ----------------------------------------------------------------------------------------------
+    DECLARE     @TypeKey                NVARCHAR(20)
+
+    SET @TypeKey  = REPLACE(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(30), GETDATE(), 121), '-', ''), ':', ''), '.', ''), ' ', '')
+
+    IF NOT EXISTS   (
+                    SELECT TOP 1 1
+                    FROM   T_AFB520SKR1 WITH (NOLOCK)
+                    WHERE  TYPE_KEY LIKE LEFT(@TypeKey, 8) + '%'
+                    )
+    BEGIN
+        TRUNCATE TABLE T_AFB520SKR1
+    END
+
+--  [ 데이터 생성 ] ---------------------------------------------------------------------------------------------------
+    -- 1. 예산확정정보 테이블(AFB510T)에서 데이터 조회하여 그리드 포맷에 맞춰 임시테이블에 INSERT
+    --    (예산코드명을 레벨순서대로 펼침, 예산금액을 12개월로 펼침)
+    INSERT INTO T_AFB520SKR1(TYPE_KEY, TYPE_FLAG, COMP_CODE, AC_YYYY, BUDG_YYYYMM, DEPT_CODE, DEPT_NAME, BUDG_CODE, BUDG_NAME
+                           , BUDG_I_TOT, AC_I_TOT, CHANGE_I_TOT, BUDG_I_TOT_LAST, AC_I_TOT_LAST, CHANGE_I_TOT_LAST, BUDG_TYPE
+    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index" >
+                           , BUDG_CODE_${index+1}
+    </foreach>
+                            )
+    SELECT @TypeKey                  AS TYPE_KEY
+         , N'0'                      AS TYPE_FLAG
+         , B.COMP_CODE               AS COMP_CODE
+         , @AC_YYYY                  AS AC_YYYY
+         , B.BUDG_YYYYMM             AS BUDG_YYYYMM
+         , B.DEPT_CODE               AS DEPT_CODE
+         , C.TREE_NAME               AS DEPT_NAME
+         , B.BUDG_CODE               AS BUDG_CODE
+         , D.BUDG_NAME               AS BUDG_NAME
+         , (SUM(ISNULL(B.BUDG_CONF_I , 0)) + 
+            SUM(ISNULL(B.BUDG_CONV_I , 0)) + 
+            SUM(ISNULL(B.BUDG_ASGN_I , 0)) + 
+            SUM(ISNULL(B.BUDG_SUPP_I , 0)) + 
+            SUM(ISNULL(B.BUDG_IWALL_I, 0)))  AS BUDG_I_TOT
+         , (SUM(ISNULL(B.DRAFT_AMT, 0)) + 
+            SUM(ISNULL(B.ORDER_AMT, 0)) + 
+            SUM(ISNULL(B.REQ_AMT  , 0)) +
+            SUM(ISNULL(B.EX_AMT_I , 0)) + 
+            SUM(ISNULL(B.AC_AMT_I , 0)))     AS AC_I_TOT
+         , (SUM(ISNULL(B.DRAFT_AMT, 0)) + 
+            SUM(ISNULL(B.ORDER_AMT, 0)) + 
+            SUM(ISNULL(B.REQ_AMT  , 0)) +
+            SUM(ISNULL(B.EX_AMT_I , 0)) +
+            SUM(ISNULL(B.AC_AMT_I , 0))) - 
+           (SUM(ISNULL(B.BUDG_CONF_I , 0)) +
+            SUM(ISNULL(B.BUDG_CONV_I , 0)) + 
+            SUM(ISNULL(B.BUDG_ASGN_I , 0)) + 
+            SUM(ISNULL(B.BUDG_SUPP_I , 0)) + 
+            SUM(ISNULL(B.BUDG_IWALL_I, 0)))  AS CHANGE_I_TOT
+         , (SUM(ISNULL(B2.BUDG_CONF_I , 0)) + 
+            SUM(ISNULL(B2.BUDG_CONV_I , 0)) + 
+            SUM(ISNULL(B2.BUDG_ASGN_I , 0)) + 
+            SUM(ISNULL(B2.BUDG_SUPP_I , 0)) + 
+            SUM(ISNULL(B2.BUDG_IWALL_I, 0))) AS BUDG_I_TOT_LAST
+         , (SUM(ISNULL(B2.DRAFT_AMT, 0)) + 
+            SUM(ISNULL(B2.ORDER_AMT, 0)) + 
+            SUM(ISNULL(B2.REQ_AMT  , 0)) +
+            SUM(ISNULL(B2.EX_AMT_I , 0)) +
+            SUM(ISNULL(B2.AC_AMT_I , 0)))    AS AC_I_TOT_LAST
+         , (SUM(ISNULL(B2.DRAFT_AMT, 0)) + 
+            SUM(ISNULL(B2.ORDER_AMT, 0)) + 
+            SUM(ISNULL(B2.REQ_AMT  , 0)) +
+            SUM(ISNULL(B2.EX_AMT_I , 0)) +
+            SUM(ISNULL(B2.AC_AMT_I , 0))) - 
+           (SUM(ISNULL(B2.BUDG_CONF_I , 0)) + 
+            SUM(ISNULL(B2.BUDG_CONV_I , 0)) + 
+            SUM(ISNULL(B2.BUDG_ASGN_I , 0)) + 
+            SUM(ISNULL(B2.BUDG_SUPP_I , 0)) + 
+            SUM(ISNULL(B2.BUDG_IWALL_I, 0))) AS CHANGE_I_TOT_LAST 
+          , D.BUDG_TYPE
+    
+    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index" >
+         , LEFT(B.BUDG_CODE, @LEVEL_LEN${index+1} ) AS BUDG_CODE_${index+1}
+    </foreach>
+        
+      FROM            
+                      AFB510T AS B WITH (NOLOCK)
+           LEFT  JOIN AFB510T AS B2 WITH (NOLOCK) ON B2.COMP_CODE    = B.COMP_CODE
+                                                 AND B2.DEPT_CODE    = B.DEPT_CODE
+                                                 AND B2.BUDG_CODE    = B.BUDG_CODE
+                                                 AND B2.BUDG_YYYYMM &gt;= @LastFrBudgYyyyMm 
+                                                 AND B2.BUDG_YYYYMM &lt;= @LastToBudgYyyyMm
+    --'사용예산코드만 조회옵션이 'Y'이고 현업담당자이면 해당 예산코드만 조회되도록 inner join 처리
+    <if test="ACCDEPT_USEYN == &quot;Y&quot;">
+    	 <if test="CHARGE_GUBUN == &quot;2&quot;">
+           INNER JOIN (SELECT COMP_CODE
+                            , BUDG_CODE
+                       FROM   AFB410T WITH (NOLOCK)
+                       WHERE  COMP_CODE = @COMP_CODE
+                       AND    AC_YYYY   = @AC_YYYY
+                       AND    DEPT_CODE = #{DEPT_CODE2}
+                       AND    USE_YN    = 'Y'
+                       )        A                 ON A.COMP_CODE      = B.COMP_CODE
+                                                 AND A.BUDG_CODE      = B.BUDG_CODE
+   	 	</if>
+    </if>
+           LEFT  JOIN AFB410T AS A  WITH (NOLOCK) ON A.COMP_CODE      = B.COMP_CODE
+                                                 AND A.AC_YYYY        = @AC_YYYY
+                                                 AND A.DEPT_CODE      = B.DEPT_CODE
+                                                 AND A.BUDG_CODE      = B.BUDG_CODE
+           LEFT  JOIN BSA210T AS C WITH (NOLOCK) ON B.COMP_CODE     = C.COMP_CODE
+                                                AND B.DEPT_CODE     = C.TREE_CODE
+           LEFT  JOIN AFB400T AS D WITH (NOLOCK) ON D.COMP_CODE     = B.COMP_CODE
+                                                 AND D.AC_YYYY       = @AC_YYYY
+                                                 AND D.BUDG_CODE     = B.BUDG_CODE
+     WHERE B.COMP_CODE      = @COMP_CODE
+       AND B.BUDG_YYYYMM   &gt;= @FrBudgYyyyMm
+       AND B.BUDG_YYYYMM   &lt;= @ToBudgYyyyMm
+       AND ((B.DEPT_CODE    = @DEPT_CODE         AND @DEPT_CODE    != '' AND @LOWER_DEPT != 'Y') OR 
+            (C.TREE_LEVEL LIKE @TREE_LEVEL + '%' AND @DEPT_CODE    != '' AND @LOWER_DEPT  = 'Y') OR
+            (@DEPT_CODE     = '' ))
+       AND ((B.BUDG_CODE  LIKE @BUDG_CODE  + '%' AND @BUDG_CODE    != '') OR (@BUDG_CODE = ''))
+       AND ((D.BUDG_TYPE    = @BUDG_TYPE         AND @BUDG_TYPE    != '') OR (@BUDG_TYPE = ''))
+       AND D.GROUP_YN       = N'N'
+    
+       AND ((B.BUDG_GUBUN   = @BUDG_GUBUN       AND @BUDG_GUBUN   != '')  OR (@BUDG_GUBUN   = ''))
+       AND ((D.PJT_CODE     = @PROJECT_NO       AND @PROJECT_NO   != '')  OR (@PROJECT_NO   = ''))
+    
+     GROUP BY B.COMP_CODE, B.BUDG_YYYYMM, B.DEPT_CODE, C.TREE_NAME, B.BUDG_CODE, D.BUDG_NAME
+            , D.BUDG_TYPE
+
+    -- 임시테이블에 레벨별 합계 INSERT
+    
+   <foreach collection="budgNameInfoList" item="budgNameInfo" index="index" >
+        INSERT INTO T_AFB520SKR1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DEPT_CODE, DEPT_NAME, BUDG_CODE, BUDG_NAME, CODE_LEVEL
+                               , BUDG_I_TOT, AC_I_TOT, CHANGE_I_TOT, CHANGE_RATE, BUDG_I_TOT_LAST, AC_I_TOT_LAST, CHANGE_I_TOT_LAST, CHANGE_RATE_LAST
+                               , BUDG_TYPE)
+        SELECT X.TYPE_KEY   AS TYPE_KEY
+             , N'1'         AS TYPE_FLAG
+             , X.COMP_CODE  AS COMP_CODE
+
+        <if test="RDO == &quot;1&quot;">
+             , X.DEPT_CODE  AS DEPT_CODE
+             , X.DEPT_NAME  AS DEPT_NAME
+        </if>
+        <if test="RDO == &quot;2&quot;">
+             , CONVERT(NVARCHAR(08),'') AS DEPT_CODE
+             , CONVERT(NVARCHAR(30),'') AS DEPT_NAME
+        </if>
+             , LEFT(X.BUDG_CODE, @LEVEL_LEN${index+1} ) AS BUDG_CODE
+             , SPACE((${index+1} -1) * 2) + Y.BUDG_NAME AS BUDG_NAME
+             , Y.CODE_LEVEL AS CODE_LEVEL
+    
+             , ISNULL(ROUND(SUM(X.BUDG_I_TOT) /@lUnit ${sSqlAmtPoint},0)    AS BUDG_I_TOT
+             , ISNULL(ROUND(SUM(X.AC_I_TOT) /@lUnit ${sSqlAmtPoint},0)      AS AC_I_TOT
+             , ISNULL(ROUND(SUM(X.CHANGE_I_TOT) /@lUnit ${sSqlAmtPoint},0)  AS CHANGE_I_TOT
+             , ISNULL((CASE WHEN ISNULL(SUM(X.BUDG_I_TOT),0) &gt; 0
+                                 THEN ISNULL(ROUND((SUM(X.CHANGE_I_TOT) / SUM(X.BUDG_I_TOT) * 100) ${sSqlRefCode1} ,0)  ELSE 0 
+                       END),0)  AS CHANGE_RATE
+             , ISNULL(ROUND(SUM(X.BUDG_I_TOT_LAST) /@lUnit ${sSqlAmtPoint},0)    AS BUDG_I_TOT_LAST
+             , ISNULL(ROUND(SUM(X.AC_I_TOT_LAST) /@lUnit ${sSqlAmtPoint},0)      AS AC_I_TOT_LAST
+             , ISNULL(ROUND(SUM(X.CHANGE_I_TOT_LAST) /@lUnit ${sSqlAmtPoint},0)  AS CHANGE_I_TOT_LAST
+             , ISNULL((CASE WHEN ISNULL(SUM(X.BUDG_I_TOT_LAST),0) &gt; 0
+                                 THEN ISNULL(ROUND((SUM(X.CHANGE_I_TOT_LAST) / SUM(X.BUDG_I_TOT_LAST) * 100) ${sSqlRefCode1} ,0)  ELSE 0 
+                       END),0)  AS CHANGE_RATE_LAST
+        
+             , X.BUDG_TYPE
+        
+      FROM           T_AFB520SKR1 X  WITH (NOLOCK)
+           LEFT JOIN AFB400T      Y  WITH (NOLOCK) ON Y.COMP_CODE = X.COMP_CODE
+                                   AND Y.AC_YYYY   = X.AC_YYYY
+                                   AND Y.BUDG_CODE = X.BUDG_CODE_${index+1} 
+        WHERE  TYPE_KEY  = @TypeKey
+        AND    TYPE_FLAG = '0'
+        AND   ((X.BUDG_I_TOT != 0) OR (X.AC_I_TOT != 0) OR (X.BUDG_I_TOT_LAST != 0) OR (X.AC_I_TOT_LAST != 0))
+       
+        GROUP BY X.TYPE_KEY, X.COMP_CODE
+        
+        <if test="RDO == &quot;1&quot;">
+                   , X.DEPT_CODE, X.DEPT_NAME, X.BUDG_TYPE
+        </if>
+        
+               , LEFT(X.BUDG_CODE, @LEVEL_LEN${index+1} ), Y.BUDG_NAME, Y.CODE_LEVEL, X.BUDG_TYPE
+    
+    </foreach>
+    
+
+    -- Main Query
+    SELECT COMP_CODE
+         , DEPT_CODE
+         , DEPT_NAME
+         , BUDG_CODE
+         , BUDG_NAME
+         , CODE_LEVEL
+         , BUDG_I_TOT
+         , AC_I_TOT
+         , CHANGE_I_TOT
+         , CHANGE_RATE
+         , BUDG_I_TOT_LAST
+         , AC_I_TOT_LAST
+         , CHANGE_I_TOT_LAST
+         , CHANGE_RATE_LAST
+         , BUDG_TYPE
+    FROM   T_AFB520SKR1  WITH (NOLOCK)
+    WHERE  TYPE_KEY  = @TypeKey
+    AND    TYPE_FLAG = '1'
+    ORDER BY COMP_CODE, DEPT_CODE, BUDG_CODE
+
+    SET NOCOUNT OFF
+END
+</select>
+
+</mapper>

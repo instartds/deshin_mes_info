@@ -1,0 +1,552 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="esa200ukrvServiceImpl">	
+
+	<select id="esa200ukrvServiceImpl.checkAsP" parameterType="Map" resultType="rMap">
+	SELECT 
+			CASE WHEN A.ITEM_ACCOUNT = '10' OR A.ITEM_ACCOUNT = '20' THEN ISNULL(B.PL_COST,0) + ISNULL(B.PL_AMOUNT,0)
+                 ELSE A.PURCHASE_BASE_P  END  AS ITEM_PRICE
+		  FROM BPR200T A WITH(NOLOCK)
+		  LEFT JOIN BPL100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+										   AND B.DIV_CODE = A.DIV_CODE
+										   AND B.PROD_ITEM_CODE = A.ITEM_CODE
+		 WHERE A.COMP_CODE = #{S_COMP_CODE}
+		   AND A.DIV_CODE = #{DIV_CODE}
+		   AND A.ITEM_CODE = #{PART_CODE}
+	</select>
+		   
+
+	<select id="esa200ukrvServiceImpl.selectForm" parameterType="Map" resultType="rMap">
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		    DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+		          , @UserId      NVARCHAR(100) /* 사용자ID */
+		          , @LangType    NVARCHAR(2)  /* 언어구분   */
+		          , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+		          , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+		
+		    SET @CompCode = #{S_COMP_CODE}
+		    SET @UserId   = #{S_USER_ID}
+		    SET @LangType = #{S_LANG_CODE}  
+		
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+		
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+		
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		      FROM BSA100T WITH (NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+		       AND MAIN_CODE = N'B044'
+		       AND REF_CODE1 = N'Y'
+		
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		
+			/* 데이터 조회 */
+		     SELECT 
+					  A.AS_NUM
+					, A.ACCEPT_DATE	
+					, A.ACCEPT_PRSN	
+					, A.AS_CUSTOMER_NM						
+					, A.ORDER_NUM	
+					, B.PROJECT_NO	
+					, CASE WHEN ISNULL(A.PHONE,'') = '' THEN A.HPHONE ELSE A.PHONE END AS PHONE 																		
+					, A.AS_CUSTOMER_CD
+					, D.CUSTOM_NAME    AS  AS_CUSTOMER_NAME								
+			        , A.OUT_DATE
+			        , (SELECT MAX(CLOSE_DATE) FROM EAS210T WHERE COMP_CODE = #{S_COMP_CODE} AND DIV_CODE = #{DIV_CODE} AND AS_NUM = #{AS_NUM_SEACH}) AS CLOSE_DATE
+					,ISNULL(B.ORDER_O, 0)			AS ORDER_O
+					,B.MONEY_UNIT										
+					,ISNULL(A.ITEM_O, 0)            AS ITEM_O	--재료비
+					,ISNULL(A.ITEM_O, 0)            AS DUMMY_ITEM_O	--재료비
+					,ISNULL(A.MAN_O, 0)             AS MAN_O	--노무비
+					,ISNULL(A.MAN_O, 0)             AS DUMMY_MAN_O	--노무비
+					,ISNULL(A.REPAIR_O, 0)          AS REPAIR_O	
+					,ISNULL(A.ETC_O, 0)          	AS ETC_O	--경비	
+					,ISNULL(A.ETC_O, 0)          	AS DUMMY_ETC_O	--경비
+					
+					,ISNULL(A.ITEM_O, 0) + ISNULL(A.MAN_O, 0) +ISNULL(A.ETC_O, 0) AS SUM_O										
+					,ISNULL(A.PAY_YN, '')			AS PAY_YN														
+					,ISNULL(A.FINISH_YN, 'N')		AS FINISH_YN	
+			  FROM  EAS100T A WITH(NOLOCK) 
+			  	LEFT JOIN SOF100T B WITH(NOLOCK) ON B.COMP_CODE	= A.COMP_CODE
+												AND B.DIV_CODE	= A.DIV_CODE
+									            AND B.ORDER_NUM = A.ORDER_NUM
+			  	LEFT JOIN BCM600T C WITH(NOLOCK) ON C.COMP_CODE	= B.COMP_CODE
+									            AND C.PJT_CODE	= B.PROJECT_NO												
+			  	LEFT JOIN BCM100T D WITH(NOLOCK) ON D.COMP_CODE	= B.COMP_CODE
+									            AND D.CUSTOM_CODE	= B.CUSTOM_CODE
+			    LEFT JOIN BSA100T E WITH(NOLOCK) ON E.COMP_CODE	= A.COMP_CODE
+									            AND E.MAIN_CODE = 'S801'
+												AND E.SUB_CODE  = A.ACCEPT_GUBUN
+
+			 WHERE A.COMP_CODE 	= #{S_COMP_CODE}
+			   AND A.DIV_CODE	= #{DIV_CODE}
+			   AND A.AS_NUM    = #{AS_NUM_SEACH}
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+    </select>
+ 
+
+    
+    <update id="esa200ukrvServiceImpl.updateMaster" parameterType="Map">
+    	UPDATE EAS100T
+		SET
+		    PAY_YN         = #{PAY_YN},
+		    FINISH_YN      = #{FINISH_YN},
+			
+		    UPDATE_DB_TIME = GETDATE(),
+		    UPDATE_DB_USER = #{S_USER_ID}
+		WHERE COMP_CODE	= #{S_COMP_CODE}
+		  AND DIV_CODE	= #{DIV_CODE}
+		  AND AS_NUM = #{AS_NUM}
+    </update>
+    
+    
+    
+    <!--////////////  sheet1  -->
+       
+	<select id="esa200ukrvServiceImpl.selectList1" parameterType="Map" resultType="rMap">
+		/* esa200ukrvServiceImpl.selectList1 */
+		SELECT
+			A.COMP_CODE,
+			A.DIV_CODE,
+ 		    A.AS_NUM,
+		    A.AS_SEQ,
+		    A.ITEM_CODE,
+		    B.ITEM_NAME,
+		    B.SPEC,
+		    B.STOCK_UNIT,
+		    A.AS_Q,
+		    A.CLOSE_DATE,
+		    A.BAD_GUBUN,
+		    A.PAY_YN,
+		    A.CLOSE_TYPE,
+		    C.CODE_NAME AS CLOSE_NAME,
+		    A.REMARK
+		FROM EAS210T A WITH(NOLOCK)
+	   INNER JOIN BPR100T B WITH(NOLOCK) ON B.COMP_CODE	= A.COMP_CODE
+										 AND B.ITEM_CODE= A.ITEM_CODE
+		LEFT JOIN BSA100T C WITH(NOLOCK) ON C.MAIN_CODE = 'S803'
+		                                 AND C.COMP_CODE = #{S_COMP_CODE} 
+										 AND C.SUB_CODE = A.CLOSE_TYPE
+		WHERE A.COMP_CODE = #{S_COMP_CODE} 
+		  AND A.DIV_CODE = #{DIV_CODE} 
+		  AND A.AS_NUM = #{AS_NUM_SEACH}
+		  ORDER BY A.AS_SEQ
+		
+	</select>
+	
+    
+    <insert id="esa200ukrvServiceImpl.insertDetail1" parameterType="Map">
+    	INSERT INTO EAS210T (
+    		COMP_CODE
+    		, DIV_CODE
+    		, AS_NUM
+    		, AS_SEQ
+    		, ITEM_CODE
+    		, AS_Q
+    		, CLOSE_DATE
+    		, BAD_GUBUN
+    		, PAY_YN
+    		, CLOSE_TYPE
+    		, REMARK
+    		, INSERT_DB_USER
+    		, INSERT_DB_TIME
+    		, UPDATE_DB_USER
+    		, UPDATE_DB_TIME
+    	)VALUES (
+		    #{S_COMP_CODE}
+		    , #{DIV_CODE}
+		    , #{AS_NUM}
+		    , #{AS_SEQ}
+		    , #{ITEM_CODE}
+		    , #{AS_Q}
+		    , #{CLOSE_DATE}
+		    , #{BAD_GUBUN}
+		    , #{PAY_YN}
+		    , #{CLOSE_TYPE}
+		    , #{REMARK}
+		    , #{S_USER_ID}     	
+		    , GETDATE()	      
+		    , #{S_USER_ID}     	
+		    , GETDATE()
+		)
+    </insert>
+    
+    <update id="esa200ukrvServiceImpl.updateDetail1" parameterType="Map">
+    	UPDATE EAS210T 
+    	SET ITEM_CODE = #{ITEM_CODE}
+		    ,AS_Q = #{AS_Q}
+		    ,CLOSE_DATE = #{CLOSE_DATE}
+		    ,BAD_GUBUN = #{BAD_GUBUN}
+		    ,PAY_YN = #{PAY_YN}
+		    ,CLOSE_TYPE = #{CLOSE_TYPE}
+		    ,REMARK = #{REMARK}
+		    ,UPDATE_DB_TIME = GETDATE()
+		    ,UPDATE_DB_USER = #{S_USER_ID}
+    	 WHERE COMP_CODE 	= #{S_COMP_CODE}
+    		AND DIV_CODE 	= #{DIV_CODE}
+    		AND AS_NUM 		= #{AS_NUM}
+    		AND AS_SEQ		= #{AS_SEQ}
+    </update>
+    
+    <delete id="esa200ukrvServiceImpl.deleteDetail1" parameterType="Map">
+    	DELETE FROM EAS210T 
+    	WHERE 	COMP_CODE 	= #{S_COMP_CODE}
+    		AND DIV_CODE 	= #{DIV_CODE}
+    		AND AS_NUM 		= #{AS_NUM}
+    		AND AS_SEQ		= #{AS_SEQ}
+    </delete>
+    
+    <update id="esa200ukrvServiceImpl.updateMasterDetail1" parameterType="Map">
+       	UPDATE EAS100T
+		   SET PAY_YN = #{PAY_YN}
+		    ,FINISH_YN = #{FINISH_YN}
+		    
+		    ,UPDATE_DB_TIME = GETDATE()
+		    ,UPDATE_DB_USER = #{S_USER_ID}
+		WHERE COMP_CODE	= #{S_COMP_CODE}
+		  AND DIV_CODE = #{DIV_CODE}
+		  AND AS_NUM = #{AS_NUM}
+    </update>
+    
+    <!--////////////  end sheet1  -->
+    
+    <!--////////////  sheet2  -->
+    
+	<select id="esa200ukrvServiceImpl.selectSubGrid" parameterType="Map" resultType="rMap">
+		SELECT 
+			A.COMP_CODE
+			,A.DIV_CODE
+			,A.AS_NUM
+			,A.AS_SEQ
+			,A.ITEM_CODE
+			,B.ITEM_NAME 
+		  FROM EAS210T A WITH (NOLOCK)
+	INNER JOIN BPR100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+									 AND B.ITEM_CODE = A.ITEM_CODE
+		 WHERE A.COMP_CODE = #{S_COMP_CODE} 
+		   AND A.DIV_CODE = #{DIV_CODE}
+		<if test="@foren.Ognl@isNotEmpty(AS_NUM_SEACH)">  
+		   AND A.AS_NUM = #{AS_NUM_SEACH}
+		</if>
+	</select>
+	
+	<select id="esa200ukrvServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+	/* esa200ukrvServiceImpl.selectList2 */
+SELECT A.COMP_CODE,
+			A.DIV_CODE,
+			A.AS_NUM,
+			A.AS_SEQ,
+		    A.PART_SEQ,
+		    A.PART_CODE,
+		    C.ITEM_NAME,
+		    C.SPEC,
+		    C.STOCK_UNIT,
+		    A.AS_Q,
+		    A.AS_P,
+		    A.AS_O,
+		    A.AS_O AS DUMMY_AS_O,
+		    A.REMARK,
+		    A.MANAGE_REMARK,
+		    A.CAUSES_REMARK,
+		    A.PREVENT_REMARK
+		FROM EAS220T A WITH(NOLOCK)
+  INNER JOIN BPR100T C WITH(NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+								   AND C.ITEM_CODE = A.PART_CODE
+		WHERE A.COMP_CODE = #{S_COMP_CODE} 
+		  AND A.DIV_CODE = #{DIV_CODE}
+		  AND A.AS_NUM = #{AS_NUM}
+		  AND A.AS_SEQ = #{AS_SEQ}
+		ORDER BY A.AS_SEQ, A.PART_SEQ
+	</select>
+    
+    <insert id="esa200ukrvServiceImpl.insertDetail2" parameterType="Map">
+    	 INSERT INTO EAS220T (
+    	 	COMP_CODE
+    	 	, DIV_CODE
+    	 	, AS_NUM
+    	 	, AS_SEQ
+    	 	, PART_SEQ
+    	 	, PART_CODE
+    	 	, AS_Q
+    	 	, AS_P
+    	 	, AS_O
+    	 	, REMARK
+    		, MANAGE_REMARK
+    		, CAUSES_REMARK
+    		, PREVENT_REMARK 
+    	 	, INSERT_DB_USER
+    	 	, INSERT_DB_TIME
+    	 	, UPDATE_DB_USER
+    	 	, UPDATE_DB_TIME
+    	 )VALUES (
+		    #{S_COMP_CODE}
+		    , #{DIV_CODE}
+		    , #{AS_NUM}
+		    , #{AS_SEQ}
+		    , #{PART_SEQ}
+		    , #{PART_CODE}
+		    , #{AS_Q}
+		    , #{AS_P}
+		    , #{AS_O}
+		    , #{REMARK}
+		    , #{MANAGE_REMARK}     
+			, #{CAUSES_REMARK}     
+			, #{PREVENT_REMARK}   
+		    , #{S_USER_ID}     	
+		    , GETDATE()	      
+		    , #{S_USER_ID}     	
+		    , GETDATE()
+		)
+    </insert>
+    
+    <update id="esa200ukrvServiceImpl.updateDetail2" parameterType="Map">
+    	UPDATE EAS220T 
+    	SET PART_CODE = #{PART_CODE}
+    		,AS_Q = #{AS_Q}
+    		,AS_P = #{AS_P}
+    		,AS_O = #{AS_O}
+    		,REMARK = #{REMARK}
+    		,MANAGE_REMARK = #{MANAGE_REMARK}
+    		,CAUSES_REMARK = #{CAUSES_REMARK}
+    		,PREVENT_REMARK = #{PREVENT_REMARK}
+		    ,UPDATE_DB_TIME = GETDATE()
+		    ,UPDATE_DB_USER = #{S_USER_ID}
+    	WHERE COMP_CODE = #{S_COMP_CODE}
+    	  AND DIV_CODE = #{DIV_CODE}
+    	  AND AS_NUM = #{AS_NUM}
+    	  AND AS_SEQ = #{AS_SEQ}
+    	  AND PART_SEQ = #{PART_SEQ}
+    		
+    </update>
+    
+    <delete id="esa200ukrvServiceImpl.deleteDetail2" parameterType="Map">
+    	DELETE FROM EAS220T 
+    	WHERE 	COMP_CODE 	= #{S_COMP_CODE}
+    		AND DIV_CODE 	= #{DIV_CODE}
+    		AND AS_NUM 		= #{AS_NUM}
+    		AND AS_SEQ		= #{AS_SEQ}
+    		AND PART_SEQ	= #{PART_SEQ}
+    </delete>
+    
+    
+    <update id="esa200ukrvServiceImpl.updateMasterDetail2" parameterType="Map">
+       	UPDATE EAS100T
+		   SET PAY_YN = #{PAY_YN}
+		    ,FINISH_YN = #{FINISH_YN}
+		    ,ITEM_O = #{ITEM_O}
+		    ,UPDATE_DB_TIME = GETDATE()
+		    ,UPDATE_DB_USER = #{S_USER_ID}
+		WHERE COMP_CODE	= #{S_COMP_CODE}
+		  AND DIV_CODE = #{DIV_CODE}
+		  AND AS_NUM = #{AS_NUM}
+    </update>
+    <!--////////////  end sheet2  -->
+    <!--////////////  sheet3  -->
+    
+	<select id="esa200ukrvServiceImpl.selectList3" parameterType="Map" resultType="rMap">
+	/* esa200ukrvServiceImpl.selectList3 */
+		SELECT
+			COMP_CODE
+			,DIV_CODE
+		    ,AS_NUM
+		    ,PERSON_NUMB
+		    ,PERSON_NAME
+		    ,MAN_HOUR
+		    ,AVG_LABOR_CODE
+		    ,AVG_LABOR_RATE
+		    ,LABOR_COST
+		    ,LABOR_COST AS DUMMY_LABOR_COST
+			,REMARK
+		FROM EAS230T WITH(NOLOCK)
+		WHERE COMP_CODE = #{S_COMP_CODE} 
+		  AND DIV_CODE = #{DIV_CODE} 
+		  AND AS_NUM = #{AS_NUM_SEACH}
+		
+	</select>
+    
+    <insert id="esa200ukrvServiceImpl.insertDetail3" parameterType="Map">
+		INSERT INTO EAS230T (
+			COMP_CODE
+			, DIV_CODE
+			, AS_NUM
+			, PERSON_NUMB
+			, PERSON_NAME
+			, MAN_HOUR
+			, AVG_LABOR_CODE
+			, AVG_LABOR_RATE
+			, LABOR_COST
+			, REMARK
+			, INSERT_DB_USER
+			, INSERT_DB_TIME
+			, UPDATE_DB_USER
+			, UPDATE_DB_TIME
+		)VALUES (
+			#{S_COMP_CODE}
+			, #{DIV_CODE}
+			, #{AS_NUM}
+			, #{PERSON_NUMB}
+			, #{PERSON_NAME}
+			, #{MAN_HOUR}
+			, #{AVG_LABOR_CODE}
+			, #{AVG_LABOR_RATE}
+			, #{LABOR_COST}
+			, #{REMARK}
+			, #{S_USER_ID}     	
+			, GETDATE()	      
+			, #{S_USER_ID}     	
+			, GETDATE()
+		)
+    </insert>
+    
+    <update id="esa200ukrvServiceImpl.updateDetail3" parameterType="Map">
+	    UPDATE EAS230T 
+	    SET MAN_HOUR        = #{MAN_HOUR}
+	    	,AVG_LABOR_CODE = #{AVG_LABOR_CODE}
+		    ,AVG_LABOR_RATE  = #{AVG_LABOR_RATE}
+		    ,LABOR_COST      = #{LABOR_COST}
+		    ,REMARK			= #{REMARK}
+		    ,UPDATE_DB_TIME = GETDATE()
+		    ,UPDATE_DB_USER = #{S_USER_ID}
+		WHERE COMP_CODE 	= #{S_COMP_CODE}
+	    	AND DIV_CODE 	= #{DIV_CODE}
+	    	AND AS_NUM   	= #{AS_NUM}
+		    AND PERSON_NUMB = #{PERSON_NUMB}
+    </update>
+    
+    <delete id="esa200ukrvServiceImpl.deleteDetail3" parameterType="Map">
+    	DELETE FROM EAS230T 
+    	WHERE 	COMP_CODE 	= #{S_COMP_CODE}
+    		AND DIV_CODE 	= #{DIV_CODE}
+    		AND AS_NUM 		= #{AS_NUM}
+    		AND PERSON_NUMB = #{PERSON_NUMB}
+    </delete>
+    
+    <update id="esa200ukrvServiceImpl.updateMasterDetail3" parameterType="Map">
+       	UPDATE EAS100T
+		   SET PAY_YN = #{PAY_YN}
+		    ,FINISH_YN = #{FINISH_YN}
+		    ,MAN_O = #{MAN_O}
+		    ,UPDATE_DB_TIME = GETDATE()
+		    ,UPDATE_DB_USER = #{S_USER_ID}
+		WHERE COMP_CODE	= #{S_COMP_CODE}
+		  AND DIV_CODE = #{DIV_CODE}
+		  AND AS_NUM = #{AS_NUM}
+    </update>
+    <!--////////////  end sheet3  -->
+    <!--////////////  sheet4  -->
+    
+    <select id="esa200ukrvServiceImpl.selectList4" parameterType="Map" resultType="rMap">
+	/* esa200ukrvServiceImpl.selectList4 */
+		SELECT 
+			 COMP_CODE
+			,DIV_CODE
+			,AS_NUM
+			,SER_NO
+			,EXPENSE_NAME
+			,EXPENSE_COST 
+			,EXPENSE_COST AS DUMMY_EXPENSE_COST
+			,REMARK 
+		FROM  EAS240T WITH(NOLOCK)
+ 		WHERE COMP_CODE 	= #{S_COMP_CODE}
+	 		AND DIV_CODE 	= #{DIV_CODE}
+	 		AND AS_NUM    	= #{AS_NUM_SEACH}
+	 	ORDER BY SER_NO
+	</select>
+    <insert id="esa200ukrvServiceImpl.insertDetail4" parameterType="Map">
+		INSERT INTO EAS240T (
+			COMP_CODE
+			, DIV_CODE
+			, AS_NUM
+			, SER_NO
+			, EXPENSE_NAME
+			, EXPENSE_COST
+			, REMARK
+			, INSERT_DB_USER
+			, INSERT_DB_TIME
+			, UPDATE_DB_USER
+			, UPDATE_DB_TIME
+		)VALUES (
+			#{S_COMP_CODE}
+			, #{DIV_CODE}
+			, #{AS_NUM}
+			, #{SER_NO}
+			, #{EXPENSE_NAME}
+			, #{EXPENSE_COST}
+			, #{REMARK}
+			, #{S_USER_ID}     	
+			, GETDATE()	      
+			, #{S_USER_ID}     	
+			, GETDATE()
+		)
+    </insert>
+    
+    <update id="esa200ukrvServiceImpl.updateDetail4" parameterType="Map">
+	    UPDATE EAS240T SET 
+		    EXPENSE_NAME    = #{EXPENSE_NAME}
+		    ,EXPENSE_COST   = #{EXPENSE_COST}
+		    ,REMARK			= #{REMARK}
+		    ,UPDATE_DB_TIME = GETDATE()
+		    ,UPDATE_DB_USER = #{S_USER_ID}
+		WHERE COMP_CODE 	= #{S_COMP_CODE}
+	    	AND DIV_CODE 	= #{DIV_CODE}
+	    	AND AS_NUM   	= #{AS_NUM}
+	    	AND SER_NO 		= #{SER_NO}
+    </update>
+    
+    <delete id="esa200ukrvServiceImpl.deleteDetail4" parameterType="Map">
+    	DELETE FROM EAS240T 
+    	WHERE 	COMP_CODE 	= #{S_COMP_CODE}
+    		AND DIV_CODE 	= #{DIV_CODE}
+    		AND AS_NUM 		= #{AS_NUM}
+    		AND SER_NO 		= #{SER_NO}
+    </delete>
+    
+    <update id="esa200ukrvServiceImpl.updateMasterDetail4" parameterType="Map">
+       	UPDATE EAS100T
+		   SET PAY_YN = #{PAY_YN}
+		    ,FINISH_YN = #{FINISH_YN}
+		    ,ETC_O = #{ETC_O}
+		    ,UPDATE_DB_TIME = GETDATE()
+		    ,UPDATE_DB_USER = #{S_USER_ID}
+		WHERE COMP_CODE	= #{S_COMP_CODE}
+		  AND DIV_CODE = #{DIV_CODE}
+		  AND AS_NUM = #{AS_NUM}
+    </update>
+    <!--////////////  end sheet4  -->
+    
+    <select id="esa200ukrvServiceImpl.selectOtherOrderList" parameterType="Map" resultType="rMap">
+    	/* esa200ukrvServiceImpl.selectOtherOrderList */
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+			 , A.AS_NUM
+			 , A.AS_SEQ
+			 , A.ITEM_CODE
+			 , B.ITEM_NAME
+		     , B.STOCK_UNIT
+			 , B.SPEC
+			 , A.AS_Q
+			 , A.AS_P
+			 , A.AS_O
+			 , A.INOUT_DATE
+			 , A.PROCESS_YN
+			 , A.REMARK,
+			A.INSERT_DB_USER,A.INSERT_DB_TIME,A.UPDATE_DB_USER,A.UPDATE_DB_TIME 
+		FROM EAS110T A
+			INNER JOIN BPR100T B WITH(NOLOCK) ON A.COMP_CODE	= B.COMP_CODE
+										     AND A.ITEM_CODE	= B.ITEM_CODE
+		WHERE A.COMP_CODE=#{S_COMP_CODE} AND A.DIV_CODE=#{DIV_CODE}
+		<if test="@foren.Ognl@isNotEmpty(AS_NUM)">  
+		    AND	 A.AS_NUM = #{AS_NUM}
+		</if>
+    </select>
+</mapper>

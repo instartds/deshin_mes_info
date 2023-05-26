@@ -1,0 +1,312 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="agc100rkrServiceImpl">
+	
+	<select id="agc100rkrServiceImpl.selectMsg" parameterType="Map" resultType="rMap">	    
+	--UBdi01Krv.CBDicKr[fnMsgDic] Query01 
+	SELECT MSG_NO                        
+	     , MSG_DESC AS MSG_DESC
+	  FROM BSA010T  WITH (NOLOCK)                        
+	 WHERE MSG_TYPE = '1'                 
+	   AND MSG_NO IN ('A0149')
+	</select>
+	
+	<select id="agc100rkrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	--agc100rkrServiceImpl.selectList 
+	BEGIN
+	    DECLARE @COMP_CODE      NVARCHAR(08)        --(필수)법인코드
+	          , @FR_DATE        NVARCHAR(08)        --(필수)FROM기준일
+	          , @TO_DATE        NVARCHAR(08)        --(필수)TO  기준일
+	          , @CALC_JAN_AMT   NVARCHAR(01)        --(필수)잔액계산기준
+	          , @ST_DATE        NVARCHAR(06)        --(필수)당기시작년월
+	          , @REF_ITEM       NVARCHAR(01)        --(필수)과목명
+	          , @FORM_DIVISION  NVARCHAR(02)        --(필수)재무제표양식차수
+			  , @MSG_DESC		NVARCHAR(100)		--합계
+	          , @Divi           NVARCHAR(02)
+	
+	    SET     @COMP_CODE      = #{S_COMP_CODE}
+	    SET     @FR_DATE        = #{FR_DATE}
+	    SET     @TO_DATE        = #{TO_DATE}
+	    SET     @CALC_JAN_AMT   = #{CALC_JAN_AMT}
+	    SET     @ST_DATE        = #{ST_DATE}
+	    SET     @REF_ITEM       = #{REF_ITEM}
+	    SET     @FORM_DIVISION  = #{FORM_DIVISION}
+		SET		@MSG_DESC		= #{MSG_DESC}
+	    SET     @Divi           = '50'
+	
+	    SET     NOCOUNT    ON
+	    SET     ARITHABORT ON
+		   
+	    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects  WHERE id=object_id('tempdb..#AGC100rkr_120914'))
+	        DROP TABLE #AGC100rkr_120914
+	
+	    CREATE TABLE #AGC100rkr_120914 ( ACCNT         NVARCHAR(16)
+	                                   , SEQ           NUMERIC(05, 0)
+	                                   , ACCNT_DIVI    NVARCHAR(01)
+	                                   , BDR_AMT_I     NUMERIC(30, 6)
+	                                   , SDR_AMT_TOT_I NUMERIC(30, 6)
+	                                   , MDR_AMT_TOT_I NUMERIC(30, 6)
+	                                   , ACCNT_NAME    NVARCHAR(50)
+	                                   , MCR_AMT_TOT_I NUMERIC(30, 6)
+	                                   , SCR_AMT_TOT_I NUMERIC(30, 6)
+	                                   , BCR_AMT_I     NUMERIC(30, 6)
+	                                   , SUBJECT_DIVI  NVARCHAR(01)
+	                                   )
+	                                    
+	    --1. 집계항목별 금액
+	    INSERT INTO #AGC100rkr_120914
+	    SELECT  E.ACCNT
+	         ,  E.SEQ
+	         ,  E.ACCNT_DIVI
+	         ,  SUM(ISNULL(E.BDR_AMT_I    , 0)) AS BDR_AMT_I       -- 잔액(차변)
+	         ,  SUM(ISNULL(E.SDR_AMT_TOT_I, 0)) AS SDR_AMT_TOT_I   -- 누계(차변)
+	         ,  SUM(ISNULL(E.MDR_AMT_TOT_I, 0)) AS MDR_AMT_TOT_I   -- 합계(차변)
+	         ,  E.ACCNT_NAME                                       -- 계정명
+	         ,  SUM(ISNULL(E.MCR_AMT_TOT_I, 0)) AS MCR_AMT_TOT_I   -- 합계(대변)
+	         ,  SUM(ISNULL(E.SCR_AMT_TOT_I, 0)) AS SCR_AMT_TOT_I   -- 누계(대변)
+	         ,  SUM(ISNULL(E.BCR_AMT_I    , 0)) AS BCR_AMT_I       -- 잔액(대변)
+	         ,  '1' AS SUBJECT_DIVI
+	    FROM (
+	            SELECT  A.ACCNT_CD      AS ACCNT                            -- 계정코드
+	                 ,  A.RIGHT_LEFT    AS JAN_DIVI                         -- 잔액
+	                 ,  A.SEQ                                               -- 순서
+	                 ,  A.OPT_DIVI      AS ACCNT_DIVI                       -- 바탕색
+	                 ,  CASE WHEN @CALC_JAN_AMT = '1'
+	                         THEN (CASE WHEN A.RIGHT_LEFT = '1' 
+	                                    THEN SUM(ISNULL(B.SDR_AMT_TOT_I,0)-ISNULL(B.SCR_AMT_TOT_I,0))
+	                                    ELSE 0 
+	                                END)
+	                         ELSE (CASE WHEN B.JAN_DIVI   = '1'
+	                                    THEN SUM(ISNULL(B.SDR_AMT_TOT_I,0)-ISNULL(B.SCR_AMT_TOT_I,0))
+	                                    ELSE 0 
+	                                END)
+	                    END AS BDR_AMT_I                                    -- 잔액(차변)
+	                 ,  SUM(ISNULL(B.SDR_AMT_TOT_I,0))  AS SDR_AMT_TOT_I    -- 누계(차변)
+	                 ,  SUM(ISNULL(B.MDR_AMT_TOT_I,0))  AS MDR_AMT_TOT_I    -- 합계(차변)
+	                 ,  CASE WHEN @REF_ITEM = '0' THEN A.ACCNT_NAME
+	                         WHEN @REF_ITEM = '1' THEN A.ACCNT_NAME2
+	                         WHEN @REF_ITEM = '2' THEN A.ACCNT_NAME3
+	                    END AS ACCNT_NAME
+	                 ,  SUM(ISNULL(B.MCR_AMT_TOT_I,0))  AS MCR_AMT_TOT_I    -- 합계(대변)
+	                 ,  SUM(ISNULL(B.SCR_AMT_TOT_I,0))  AS SCR_AMT_TOT_I    -- 누계(대변)
+	                 ,  CASE WHEN @CALC_JAN_AMT = '1'
+	                         THEN (CASE WHEN A.RIGHT_LEFT = '2'
+	                                    THEN SUM(ISNULL(B.SCR_AMT_TOT_I,0)-ISNULL(B.SDR_AMT_TOT_I,0))
+	                                    ELSE 0 
+	                                END)
+	                         ELSE (CASE WHEN B.JAN_DIVI   = '2'
+	                                    THEN SUM(ISNULL(B.SCR_AMT_TOT_I,0)-ISNULL(B.SDR_AMT_TOT_I,0))
+	                                    ELSE 0 
+	                                END)
+	                    END AS BCR_AMT_I                                    -- 잔액(대변)
+	            FROM ABA121T    AS A  WITH (NOLOCK)
+	                LEFT  JOIN (
+	                            SELECT  C.COMP_CODE
+	                                 ,  C.ACCNT
+	                                 ,  C.AC_DATE
+	                                 ,  CASE WHEN C.AC_DATE &gt;= @FR_DATE
+	                                         THEN SUM(ISNULL(C.DR_AMT_I,0))
+	                                         ELSE 0
+	                                    END AS MDR_AMT_TOT_I
+	                                 ,  SUM(ISNULL(C.DR_AMT_I,0))   AS SDR_AMT_TOT_I
+	                                 ,  CASE WHEN C.AC_DATE &gt;= @FR_DATE
+	                                         THEN SUM(ISNULL(C.CR_AMT_I,0))
+	                                         ELSE 0 
+	                                    END AS MCR_AMT_TOT_I
+	                                 ,  SUM(ISNULL(C.CR_AMT_I,0))   AS SCR_AMT_TOT_I
+	                                 ,  E.JAN_DIVI
+	                            FROM           AGB100T  AS C WITH (NOLOCK)
+	                                LEFT  JOIN BOR120T  AS D WITH (NOLOCK)  ON  D.COMP_CODE = C.COMP_CODE
+	                                                                        AND D.DIV_CODE  = C.DIV_CODE
+	                                LEFT  JOIN ABA400T  AS E WITH (NOLOCK)  ON  E.COMP_CODE = C.COMP_CODE
+	                                                                        AND E.ACCNT     = C.ACCNT
+	                            WHERE C.COMP_CODE   = @COMP_CODE
+	                            AND C.AC_DATE      &gt;= @ST_DATE
+	                            AND C.AC_DATE      &lt;= @TO_DATE
+	                            AND NOT (LEN(C.AC_DATE) = 6 AND C.AC_DATE &gt; @ST_DATE AND C.AC_DATE &lt;=  @TO_DATE)
+	                            AND (E.PROFIT_DIVI IS NULL OR E.PROFIT_DIVI NOT LIKE 'B%')
+	                            <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">
+							    AND C.DIV_CODE IN (select value from  uniLITE.fnSplit(#{ACCNT_DIV_CODE}, ','))
+								</if>
+	                            GROUP BY C.COMP_CODE, C.ACCNT, C.AC_DATE, E.JAN_DIVI
+	                           ) AS B   ON  B.COMP_CODE = A.COMP_CODE
+	                                    AND B.ACCNT     = A.ACCNT
+	            WHERE A.COMP_CODE = @COMP_CODE
+	            AND   A.DIVI      = @Divi
+	            AND   A.GUBUN     = @FORM_DIVISION
+	            GROUP BY A.ACCNT_CD, A.RIGHT_LEFT, A.ACCNT_NAME, A.ACCNT_NAME2, A.ACCNT_NAME3, A.SEQ, A.OPT_DIVI, B.JAN_DIVI
+	         )  AS E
+	    GROUP BY E.ACCNT, E.SEQ, E.ACCNT_DIVI, E.ACCNT_NAME
+	    HAVING NOT (SUM(ISNULL(E.BDR_AMT_I    ,0)) = 0 AND
+	                SUM(ISNULL(E.SDR_AMT_TOT_I,0)) = 0 AND
+	                SUM(ISNULL(E.MDR_AMT_TOT_I,0)) = 0 AND
+	                SUM(ISNULL(E.MCR_AMT_TOT_I,0)) = 0 AND
+	                SUM(ISNULL(E.SCR_AMT_TOT_I,0)) = 0 AND
+	                SUM(ISNULL(E.BCR_AMT_I    ,0)) = 0)
+	
+	
+	    --2. 계정별 금액
+	    INSERT INTO #AGC100rkr_120914
+	    SELECT  C.ACCNT
+	         ,  C.SEQ 
+	         ,  '0' AS ACCNT_DIVI
+	         ,  CASE WHEN C.JAN_DIVI = '1'
+	                 THEN SUM(ISNULL(C.SDR_AMT_TOT_I,0)) - SUM(ISNULL(C.SCR_AMT_TOT_I,0))
+	                 ELSE 0
+	            END AS BDR_AMT_I
+	         ,  SUM(ISNULL(C.SDR_AMT_TOT_I,0)) AS SDR_AMT_TOT_I
+	         ,  SUM(ISNULL(C.MDR_AMT_TOT_I,0)) AS MDR_AMT_TOT_I
+	         ,  CASE WHEN @REF_ITEM = '0' THEN D.ACCNT_NAME
+	                 WHEN @REF_ITEM = '1' THEN D.ACCNT_NAME2
+	                 WHEN @REF_ITEM = '2' THEN D.ACCNT_NAME3
+	            END AS ACCNT_NAME
+	         ,  SUM(ISNULL(C.MCR_AMT_TOT_I,0)) AS MCR_AMT_TOT_I
+	         ,  SUM(ISNULL(C.SCR_AMT_TOT_I,0)) AS SCR_AMT_TOT_I
+	         ,  CASE WHEN C.JAN_DIVI = '2'
+	                 THEN SUM(ISNULL(C.SCR_AMT_TOT_I,0)) - SUM(ISNULL(C.SDR_AMT_TOT_I,0))
+	                 ELSE 0
+	            END AS BCR_AMT_I
+	         ,  C.SUBJECT_DIVI
+	    FROM (
+	            --2.1. 계정(과목)별 금액
+	            SELECT  A.COMP_CODE
+	                 ,  B.ACCNT_CD  AS ACCNT
+	                 ,  F.JAN_DIVI
+	                 ,  CASE WHEN F.JAN_DIVI = '1'
+	                         THEN SUM(ISNULL(A.DR_AMT_I,0) - ISNULL(A.CR_AMT_I,0))
+	                         ELSE 0
+	                    END AS BDR_AMT_I
+	                 ,  SUM(ISNULL(A.DR_AMT_I,0))   AS SDR_AMT_TOT_I
+	                 ,  CASE WHEN A.AC_DATE &gt;= @FR_DATE
+	                         THEN SUM(ISNULL(A.DR_AMT_I,0))
+	                         ELSE 0
+	                    END AS MDR_AMT_TOT_I
+	                 ,  CASE WHEN A.AC_DATE &gt;= @FR_DATE
+	                         THEN SUM(ISNULL(A.CR_AMT_I,0))
+	                         ELSE 0
+	                    END AS MCR_AMT_TOT_I
+	                 ,  SUM(ISNULL(A.CR_AMT_I,0))   AS SCR_AMT_TOT_I
+	                 ,  CASE WHEN F.JAN_DIVI = '2'
+	                         THEN SUM(ISNULL(A.CR_AMT_I,0) - ISNULL(A.DR_AMT_I,0))
+	                         ELSE 0
+	                    END AS BCR_AMT_I
+	                 ,  '1' AS SUBJECT_DIVI
+	                 ,  E.SEQ
+	            FROM           AGB100T  AS A WITH (NOLOCK)
+	                LEFT  JOIN ABA400T  AS B WITH (NOLOCK)  ON  B.COMP_CODE = A.COMP_CODE
+	                                                        AND B.ACCNT     = A.ACCNT
+	                LEFT  JOIN BOR120T  AS D WITH (NOLOCK)  ON  D.COMP_CODE = A.COMP_CODE
+	                                                        AND D.DIV_CODE  = A.DIV_CODE
+	                INNER JOIN ABA121T  AS E WITH (NOLOCK)  ON  E.COMP_CODE = A.COMP_CODE
+	                                                        AND E.OPT_DIVI  = '4'
+	                                                        AND E.GUBUN     = @FORM_DIVISION
+	                                                        AND E.ACCNT     = A.ACCNT
+	                LEFT  JOIN ABA400T  AS F WITH (NOLOCK)  ON  F.COMP_CODE = B.COMP_CODE
+	                                                        AND F.ACCNT     = B.ACCNT_CD
+	            WHERE A.COMP_CODE     = @COMP_CODE
+	            AND   A.AC_DATE      &gt;= @ST_DATE
+	            AND   A.AC_DATE      &lt;= @TO_DATE
+	            AND   NOT (LEN(A.AC_DATE) = 6 AND A.AC_DATE &gt; @ST_DATE AND A.AC_DATE &lt;=  @TO_DATE)
+	            AND   (B.PROFIT_DIVI IS NULL OR B.PROFIT_DIVI != 'B')
+                <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">
+			    AND   A.DIV_CODE IN (select value from  uniLITE.fnSplit(#{ACCNT_DIV_CODE}, ','))
+				</if>
+	            GROUP BY A.COMP_CODE, B.ACCNT_CD, F.JAN_DIVI, A.AC_DATE, E.SEQ
+	    
+	    
+	    <if test="SUB_JECT_DIVI == &quot;2&quot;">
+	
+	            UNION ALL 
+	
+	            --2.2. 계정(세목)별 금액
+	            SELECT  A.COMP_CODE
+	                 ,  B.ACCNT AS ACCNT
+	                 ,  B.JAN_DIVI
+	                 ,  CASE WHEN B.JAN_DIVI = '1'
+	                         THEN SUM(ISNULL(A.DR_AMT_I, 0)) - SUM(ISNULL(A.CR_AMT_I, 0))
+	                         ELSE 0
+	                    END AS BDR_AMT_I
+	                 ,  SUM(ISNULL(A.DR_AMT_I, 0))  AS SDR_AMT_TOT_I
+	                 ,  CASE WHEN A.AC_DATE &gt;= @FR_DATE
+	                         THEN SUM(ISNULL(A.DR_AMT_I, 0))
+	                         ELSE 0
+	                    END AS MDR_AMT_TOT_I
+	                 ,  CASE WHEN A.AC_DATE &gt;= @FR_DATE
+	                         THEN SUM(ISNULL(A.CR_AMT_I, 0))
+	                         ELSE 0
+	                    END AS MCR_AMT_TOT_I
+	                 ,  SUM(ISNULL(A.CR_AMT_I, 0))  AS SCR_AMT_TOT_I
+	                 ,  CASE WHEN B.JAN_DIVI = '2'
+	                         THEN SUM(ISNULL(A.CR_AMT_I,0) - ISNULL(A.DR_AMT_I,0))
+	                         ELSE 0
+	                    END AS BCR_AMT_I
+	                 ,  '2' AS SUBJECT_DIVI
+	                 ,  E.SEQ
+	            FROM           AGB100T  AS A  WITH (NOLOCK)
+	                LEFT  JOIN ABA400T  AS B  WITH (NOLOCK) ON  B.COMP_CODE = A.COMP_CODE
+	                                                        AND B.ACCNT     = A.ACCNT
+	                LEFT  JOIN BOR120T  AS D  WITH (NOLOCK) ON  D.COMP_CODE = A.COMP_CODE
+	                                                        AND D.DIV_CODE  = A.DIV_CODE
+	                LEFT  JOIN ABA121T  AS E  WITH (NOLOCK) ON  E.COMP_CODE = A.COMP_CODE
+	                                                        AND E.OPT_DIVI  = '4'
+	                                                        AND E.GUBUN     = @FORM_DIVISION
+	                                                        AND E.ACCNT     = A.ACCNT
+	            WHERE A.COMP_CODE     = @COMP_CODE
+	            AND   A.AC_DATE      &gt;= @ST_DATE
+	            AND   A.AC_DATE      &lt;= @TO_DATE
+	            AND   NOT (LEN(A.AC_DATE) = 6 AND A.AC_DATE &gt; @ST_DATE AND A.AC_DATE &lt;=  @TO_DATE)
+	            AND   B.SUBJECT_DIVI  = '2'
+	            AND   (B.PROFIT_DIVI IS NULL OR B.PROFIT_DIVI != 'B')
+	            <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+			    AND A.DIV_CODE IN
+					<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+					 ${item}
+					</foreach>									
+				</if>
+	            GROUP BY A.COMP_CODE, B.ACCNT, B.JAN_DIVI, A.AC_DATE, E.SEQ
+	    
+	    </if>
+	    
+	         ) AS C
+	           LEFT  JOIN ABA400T   AS D WITH (NOLOCK)  ON  D.COMP_CODE = C.COMP_CODE
+	                                                    AND D.ACCNT     = C.ACCNT
+	    GROUP BY C.ACCNT, D.ACCNT_NAME, D.ACCNT_NAME2, D.ACCNT_NAME3, C.SUBJECT_DIVI, C.SEQ, C.JAN_DIVI
+	    
+	    
+	    HAVING NOT (SUM(ISNULL(C.BDR_AMT_I    ,0)) = 0 AND
+	                SUM(ISNULL(C.SDR_AMT_TOT_I,0)) = 0 AND
+	                SUM(ISNULL(C.MDR_AMT_TOT_I,0)) = 0 AND
+	                SUM(ISNULL(C.MCR_AMT_TOT_I,0)) = 0 AND
+	                SUM(ISNULL(C.SCR_AMT_TOT_I,0)) = 0 AND
+	                SUM(ISNULL(C.BCR_AMT_I    ,0)) = 0)
+	   
+	    
+	
+	    SET     NOCOUNT    OFF
+	    SET     ARITHABORT OFF
+	
+	    SELECT *
+	    FROM (
+	        SELECT * FROM #AGC100rkr_120914  WITH (NOLOCK)
+	        UNION ALL
+	        SELECT  
+	                MAX(ISNULL(ACCNT        , ''))  AS ACCNT
+	             ,  99999                           AS SEQ
+	             ,  MAX(ISNULL(ACCNT_DIVI   , ''))  AS ACCNT_DIVI
+	             ,  SUM(ISNULL(BDR_AMT_I    , 0 ))  AS BDR_AMT_I
+	             ,  SUM(ISNULL(SDR_AMT_TOT_I, 0 ))  AS SDR_AMT_TOT_I
+	             ,  SUM(ISNULL(MDR_AMT_TOT_I, 0 ))  AS MDR_AMT_TOT_I
+	             ,  @MSG_DESC 						AS ACCNT_NAME
+	             ,  SUM(ISNULL(MCR_AMT_TOT_I, 0 ))  AS MCR_AMT_TOT_I
+	             ,  SUM(ISNULL(SCR_AMT_TOT_I, 0 ))  AS SCR_AMT_TOT_I
+	             ,  SUM(ISNULL(BCR_AMT_I    , 0 ))  AS BCR_AMT_I
+	             ,  MIN(ISNULL(SUBJECT_DIVI , ''))  AS SUBJECT_DIVI
+	        FROM  #AGC100rkr_120914  WITH (NOLOCK)
+	        WHERE ACCNT_DIVI = '6'
+	         )  AS T
+	    ORDER BY T.SEQ ASC, T.ACCNT_DIVI DESC, T.ACCNT ASC
+	END
+	</select>
+	
+	
+</mapper>

@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_sco902skrv_kdService">
+    <select id="s_sco902skrv_kdService.selectList" parameterType="Map" resultType="rMap">
+	    /* 미수금 월누적조회 */
+        BEGIN
+        
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+        
+        DECLARE  @COMP_CODE     NVARCHAR(08)
+                ,@DIV_CODE      NVARCHAR(08)
+                ,@BASIS_YYYYMM  NVARCHAR(06)
+                ,@FR_YYYYMM     NVARCHAR(06)
+                ,@TO_YYYYMM     NVARCHAR(06)
+                ,@CUSTOM_CODE   NVARCHAR(08)
+        
+        SET @COMP_CODE    = #{S_COMP_CODE}    ---법인(필수)
+        SET @DIV_CODE     = #{DIV_CODE}       ---사업장(필수)
+        SET @BASIS_YYYYMM = #{BASIS_YYYYMM}   ---기준년월(필수)
+        SET @CUSTOM_CODE  = #{CUSTOM_CODE}    ---거래처코드(필수)
+        SET @FR_YYYYMM    = CONVERT(NVARCHAR(06), DATEADD(MONTH,  -11, @BASIS_YYYYMM + '01'), 112)
+        SET @TO_YYYYMM    = @BASIS_YYYYMM
+
+
+    		IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE ID=OBJECT_ID('tempdb..#TMP_MISU'))
+    			DROP TABLE #TMP_MISU	
+    			        
+        ;WITH CTE_yyyymmIntev(YYYYMM)
+            AS (
+                SELECT CONVERT(VARCHAR(06), DATEADD(MONTH, 0, @FR_YYYYMM + '01'), 112)  AS YYYYMM
+                UNION  ALL
+                SELECT CONVERT(VARCHAR(06), DATEADD(MONTH, 1, YYYYMM + '01'), 112)
+                FROM CTE_yyyymmIntev
+                WHERE YYYYMM &lt; @TO_YYYYMM
+               )
+        SELECT B.COMP_CODE, B.DIV_CODE
+           , A.CUSTOM_CODE                 AS CUSTOM_CODE      ---거래처코드
+          ,MAX(A.CUSTOM_NAME)            AS CUSTOM_NAME      ---거래처명
+          ,A.BASIS_YYYYMM                AS BASIS_YYYYMM     ---기준년월
+          ,ISNULL(B.MONEY_UNIT, A.MONEY_UNIT)      AS MONEY_UNIT       ---화폐단위
+          ,SUM(ISNULL(B.SALE_AMT_O, 0))  AS SALE_AMT_O       ---공급가액(매출액)
+          ,SUM(ISNULL(B.TAX_AMT_O, 0))   AS TAX_AMT_O        ---네부가세
+          ,SUM(ISNULL(B.COLLECT_AMT, 0)) AS COLLECT_AMT      ---수금액
+          ,SUM(ISNULL(B.BLAN_AMT, 0))    AS BLAN_AMT         ---미수잔액
+        INTO #TMP_MISU
+        FROM
+        (SELECT A.COMP_CODE, A.CUSTOM_CODE, A.CUSTOM_NAME, A.MONEY_UNIT, CTE.YYYYMM AS BASIS_YYYYMM
+            FROM       BCM100T A WITH(NOLOCK) 
+            CROSS JOIN CTE_yyyymmIntev CTE
+        WHERE A.COMP_CODE   = @COMP_CODE 
+        AND A.CUSTOM_TYPE IN ('1','3')
+        <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+        AND A.CUSTOM_CODE = @CUSTOM_CODE
+        </if>
+        ) A
+        LEFT JOIN SAR200T B WITH(NOLOCK) ON  A.COMP_CODE    = B.COMP_CODE
+                                         AND A.CUSTOM_CODE  = B.CUSTOM_CODE
+                                         AND A.BASIS_YYYYMM = B.BASIS_YYYYMM
+                                         AND (B.COMP_CODE   = @COMP_CODE AND B.DIV_CODE = @DIV_CODE)
+        
+        GROUP BY B.COMP_CODE, B.DIV_CODE, A.CUSTOM_CODE, A.BASIS_YYYYMM, ISNULL(B.MONEY_UNIT, A.MONEY_UNIT)
+        ORDER BY A.CUSTOM_CODE, A.BASIS_YYYYMM, ISNULL(B.MONEY_UNIT, A.MONEY_UNIT)
+
+
+		
+    		DELETE A
+    		FROM #TMP_MISU A
+    			 INNER JOIN (
+    				SELECT CUSTOM_CODE
+    				FROM #TMP_MISU
+    				GROUP BY CUSTOM_CODE
+    				HAVING (SUM(SALE_AMT_O) = 0 AND SUM(TAX_AMT_O) = 0 AND SUM(COLLECT_AMT) = 0 AND SUM(BLAN_AMT) = 0)
+    			 ) B ON A.CUSTOM_CODE=B.CUSTOM_CODE
+            
+    
+    	--	SELECT *
+    	--	FROM #TMP_MISU
+    	--	ORDER BY CUSTOM_CODE
+
+		SELECT  CUSTOM_CODE
+				, CUSTOM_NAME
+				, BASIS_YYYYMM
+				, MONEY_UNIT
+				, SUM(SALE_AMT_O)	AS SALE_AMT_O
+				, SUM(TAX_AMT_O)	AS TAX_AMT_O
+				, SUM(COLLECT_AMT)	AS COLLECT_AMT
+				, SUM(BLAN_AMT)		AS BLAN_AMT
+		FROM (
+    		SELECT 
+				 CASE WHEN ISNULL(B.BILL_CUSTOM, '') = '' THEN  A.CUSTOM_CODE ELSE B.BILL_CUSTOM END CUSTOM_CODE
+				, CASE WHEN ISNULL(B.BILL_CUSTOM, '') = ''THEN  A.CUSTOM_NAME ELSE C.CUSTOM_NAME END CUSTOM_NAME
+				, A.BASIS_YYYYMM
+				, A.MONEY_UNIT
+				, A.SALE_AMT_O
+				, A.TAX_AMT_O
+				, A.COLLECT_AMT
+				, A.BLAN_AMT
+				
+				, B.BILL_CUSTOM
+				, C.CUSTOM_NAME AS BILL_NAME
+    		FROM #TMP_MISU A  
+        	   INNER JOIN BCM100T B WITH (NOLOCK) ON A.COMP_CODE=B.COMP_CODE AND A.CUSTOM_CODE=B.CUSTOM_CODE
+			   LEFT JOIN BCM100T C WITH(NOLOCK) ON C.COMP_CODE = B.COMP_CODE AND C.CUSTOM_CODE=B.BILL_CUSTOM
+        
+			)  X
+			GROUP BY CUSTOM_CODE, CUSTOM_NAME, BASIS_YYYYMM, MONEY_UNIT
+
+    		ORDER BY CUSTOM_CODE
+
+        
+        --OPTION (MAXRECURSION 300);
+        SET ARITHABORT OFF
+        SET NOCOUNT OFF
+        
+        END     
+	</select>
+</mapper>

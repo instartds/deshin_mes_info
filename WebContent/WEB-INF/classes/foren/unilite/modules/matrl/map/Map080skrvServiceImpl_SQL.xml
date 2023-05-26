@@ -1,0 +1,504 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="map080skrvServiceImpl">
+					
+	<select id="map080skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+
+
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+    
+    DECLARE @COMP_CODE          NVARCHAR(08)    --법인코드    
+          , @DIV_CODE           NVARCHAR(10)    --사업장코드
+          , @FR_DATE            NVARCHAR(8)     --매입일(FROM)
+          , @TO_DATE            NVARCHAR(8)     --매입일(TO)
+          , @COLLECT_DAY        NVARCHAR(08)    --차수
+          , @CUSTOM_CODE        NVARCHAR(20)    --매입처코드
+                  
+    DECLARE @FR_SALE_DATE       NVARCHAR(08)    --매출일(FROM)
+          , @TO_SALE_DATE       NVARCHAR(08)    --매출일(TO)
+          , @JIBUL_DATE         NVARCHAR(06)    --지불년월
+          , @AGENT_TYPE         NVARCHAR(01)    --고객분류
+          , @RECEIPT_DAY        NVARCHAR(01)    --결제조건
+
+    -- 아래부분만 셋팅하여 조회하시면 됩니다.
+    --★★★★★★★★★★★★★★★★★★★★★
+    SET @COMP_CODE    = #{S_COMP_CODE}
+    SET @DIV_CODE     = #{DIV_CODE}        
+    SET @FR_DATE      = #{FR_DATE}
+    SET @TO_DATE      = #{TO_DATE}
+    SET @JIBUL_DATE   = #{PAY_YYYYMM}
+    SET @FR_SALE_DATE = #{FR_SALE_DATE}
+    SET @TO_SALE_DATE = #{TO_SALE_DATE}
+    SET @COLLECT_DAY  = #{COLLECT_DAY_MAP050}
+    SET @CUSTOM_CODE  = #{CUSTOM_CODE}
+    SET @AGENT_TYPE   = #{AGENT_TYPE}
+    SET @RECEIPT_DAY  = #{RECEIPT_DAY}
+    --★★★★★★★★★★★★★★★★★★★★★
+    
+        
+    /*  4. 임시 테이블 처리  */
+    DECLARE @TypeKey    NVARCHAR(20)
+    
+    SET @TypeKey  = REPLACE(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(30), GETDATE(), 121), '-', ''), ':', ''), '.', ''), ' ', '')
+    
+    IF NOT EXISTS   (
+                    SELECT  TOP 1 1
+                    FROM    T_MAP080UKRV1 WITH (NOLOCK)
+                    WHERE   TYPE_KEY LIKE LEFT(@TypeKey, 8) + '%'
+                    )
+    BEGIN
+        TRUNCATE TABLE T_MAP080UKRV1
+    END
+        
+    /*  5.2.1 기간에 따른 매입액  */
+    INSERT  INTO T_MAP080UKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE, CUSTOM_CODE, RANGE_IN_AMT_I)
+    SELECT  
+            @TypeKey                                                                    AS TYPE_KEY
+         ,  N'1'                                                                        AS TYPE_FLAG
+         ,  A.COMP_CODE                                                                 AS COMP_CODE
+         ,  A.DIV_CODE                                                                  AS DIV_CODE
+         ,  A.CUSTOM_CODE                                                               AS CUSTOM_CODE
+         ,  ISNULL(SUM(CASE WHEN A1.CHANGE_BASIS_DATE &gt;= @FR_DATE AND A1.CHANGE_BASIS_DATE &lt;= @TO_DATE
+                                 THEN ISNULL(A.AMOUNT_I, 0) + ISNULL(A.TAX_I, 0)
+                            ELSE 0
+                       END), 0)                                                         AS RANGE_IN_AMT_I
+    FROM               MAP200T  A  WITH (NOLOCK)
+            INNER JOIN MAP100T  A1 WITH (NOLOCK) ON  A1.COMP_CODE        = A.COMP_CODE
+                                                 AND A1.DIV_CODE         = A.DIV_CODE
+                                                 AND A1.BILL_DIV_CODE    = A.BILL_DIV_CODE
+                                                 AND A1.CUSTOM_CODE      = A.CUSTOM_CODE
+                                                 AND A1.CHANGE_BASIS_NUM = A.CHANGE_BASIS_NUM
+            LEFT  JOIN BCM100T  B  WITH (NOLOCK) ON  B.COMP_CODE         = A.COMP_CODE
+                                                 AND B.CUSTOM_CODE       = A.CUSTOM_CODE
+    WHERE   A.COMP_CODE                = @COMP_CODE
+    AND     A.DIV_CODE                 = @DIV_CODE
+    AND     A1.CHANGE_BASIS_DATE      &gt;= @FR_DATE
+    AND     A1.CHANGE_BASIS_DATE      &lt;= @TO_DATE
+    AND     ISNULL(A1.BILL_NUM, '')   != ''
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+    AND   ((A1.CUSTOM_CODE             = @CUSTOM_CODE AND @CUSTOM_CODE != '') OR (@CUSTOM_CODE = ''))
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+    AND   ((B.AGENT_TYPE               = @AGENT_TYPE  AND @AGENT_TYPE  != '') OR (@AGENT_TYPE  = ''))
+    </if>
+    
+    GROUP   BY A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE
+
+    /* 5.4.1 매출액 (매입대비) */
+    IF EXISTS (SELECT TOP 1 1 FROM tempdb.sys.objects WHERE object_id = OBJECT_ID('tempdb..#OMEGA20160303103000_1'))        
+        DROP TABLE #OMEGA20160303103000_1
+
+    /* 매입 LOT NO 집계 */
+    SELECT  A.COMP_CODE, A.DIV_CODE, B.LOT_NO, B.INOUT_P
+    INTO    #OMEGA20160303103000_1
+    FROM               MAP200T A  WITH (NOLOCK)
+            INNER JOIN MAP100T A1 WITH (NOLOCK) ON A1.COMP_CODE        = A.COMP_CODE
+                                               AND A1.DIV_CODE         = A.DIV_CODE
+                                               AND A1.BILL_DIV_CODE    = A.BILL_DIV_CODE
+                                               AND A1.CUSTOM_CODE      = A.CUSTOM_CODE
+                                               AND A1.CHANGE_BASIS_NUM = A.CHANGE_BASIS_NUM
+            INNER JOIN BTR100T B  WITH (NOLOCK, INDEX(BTR100T_IDX07)) ON B.COMP_CODE   = A.COMP_CODE
+                                                                     AND B.INOUT_NUM   = A.INOUT_NUM
+                                                                     AND B.INOUT_SEQ   = A.INOUT_SEQ
+                                                                     AND B.INOUT_TYPE  = N'1'
+                                                                     AND B.DIV_CODE    = A.DIV_CODE
+            LEFT  JOIN BCM100T C  WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                               AND C.CUSTOM_CODE = A.CUSTOM_CODE
+                               
+    WHERE   A.COMP_CODE             = @COMP_CODE
+    AND     A.DIV_CODE              = @DIV_CODE
+    AND     A1.CHANGE_BASIS_DATE   &gt;= @FR_DATE
+    AND     A1.CHANGE_BASIS_DATE   &lt;= @TO_DATE
+    AND     B.LOT_NO               IS NOT NULL
+    AND     ISNULL(A1.BILL_NUM, '') &gt; ''
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+    AND   ((A.CUSTOM_CODE           = @CUSTOM_CODE AND @CUSTOM_CODE != '') OR (@CUSTOM_CODE = ''))
+    </if>
+     
+    GROUP   BY A.COMP_CODE, A.DIV_CODE, B.LOT_NO, B.INOUT_P --, A.CUSTOM_CODE
+
+    CREATE INDEX #OMEGA20160303103000_1_IDX01 ON #OMEGA20160303103000_1 (COMP_CODE, DIV_CODE, LOT_NO)
+    
+    IF EXISTS (SELECT TOP 1 1 FROM tempdb.sys.objects WHERE object_id = OBJECT_ID('tempdb..#OMEGA20160303103000_2'))        
+        DROP TABLE #OMEGA20160303103000_2
+
+    SELECT  A.COMP_CODE
+         ,  A.DIV_CODE
+         ,  A.PURCHASE_CUSTOM_CODE
+         ,  SUM(CASE WHEN A.INOUT_TYPE = '2' THEN A.INOUT_Q * (CASE WHEN A.INOUT_TYPE_DETAIL = '96' THEN A.SALE_P ELSE A.INOUT_P END)
+                     WHEN A.INOUT_TYPE = '3' THEN A.INOUT_Q * (-1) * (CASE WHEN A.INOUT_TYPE_DETAIL = '96' THEN A.SALE_P ELSE A.INOUT_P END)
+                     ELSE 0
+                END) AS SALE_AMT_I
+         , SUM(
+               CASE WHEN A.INOUT_TYPE = '2' THEN A.INOUT_Q  * B.INOUT_P --A.PURCHASE_P
+                    WHEN A.INOUT_TYPE = '3' THEN A.INOUT_Q * (-1) * B.INOUT_P --A.PURCHASE_P
+                    ELSE 0
+               END
+               ) AS SALE_COST   
+         --, SUM(
+         --    CASE WHEN A.INOUT_TYPE = '2' THEN A.INOUT_Q
+         --         WHEN A.INOUT_TYPE = '3' THEN A.INOUT_Q * (-1)
+         --         ELSE 0
+         --    END
+         --    ) AS SALE_Q 
+         --, MAX(F.BUY_Q) AS BUY_Q
+    INTO    #OMEGA20160303103000_2
+    FROM                BTR100T                A WITH (NOLOCK, INDEX(BTR100T_IDX07))
+            INNER JOIN  #OMEGA20160303103000_1 B WITH (NOLOCK, INDEX(#OMEGA20160303103000_1_IDX01)) ON B.COMP_CODE = A.COMP_CODE
+                                                                                                   AND B.DIV_CODE  = A.DIV_CODE
+                                                                                                   AND B.LOT_NO    = A.LOT_NO
+            LEFT  JOIN  BCM100T                E WITH (NOLOCK) ON E.COMP_CODE   = A.COMP_CODE
+                                                              AND E.CUSTOM_CODE = A.PURCHASE_CUSTOM_CODE
+    WHERE   A.COMP_CODE            = @COMP_CODE
+    AND     A.DIV_CODE             = @DIV_CODE
+    AND     A.CREATE_LOC           = N'1'
+    AND     A.INOUT_TYPE          IN ('2', '3')
+    <if test="@foren.Ognl@isNotEmpty(FR_SALE_DATE)">
+    AND   ((A.INOUT_DATE          &gt;= @FR_SALE_DATE AND @FR_SALE_DATE != '') OR (@FR_SALE_DATE = ''))
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(TO_SALE_DATE)">
+    AND   ((A.INOUT_DATE          &lt;= @TO_SALE_DATE AND @TO_SALE_DATE != '') OR (@TO_SALE_DATE = '')) 
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+    AND   ((A.PURCHASE_CUSTOM_CODE = @CUSTOM_CODE  AND @CUSTOM_CODE  != '') OR (@CUSTOM_CODE  = '')) 
+    </if>                     
+    --AND   A.INOUT_NUM NOT LIKE 'SR%'               
+    GROUP   BY A.COMP_CODE, A.DIV_CODE, A.PURCHASE_CUSTOM_CODE
+
+    INSERT  INTO T_MAP080UKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE, CUSTOM_CODE, RANGE_SALE_AMT_I, SALE_COST)
+    SELECT  @TypeKey                 AS TYPE_KEY
+         ,  N'1'                     AS TYPE_FLAG
+         ,  COMP_CODE                AS COMP_CODE
+         ,  DIV_CODE                 AS DIV_CODE
+         ,  PURCHASE_CUSTOM_CODE     AS CUSTOM_CODE
+         ,  SALE_AMT_I               AS RANGE_SALE_AMT_I
+         ,  SALE_COST                AS SALE_COST
+    FROM    #OMEGA20160303103000_2
+        
+    /*  6. 최종 데이터 조회 */
+    SELECT  A.CUSTOM_CODE                                                                                   AS CUSTOM_CODE
+         ,  C.CUSTOM_NAME                                                                                   AS CUSTOM_NAME
+         ,  ISNULL(C.TOP_NAME      , '')                                                                    AS TOP_NAME
+         ,  ISNULL(D.CUSTOM_NAME   , '')                                                                    AS BANK_NAME
+         ,  ISNULL(uniLITE.FNCIPHERDECRYPT(C.BANKBOOK_NUM, ''), '')                                         AS BANKBOOK_NUM
+         ,  ISNULL(C.BANKBOOK_NAME , '')                                                                    AS BANKBOOK_NAME
+         ,  SUM(A.RANGE_IN_AMT_I)                                                                           AS IN_CR_AMT_I      -- 매입액(20160307신규추가)
+         ,  SUM(A.RANGE_SALE_AMT_I)                                                                         AS SALE_AMT_I       -- 매출액(20160307신규추가)
+         ,  CASE WHEN SUM(A.RANGE_IN_AMT_I)  - SUM(A.SALE_COST) &lt; 0 THEN 0
+                   ELSE SUM(A.RANGE_IN_AMT_I)  - SUM(A.SALE_COST)
+            END                                                                                             AS STOCK_AMT_I      -- 재고액(20160307신규추가)
+         ,  CASE WHEN SUM(A.RANGE_IN_AMT_I)  - SUM(A.SALE_COST) &lt; 0 THEN SUM(A.RANGE_IN_AMT_I)
+                 ELSE SUM(A.SALE_COST)
+            END                                                                                             AS SALE_COST
+         ,  ISNULL(B.PAY_AMT,0)                                                                             AS PAY_AMT          /* 지불확정금액 */
+    FROM               T_MAP080UKRV1  A WITH (NOLOCK)
+            LEFT  JOIN MAP050T        B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                     AND B.DIV_CODE    = A.DIV_CODE
+                                                     AND B.CUSTOM_CODE = A.CUSTOM_CODE
+                                                     AND B.PAY_YYYYMM  = @JIBUL_DATE
+            LEFT  JOIN BCM100T        C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                     AND C.CUSTOM_CODE = A.CUSTOM_CODE
+            LEFT  JOIN BCM100T        D WITH (NOLOCK) ON D.COMP_CODE   = C.COMP_CODE
+                                                     AND D.CUSTOM_CODE = C.BANK_CODE
+                                                     AND D.CUSTOM_TYPE = '4'
+            INNER JOIN BSA100T        E WITH (NOLOCK) ON E.COMP_CODE   = C.COMP_CODE
+                                                     AND E.MAIN_CODE   = 'YP36'
+                                                     AND E.SUB_CODE    = C.BILL_TYPE
+            INNER JOIN BSA100T        F WITH (NOLOCK) ON F.COMP_CODE   = C.COMP_CODE
+                                                     AND F.MAIN_CODE   = 'B055'
+                                                     AND F.SUB_CODE    = C.AGENT_TYPE
+            LEFT  JOIN BOR100T        H WITH (NOLOCK) ON A.COMP_CODE   = H.COMP_CODE
+            LEFT  JOIN BOR120T        I WITH (NOLOCK) ON A.COMP_CODE   = I.COMP_CODE
+                                                     AND A.DIV_CODE    = I.DIV_CODE
+
+    WHERE   A.TYPE_KEY                = @TypeKey
+    <if test="@foren.Ognl@isNotEmpty(COLLECT_DAY_MAP050)">
+    AND   ((B.COLLECT_DAY             = @COLLECT_DAY AND @COLLECT_DAY != '') OR (@COLLECT_DAY = '')) 
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+    AND   ((A.CUSTOM_CODE             = @CUSTOM_CODE AND @CUSTOM_CODE != '') OR (@CUSTOM_CODE = '')) 
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+    AND   ((C.AGENT_TYPE              = @AGENT_TYPE  AND @AGENT_TYPE  != '') OR (@AGENT_TYPE  = '')) 
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(RECEIPT_DAY)">
+    AND   ((ISNULL(C.RECEIPT_DAY, '') = @RECEIPT_DAY AND @RECEIPT_DAY != '') OR (@RECEIPT_DAY = '')) 
+    </if>
+
+    GROUP   BY A.COMP_CODE  , A.DIV_CODE , A.CUSTOM_CODE   , C.CUSTOM_NAME, C.AGENT_TYPE, C.RECEIPT_DAY, C.COLLECT_DAY , C.BILL_TYPE
+             , C.TOP_NAME   , C.ADDR1    , C.BANK_CODE     , D.CUSTOM_NAME, uniLITE.FNCIPHERDECRYPT(C.BANKBOOK_NUM, ''), C.BANKBOOK_NAME
+             , C.COMPANY_NUM, C.TELEPHON , C.TOT_CREDIT_AMT, B.PAY_AMT    , B.PAY_YYYYMM, B.EX_DATE, B.BILL_DATE
+             , E.REF_CODE1  , F.REF_CODE3, B.TAX_AMT       , B.COLLECT_DAY, H.COMP_NAME , I.DIV_NAME
+             
+    ORDER 	BY A.COMP_CODE, A.DIV_CODE, (CASE WHEN B.PAY_AMT IS NOT NULL THEN 1 ELSE 2 END), A.CUSTOM_CODE
+
+    SET NOCOUNT OFF
+    SET ARITHABORT OFF
+END
+
+    </select>
+
+    <select id="map080skrvServiceImpl.getNewCollectDay" parameterType="Map" resultType="comboItem">  
+
+    SELECT 
+            COLLECT_DAY AS 'value'
+         ,  COLLECT_DAY AS 'text' 
+         ,  COLLECT_DAY AS search
+         ,  DIV_CODE + '-' + PAY_YYYYMM AS 'option'
+    FROM    MAP050T
+    WHERE   COMP_CODE  = #{S_COMP_CODE}
+    AND     DIV_CODE   = #{DIV_CODE}
+    AND     PAY_YYYYMM = #{PAY_YYYYMM}
+    
+    GROUP   BY COLLECT_DAY,DIV_CODE,PAY_YYYYMM
+    ORDER   BY CONVERT(NUMERIC(10,0),COLLECT_DAY)
+        
+    </select>
+
+
+	<select id="map080skrvServiceImpl.printList" parameterType="Map" resultType="rMap">
+
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+    
+    DECLARE @COMP_CODE          NVARCHAR(08)    --법인코드    
+          , @DIV_CODE           NVARCHAR(10)    --사업장코드
+          , @FR_DATE            NVARCHAR(8)     --매입일(FROM)
+          , @TO_DATE            NVARCHAR(8)     --매입일(TO)
+          , @COLLECT_DAY        NVARCHAR(08)    --차수
+          , @CUSTOM_CODE        NVARCHAR(20)    --매입처코드
+                  
+    DECLARE @FR_SALE_DATE       NVARCHAR(08)    --매출일(FROM)
+          , @TO_SALE_DATE       NVARCHAR(08)    --매출일(TO)
+          , @JIBUL_DATE         NVARCHAR(06)    --지불년월
+          , @AGENT_TYPE         NVARCHAR(01)    --고객분류
+          , @RECEIPT_DAY        NVARCHAR(01)    --결제조건
+
+    -- 아래부분만 셋팅하여 조회하시면 됩니다.
+    --★★★★★★★★★★★★★★★★★★★★★
+    SET @COMP_CODE    = #{COMP_CODE}
+    SET @DIV_CODE     = #{DIV_CODE}        
+    SET @FR_DATE      = #{FR_DATE}
+    SET @TO_DATE      = #{TO_DATE}
+    SET @JIBUL_DATE   = #{PAY_YYYYMM}
+    SET @FR_SALE_DATE = #{FR_SALE_DATE}
+    SET @TO_SALE_DATE = #{TO_SALE_DATE}
+    SET @COLLECT_DAY  = #{COLLECT_DAY_MAP050}
+    SET @CUSTOM_CODE  = #{CUSTOM_CODE}
+    SET @AGENT_TYPE   = #{AGENT_TYPE}
+    SET @RECEIPT_DAY  = #{RECEIPT_DAY}
+    --★★★★★★★★★★★★★★★★★★★★★
+    
+        
+    /*  4. 임시 테이블 처리  */
+    DECLARE @TypeKey    NVARCHAR(20)
+    
+    SET @TypeKey  = REPLACE(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(30), GETDATE(), 121), '-', ''), ':', ''), '.', ''), ' ', '')
+    
+    IF NOT EXISTS   (
+                    SELECT  TOP 1 1
+                    FROM    T_MAP080UKRV1 WITH (NOLOCK)
+                    WHERE   TYPE_KEY LIKE LEFT(@TypeKey, 8) + '%'
+                    )
+    BEGIN
+        TRUNCATE TABLE T_MAP080UKRV1
+    END
+        
+    /*  5.2.1 기간에 따른 매입액  */
+    INSERT  INTO T_MAP080UKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE, CUSTOM_CODE, RANGE_IN_AMT_I)
+    SELECT  
+            @TypeKey                                                                    AS TYPE_KEY
+         ,  N'1'                                                                        AS TYPE_FLAG
+         ,  A.COMP_CODE                                                                 AS COMP_CODE
+         ,  A.DIV_CODE                                                                  AS DIV_CODE
+         ,  A.CUSTOM_CODE                                                               AS CUSTOM_CODE
+         ,  ISNULL(SUM(CASE WHEN A1.CHANGE_BASIS_DATE &gt;= @FR_DATE AND A1.CHANGE_BASIS_DATE &lt;= @TO_DATE
+                                 THEN ISNULL(A.AMOUNT_I, 0) + ISNULL(A.TAX_I, 0)
+                            ELSE 0
+                       END), 0)                                                         AS RANGE_IN_AMT_I
+    FROM               MAP200T  A  WITH (NOLOCK)
+            INNER JOIN MAP100T  A1 WITH (NOLOCK) ON  A1.COMP_CODE        = A.COMP_CODE
+                                                 AND A1.DIV_CODE         = A.DIV_CODE
+                                                 AND A1.BILL_DIV_CODE    = A.BILL_DIV_CODE
+                                                 AND A1.CUSTOM_CODE      = A.CUSTOM_CODE
+                                                 AND A1.CHANGE_BASIS_NUM = A.CHANGE_BASIS_NUM
+            LEFT  JOIN BCM100T  B  WITH (NOLOCK) ON  B.COMP_CODE         = A.COMP_CODE
+                                                 AND B.CUSTOM_CODE       = A.CUSTOM_CODE
+    WHERE   A.COMP_CODE                = @COMP_CODE
+    AND     A.DIV_CODE                 = @DIV_CODE
+    AND     A1.CHANGE_BASIS_DATE      &gt;= @FR_DATE
+    AND     A1.CHANGE_BASIS_DATE      &lt;= @TO_DATE
+    AND     ISNULL(A1.BILL_NUM, '')   != ''
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+    AND   ((A1.CUSTOM_CODE             = @CUSTOM_CODE AND @CUSTOM_CODE != '') OR (@CUSTOM_CODE = ''))
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+    AND   ((B.AGENT_TYPE               = @AGENT_TYPE  AND @AGENT_TYPE  != '') OR (@AGENT_TYPE  = ''))
+    </if>
+    
+    GROUP   BY A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE
+
+    /* 5.4.1 매출액 (매입대비) */
+    IF EXISTS (SELECT TOP 1 1 FROM tempdb.sys.objects WHERE object_id = OBJECT_ID('tempdb..#OMEGA20160303103000_1'))        
+        DROP TABLE #OMEGA20160303103000_1
+
+    /* 매입 LOT NO 집계 */
+    SELECT  A.COMP_CODE, A.DIV_CODE, B.LOT_NO
+    INTO    #OMEGA20160303103000_1
+    FROM               MAP200T A  WITH (NOLOCK)
+            INNER JOIN MAP100T A1 WITH (NOLOCK) ON A1.COMP_CODE        = A.COMP_CODE
+                                               AND A1.DIV_CODE         = A.DIV_CODE
+                                               AND A1.BILL_DIV_CODE    = A.BILL_DIV_CODE
+                                               AND A1.CUSTOM_CODE      = A.CUSTOM_CODE
+                                               AND A1.CHANGE_BASIS_NUM = A.CHANGE_BASIS_NUM
+            INNER JOIN BTR100T B  WITH (NOLOCK, INDEX(BTR100T_IDX07)) ON B.COMP_CODE   = A.COMP_CODE
+                                                                     AND B.INOUT_NUM   = A.INOUT_NUM
+                                                                     AND B.INOUT_SEQ   = A.INOUT_SEQ
+                                                                     AND B.INOUT_TYPE  = N'1'
+                                                                     AND B.DIV_CODE    = A.DIV_CODE
+            LEFT  JOIN BCM100T C  WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                               AND C.CUSTOM_CODE = A.CUSTOM_CODE
+                               
+    WHERE   A.COMP_CODE             = @COMP_CODE
+    AND     A.DIV_CODE              = @DIV_CODE
+    AND     A1.CHANGE_BASIS_DATE   &gt;= @FR_DATE
+    AND     A1.CHANGE_BASIS_DATE   &lt;= @TO_DATE
+    AND     B.LOT_NO               IS NOT NULL
+    AND     ISNULL(A1.BILL_NUM, '') &gt; ''
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+    AND   ((A.CUSTOM_CODE           = @CUSTOM_CODE AND @CUSTOM_CODE != '') OR (@CUSTOM_CODE = ''))
+    </if>
+     
+    GROUP   BY A.COMP_CODE, A.DIV_CODE, B.LOT_NO, A.CUSTOM_CODE
+
+    CREATE INDEX #OMEGA20160303103000_1_IDX01 ON #OMEGA20160303103000_1 (COMP_CODE, DIV_CODE, LOT_NO)
+    
+    IF EXISTS (SELECT TOP 1 1 FROM tempdb.sys.objects WHERE object_id = OBJECT_ID('tempdb..#OMEGA20160303103000_2'))        
+        DROP TABLE #OMEGA20160303103000_2
+
+    SELECT  A.COMP_CODE
+         ,  A.DIV_CODE
+         ,  A.PURCHASE_CUSTOM_CODE
+         ,  SUM(CASE WHEN A.INOUT_TYPE = '2' THEN A.INOUT_Q * (CASE WHEN A.INOUT_TYPE_DETAIL = '96' THEN A.SALE_P ELSE A.INOUT_P END)
+                     WHEN A.INOUT_TYPE = '3' THEN A.INOUT_Q * (-1) * (CASE WHEN A.INOUT_TYPE_DETAIL = '96' THEN A.SALE_P ELSE A.INOUT_P END)
+                     ELSE 0
+                END) AS SALE_AMT_I
+         ,  SUM(CASE WHEN A.INOUT_TYPE = '2' THEN A.INOUT_Q * A.PURCHASE_P
+                     WHEN A.INOUT_TYPE = '3' THEN A.INOUT_Q * (-1) * A.PURCHASE_P
+                     ELSE 0
+                END) AS SALE_COST
+         --, SUM(
+         --    CASE WHEN A.INOUT_TYPE = '2' THEN A.INOUT_Q
+         --         WHEN A.INOUT_TYPE = '3' THEN A.INOUT_Q * (-1)
+         --         ELSE 0
+         --    END
+         --    ) AS SALE_Q 
+         --, MAX(F.BUY_Q) AS BUY_Q
+    INTO    #OMEGA20160303103000_2
+    FROM                BTR100T                A WITH (NOLOCK, INDEX(BTR100T_IDX07))
+            INNER JOIN  #OMEGA20160303103000_1 B WITH (NOLOCK, INDEX(#OMEGA20160303103000_1_IDX01)) ON B.COMP_CODE = A.COMP_CODE
+                                                                                                   AND B.DIV_CODE  = A.DIV_CODE
+                                                                                                   AND B.LOT_NO    = A.LOT_NO
+            LEFT  JOIN  BCM100T                E WITH (NOLOCK) ON E.COMP_CODE   = A.COMP_CODE
+                                                              AND E.CUSTOM_CODE = A.PURCHASE_CUSTOM_CODE
+    WHERE   A.COMP_CODE            = @COMP_CODE
+    AND     A.DIV_CODE             = @DIV_CODE
+    AND     A.INOUT_TYPE          IN ('2', '3')
+    AND     A.CREATE_LOC           = N'1'
+    <if test="@foren.Ognl@isNotEmpty(FR_SALE_DATE)">
+    AND   ((A.INOUT_DATE          &gt;= @FR_SALE_DATE AND @FR_SALE_DATE != '') OR (@FR_SALE_DATE = ''))
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(TO_SALE_DATE)">
+    AND   ((A.INOUT_DATE          &lt;= @TO_SALE_DATE AND @TO_SALE_DATE != '') OR (@TO_SALE_DATE = '')) 
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+    AND   ((A.PURCHASE_CUSTOM_CODE = @CUSTOM_CODE  AND @CUSTOM_CODE  != '') OR (@CUSTOM_CODE  = '')) 
+    </if>                     
+    --AND   A.INOUT_NUM NOT LIKE 'SR%'
+                   
+    GROUP   BY A.COMP_CODE, A.DIV_CODE, A.PURCHASE_CUSTOM_CODE
+
+    INSERT  INTO T_MAP080UKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE, CUSTOM_CODE, RANGE_SALE_AMT_I, SALE_COST)
+    SELECT  @TypeKey                 AS TYPE_KEY
+         ,  N'1'                     AS TYPE_FLAG
+         ,  COMP_CODE                AS COMP_CODE
+         ,  DIV_CODE                 AS DIV_CODE
+         ,  PURCHASE_CUSTOM_CODE     AS CUSTOM_CODE
+         ,  SALE_AMT_I               AS RANGE_SALE_AMT_I
+         ,  SALE_COST                AS SALE_COST
+    FROM    #OMEGA20160303103000_2
+        
+    /*  6. 최종 데이터 조회 */
+    SELECT  ROW_NUMBER() OVER (ORDER BY (CASE WHEN B.PAY_AMT IS NOT NULL THEN 1 ELSE 2 END),A.CUSTOM_CODE)  AS SEQ
+         ,  A.CUSTOM_CODE                                                                                   AS CUSTOM_CODE
+         ,  C.CUSTOM_NAME                                                                                   AS CUSTOM_NAME
+         ,  ISNULL(C.TOP_NAME      , '')                                                                    AS TOP_NAME
+         ,  ISNULL(D.CUSTOM_NAME   , '')                                                                    AS BANK_NAME
+         ,  ISNULL(uniLITE.FNCIPHERDECRYPT(C.BANKBOOK_NUM, ''), '')                                         AS BANKBOOK_NUM
+         ,  ISNULL(C.BANKBOOK_NAME , '')                                                                    AS BANKBOOK_NAME
+         ,  SUM(A.RANGE_IN_AMT_I)                                                                           AS IN_CR_AMT_I      -- 매입액
+         ,  SUM(A.RANGE_SALE_AMT_I)                                                                         AS SALE_AMT_I       -- 매출액
+         ,  CASE WHEN SUM(A.RANGE_IN_AMT_I)  - SUM(A.SALE_COST) &lt; 0 THEN 0
+                   ELSE SUM(A.RANGE_IN_AMT_I)  - SUM(A.SALE_COST)
+            END                                                                                             AS STOCK_AMT_I      -- 재고액(20160307신규추가)
+         ,  CASE WHEN SUM(A.RANGE_IN_AMT_I)  - SUM(A.SALE_COST) &lt; 0 THEN SUM(A.RANGE_IN_AMT_I)
+                 ELSE SUM(A.SALE_COST)
+            END                                                                                             AS SALE_COST
+         ,  ISNULL(B.PAY_AMT,0)                                                                             AS PAY_AMT          -- 지불확정금액
+         ,  H.COMP_NAME                                                                                     AS COMP_NAME
+         ,  I.DIV_NAME                                                                                      AS DIV_NAME
+		 ,  CASE WHEN ISNULL(C.COMPANY_NUM, '') = '' THEN ''
+				 ELSE SUBSTRING(C.COMPANY_NUM, 1, 3) + '-' +
+					  SUBSTRING(C.COMPANY_NUM, 4, 2) + '-' +
+					  SUBSTRING(C.COMPANY_NUM, 6, 5)
+			END 																                            AS COMPANY_NUM
+    FROM               T_MAP080UKRV1  A WITH (NOLOCK)
+            LEFT  JOIN MAP050T        B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                     AND B.DIV_CODE    = A.DIV_CODE
+                                                     AND B.CUSTOM_CODE = A.CUSTOM_CODE
+                                                     AND B.PAY_YYYYMM  = @JIBUL_DATE
+            LEFT  JOIN BCM100T        C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                     AND C.CUSTOM_CODE = A.CUSTOM_CODE
+            LEFT  JOIN BCM100T        D WITH (NOLOCK) ON D.COMP_CODE   = C.COMP_CODE
+                                                     AND D.CUSTOM_CODE = C.BANK_CODE
+                                                     AND D.CUSTOM_TYPE = '4'
+            INNER JOIN BSA100T        E WITH (NOLOCK) ON E.COMP_CODE   = C.COMP_CODE
+                                                     AND E.MAIN_CODE   = 'YP36'
+                                                     AND E.SUB_CODE    = C.BILL_TYPE
+            INNER JOIN BSA100T        F WITH (NOLOCK) ON F.COMP_CODE   = C.COMP_CODE
+                                                     AND F.MAIN_CODE   = 'B055'
+                                                     AND F.SUB_CODE    = C.AGENT_TYPE
+            LEFT  JOIN BOR100T        H WITH (NOLOCK) ON A.COMP_CODE   = H.COMP_CODE
+            LEFT  JOIN BOR120T        I WITH (NOLOCK) ON A.COMP_CODE   = I.COMP_CODE
+                                                     AND A.DIV_CODE    = I.DIV_CODE
+
+    WHERE   A.TYPE_KEY                = @TypeKey
+    <if test="@foren.Ognl@isNotEmpty(COLLECT_DAY_MAP050)">
+    AND   ((B.COLLECT_DAY             = @COLLECT_DAY AND @COLLECT_DAY != '') OR (@COLLECT_DAY = '')) 
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+    AND   ((A.CUSTOM_CODE             = @CUSTOM_CODE AND @CUSTOM_CODE != '') OR (@CUSTOM_CODE = '')) 
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+    AND   ((C.AGENT_TYPE              = @AGENT_TYPE  AND @AGENT_TYPE  != '') OR (@AGENT_TYPE  = '')) 
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(RECEIPT_DAY)">
+    AND   ((ISNULL(C.RECEIPT_DAY, '') = @RECEIPT_DAY AND @RECEIPT_DAY != '') OR (@RECEIPT_DAY = '')) 
+    </if>
+
+    GROUP   BY A.COMP_CODE  , A.DIV_CODE , A.CUSTOM_CODE   , C.CUSTOM_NAME, C.AGENT_TYPE, C.RECEIPT_DAY, C.COLLECT_DAY , C.BILL_TYPE
+             , C.TOP_NAME   , C.ADDR1    , C.BANK_CODE     , D.CUSTOM_NAME, uniLITE.FNCIPHERDECRYPT(C.BANKBOOK_NUM, ''), C.BANKBOOK_NAME
+             , C.COMPANY_NUM, C.TELEPHON , C.TOT_CREDIT_AMT, B.PAY_AMT    , B.PAY_YYYYMM, B.EX_DATE, B.BILL_DATE
+             , E.REF_CODE1  , F.REF_CODE3, B.TAX_AMT       , B.COLLECT_DAY, H.COMP_NAME , I.DIV_NAME
+             
+    --ORDER     BY A.COMP_CODE, A.DIV_CODE, (CASE WHEN B.PAY_AMT IS NOT NULL THEN 1 ELSE 2 END), A.CUSTOM_CODE
+
+    SET NOCOUNT OFF
+    SET ARITHABORT OFF
+END
+
+    </select>
+</mapper>

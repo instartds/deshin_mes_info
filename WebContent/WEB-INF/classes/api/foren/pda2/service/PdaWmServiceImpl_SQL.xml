@@ -1,0 +1,1378 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace = "pdaWmService">
+
+
+
+<select id="pdaWmService.s_pdp100ukrv_wm_search" parameterType="Map" resultType="rMap" >
+
+		/* 출하지시참조*/
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+		    DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+		          , @UserId      NVARCHAR(100) /* 사용자ID    */
+		          , @LangType    NVARCHAR(2)  /* 언어구분    */
+		          , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+		          , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+		          , @TimeSI      NVARCHAR(01)
+		          , @TimeSR      NVARCHAR(01)
+		          , @TimeSS      NVARCHAR(01)
+
+		    DECLARE @LOT_SUM_TYPE NVARCHAR(10)  /* LOT 관리 여부 */
+
+		    SELECT @TimeSI = MAX(CASE WHEN SUB_CODE = 'SI' THEN REF_CODE1 ELSE '' END)
+		         , @TimeSR = MAX(CASE WHEN SUB_CODE = 'SR' THEN REF_CODE1 ELSE '' END)
+		         , @TimeSS = MAX(CASE WHEN SUB_CODE = 'SS' THEN REF_CODE1 ELSE '' END)
+
+		     FROM BSA100T
+		    WHERE COMP_CODE = @CompCode
+		      AND MAIN_CODE = N'S048'
+		      AND SUB_CODE IN (N'SI', N'SR', N'SS')
+
+		    IF @TimeSI IS NULL
+		        SET @TimeSI = 'N'
+		    IF @TimeSR IS NULL
+		        SET @TimeSR = 'N'
+		    IF @TimeSS IS NULL
+		        SET @TimeSS = 'N'
+
+		    SET @CompCode = #{S_COMP_CODE}
+		    SET @UserId   = #{S_USER_ID}
+		    SET @LangType = #{S_LANG_CODE}
+
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		      FROM BSA100T WITH (NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+		       AND MAIN_CODE = N'B044'
+		       AND REF_CODE1 = N'Y'
+
+		    /* LOT 관리 여부 */
+  			SELECT @LOT_SUM_TYPE=REF_CODE1
+  			FROM BSA100T A WITH (NOLOCK)
+  			WHERE COMP_CODE=@CompCode
+  			AND MAIN_CODE='B084'
+  			AND SUB_CODE='C'
+
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+
+		    /* 데이터 조회 */
+		    SELECT
+		           CAST(0 AS BIT)                                                          AS CHOICE
+		         ,(CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+		                WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+		                                    ELSE C1.CUSTOM_NAME
+		            END)                                                                   AS CUSTOM_NAME
+		         , A.ITEM_CODE
+		         ,(CASE WHEN @RefItem = '1' THEN C2.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN C2.ITEM_NAME2
+		                                    ELSE C2.ITEM_NAME
+		            END)                                                                   AS ITEM_NAME
+		         , C2.SPEC
+		         , A.ORDER_UNIT
+		         , A.TRANS_RATE
+		        -- , CAST(A.ISSUE_REQ_DATE AS DATETIME) AS ISSUE_REQ_DATE
+		         ,(CASE WHEN ISNULL(A.ISSUE_REQ_DATE , '') = ''
+		                     THEN ''
+		                     ELSE REPLACE(REPLACE(REPLACE(@DateFormat , 'YYYY' , SUBSTRING(A.ISSUE_REQ_DATE, 1, 4))
+		                                                              , 'MM'   , SUBSTRING(A.ISSUE_REQ_DATE, 5, 2))
+		                                                              , 'DD'   , SUBSTRING(A.ISSUE_REQ_DATE, 7, 2))
+		                END) + RTRIM(' ' + CASE @TimeSR WHEN 'Y' THEN ISNULL(A.DELIVERY_TIME,'')
+		                                                ELSE ''
+		                                    END)                                          AS ISSUE_REQ_DATE
+		         ,(CASE WHEN ISNULL(A.ISSUE_DATE , '') = ''
+		                     THEN ''
+		                     ELSE REPLACE(REPLACE(REPLACE(@DateFormat , 'YYYY' , SUBSTRING(A.ISSUE_DATE, 1, 4))
+		                                                              , 'MM'   , SUBSTRING(A.ISSUE_DATE, 5, 2))
+		                                                              , 'DD'   , SUBSTRING(A.ISSUE_DATE, 7, 2))
+		                END) + RTRIM(' ' + CASE @TimeSR WHEN 'Y' THEN ISNULL(A.DELIVERY_TIME,'')
+		                                                ELSE ''
+		                                    END)                                          AS ISSUE_DATE
+		         ,(A.ISSUE_REQ_QTY - A.ISSUE_QTY)                                         AS NOT_REQ_Q
+		         , A.ISSUE_REQ_QTY
+		         , A.ISSUE_WGT_Q
+		         , A.ISSUE_VOL_Q
+--		         , ISNULL(D.GOOD_STOCK_Q, 0)                                              AS STOCK_Q
+		         , CASE WHEN @LOT_SUM_TYPE = 'Y' AND C3.LOT_YN='Y' THEN ISNULL(D2.GOOD_STOCK_Q, 0) ELSE ISNULL(D.GOOD_STOCK_Q, 0)  END AS STOCK_Q
+		         , A.WH_CODE
+		         , A.ORDER_NUM
+		         , A.ISSUE_REQ_NUM
+		         , A.ISSUE_REQ_SEQ
+		         , A.PROJECT_NO
+		         , E.PAY_METHODE1                                                         AS PAY_METHODE1
+		         , E1.LC_SER_NO                                                           AS LC_SER_NO
+		         , A.LOT_NO
+		         , B.RECEIVER_ID
+		         , B.RECEIVER_NAME
+		         , B.TELEPHONE_NUM1
+		         , B.TELEPHONE_NUM2
+		         -- 20210422 ADDRESS(주소) 추가
+		         , CASE WHEN ISNULL(NULLIF(A.ADDRESS, ''), '') = '' THEN ISNULL(B.ADDRESS1, '') + ISNULL(B.ADDRESS2, '')
+		                ELSE A.ADDRESS
+		                END                                                               AS ADDRESS
+		         ,(CASE WHEN @RefItem = '1' THEN C6.CUSTOM_NAME1
+		                WHEN @RefItem = '2' THEN C6.CUSTOM_NAME2
+		                                    ELSE C6.CUSTOM_NAME
+		            END)                                                                  AS ORDER_CUST_CD
+		         , A.DIV_CODE
+		         , A.CUSTOM_CODE
+		         , A.INOUT_TYPE_DETAIL
+		         , A.WH_CELL_CODE
+		         , C5.WH_CELL_NAME
+		         , A.ISSUE_REQ_PRICE
+		         , A.ISSUE_REQ_AMT
+		         , A.ISSUE_REQ_TAX_AMT
+		         , A.TAX_TYPE
+		         , A.MONEY_UNIT
+		         , A.EXCHANGE_RATE
+		         , A.ACCOUNT_YNC
+		         , A.DISCOUNT_RATE
+		         , A.ISSUE_REQ_PRSN                                                       AS ISSUE_REQ_PRSN
+		         , A.DVRY_CUST_CD
+		         , A.REMARK
+		         , A.SER_NO
+		         , A.SALE_CUSTOM_CODE
+		         ,(CASE WHEN @RefItem = '1' THEN C4.CUSTOM_NAME1
+		                WHEN @RefItem = '2' THEN C4.CUSTOM_NAME2
+		                                     ELSE C4.CUSTOM_NAME
+		            END)                                                                  AS SALE_CUST_CD
+		         , A.ISSUE_DIV_CODE
+		         , A.BILL_TYPE
+		         -- 20210225 : CARD_CUSTOM_CODE(카드사) 추가
+		         , C.CARD_CUSTOM_CODE
+		         , A.ORDER_TYPE
+		         , A.PRICE_YN
+		         , A.PO_NUM
+		         , A.PO_SEQ
+		         , C1.CREDIT_YN
+		         , ISNULL(C1.WON_CALC_BAS , '3')                                          AS WON_CALC_BAS
+		         , ISNULL(C1.TAX_TYPE     , '1')                                          AS TAX_INOUT
+		         , A.AGENT_TYPE
+		         , ISNULL(C2.STOCK_CARE_YN, 'Y')                                          AS STOCK_CARE_YN
+		         , C2.STOCK_UNIT
+		         , C7.DVRY_CUST_NM                                                        AS DVRY_CUST_NAME
+		         , C.TAX_INOUT                                                            AS SOF100_TAX_INOUT
+		         , CASE WHEN ISNULL(B.RETURN_Q, 0) &gt; 0 THEN 'Y' ELSE 'N' END           AS RETURN_Q_YN
+		         , CASE WHEN ISNULL(A.REF_LOC, '1') = '1' THEN ISNULL(B.ORDER_Q, 0)
+		                                                  ELSE ISNULL(E1.QTY, 0)
+		            END                                                                   AS ORDER_Q
+		         , CASE WHEN ISNULL(M1.REF_CODE2, '') = '' THEN M1.SUB_CODE
+		                ELSE M1.REF_CODE2
+		           END                                                                    AS REF_CODE2
+		         , ISNULL(C2.EXCESS_RATE, 0)                                              AS EXCESS_RATE
+		         , A.DEPT_CODE
+		         , C3.ITEM_ACCOUNT
+		         , A.PRICE_TYPE
+		         , A.ISSUE_FOR_WGT_P
+		         , A.ISSUE_WGT_P
+		         , A.ISSUE_FOR_VOL_P
+		         , A.ISSUE_VOL_P
+		         , A.WGT_UNIT
+		         , A.UNIT_WGT
+		         , A.VOL_UNIT
+		         , A.UNIT_VOL
+		         , C3.LOT_YN
+		         , A.REMARK_INTER
+		         --20200206 추가
+		         , C1.AGENT_TYPE                                                          AS CUSTOM_AGENT_TYPE
+		         , C1.BUSI_PRSN                                                           AS CUSTOM_BUSI_PRSN
+		      FROM            SRQ100T A  WITH (NOLOCK)
+		           LEFT  JOIN SOF110T B  WITH (NOLOCK) ON  B.COMP_CODE      = A.COMP_CODE
+		                                              AND  B.DIV_CODE       = A.DIV_CODE
+		                                              AND  B.ORDER_NUM      = A.ORDER_NUM
+		                                              AND  B.SER_NO         = A.SER_NO
+		           LEFT  JOIN SOF100T C  WITH (NOLOCK) ON  C.COMP_CODE      = B.COMP_CODE
+		                                              AND  C.DIV_CODE       = B.DIV_CODE
+		                                              AND  C.ORDER_NUM      = B.ORDER_NUM
+		           LEFT  JOIN BIV100T D  WITH (NOLOCK) ON  D.COMP_CODE      = A.COMP_CODE
+		                                              AND  D.DIV_CODE       = A.ISSUE_DIV_CODE
+		                                              AND  D.WH_CODE        = A.WH_CODE
+		                                              AND  D.ITEM_CODE      = A.ITEM_CODE
+		           LEFT  JOIN BIV150T D2  WITH (NOLOCK) ON  D2.COMP_CODE    = A.COMP_CODE
+		                                              AND  D2.DIV_CODE      = A.ISSUE_DIV_CODE
+		                                              AND  D2.WH_CODE       = A.WH_CODE
+		                                              AND  D2.ITEM_CODE     = A.ITEM_CODE
+		                                              AND  D2.LOT_NO        = A.LOT_NO
+		           INNER JOIN BCM100T C1 WITH (NOLOCK) ON C1.COMP_CODE      = A.COMP_CODE
+		                                              AND C1.CUSTOM_CODE    = A.CUSTOM_CODE
+		           INNER JOIN BPR100T C2 WITH (NOLOCK) ON C2.COMP_CODE      = A.COMP_CODE
+		                                              AND C2.ITEM_CODE      = A.ITEM_CODE
+		           INNER JOIN BPR200T C3 WITH (NOLOCK) ON C3.COMP_CODE      = A.COMP_CODE
+		                                              AND C3.DIV_CODE       = A.DIV_CODE
+		                                              AND C3.ITEM_CODE      = A.ITEM_CODE
+		           LEFT  JOIN BCM100T C4 WITH (NOLOCK) ON C4.COMP_CODE      = A.COMP_CODE
+		                                              AND C4.CUSTOM_CODE    = A.SALE_CUSTOM_CODE
+		           LEFT  JOIN BSA225T C5 WITH (NOLOCK) ON C5.COMP_CODE      = A.COMP_CODE
+		                                              AND C5.DIV_CODE       = A.DIV_CODE
+		                                              AND C5.WH_CODE        = A.WH_CODE
+		                                              AND C5.WH_CELL_CODE   = A.WH_CELL_CODE
+		           LEFT  JOIN BCM100T C6 WITH (NOLOCK) ON C6.COMP_CODE      = C.COMP_CODE
+		                                              AND C6.CUSTOM_CODE    = C.CUSTOM_CODE
+		           LEFT  JOIN SCM100T C7 WITH (NOLOCK) ON C7.COMP_CODE      = A.COMP_CODE
+		                                              AND C7.CUSTOM_CODE    = A.CUSTOM_CODE
+		                                              AND CONVERT(NVARCHAR, C7.DVRY_CUST_SEQ) = A.DVRY_CUST_CD
+		           LEFT  JOIN BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE      = A.COMP_CODE
+		                                              AND M1.MAIN_CODE      = N'S007'
+		                                              AND M1.SUB_CODE       = A.INOUT_TYPE_DETAIL
+		           LEFT  JOIN TEA100T E  WITH (NOLOCK) ON E.COMP_CODE       = A.COMP_CODE
+		                                              AND E.DIV_CODE        = A.DIV_CODE
+		                                              AND E.SO_SER_NO       = A.ORDER_NUM
+		           LEFT  JOIN TEA110T E1 WITH (NOLOCK) ON E1.COMP_CODE      = A.COMP_CODE
+		                                              AND E1.DIV_CODE       = A.DIV_CODE
+		                                              AND E1.SO_SER_NO      = A.ORDER_NUM
+		                                              AND E1.SO_SER         = A.SER_NO
+
+		     WHERE A.COMP_CODE        = @CompCode
+		       AND A.ISSUE_REQ_QTY    &gt; A.ISSUE_QTY
+		       AND ISNULL(B.ORDER_STATUS,'N')      = 'N'           /* 마감여부 */
+		       AND A.ISSUE_REQ_NUM     LIKE #{ISSUE_REQ_NUM} + '%'
+
+
+		     GROUP BY A.CUSTOM_CODE      , C1.CUSTOM_NAME    , A.ITEM_CODE        , C2.ITEM_NAME       , C2.ITEM_NAME1
+		            , C2.ITEM_NAME2         , C2.SPEC
+		            , A.ORDER_UNIT       , A.TRANS_RATE        , A.ISSUE_REQ_DATE   , A.ISSUE_DATE       , A.DELIVERY_TIME
+		            , A.ISSUE_REQ_QTY    , A.ISSUE_QTY         , CASE WHEN @LOT_SUM_TYPE = 'Y' AND C3.LOT_YN='Y' THEN ISNULL(D2.GOOD_STOCK_Q, 0) ELSE ISNULL(D.GOOD_STOCK_Q, 0) END
+		            , A.ISSUE_REQ_NUM    , A.ISSUE_REQ_SEQ
+		            , A.PROJECT_NO       , A.LOT_NO            , B.RECEIVER_ID      , B.RECEIVER_NAME    , B.TELEPHONE_NUM1
+		            , B.TELEPHONE_NUM2   , B.ADDRESS1          , B.ADDRESS2         , C6.CUSTOM_NAME     , C6.CUSTOM_NAME1
+		            , C6.CUSTOM_NAME2    , A.INOUT_TYPE_DETAIL , A.ISSUE_DIV_CODE , A.BILL_TYPE
+		            , A.WH_CODE          , A.WH_CELL_CODE      , C5.WH_CELL_NAME    , A.ISSUE_REQ_PRICE  , A.ISSUE_REQ_AMT
+		            , A.ISSUE_REQ_TAX_AMT, A.TAX_TYPE          , A.MONEY_UNIT       , A.EXCHANGE_RATE    , A.ACCOUNT_YNC
+		            , A.DISCOUNT_RATE    , A.ISSUE_REQ_PRSN    , A.DVRY_CUST_CD     , A.REMARK           , A.ORDER_NUM
+		            , A.SER_NO           , A.SALE_CUSTOM_CODE  , C4.CUSTOM_NAME     , C4.CUSTOM_NAME1     , C4.CUSTOM_NAME2
+		            , A.ORDER_TYPE       , A.PRICE_YN          , A.PO_NUM           , A.PO_SEQ           , C1.CREDIT_YN
+		            , C1.WON_CALC_BAS    , C1.TAX_TYPE         , A.AGENT_TYPE       , C2.STOCK_CARE_YN   , C2.STOCK_UNIT
+		            , C7.DVRY_CUST_NM    , C.TAX_INOUT         , B.RETURN_Q         , B.ORDER_Q          , M1.REF_CODE2
+		            , M1.SUB_CODE        , C2.EXCESS_RATE      , A.DEPT_CODE        , A.COMP_CODE        , A.DIV_CODE
+		            , E.PAY_METHODE1     , E1.LC_SER_NO        , C3.ITEM_ACCOUNT    , C1.CUSTOM_NAME1     , C1.CUSTOM_NAME2
+		            , A.REF_LOC          , E1.QTY              , A.ISSUE_WGT_Q      , A.ISSUE_VOL_Q
+		            , A.PRICE_TYPE       , A.ISSUE_FOR_WGT_P   , A.ISSUE_WGT_P      , A.ISSUE_VOL_P      , A.ISSUE_FOR_VOL_P
+		            , A.WGT_UNIT         , A.UNIT_WGT          , A.VOL_UNIT         , A.UNIT_VOL, C3.LOT_YN , A.REMARK_INTER
+		            --20200206 추가
+		            , C1.AGENT_TYPE      , C.CARD_CUSTOM_CODE -- 20210225 : CARD_CUSTOM_CODE(카드사) 추가
+		            , C1.BUSI_PRSN       , A.ADDRESS          -- 20210422 ADDRESS(주소) 추가
+
+		     ORDER BY A.ISSUE_REQ_NUM, A.ISSUE_REQ_SEQ, C1.CUSTOM_NAME, A.ISSUE_REQ_PRSN DESC, A.ITEM_CODE, A.ISSUE_DATE
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+</select>
+	<update id="pdaWmService.spReceiving" parameterType="Map" statementType="CALLABLE">
+		{call USP_SALES_STR103UKR (
+			#{KeyValue		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{InOutNum		, mode=OUT	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{ErrorDesc		, mode=OUT	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{SalePrsnChk	, mode=OUT	, jdbcType=VARCHAR	, javaType=java.lang.String}
+		)}
+	</update>
+	<insert id="pdaWmService.insert_pdp100ukrv" parameterType="Map">
+		/* sm_pdp100ukrv_wm.jsp.PdaWmServiceImpl[insert_pdp100ukrv] Query01 */
+		INSERT INTO L_BTR100T
+		     ( KEY_VALUE,         OPR_FLAG
+		     , COMP_CODE,         DIV_CODE,        INOUT_NUM,      INOUT_SEQ,       INOUT_TYPE,        INOUT_METH
+		     , INOUT_TYPE_DETAIL, INOUT_CODE_TYPE, INOUT_CODE,     WH_CODE,         INOUT_DATE
+		     , ITEM_CODE,         ITEM_STATUS,     INOUT_Q,        INOUT_P,         INOUT_I
+		     , MONEY_UNIT,        INOUT_FOR_P,     INOUT_FOR_O,    EXCHG_RATE_O,    ORDER_TYPE
+		     , ORDER_NUM,         ORDER_SEQ,       INOUT_PRSN,     BASIS_NUM,       BASIS_SEQ
+		     , ACCOUNT_YNC,       ACCOUNT_Q,       CREATE_LOC,     SALE_C_YN,       REMARK
+		     , ORDER_UNIT,        TRNS_RATE,       PROJECT_NO,     ORDER_UNIT_Q,    ORDER_UNIT_P
+		     , ORDER_UNIT_FOR_P,  ISSUE_REQ_NUM,   ISSUE_REQ_SEQ,  DVRY_CUST_CD,    DISCOUNT_RATE
+		     , INOUT_TAX_AMT,     TAX_TYPE,        LOT_NO,         SALE_DIV_CODE,   SALE_CUSTOM_CODE
+		     , BILL_TYPE,         SALE_TYPE,       PRICE_YN,       ORDER_UNIT_O,    SALE_PRSN
+		     , FR_ACCOUNT,        TO_ACCOUNT,      LC_NUM,         TRADE_LOC
+		     , DELIVERY_DATE,     DELIVERY_TIME,   WH_CELL_CODE,   AGENT_TYPE,      DEPT_CODE
+		     , TRANS_COST,        PRICE_TYPE,      INOUT_WGT_Q,    INOUT_FOR_WGT_P, INOUT_WGT_P
+		     , INOUT_VOL_Q,       INOUT_FOR_VOL_P, INOUT_VOL_P,    WGT_UNIT,        UNIT_WGT
+		     , VOL_UNIT,          UNIT_VOL,        NATION_INOUT,   SALE_C_DATE,     UPDATE_DB_USER
+		     , UPDATE_DB_TIME,    PACK_UNIT_Q,     BOX_Q,          EACH_Q,          LOSS_Q
+		     , REMARK_INTER
+		     --20190916 추가: 세액 포함여부 BTR100T에 컬럼 추가 / 저장하도록 수정
+		     , TAX_INOUT
+		     -- 20210225 : CARD_CUSTOM_CODE(카드사) 추가
+		     , CARD_CUSTOM_CODE
+		     -- 20210422 : ADDRESS(주소) 추가
+		     , ADDRESS
+		     )
+		SELECT  #{KEY_VALUE}                                                    -- KEY_VALUE
+		      , #{OPR_FLAG}                                                     -- OPR_FLAG
+		      , #{COMP_CODE}                                                    -- COMP_CODE
+		      , #{DIV_CODE}                                                     -- DIV_CODE
+		      , #{INOUT_NUM}                                                    -- INOUT_NUM
+		      , #{INOUT_SEQ}                                                    -- INOUT_SEQ
+		      , N'2'                                                            -- INOUT_TYPE
+		      , #{INOUT_METH}                                                   -- INOUT_METH
+		      , #{INOUT_TYPE_DETAIL}                                            -- INOUT_TYPE_DETAIL
+		      , N'4'                                                            -- INOUT_CODE_TYPE
+		      , #{INOUT_CODE}                                                   -- INOUT_CODE
+		      , #{WH_CODE}                                                      -- WH_CODE
+		      , #{INOUT_DATE}                                                   -- INOUT_DATE
+		      , #{ITEM_CODE}                                                    -- ITEM_CODE
+		      , #{ITEM_STATUS}                                                  -- ITEM_STATUS
+		      , 0
+		      --20200611 수정: 자사단가 가져오는 로직 수정
+		      , 0
+		      --20200611 수정: 자사단가 가져오는 로직 수정
+		      , 0
+		      , #{MONEY_UNIT}                                                   -- MONEY_UNIT
+		      , 0
+		      , #{ORDER_UNIT_O}                                                 -- INOUT_FOR_O
+		      , #{EXCHG_RATE_O}                                                 -- EXCHG_RATE_O
+		      , #{ORDER_TYPE}                                                   -- ORDER_TYPE
+		      , #{ORDER_NUM}                                                    -- ORDER_NUM
+		      , #{ORDER_SEQ}                                                    -- ORDER_SEQ
+		      , #{INOUT_PRSN}                                                   -- INOUT_PRSN
+		      , #{BASIS_NUM}                                                    -- BASIS_NUM
+		      , #{BASIS_SEQ}                                                    -- BASIS_SEQ
+		      , #{ACCOUNT_YNC}                                                  -- ACCOUNT_YNC
+		      ,   0                                                             -- ACCOUNT_Q
+		      , #{CREATE_LOC}                                                   -- CREATE_LOC
+		      , N'N'                                                            -- SALE_C_YN
+		      , #{REMARK}                                                       -- REMARK
+		      , #{ORDER_UNIT}                                                   -- ORDER_UNIT
+		      , #{TRANS_RATE}                                                   -- TRNS_RATE
+		      , #{PLAN_NUM}                                                     -- PROJECT_NO
+		      , #{ORDER_UNIT_Q}                                                 -- ORDER_UNIT_Q
+		      , #{ORDER_UNIT_P}                                                 -- ORDER_UNIT_P
+		      , #{ORDER_UNIT_P}                                                 -- ORDER_UNIT_FOR_P
+		      , #{ISSUE_REQ_NUM}                                                -- ISSUE_REQ_NUM
+		      , #{ISSUE_REQ_SEQ}                                                -- ISSUE_REQ_SEQ
+		      , #{DVRY_CUST_CD}                                                 -- DVRY_CUST_CD
+		      , #{DISCOUNT_RATE}                                                -- DISCOUNT_RATE
+		      --20200611 수정: 자사단가 가져오는 로직 수정
+		      , 0
+		      , #{TAX_TYPE}                                                     -- TAX_TYPE
+		      , #{LOT_NO}                                                       -- LOT_NO
+		      , #{SALE_DIV_CODE}                                                -- SALE_DIV_CODE
+		      , #{SALE_CUSTOM_CODE}                                             -- SALE_CUSTOM_CODE
+		      , #{BILL_TYPE}                                                    -- BILL_TYPE
+		      , #{SALE_TYPE}                                                    -- SALE_TYPE
+		      , #{PRICE_YN}                                                     -- PRICE_YN
+		      , #{ORDER_UNIT_O}                                                 -- ORDER_UNIT_O
+		      , #{SALE_PRSN}                                                    -- SALE_PRSN
+		      , ITEM_ACCOUNT                                                    -- FR_ACCOUNT
+		      , CASE WHEN ITEM_ACCOUNT >= N'40' THEN N'00'
+		             ELSE ITEM_ACCOUNT
+		        END                                                             -- TO_ACCOUNT
+		      , #{LC_SER_NO}                                                    -- LC_NUM
+		      , CASE WHEN #{CREATE_LOC} = '5' THEN
+		             CASE WHEN #{PAY_METHODE1}   = 'MLC' THEN '1'
+		                  WHEN #{PAY_METHODE1}   = 'LLC' THEN '2'
+		                  WHEN #{ISSUE_REQ_NUM} != ''    THEN '4'
+		                  ELSE '3'
+		              END
+		             ELSE #{CREATE_LOC}
+		         END                                                            -- TRADE_LOC
+		      , #{DELIVERY_DATE}                                                -- DELIVERY_DATE
+		      , #{DELIVERY_TIME}                                                -- DELIVERY_TIME
+		      , #{WH_CELL_CODE}                                                 -- WH_CELL_CODE
+		      , #{AGENT_TYPE}                                                   -- AGENT_TYPE
+		      , #{DEPT_CODE}                                                    -- DEPT_CODE
+		      , #{TRANS_COST}                                                   -- TRANS_COST
+		      , #{PRICE_TYPE}                                                   -- PRICE_TYPE
+		      , #{INOUT_WGT_Q}                                                  -- INOUT_WGT_Q
+		      , #{INOUT_FOR_WGT_P}                                              -- INOUT_FOR_WGT_P
+		      , #{INOUT_WGT_P}                                                  -- INOUT_WGT_P
+		      , #{INOUT_VOL_Q}                                                  -- INOUT_VOL_Q
+		      , #{INOUT_FOR_VOL_P}                                              -- INOUT_FOR_VOL_P
+		      , #{INOUT_VOL_P}                                                  -- INOUT_VOL_P
+		      , #{WGT_UNIT}                                                     -- WGT_UNIT
+		      , #{UNIT_WGT}                                                     -- UNIT_WGT
+		      , #{VOL_UNIT}                                                     -- VOL_UNIT
+		      , #{UNIT_VOL}                                                     -- UNIT_VOL
+		      , #{NATION_INOUT}                                                 -- 국내외구분
+		      , #{SALE_DATE}                                                    -- 매출일
+		      , #{S_USER_ID}                                                    -- UPDATE_DB_USER
+		      , GETDATE()                                                       -- UPDATE_DB_TIME
+		      , #{PACK_UNIT_Q}
+		      , #{BOX_Q}
+		      ,	#{EACH_Q}
+		      ,	#{LOSS_Q}
+		      , #{REMARK_INTER}
+		     --20190916 추가: 세액 포함여부 BTR100T에 컬럼 추가 / 저장하도록 수정
+		     , #{TAX_INOUT}
+		     -- 20210225 : CARD_CUSTOM_CODE(카드사) 추가
+		     , #{CARD_CUSTOM_CODE}
+		     -- 20210422 : ADDRESS(주소) 추가
+		     , #{ADDRESS}
+		  FROM BPR200T WITH (NOLOCK)
+		 WHERE COMP_CODE = #{COMP_CODE}
+		   AND DIV_CODE  = #{DIV_CODE}
+		   AND ITEM_CODE = #{ITEM_CODE}
+	</insert>
+
+<update id="pdaWmService.spAutoNumPdp200ukrv" parameterType="Map" statementType="CALLABLE">
+        {call SP_GetAutoNumComp (
+            #{COMP_CODE,    mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{DIV_CODE,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{TABLE_ID,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{PREFIX,       mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{BASIS_DATE,   mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{AUTO_TYPE,    mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{KEY_NUMBER,   mode=OUT,   jdbcType=VARCHAR,   javaType=java.lang.String}
+        )}
+    </update>
+<insert id="pdaWmService.insertPdp200ukrv" parameterType="Map">
+
+	 INSERT INTO PMR110T
+	      ( COMP_CODE
+		  , DIV_CODE
+	      , PRODT_NUM
+		  , WORK_SHOP_CODE
+	      , WKORD_NUM
+		  , ITEM_CODE
+	      , PRODT_DATE
+		  , PRODT_Q
+	      , GOOD_PRODT_Q
+		  , BAD_PRODT_Q
+	      , CONTROL_STATUS
+		  , MAN_HOUR
+	      , LOT_NO
+	      , INSERT_DB_USER
+		  , INSERT_DB_TIME
+	      , UPDATE_DB_USER
+		  , UPDATE_DB_TIME
+		  , FR_TIME
+		  , TO_TIME
+		  , PRODT_PRSN)
+	 VALUES
+	      ( #{COMP_CODE}
+	      , #{DIV_CODE}
+	      , #{PRODT_NUM}
+	      , #{WORK_SHOP_CODE}
+	      , #{WKORD_NUM}
+	      , #{ITEM_CODE}
+	      , CONVERT(CHAR(8),CONVERT(DATETIME,#{PRODT_DATE}) , 112)
+	      , #{PRODT_Q}
+	      , #{GOOD_PRODT_Q}
+	      , #{BAD_PRODT_Q}
+	      , #{CONTROL_STATUS}
+	      , #{MAN_HOUR}
+	      , #{LOT_NO}
+	      , #{USER_ID}
+	      , GETDATE()
+	      , #{USER_ID}
+	      , GETDATE()
+	      , CASE WHEN #{FR_TIME} = '000000' THEN '08:00:00' ELSE #{FR_TIME} END
+		  , CASE WHEN #{TO_TIME} = '000000' THEN '08:00:00' ELSE #{TO_TIME} END
+		  , #{PRODT_PRSN}
+	      )
+	</insert>
+
+
+<update id="pdaWmService.spCallPdp200ukrv" parameterType="Map" statementType="CALLABLE">
+        {call SP_PRODT_ProductionResult (
+            #{COMP_CODE          ,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{DIV_CODE           ,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{PRODT_NUM          ,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{WKORD_NUM          ,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{WH_CODE       ,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{GOOD_WH_CELL_CODE  ,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{GOOD_PRSN          ,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{GOOD_PRODT_Q             ,     mode=IN,    jdbcType=NUMERIC,   javaType=double},
+            #{WH_CODE        ,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{BAD_WH_CELL_CODE   ,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{BAD_PRSN           ,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{BAD_PRODT_Q              ,     mode=IN,    jdbcType=NUMERIC,   javaType=double},
+            #{CONTROL_STATUS     ,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{PRODT_TYPE         ,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{STATUS             ,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{USER_ID            ,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{ERROR_DESC         ,     mode=OUT,   jdbcType=VARCHAR,   javaType=java.lang.String}
+        )}
+    </update>
+
+
+
+<select id="pdaWmService.searchListPdm300ukrvMain" parameterType="Map" resultType="rMap">
+    SELECT
+    	--	A.COMP_CODE
+		   --  , A.DIV_CODE
+		   --  , A.RECEIPT_NUM
+		   --  , A.CUSTOM_PRSN
+		   --  , A.CUSTOM_CODE
+		   --  , C1.CUSTOM_NAME
+		   --  , A.PHONE_NUM
+		   --  , A.ORDER_PRSN
+		   --  , A.RECEIPT_TYPE
+		   --  , A.PRICE_TYPE
+		   --  , unilite.fnCipherDecrypt(A.REPRE_NUM, '')    AS REPRE_NUM
+		   --  , unilite.fnCipherDecrypt(A.REPRE_NUM, 'RR')  AS REPRE_NUM_EXPOS
+		   --  , A.RECEIPT_DATE
+		   --  , A.RECEIPT_PRSN      --20201103 추가
+
+
+		      B.ITEM_CODE		AS itemCode
+		     , B1.ITEM_NAME		AS itemName
+		     , B1.SPEC			AS spec
+		     , B.ORDER_UNIT		AS orderUnit
+		     , ISNULL(B.RECEIPT_Q,0) - ISNULL(B.INSTOCK_Q,0)		AS instockQ
+
+
+		   --  , B.CONTROL_STATUS
+		   --  , B.ARRIVAL_DATE
+		   --  , B.ARRIVAL_PRSN
+		   --  , B.WORK_SEQ
+
+
+		     , B.RECEIPT_NUM		AS receiptNum
+		     , B.RECEIPT_SEQ		AS receiptSeq
+		     , ISNULL(B.RECEIPT_Q,0) - ISNULL(B.INSTOCK_Q,0)			AS receiptQ
+
+
+		   --  , B.RECEIPT_P
+		   --  , B.RECEIPT_O
+		   --  , B.DVRY_DATE
+		   --  , B.REMARK
+		   --  , B.CUSTOM_PRSN
+		   --  , B.REPRE_NUM
+		   --  , B.MONEY_UNIT
+		   --  , B.EXCHG_RATE_O
+		   --  , A.AGREE_STATUS
+		  FROM       S_MPO010T_WM A  WITH(NOLOCK)
+		  INNER JOIN S_MPO020T_WM B  WITH(NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+		                                         AND B.DIV_CODE     = A.DIV_CODE
+		                                         AND B.RECEIPT_NUM  = A.RECEIPT_NUM
+		  LEFT  JOIN BPR100T      B1 WITH(NOLOCK) ON B1.COMP_CODE   = B.COMP_CODE
+		                                         AND B1.ITEM_CODE   = B.ITEM_CODE
+		  LEFT  JOIN BCM100T      C1 WITH(NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE
+		                                         AND C1.CUSTOM_CODE = A.CUSTOM_CODE
+		 WHERE A.COMP_CODE      = #{COMP_CODE}
+		   AND A.DIV_CODE       = #{DIV_CODE}
+		   AND B.CONTROL_STATUS = 'A'
+		   AND A.CUSTOM_PRSN    LIKE #{CUSTOM_PRSN} + '%'
+		 ORDER BY CASE WHEN ISNULL(B.WORK_SEQ, 0) = 0 THEN 99 ELSE ISNULL(B.WORK_SEQ, 0) END, B.RECEIPT_NUM, B.RECEIPT_SEQ
+</select>
+
+<select id="pdaWmService.searchListPdm300ukrvSub1" parameterType="Map" resultType="rMap">
+
+SELECT
+	ITEM_CODE
+	,ITEM_NAME
+	,SPEC
+	,ORDER_UNIT
+  FROM BPR200TV
+ WHERE COMP_CODE = #{COMP_CODE}
+   AND DIV_CODE = #{DIV_CODE}
+<if test="@foren.Ognl@isNotEmpty(ITEM_CD_NM)">
+   AND (ITEM_CODE LIKE #{ITEM_CD_NM} + '%'
+		OR ITEM_NAME LIKE '%'+ #{ITEM_CD_NM} + '%' )
+</if>
+</select>
+
+<update id="pdaWmService.spAutoNumPdm300ukrv" parameterType="Map" statementType="CALLABLE">
+        {call SP_GetAutoNumComp (
+            #{COMP_CODE,    mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{DIV_CODE,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{TABLE_ID,     mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{PREFIX,       mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{BASIS_DATE,   mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{AUTO_TYPE,    mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{KEY_NUMBER,   mode=OUT,   jdbcType=VARCHAR,   javaType=java.lang.String}
+        )}
+    </update>
+
+<insert id="pdaWmService.insertPdm300ukrvMaster" parameterType="Map">
+	INSERT INTO S_MPO010T_WM (
+		          COMP_CODE
+		        , DIV_CODE
+		        , RECEIPT_NUM
+		        , ORDER_PRSN
+		        , CUSTOM_CODE
+		        , CUSTOM_PRSN
+		        , RECEIPT_TYPE
+		        , RECEIPT_PRSN
+		        , RECEIPT_DATE
+		        , WH_CODE
+		        , PRICE_TYPE
+		        , PHONE_NUM
+		        , E_MAIL
+		        , BANK_NAME
+		        , BANK_ACCOUNT
+		        , ADDR
+		        , HOME_TITLE
+		        , HOME_REMARK
+		        , REMARK
+		        , REPRE_NUM
+		        , MONEY_UNIT
+		        , EXCHG_RATE_O
+		        , INSERT_DB_USER
+		        , INSERT_DB_TIME
+		        , UPDATE_DB_USER
+		        , UPDATE_DB_TIME
+		) VALUES (
+		           #{COMP_CODE}
+			     , #{DIV_CODE}
+			     , #{RECEIPT_NUM}
+		        , '90'		-- 고정
+		        ,  'A00001'  --고정
+		        , #{CUSTOM_PRSN} --고객명
+		        , '80' --고정
+		        , #{RECEIPT_PRSN}	--담당자
+		        , #{ARRIVAL_DATE} -- 도착일
+		        , NULL
+		        , 'Z'		--고정
+		        , #{PHONE_NUM}		--연락처
+		        , NULL
+		        , NULL
+		        , NULL
+		        , NULL
+		        , NULL
+		        , NULL
+		        , ''
+		        , ''	-- '' 고정
+		        , 'KRW'	-- 고정
+				, 1		--고정
+		        , #{S_USER_ID}
+		        , GETDATE()
+		        , #{S_USER_ID}
+		        , GETDATE()
+		);
+</insert>
+
+<insert id="pdaWmService.insertPdm300ukrvDetail" parameterType="Map">
+		INSERT INTO S_MPO020T_WM (
+		       COMP_CODE
+		     , DIV_CODE
+		     , RECEIPT_NUM
+		     , RECEIPT_SEQ
+		     , ITEM_CODE
+		     , ORDER_UNIT
+		     , RECEIPT_Q
+		     , RECEIPT_P
+		     , RECEIPT_O
+		     , DVRY_DATE
+		     , INSTOCK_Q
+		     , CONTROL_STATUS
+		     , ARRIVAL_DATE
+		     , ARRIVAL_PRSN
+
+		     , WORK_SEQ
+
+		     , REMARK
+		     , CUSTOM_PRSN
+		     , REPRE_NUM
+		     , MONEY_UNIT
+		     , EXCHG_RATE_O
+		     , INSERT_DB_USER
+		     , INSERT_DB_TIME
+		     , UPDATE_DB_USER
+		     , UPDATE_DB_TIME
+		) VALUES (
+		       #{COMP_CODE}
+		     , #{DIV_CODE}
+		     , #{RECEIPT_NUM}
+		     , #{RECEIPT_SEQ}
+		     , #{ITEM_CODE}
+		     , #{ORDER_UNIT}		-- 품목정보의 order_unit
+		     , 0		-- 고정
+		     , 0		--고정
+		     , 0		--고정
+		     , #{ARRIVAL_DATE}--도착일
+		     , #{INSTOCK_Q}		--도착수량
+		     , 'B'		--고정
+		     , #{ARRIVAL_DATE}	--도착일
+		     , #{RECEIPT_PRSN}		--담당자
+
+		     , '0'		--고정
+
+		     , ''		--고정
+		     , #{CUSTOM_PRSN}	--고객명
+		     , ''	--고정
+		     , 'KRW'--고정
+		     , 1	--고정
+		     , #{S_USER_ID}
+		     , GETDATE()
+		     , #{S_USER_ID}
+		     , GETDATE()
+		)
+</insert>
+
+<update id="pdaWmService.updatePdm300ukrvDetail" parameterType="Map">
+	UPDATE S_MPO020T_WM
+		   SET INSTOCK_Q       = #{INSTOCK_Q}
+		     , CONTROL_STATUS  = 'B'		--고정
+		     , ARRIVAL_DATE    = #{ARRIVAL_DATE}
+		     , ARRIVAL_PRSN    = #{RECEIPT_PRSN}		--담당자
+
+		     , WORK_SEQ        = '0' --고정
+
+		     , UPDATE_DB_USER  = #{S_USER_ID}
+		     , UPDATE_DB_TIME  = GETDATE()
+		 WHERE COMP_CODE    = #{COMP_CODE}
+		   AND DIV_CODE     = #{DIV_CODE}
+		   AND RECEIPT_NUM  = #{RECEIPT_NUM}
+		   AND RECEIPT_SEQ  = #{RECEIPT_SEQ}
+
+</update>
+
+
+
+
+<select id="pdaWmService.invoiceNumCheck" parameterType="Map" resultType="rMap">
+SELECT TOP 1
+	ORDER_STATUS
+FROM SOF110T
+WHERE COMP_CODE = #{COMP_CODE}
+  AND DIV_CODE = #{DIV_CODE}
+  AND INVOICE_NUM2 LIKE '%' + #{INVOICE_NUM} + '%'
+
+</select>
+<select id="pdaWmService.searchListPds200ukrvMain" parameterType="Map" resultType="rMap">
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+    DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+          , @UserId      NVARCHAR(100) /* 사용자ID    */
+          , @LangType    NVARCHAR(2)  /* 언어구분    */
+          , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+          , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+          , @TimeSI      NVARCHAR(01)
+          , @TimeSR      NVARCHAR(01)
+          , @TimeSS      NVARCHAR(01)
+
+    DECLARE @LOT_SUM_TYPE NVARCHAR(10)  /* LOT 관리 여부 */
+
+    SET @CompCode = 'MASTER'
+    SET @UserId   = 'unilite5'
+    SET @LangType = 'ko'
+
+    /* 명칭 참조 유형 */
+    SELECT TOP 1 @RefItem = REF_ITEM
+      FROM BSA300T WITH (NOLOCK)
+     WHERE USER_ID = @UserId
+
+    SET @RefItem = ISNULL(@RefItem, N'0')
+
+    /* 날짜 포맷 유형 설정 */
+    SELECT TOP 1 @DateFormat = CODE_NAME
+      FROM BSA100T WITH (NOLOCK)
+     WHERE COMP_CODE = @CompCode
+       AND MAIN_CODE = N'B044'
+       AND REF_CODE1 = N'Y'
+
+    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+	/* 데이터 조회 */
+	SELECT
+		A.INOUT_TYPE_DETAIL	as inoutTypeDetail
+		, A.CUSTOM_CODE		as customCode
+		, A.ITEM_CODE		as itemCode
+		, A.LOT_NO	     	as lotNo
+		, A.ORDER_UNIT		as orderUnit
+		, A.TRANS_RATE 		as transRate
+		, A.ISSUE_REQ_PRICE	as issueReqPrice				-- 단가
+		,(A.ISSUE_REQ_QTY - A.ISSUE_QTY)	as notReqQ
+		, A.ORDER_TYPE	as orderType
+		, A.MONEY_UNIT	as moneyUnit
+		, A.EXCHANGE_RATE	as exchangeRate
+		, ISNULL(A.ACCOUNT_YNC, '') as accountYnc
+		, A.BILL_TYPE	as billType
+   		, A.PRICE_YN	as priceYn
+		, A.SALE_CUSTOM_CODE	as saleCustomCode
+		, ISNULL(A.ORDER_NUM, '') as orderNum
+        , ISNULL(A.SER_NO, 0) as orderSeq
+        , ISNULL(A.ISSUE_REQ_NUM, '') as issueReqNum
+        , ISNULL(A.ISSUE_REQ_SEQ, 0) as issueReqSeq
+		, (CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+				WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+			ELSE C1.CUSTOM_NAME
+		END)	as customName
+		, (CASE WHEN @RefItem = '1' THEN C2.ITEM_NAME1
+				WHEN @RefItem = '2' THEN C2.ITEM_NAME2
+			ELSE C2.ITEM_NAME
+		END)	as itemName
+		, B.INVOICE_NUM as invoiceNum--운송장 번호
+
+		,A.TAX_TYPE as taxType
+
+		, A.ISSUE_REQ_AMT     as issueReqAmt
+		, A.ISSUE_REQ_TAX_AMT as issueReqTaxAmt
+		, A.ISSUE_FOR_AMT     as issueForAmt
+		, A.ISSUE_FOR_PRICE   as issueForPrice
+
+      FROM            SRQ100T A  WITH (NOLOCK)
+           LEFT  JOIN SOF110T B  WITH (NOLOCK) ON  B.COMP_CODE      = A.COMP_CODE
+                                              AND  B.DIV_CODE       = A.DIV_CODE
+                                              AND  B.ORDER_NUM      = A.ORDER_NUM
+                                              AND  B.SER_NO         = A.SER_NO
+           LEFT  JOIN SOF100T C  WITH (NOLOCK) ON  C.COMP_CODE      = B.COMP_CODE
+                                              AND  C.DIV_CODE       = B.DIV_CODE
+                                              AND  C.ORDER_NUM      = B.ORDER_NUM
+           LEFT  JOIN BIV100T D  WITH (NOLOCK) ON  D.COMP_CODE      = A.COMP_CODE
+                                              AND  D.DIV_CODE       = A.ISSUE_DIV_CODE
+                                              AND  D.WH_CODE        = A.WH_CODE
+                                              AND  D.ITEM_CODE      = A.ITEM_CODE
+           INNER JOIN BCM100T C1 WITH (NOLOCK) ON C1.COMP_CODE      = A.COMP_CODE
+                                              AND C1.CUSTOM_CODE    = A.CUSTOM_CODE
+           INNER JOIN BPR100T C2 WITH (NOLOCK) ON C2.COMP_CODE      = A.COMP_CODE
+                                              AND C2.ITEM_CODE      = A.ITEM_CODE
+           INNER JOIN BPR200T C3 WITH (NOLOCK) ON C3.COMP_CODE      = A.COMP_CODE
+                                              AND C3.DIV_CODE       = A.DIV_CODE
+                                              AND C3.ITEM_CODE      = A.ITEM_CODE
+           LEFT  JOIN BCM100T C4 WITH (NOLOCK) ON C4.COMP_CODE      = A.COMP_CODE
+                                              AND C4.CUSTOM_CODE    = A.SALE_CUSTOM_CODE
+           LEFT  JOIN BSA225T C5 WITH (NOLOCK) ON C5.COMP_CODE      = A.COMP_CODE
+                                              AND C5.DIV_CODE       = A.DIV_CODE
+                                              AND C5.WH_CODE        = A.WH_CODE
+                                              AND C5.WH_CELL_CODE   = A.WH_CELL_CODE
+           LEFT  JOIN BCM100T C6 WITH (NOLOCK) ON C6.COMP_CODE      = C.COMP_CODE
+                                              AND C6.CUSTOM_CODE    = C.CUSTOM_CODE
+           LEFT  JOIN SCM100T C7 WITH (NOLOCK) ON C7.COMP_CODE      = A.COMP_CODE
+                                              AND C7.CUSTOM_CODE    = A.CUSTOM_CODE
+                                              AND CONVERT(NVARCHAR, C7.DVRY_CUST_SEQ) = A.DVRY_CUST_CD
+           LEFT  JOIN BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE      = A.COMP_CODE
+                                              AND M1.MAIN_CODE      = N'S007'
+                                              AND M1.SUB_CODE       = A.INOUT_TYPE_DETAIL
+           LEFT  JOIN TEA100T E  WITH (NOLOCK) ON E.COMP_CODE       = A.COMP_CODE
+                                              AND E.DIV_CODE        = A.DIV_CODE
+                                              AND E.SO_SER_NO       = A.ORDER_NUM
+           LEFT  JOIN TEA110T E1 WITH (NOLOCK) ON E1.COMP_CODE      = A.COMP_CODE
+                                              AND E1.DIV_CODE       = A.DIV_CODE
+                                              AND E1.SO_SER_NO      = A.ORDER_NUM
+                                              AND E1.SO_SER         = A.SER_NO
+
+     WHERE A.COMP_CODE        = @CompCode
+       AND A.ISSUE_REQ_QTY    > A.ISSUE_QTY
+       AND ISNULL(B.ORDER_STATUS,'N')      = 'N'           /* 마감여부 */
+
+       AND ISNULL(A.REF_LOC, '1') = '1'
+       AND A.ISSUE_DIV_CODE   	  = '01'
+
+	  AND ( B.INVOICE_NUM2 LIKE '%' + #{INVOICE_NUM} + '%' AND  #{INVOICE_NUM} != '' )  --운송장번호
+
+     GROUP BY A.CUSTOM_CODE      , C1.CUSTOM_NAME    , A.ITEM_CODE        , C2.ITEM_NAME       , C2.ITEM_NAME1
+            , C2.ITEM_NAME2         , C2.SPEC
+            , A.ORDER_UNIT       , A.TRANS_RATE        , A.ISSUE_REQ_DATE   , A.ISSUE_DATE       , A.DELIVERY_TIME
+            , A.ISSUE_REQ_QTY    , A.ISSUE_QTY         , D.GOOD_STOCK_Q --, CASE WHEN @LOT_SUM_TYPE = 'Y' AND C3.LOT_YN='Y' THEN ISNULL(D2.GOOD_STOCK_Q, 0) ELSE ISNULL(D.GOOD_STOCK_Q, 0) END
+            , A.ISSUE_REQ_NUM    , A.ISSUE_REQ_SEQ
+            , A.PROJECT_NO       , A.LOT_NO            , B.RECEIVER_ID      , B.RECEIVER_NAME    , B.TELEPHONE_NUM1
+            , B.TELEPHONE_NUM2   , B.ADDRESS1          , B.ADDRESS2         , C6.CUSTOM_NAME     , C6.CUSTOM_NAME1
+            , C6.CUSTOM_NAME2    , A.INOUT_TYPE_DETAIL , A.ISSUE_DIV_CODE , A.BILL_TYPE
+            , A.WH_CODE          , A.WH_CELL_CODE      , C5.WH_CELL_NAME    , A.ISSUE_REQ_PRICE  , A.ISSUE_REQ_AMT
+            , A.ISSUE_REQ_TAX_AMT, A.TAX_TYPE          , A.MONEY_UNIT       , A.EXCHANGE_RATE    , A.ACCOUNT_YNC
+            , A.DISCOUNT_RATE    , A.ISSUE_REQ_PRSN    , A.DVRY_CUST_CD     , A.REMARK           , A.ORDER_NUM
+            , A.SER_NO           , A.SALE_CUSTOM_CODE  , C4.CUSTOM_NAME     , C4.CUSTOM_NAME1     , C4.CUSTOM_NAME2
+            , A.ORDER_TYPE       , A.PRICE_YN          , A.PO_NUM           , A.PO_SEQ           , C1.CREDIT_YN
+            , C1.WON_CALC_BAS    , C1.TAX_TYPE         , A.AGENT_TYPE       , C2.STOCK_CARE_YN   , C2.STOCK_UNIT
+            , C7.DVRY_CUST_NM    , C.TAX_INOUT         , B.RETURN_Q         , B.ORDER_Q          , M1.REF_CODE2
+            , M1.SUB_CODE        , C2.EXCESS_RATE      , A.DEPT_CODE        , A.COMP_CODE        , A.DIV_CODE
+            , E.PAY_METHODE1     , E1.LC_SER_NO        , C3.ITEM_ACCOUNT    , C1.CUSTOM_NAME1     , C1.CUSTOM_NAME2
+            , A.REF_LOC          , E1.QTY              , A.ISSUE_WGT_Q      , A.ISSUE_VOL_Q
+            , A.PRICE_TYPE       , A.ISSUE_FOR_WGT_P   , A.ISSUE_WGT_P      , A.ISSUE_VOL_P      , A.ISSUE_FOR_VOL_P
+            , A.WGT_UNIT         , A.UNIT_WGT          , A.VOL_UNIT         , A.UNIT_VOL, C3.LOT_YN , A.REMARK_INTER
+            , A.ISSUE_FOR_AMT    , A.ISSUE_FOR_PRICE
+			, B.INVOICE_NUM
+
+     ORDER BY A.ISSUE_REQ_NUM, A.ISSUE_REQ_SEQ, C1.CUSTOM_NAME, A.ISSUE_REQ_PRSN DESC, A.ITEM_CODE, A.ISSUE_DATE
+
+    SET NOCOUNT OFF
+    SET ARITHABORT OFF
+END
+</select>
+
+<insert id="pdaWmService.insertPds200ukrv" parameterType="Map">
+INSERT INTO L_BTR100T
+(
+	  KEY_VALUE
+	, OPR_FLAG
+	, COMP_CODE
+	, DIV_CODE
+	, INOUT_NUM
+	, INOUT_SEQ
+	, INOUT_TYPE
+	, INOUT_METH
+	, CREATE_LOC
+	, INOUT_TYPE_DETAIL
+	, INOUT_CODE_TYPE
+	, INOUT_CODE
+	, INOUT_DATE
+	, ITEM_CODE
+	, ITEM_STATUS
+	, WH_CODE
+	, WH_CELL_CODE
+	, LOT_NO
+	, INOUT_PRSN
+	, ORDER_UNIT
+	, TRNS_RATE
+	, ORDER_UNIT_Q
+	, ORDER_UNIT_P
+	, ORDER_UNIT_O
+	, ORDER_UNIT_FOR_P
+	, INOUT_Q
+	, INOUT_P
+	, INOUT_I
+	, INOUT_FOR_P
+	, INOUT_FOR_O
+	, INOUT_TAX_AMT
+	, ORDER_TYPE
+	, MONEY_UNIT
+	, EXCHG_RATE_O
+	, ACCOUNT_YNC
+	--, INSPEC_NUM
+	--, INSPEC_SEQ
+	--, LC_NUM
+	--, BL_NUM
+	--, BASIS_NUM
+	--, BASIS_SEQ
+	, BILL_TYPE
+	, SALE_TYPE
+	, PRICE_YN
+	, SALE_DIV_CODE
+	, SALE_CUSTOM_CODE
+	, SALE_C_YN
+	, INSERT_DB_USER
+	, INSERT_DB_TIME
+	, UPDATE_DB_USER
+	, UPDATE_DB_TIME
+	, ORDER_NUM
+	, ORDER_SEQ
+	, ISSUE_REQ_NUM
+	, ISSUE_REQ_SEQ
+	,TAX_TYPE
+)VALUES(
+	  #{KEY_VALUE} 																														--KEY_VALUE
+	, #{OPR_FLAG}                                                                                                                       --OPR_FLAG
+	, #{COMP_CODE}                                                                                                                       --COMP_CODE
+	, #{DIV_CODE}                                                                                                                        --DIV_CODE
+	, ''                                                                                                                                --INOUT_NUM
+	, #{INOUT_SEQ}                                                                                                                     --INOUT_SEQ
+	, '2'                                       -- INOUT_TYPE                 ---- 고정(수불타입)	1 출고                              --INOUT_TYPE
+	, '1'                                       -- INOUT_METH                 ---- 고정(수불방법)	1 정상 2예외                        --INOUT_METH
+	, '1'                               		-- CREATE_LOC                 ---- 고정(수불생성)  1:영업                               --CREATE_LOC
+	, #{INOUT_TYPE_DETAIL}                                      -- INOUT_TYPE_DETAIL          ---- 고정(수불유형)		 99예외출고                     --INOUT_TYPE_DETAIL
+	, '4' 										-- INOUT_CODE_TYPE            ---- 고정(거래처구분)  4:거래처                           --INOUT_CODE_TYPE
+	, #{CUSTOM_CODE}                                                                                                                     --INOUT_CODE
+	, CONVERT(NVARCHAR(08), GETDATE(), 112)                                                                                                                   --INOUT_DATE
+	, #{ITEM_CODE}                                                                                                                       --ITEM_CODE
+	, '1'                                                                                                                               --ITEM_STATUS
+	, #{WH_CODE}                                                                                                                    --WH_CODE
+	, #{WH_CELL_CODE}
+	, #{LOT_NO}                                                                                                                           --LOT_NO
+	, #{INOUT_PRSN}                                                                                                                     --INOUT_PRSN
+	, #{ORDER_UNIT}	-- 단위                                                                                                         --ORDER_UNIT
+	, ${TRANS_RATE}						                                                                                                --TRNS_RATE
+
+	--, ${NOT_REQ_Q}      		                                                                                                        --ORDER_UNIT_Q
+	--, ${ISSUE_REQ_PRICE}			                                                                                                    --ORDER_UNIT_P
+	--, ${NOT_REQ_Q}  * ${ISSUE_REQ_PRICE}	                                                                                            --ORDER_UNIT_O
+	--, ${ISSUE_REQ_PRICE}	                                                                                                            --ORDER_UNIT_FOR_P
+	--, ${NOT_REQ_Q}		                                                                                                                --INOUT_Q
+	--, ${ISSUE_REQ_PRICE} / ${TRANS_RATE} * ${EXCHANGE_RATE}                                                                                                            --INOUT_P
+	--, ${NOT_REQ_Q} * ${ISSUE_REQ_PRICE} * ${EXCHANGE_RATE}                                                                                           --INOUT_I
+	--, ${ISSUE_REQ_PRICE}	                                                                                                            --INOUT_FOR_P
+	--, ${NOT_REQ_Q} * ${ISSUE_REQ_PRICE}	                                                                                            --INOUT_FOR_O
+
+	, #{NOT_REQ_Q}              -- ORDER_UNIT_Q
+	, #{ISSUE_REQ_PRICE}        -- ORDER_UNIT_P
+	, #{ISSUE_REQ_AMT}          -- ORDER_UNIT_O
+	, #{ISSUE_FOR_PRICE}        -- ORDER_UNIT_FOR_P
+	, #{NOT_REQ_Q}              -- INOUT_Q
+	, #{ISSUE_REQ_PRICE}        -- INOUT_P
+	, #{ISSUE_REQ_AMT}          -- INOUT_I
+	, #{ISSUE_FOR_PRICE}        -- INOUT_FOR_P
+	, #{ISSUE_FOR_AMT}          -- INOUT_FOR_O
+	, #{ISSUE_REQ_TAX_AMT}      -- INOUT_TAX_AMT
+
+	, #{ORDER_TYPE} 	                                                                                                                            --ORDER_TYPE
+	, #{MONEY_UNIT}         --  MONEY_UNIT
+	, ${EXCHANGE_RATE}                                                                                                                                  --EXCHG_RATE_O
+	, #{ACCOUNT_YNC}                                                                                                                                --ACCOUNT_YNC
+	--, ''				                                                                                                                --INSPEC_NUM
+	--, 0					                                                                                                                --INSPEC_SEQ
+	--, ''				                                                                                                                --LC_NUM
+	--, ''				                                                                                                                --BL_NUM
+	--, ''				                                                                                                                --BASIS_NUM
+	--, NULL				                                                                                                                --BASIS_SEQ
+	,#{BILL_TYPE}            				--				 BILL_TYPE                                                              --BILL_TYPE
+	, #{ORDER_TYPE}                           --				 SALE_TYPE                                                          --SALE_TYPE
+	,#{PRICE_YN}                            --				 PRICE_YN                                                                           --PRICE_YN
+	, #{DIV_CODE}                            --				 SALE_DIV_CODE                                                              --SALE_DIV_CODE
+	, #{SALE_CUSTOM_CODE}                            --				 SALE_CUSTOM_CODE                                                                   --SALE_CUSTOM_CODE
+	,'N'                                                                                                                                --SALE_C_YN
+	,#{S_USER_ID}                                                                                                                       --INSERT_DB_USER
+	,GETDATE()                                                                                                                          --INSERT_DB_TIME
+	,#{S_USER_ID}                                                                                                                       --UPDATE_DB_USER
+	,GETDATE()                                                                                                                          --UPDATE_DB_TIME
+	,#{ORDER_NUM}                                                                                                                       --ORDER_NUM
+	,#{ORDER_SEQ}                                                                                                                       --ORDER_SEQ
+	,#{ISSUE_REQ_NUM}                                                                                                                   --ISSUE_REQ_NUM
+	,#{ISSUE_REQ_SEQ}	                                                                                                                --ISSUE_REQ_SEQ
+	,#{TAX_TYPE}
+)
+</insert>
+<update id="pdaWmService.spCallPds200ukrv" parameterType="Map" statementType="CALLABLE">
+	{call USP_SALES_STR103UKR (
+		#{KeyValue		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+		#{InOutNum		, mode=OUT	, jdbcType=VARCHAR	, javaType=java.lang.String},
+		#{ErrorDesc		, mode=OUT	, jdbcType=VARCHAR	, javaType=java.lang.String},
+		#{SalePrsnChk	, mode=OUT	, jdbcType=VARCHAR	, javaType=java.lang.String}
+	)}
+</update>
+<select id="pdaWmService.searchListIfOrderListPut" parameterType="Map" resultType="rMap">
+	    SELECT *
+	      FROM L_BTR100T         L  WITH (NOLOCK)
+	INNER JOIN SOF110T           A  WITH (NOLOCK)
+	        ON A.COMP_CODE     = L.COMP_CODE
+	       AND A.OUT_DIV_CODE  = L.DIV_CODE
+	       AND A.ORDER_NUM     = L.ORDER_NUM
+	       AND A.SER_NO        = L.ORDER_SEQ
+	     WHERE L.COMP_CODE     = #{COMP_CODE}
+	       AND L.DIV_CODE      = #{DIV_CODE}
+	       AND L.KEY_VALUE     = #{KEY_VALUE}
+	       AND A.NUMBER        = '9999'
+</select>
+
+
+
+
+<select id="pdaWmService.searchListPdm400ukrvMain" parameterType="Map" resultType="rMap">
+        DECLARE     @COMP_CODE              NVARCHAR(08)            -- (필수) 법인코드
+                  , @DIV_CODE               NVARCHAR(08)            -- (필수) 사업장코드
+                  , @WKORD_NUM              NVARCHAR(20)            -- (선택) 작업지시번호
+                  , @USER_ID                NVARCHAR(100)            -- (필수) 사용자ID
+
+        SET @COMP_CODE              = #{COMP_CODE}
+        SET @DIV_CODE               = #{DIV_CODE}
+        SET @WKORD_NUM              = #{WKORD_NUM}
+        SET @USER_ID                = #{S_USER_ID}
+
+        DECLARE     @RefItem                NVARCHAR(01)             -- 사용자 품목명 참조 유형
+
+        SELECT TOP 1 @RefItem = REF_ITEM
+        FROM   BSA300T WITH (NOLOCK)
+        WHERE  COMP_CODE = @COMP_CODE
+        AND    USER_ID   = @USER_ID
+
+        SET @RefItem = ISNULL(@RefItem, '0')
+
+        SELECT
+              A.COMP_CODE
+             , A.DIV_CODE
+             , A.WORK_SHOP_CODE															as workShopCode
+             , A.ITEM_CODE																as itemCode
+             , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                    WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                    WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                    ELSE                     C1.ITEM_NAME
+               END                                                                      as itemName
+             , ISNULL(C1.SPEC, '') 												    	as spec
+             , C1.STOCK_UNIT															as orderUnit
+             , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.ALLOCK_Q, 0)
+                                          - ISNULL(A.PRODT_Q, 0),     'M_FSET_QS')		as notQ
+             , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.ALLOCK_Q, 0)
+                                          - ISNULL(A.PRODT_Q, 0),     'M_FSET_QS')		as outQ
+             , A.WKORD_NUM																as wkordNum
+             , ISNULL(C.LOT_NO, '')                                                     as lotNo
+             , ISNULL(C.REMARK, '')                                                     as remark
+             , ISNULL(C.PROJECT_NO, '')                                                 as projectNo
+
+        FROM               PMP200T      A  WITH (NOLOCK)
+               LEFT  JOIN  PMP100TV1    C  WITH (NOLOCK) ON C.COMP_CODE     = A.COMP_CODE
+                                                        AND C.DIV_CODE      = A.DIV_CODE
+                                                        AND C.WKORD_NUM     = A.WKORD_NUM
+
+               INNER JOIN  BPR100T      C1 WITH (NOLOCK) ON C1.COMP_CODE    = A.COMP_CODE
+                                                        AND C1.ITEM_CODE    = A.ITEM_CODE
+               INNER JOIN  BPR200T      C2 WITH (NOLOCK) ON C2.COMP_CODE    = A.COMP_CODE
+                                                        AND C2.DIV_CODE     = A.DIV_CODE
+                                                        AND C2.ITEM_CODE    = A.ITEM_CODE
+               LEFT  JOIN  BPR100T      C3 WITH (NOLOCK) ON C3.COMP_CODE    = C.COMP_CODE
+                                                        AND C3.ITEM_CODE    = C.ITEM_CODE
+
+        WHERE A.COMP_CODE = @COMP_CODE
+         AND A.DIV_CODE = @DIV_CODE
+		 AND A.WKORD_NUM = @WKORD_NUM
+		 AND C.WKORD_STATUS &lt; '8'
+	     AND A.ALLOCK_Q > A.PRODT_Q
+        ORDER BY A.COMP_CODE, A.DIV_CODE, A.WORK_SHOP_CODE, A.ITEM_CODE, A.PATH_CODE
+</select>
+
+<select id="pdaWmService.searchListPdm400ukrvSub1" parameterType="Map" resultType="rMap">
+
+<if test="GUBUN == &quot;1&quot;">
+	SELECT
+		ITEM_CODE
+		,ITEM_NAME
+		,SPEC
+		,ORDER_UNIT
+	  FROM BPR200TV
+	 WHERE COMP_CODE = #{COMP_CODE}
+	   AND DIV_CODE = #{DIV_CODE}
+	<if test="@foren.Ognl@isNotEmpty(ITEM_CD_NM)">
+	   AND (ITEM_CODE LIKE #{ITEM_CD_NM} + '%'
+			OR ITEM_NAME LIKE '%'+ #{ITEM_CD_NM} + '%' )
+	</if>
+</if>
+
+<if test="GUBUN == &quot;2&quot;">
+
+	SELECT
+		 A.ITEM_CODE
+		, B.ITEM_NAME
+		, B.SPEC
+		FROM S_BPR210T_WM A
+		INNER JOIN BPR100T B ON B.COMP_CODE = A.COMP_CODE
+							AND B.ITEM_CODE = A.ITEM_CODE
+		INNER JOIN S_BPR210T_WM C ON C.COMP_CODE = A.COMP_CODE
+								 AND C.DIV_CODE = A.DIV_CODE
+								 AND C.ITEM_GROUP = A.ITEM_GROUP
+
+		WHERE C.COMP_CODE = #{COMP_CODE}
+			AND C.DIV_CODE = #{DIV_CODE}
+			AND C.USE_YN = 'Y'
+			AND C.ITEM_CODE = #{ITEM_CD_NM}
+</if>
+
+</select>
+
+<insert id="pdaWmService.insertPdm400ukrv" parameterType="Map">
+INSERT INTO L_BTR100T
+        ( KEY_VALUE
+		,OPR_FLAG
+		,COMP_CODE
+		,DIV_CODE
+		,INOUT_NUM
+		,INOUT_SEQ
+		,INOUT_METH
+		,INOUT_TYPE
+		,INOUT_CODE_TYPE
+		,INOUT_TYPE_DETAIL
+		,CREATE_LOC
+		,INOUT_CODE
+		,INOUT_CODE_DETAIL
+		,INOUT_DATE
+		,INOUT_PRSN
+		,MONEY_UNIT
+		,EXCHG_RATE_O
+		,ITEM_CODE
+		,INOUT_Q
+		,INOUT_P
+		,INOUT_I
+		,ORDER_UNIT_Q
+		,ITEM_STATUS
+		,WH_CODE
+		,WH_CELL_CODE
+		,LOT_NO
+		,PATH_CODE
+		,ORDER_NUM
+		,ORDER_SEQ
+		,OUTSTOCK_NUM
+		,REF_WKORD_NUM
+		,BASIS_NUM
+		,BASIS_SEQ
+		,REMARK
+		,PROJECT_NO
+		,BILL_TYPE
+		,SALE_TYPE
+		,SALE_DIV_CODE
+		,SALE_CUSTOM_CODE
+		,ACCOUNT_YNC
+
+		, ORDER_UNIT
+		,INSERT_DB_USER
+		,INSERT_DB_TIME
+		,UPDATE_DB_USER
+		,UPDATE_DB_TIME
+
+)VALUES(
+
+		 #{KEY_VALUE}              -- KEY_VALUE
+		, #{OPR_FLAG}              -- OPR_FLAG
+        , #{COMP_CODE}            -- COMP_CODE
+		, #{DIV_CODE}              -- DIV_CODE
+		, ''                      -- INOUT_NUM
+		, #{INOUT_SEQ}             -- INOUT_SEQ
+		, '3'                     -- INOUT_METH
+		, '2'                     -- INOUT_TYPE
+        , '3'                     -- INOUT_CODE_TYPE		 ---- 수불처구분 작업장
+		, '10'                    -- INOUT_TYPE_DETAIL		--생산출고
+        , '2'                     -- CREATE_LOC
+		, #{WORK_SHOP_CODE}         -- INOUT_CODE		--작업장 코드
+		, ''       					-- INOUT_CODE_DETAIL	--빈값
+		, #{INOUT_DATE} 				-- INOUT_DATE
+        , #{INOUT_PRSN} 				-- INOUT_PRSN
+        , 'KRW'            -- MONEY_UNIT
+		, 1.0          -- EXCHG_RATE_O
+		, #{ITEM_CODE}             -- ITEM_CODE
+		, #{OUT_Q}          		-- INOUT_Q
+        , 0          				-- INOUT_P
+        , 0          				-- INOUT_I
+		, #{OUT_Q}          		-- ORDER_UNIT_Q
+		, '1'                     -- ITEM_STATUS
+        , #{WH_CODE}               -- WH_CODE
+        , #{WH_CELL_CODE}          -- WH_CELL_CODE
+        , #{LOT_NO}              -- LOT_NO
+		, 0                       -- PATH_CODE
+        , #{WKORD_NUM}             -- ORDER_NUM		--작지번호
+		, 0             			-- ORDER_SEQ
+        , NULL            			-- OUTSTOCK_NUM
+        , #{WKORD_NUM}         		-- REF_WKORD_NUM		--작지번호
+		, NULL             			-- BASIS_NUM
+		, NULL             			-- BASIS_SEQ
+        , #{REMARK}              	-- REMARK
+        , #{PROJECT_NO}              			-- PROJECT_NO
+        , '*'                     	-- BILL_TYPE
+        , '*'                     	-- SALE_TYPE
+        , '*'                     	-- SALE_DIV_CODE
+		, '*'                     	-- SALE_CUSTOM_CODE
+		, 'N'                     	-- ACCOUNT_YNC
+
+		, #{ORDER_UNIT}
+
+		, #{S_USER_ID}        		-- INSERT_DB_USER
+		, GETDATE()        			-- INSERT_DB_TIME
+        , #{S_USER_ID}        		-- UPDATE_DB_USER
+        , GETDATE()         		-- UPDATE_DB_TIME
+		)
+
+
+	</insert>
+	<update id="pdaWmService.uspMatrlMtr200ukr" parameterType="Map" statementType="CALLABLE">
+        {call uniLITE.USP_MATRL_Mtr200ukr  (
+            #{KEY_VALUE,      mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{INOUT_NUM,      mode=OUT,   jdbcType=VARCHAR,   javaType=java.lang.String},
+            #{ERROR_DESC,     mode=OUT,   jdbcType=VARCHAR,   javaType=java.lang.String}
+        )}
+    </update>
+
+
+
+<select id="pdaWmService.orderStatusCheck" parameterType="Map" resultType="rMap">
+
+	SELECT TOP 1
+		B.ORDER_STATUS  --수주상태
+	  FROM PMP100T A WITH(NOLOCK)
+INNER JOIN SOF110T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+          						 AND B.DIV_CODE = A.DIV_CODE
+          						 AND B.ORDER_NUM = A.SO_NUM
+          						 AND B.SER_NO = A.SO_SEQ
+	 WHERE A.COMP_CODE = #{COMP_CODE}
+	   AND A.DIV_CODE = #{DIV_CODE}
+	   AND A.WKORD_NUM = #{WORKORD_NUM}
+
+</select>
+<select id="pdaWmService.searchListPdp400ukrvMain" parameterType="Map" resultType="rMap">
+
+    SELECT TOP 1
+		   A.ITEM_CODE									as itemCode
+	     , B.ITEM_NAME									as itemName
+	     , B.SPEC										as spec
+	     , ISNULL(A.RECEIPT_Q,0) - ISNULL(A.INSPEC_Q,0) as notInspecQ
+	     , A.RECEIPT_NUM								as receiptNum
+	     , A.RECEIPT_SEQ								as receiptSeq
+	     , A.LOT_NO										as lotNo
+	     , A.PRODT_NUM									as prodtNum
+	     , A.WKORD_NUM									as wkordNum
+		 , F.INVOICE_NUM2   							as invoiceNum	--운송장번호2
+		 , F.RECEIVER_NAME  							as receiverName	--주문자
+
+      FROM QMS300T A WITH (NOLOCK)
+INNER JOIN PMP100T E WITH(NOLOCK) ON E.COMP_CODE = A.COMP_CODE
+								 AND E.DIV_CODE = A.DIV_CODE
+							  	 AND E.WKORD_NUM = A.WKORD_NUM
+ LEFT JOIN SOF110T F WITH(NOLOCK) ON F.COMP_CODE = E.COMP_CODE
+								 AND F.DIV_CODE = E.DIV_CODE
+								 AND F.ORDER_NUM = E.SO_NUM
+								 AND F.SER_NO = E.SO_SEQ
+INNER JOIN BPR100T B WITH (NOLOCK) ON A.ITEM_CODE = B.ITEM_CODE
+                                  AND A.COMP_CODE = B.COMP_CODE
+     WHERE A.COMP_CODE = #{COMP_CODE}
+       AND ISNULL(A.RECEIPT_Q,0) - ISNULL(A.INSPEC_Q,0) > 0
+	   AND A.WKORD_NUM = #{WKORD_NUM}
+ ORDER BY A.COMP_CODE, A.DIV_CODE, A.RECEIPT_NUM, A.RECEIPT_SEQ
+
+</select>
+
+<insert id="pdaWmService.insertPdp400ukrv" parameterType="Map">
+INSERT INTO L_QMS400T(
+	KEY_VALUE
+     , OPR_FLAG
+     , COMP_CODE
+     , DIV_CODE
+     , INSPEC_NUM
+     , INSPEC_SEQ
+     , INSPEC_DATE
+     , ITEM_CODE
+     , INSPEC_TYPE
+     , GOODBAD_TYPE
+     , RECEIPT_Q
+     , INSPEC_Q
+     , GOOD_INSPEC_Q
+     , BAD_INSPEC_Q
+     , INSPEC_PRSN
+     , LOT_NO
+     , PRODT_NUM
+     , WKORD_NUM
+     , PROJECT_NO
+     , PJT_CODE
+     , RECEIPT_NUM
+     , RECEIPT_SEQ
+     , REMARK
+     , GOOD_WH_CODE
+     , GOOD_WH_CELL_CODE
+     , BAD_WH_CODE
+     , BAD_WH_CELL_CODE
+     , GOOD_PRSN
+     , BAD_PRSN
+     , INSERT_DB_USER
+     , INSERT_DB_TIME
+     , UPDATE_DB_USER
+     , UPDATE_DB_TIME
+)VALUES(
+	#{KEY_VALUE}
+     , #{OPR_FLAG}
+     , #{COMP_CODE}
+     , #{DIV_CODE}
+     , ''
+     , #{INSPEC_SEQ}
+
+     , #{INSPEC_DATE}
+     , #{ITEM_CODE}
+     , '01'--고정
+     , ''
+     , #{NOT_INSPEC_Q}
+     , #{NOT_INSPEC_Q}  --미검사수량 그대로
+     , #{NOT_INSPEC_Q}
+     , '0'
+     , #{INSPEC_PRSN}--검사담당
+     , ''
+     , #{PRODT_NUM}
+     , #{WKORD_NUM}--작업지시번호
+     , ''
+     , ''
+     , #{RECEIPT_NUM}
+     , #{RECEIPT_SEQ}
+     , ''
+     , #{WH_CODE}
+     , #{WH_CELL_CODE}
+     , ''
+     , ''
+     , ''
+     , ''
+     , #{S_USER_ID}
+     , GETDATE()
+     , #{S_USER_ID}
+     , GETDATE()
+)
+</insert>
+
+<update id="pdaWmService.spCallPdp400ukrv" parameterType="Map" statementType="CALLABLE">
+	{call uniLITE.USP_PRODT_Pms400ukr  (
+        #{KEY_VALUE,      mode=IN,    jdbcType=VARCHAR,   javaType=java.lang.String},
+        #{INSPEC_NUM,      mode=OUT,   jdbcType=VARCHAR,   javaType=java.lang.String},
+        #{ERROR_DESC,     mode=OUT,   jdbcType=VARCHAR,   javaType=java.lang.String}
+    )}
+
+</update>
+</mapper>

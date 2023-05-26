@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="hep910ukrServiceImpl">
+
+<select id="hep910ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+BEGIN
+    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects  WHERE id=object_id('tempdb..#TEMP_HEP910T'))
+        DROP TABLE #TEMP_HEP910T
+    
+        CREATE TABLE #TEMP_HEP910T (
+            COMP_CODE           NVARCHAR (1000),
+            TREE_LEVEL          NVARCHAR (1000),
+            DEPT_CODE           NVARCHAR (1000),
+            DEPT_NAME           NVARCHAR (1000),
+            DEPT_TEAM_CODE      NVARCHAR (1000),
+            DEPT_TEAM_NAME      NVARCHAR (1000),
+            EVAL_YEARS          NVARCHAR (1000),
+            TEAM_POINT          NUMERIC(5, 2) DEFAULT (0.00),
+            WEIGHT_POINT        NUMERIC(5, 0) DEFAULT (0),
+            FINAL_TEAM_POINT    NUMERIC(5, 2) DEFAULT (0.00),
+            DEPT_POINT          NUMERIC(5, 2) DEFAULT (0.00)
+        )
+
+        INSERT INTO #TEMP_HEP910T(
+            COMP_CODE       
+            ,TREE_LEVEL     
+            ,DEPT_CODE      
+            ,DEPT_NAME      
+            ,DEPT_TEAM_CODE
+            ,DEPT_TEAM_NAME
+            ,EVAL_YEARS
+        )SELECT
+            A.COMP_CODE
+            ,A.TREE_LEVEL
+            ,(SELECT S1.TREE_CODE FROM BSA210T S1 WHERE S1.TREE_LEVEL = SUBSTRING(A.TREE_LEVEL,1,7)) AS DEPT_CODE
+            ,(SELECT S2.TREE_NAME FROM BSA210T S2 WHERE S2.TREE_LEVEL = SUBSTRING(A.TREE_LEVEL,1,7)) AS DEPT_NAME
+            ,A.TREE_CODE AS DEPT_TEAM_CODE
+            ,A.TREE_NAME AS DEPT_TEAM_NAME
+            ,#{EVAL_YEARS}
+          FROM BSA210T A WITH(NOLOCK)
+        WHERE A.COMP_CODE = #{S_COMP_CODE}
+          AND A.USE_YN = 'Y'
+      AND LEN(A.TREE_LEVEL) = 10
+END
+
+BEGIN
+    UPDATE #TEMP_HEP910T SET
+        TEAM_POINT = B.TEAM_POINT
+        ,WEIGHT_POINT   = B.WEIGHT_POINT
+        ,FINAL_TEAM_POINT = B.TEAM_POINT * B.WEIGHT_POINT
+        ,DEPT_POINT = B.DEPT_POINT
+      FROM #TEMP_HEP910T A WITH(NOLOCK)
+      INNER JOIN HEP910T B ON B.COMP_CODE = A.COMP_CODE
+                          AND B.DEPT_CODE = A.DEPT_CODE
+                          AND B.EVAL_YEARS = A.EVAL_YEARS
+                          AND B.DEPT_TEAM_CODE = A.DEPT_TEAM_CODE
+     
+END
+
+SELECT 
+    COMP_CODE
+    ,TREE_LEVEL
+    ,DEPT_CODE          --부서코드
+    ,DEPT_NAME          --부서명
+    ,DEPT_TEAM_CODE     --팀코드
+    ,DEPT_TEAM_NAME     --팀명
+    ,EVAL_YEARS         --기준년도
+    ,TEAM_POINT         --평가점수
+    ,WEIGHT_POINT       --가중치
+    ,FINAL_TEAM_POINT   --평가점수합계
+    ,DEPT_POINT         --부서평균
+ FROM #TEMP_HEP910T WITH(NOLOCK)
+WHERE COMP_CODE  = #{S_COMP_CODE}
+  AND EVAL_YEARS = #{EVAL_YEARS}
+<if test="@foren.Ognl@isNotEmpty(DEPTS)">
+  AND DEPT_TEAM_CODE    IN
+    <foreach collection="DEPTS" item="item" separator="," close=")" open="(">
+        #{item}
+    </foreach>
+</if>
+
+</select>
+<update id="hep910ukrServiceImpl.updateDetail" parameterType="Map">    
+IF NOT EXISTS (SELECT COMP_CODE FROM HEP910T WITH(NOLOCK) WHERE COMP_CODE = #{S_COMP_CODE}
+                                               AND EVAL_YEARS = #{EVAL_YEARS}
+                                               AND DEPT_CODE = #{DEPT_CODE}
+                                               AND DEPT_TEAM_CODE = #{DEPT_TEAM_CODE}) 
+        BEGIN
+            INSERT INTO HEP910T (
+                COMP_CODE
+                ,EVAL_YEARS
+                ,DEPT_CODE
+                ,DEPT_TEAM_CODE
+                ,TEAM_POINT
+                ,WEIGHT_POINT
+                ,DEPT_POINT
+                ,INSERT_DB_USER
+                ,INSERT_DB_TIME
+                ,UPDATE_DB_USER 
+                ,UPDATE_DB_TIME
+            )VALUES(
+                #{S_COMP_CODE}
+                ,#{EVAL_YEARS}
+                ,#{DEPT_CODE}
+                ,#{DEPT_TEAM_CODE}
+                ,#{TEAM_POINT}
+                ,#{WEIGHT_POINT}
+                ,#{DEPT_POINT}
+                ,#{S_USER_ID}  
+                ,GETDATE()     
+                ,#{S_USER_ID}  
+                ,GETDATE()     
+            )
+        END
+ELSE
+        BEGIN
+            UPDATE HEP910T SET 
+                UPDATE_DB_USER = #{S_USER_ID}
+                ,UPDATE_DB_TIME = GETDATE()
+                ,TEAM_POINT = #{TEAM_POINT}
+                ,WEIGHT_POINT = #{WEIGHT_POINT}
+                ,DEPT_POINT = #{DEPT_POINT}
+             WHERE COMP_CODE = #{S_COMP_CODE}
+               AND EVAL_YEARS = #{EVAL_YEARS}
+               AND DEPT_CODE = #{DEPT_CODE}
+               AND DEPT_TEAM_CODE = #{DEPT_TEAM_CODE}
+            
+            
+        END
+   </update> 
+
+</mapper>

@@ -1,0 +1,275 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ord101ukrvServiceImpl">
+	<select id="ord101ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* ord101ukrvServiceImpl.selectList */
+		BEGIN
+		    DECLARE @TAX_CALC_TYPE NVARCHAR(01)        --세액포함여부
+		          , @VAT_RATE      NUMERIC(5, 2)    --세율
+		          , @WON_CALC_BAS  NVARCHAR(01)     --원미만계산
+
+		    SELECT @TAX_CALC_TYPE = A.TAX_TYPE
+		         , @VAT_RATE      = CASE WHEN ISNULL(A.VAT_RATE, 0) = 0 THEN ISNULL(B.REF_CODE1, 0)
+		                                 ELSE VAT_RATE
+		                            END
+		         , @WON_CALC_BAS = A.WON_CALC_BAS
+		      FROM BCM100T A WITH(NOLOCK)
+		      LEFT JOIN (SELECT COMP_CODE, REF_CODE1
+		                   FROM BSA100T WITH(NOLOCK)
+		                  WHERE COMP_CODE = #{S_COMP_CODE}
+		                    AND MAIN_CODE = 'S028'
+		                    AND SUB_CODE  = '1' ) B ON B.COMP_CODE = A.COMP_CODE
+		     WHERE A.COMP_CODE   = #{S_COMP_CODE}
+		       AND A.CUSTOM_CODE = #{CUSTOM_CODE}
+
+		    --SELECT @TAX_TYPE = '1'
+		    --     , @TAX_CALC_TYPE = '1'
+
+		    DECLARE @RefItem NVARCHAR(01)        -- 사용자 품목명 참조 유형
+
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE COMP_CODE = #{S_COMP_CODE}
+		       AND USER_ID   = #{S_USER_ID}
+
+		    SET @RefItem = ISNULL(@RefItem, N'')
+
+		<if test="rdoSelect == &quot;&quot;">
+		    --대상: 전체
+		    SELECT A.ITEM_CODE
+		         , CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN B.ITEM_NAME2
+		                ELSE B.ITEM_NAME
+		           END                               AS ITEM_NAME
+		         , B.SPEC                                                                  --규격: 20210408 추가
+		         , B.TRNS_RATE                       AS TRNS_RATE                          --입수
+		         , B.TRNS_RATE                       AS ORI_TRNS_RATE                      --입수
+		         , B.SALE_UNIT                       AS ORDER_UNIT                         --판매단위
+		         , 1                                 AS ORDER_Q                            --주문량
+		         , C.ITEM_P                          AS ORDER_P                            --실구매단가
+		         , C.ITEM_P                          AS ORI_ORDER_P                        --실구매단가
+		         , CASE WHEN B.TAX_TYPE     = '2' THEN C.ITEM_P
+		                WHEN @TAX_CALC_TYPE = '1' THEN C.ITEM_P
+		                ELSE C.ITEM_P - ((C.ITEM_P / ( @VAT_RATE + 100 )) * 100) * @VAT_RATE / 100
+		           END                               AS ORDER_O                            --금액(주문량 * 구매단가)
+		         , CASE WHEN B.TAX_TYPE     = '2' THEN 0
+		                WHEN @TAX_CALC_TYPE = '1' THEN C.ITEM_P * @VAT_RATE / 100
+		                ELSE ((C.ITEM_P / ( @VAT_RATE + 100 )) * 100) * @VAT_RATE / 100
+		           END                               AS ORDER_TAX_O                        --부가세액
+		         , CASE WHEN B.TAX_TYPE     = '2' THEN C.ITEM_P
+		                WHEN @TAX_CALC_TYPE = '1' THEN C.ITEM_P + C.ITEM_P * @VAT_RATE / 100
+		                ELSE C.ITEM_P
+		           END                               AS ORDER_TOT_O                        --합계
+		         , '1'                               AS STATUS_FLAG                        --주문상태
+		         , #{DVRY_DATE}                      AS DVRY_DATE                          --납기일
+		         , #{CUSTOM_CODE}                    AS SALE_CUST_CD                       --주문자
+		         , B.TAX_TYPE                        AS TAX_TYPE                           --세구분(과세/면세)
+		         , @TAX_CALC_TYPE                    AS TAX_CALC_TYPE                      --세액포함여부
+		         , @VAT_RATE                         AS VAT_RATE                           --세율
+		         , @WON_CALC_BAS                     AS WON_CALC_BAS
+		         , ''                                AS DELIV_METHOD
+		         , ''                                AS RECEIVER_NAME
+		         , ''                                AS TELEPHONE_NUM1
+		         , ''                                AS ZIP_NUM
+		         , ''                                AS ADDRESS1
+		      FROM       BPR200T A WITH(NOLOCK)
+		      INNER JOIN BPR100T B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		                                       AND B.ITEM_CODE   = A.ITEM_CODE
+		      LEFT  JOIN BPR400T C WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+		                                       AND C.CUSTOM_CODE = #{CUSTOM_CODE}
+		                                       AND C.ITEM_CODE   = A.ITEM_CODE
+		                                       AND C.APLY_START_DATE &lt;= #{SO_DATE}
+		                                       AND ISNULL(C.APLY_END_DATE, '29991231') &gt;= #{SO_DATE}
+		                                       AND C.TYPE        = '2'
+		      LEFT  JOIN BSA100T D WITH(NOLOCK) ON D.COMP_CODE   = A.COMP_CODE
+		                                       AND D.MAIN_CODE   = 'B020'
+		                                       AND D.SUB_CODE    = A.ITEM_ACCOUNT
+		     WHERE A.COMP_CODE   = #{S_COMP_CODE}
+		    --   AND D.REF_CODE3  IN ('00', '10')          --20210407 주석: 월드와이드메모리에서는 상품, 제품외에도 조회되도록 수정
+		       AND B.USE_YN                 = 'Y'          --20200626 추가: 사용여부가 'Y'인 데이터만 조회
+		       AND ISNULL(C.ITEM_CODE,'') != ''            --20210107: 해당 거래처의 판매단가가 등록된 품목만 가져오도록 조건 추가
+		    <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		       AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+		       AND CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN B.ITEM_NAME2
+		                ELSE B.ITEM_NAME
+		           END         LIKE #{ITEM_NAME} + '%'
+		    </if>
+		     GROUP BY A.ITEM_CODE, B.ITEM_NAME, B.ITEM_NAME1, B.ITEM_NAME2, C.ITEM_P, B.TRNS_RATE, B.SALE_UNIT, B.TAX_TYPE, B.SPEC   --20210408 추가: spec
+		     ORDER BY A.ITEM_CODE
+		</if>
+		<if test="rdoSelect == &quot;R&quot;">
+		    --대상: 최근 주문품목
+		    SELECT A.ITEM_CODE
+		         , CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN B.ITEM_NAME2
+		                ELSE B.ITEM_NAME
+		           END                                 AS ITEM_NAME
+		         , B.SPEC                                                                   --규격: 20210408 추가
+		         , B.TRNS_RATE                         AS TRNS_RATE                         --입수
+		         , B.SALE_UNIT                         AS ORDER_UNIT                        --판매단위
+		         , 1                                   AS ORDER_Q                           --주문량
+		         , C.ITEM_P                            AS ORDER_P                           --실구매단가
+		         , CASE WHEN B.TAX_TYPE     = '2' THEN C.ITEM_P
+		                WHEN @TAX_CALC_TYPE = '1' THEN C.ITEM_P
+		                ELSE C.ITEM_P - ((C.ITEM_P / ( @VAT_RATE + 100 )) * 100) * @VAT_RATE / 100
+		           END                                 AS ORDER_O                           --금액(주문량 * 구매단가)
+		         , CASE WHEN B.TAX_TYPE     = '2' THEN 0
+		                WHEN @TAX_CALC_TYPE = '1' THEN C.ITEM_P * @VAT_RATE / 100
+		                ELSE ((C.ITEM_P / ( @VAT_RATE + 100 )) * 100) * @VAT_RATE / 100
+		           END                                 AS ORDER_TAX_O                       --부가세액
+		         , CASE WHEN B.TAX_TYPE     = '2' THEN C.ITEM_P
+		                WHEN @TAX_CALC_TYPE = '1' THEN C.ITEM_P + C.ITEM_P * @VAT_RATE / 100
+		                ELSE C.ITEM_P
+		           END                                 AS ORDER_TOT_O                       --합계
+		         , '1'                                 AS STATUS_FLAG                       --주문상태
+		         , #{DVRY_DATE}                        AS DVRY_DATE                         --납기일
+		         , #{CUSTOM_CODE}                      AS SALE_CUST_CD                      --주문자
+		         , B.TAX_TYPE                          AS TAX_TYPE                          --세구분
+		         , @TAX_CALC_TYPE                      AS TAX_CALC_TYPE                     --세액계산법
+		         , @VAT_RATE                           AS VAT_RATE                          --세율
+		         , A.DELIV_METHOD
+		         , A.RECEIVER_NAME
+		         , A.TELEPHONE_NUM1
+		         , A.ZIP_NUM
+		         , A.ADDRESS1
+		      FROM       SOF110T A WITH(NOLOCK)
+		      INNER JOIN BPR100T B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		                                       AND B.ITEM_CODE   = A.ITEM_CODE
+		      INNER JOIN BPR200T D WITH(NOLOCK) ON D.COMP_CODE   = A.COMP_CODE
+		                                       AND D.ITEM_CODE   = A.ITEM_CODE
+		      LEFT  JOIN BPR400T C WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+		                                       AND C.CUSTOM_CODE = #{CUSTOM_CODE}
+		                                       AND C.ITEM_CODE   = A.ITEM_CODE
+		                                       AND C.APLY_START_DATE &lt;= #{SO_DATE}
+		                                       AND ISNULL(C.APLY_END_DATE,  '29991231') &gt;= #{SO_DATE}
+		                                       AND C.TYPE        = '2'
+		      LEFT  JOIN BSA100T E WITH(NOLOCK) ON E.COMP_CODE = D.COMP_CODE
+		                                       AND E.MAIN_CODE = 'B020'
+		                                       AND E.SUB_CODE  = D.ITEM_ACCOUNT
+		     WHERE A.COMP_CODE    = #{S_COMP_CODE}
+		       AND A.SALE_CUST_CD = #{CUSTOM_CODE}
+		    --   AND E.REF_CODE3   IN ('00', '10')                  --20210407 주석: 월드와이드메모리에서는 상품, 제품외에도 조회되도록 수정
+		       AND B.USE_YN                  = 'Y'                    --20200626 추가: 사용여부가 'Y'인 데이터만 조회
+		       AND ISNULL(C.ITEM_CODE,'') != ''                           --20210107: 해당 거래처의 판매단가가 등록된 품목만 가져오도록 조건 추가
+		    <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		       AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+		       AND CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN B.ITEM_NAME2
+		                ELSE B.ITEM_NAME
+		           END         LIKE #{ITEM_NAME} + '%'
+		    </if>
+		     GROUP BY A.ITEM_CODE, B.ITEM_NAME, B.ITEM_NAME1, B.ITEM_NAME2, C.ITEM_P, A.SALE_CUST_CD, B.TRNS_RATE, B.SALE_UNIT, B.TAX_TYPE, B.SPEC   --20210408 추가: spec
+		            , A.DELIV_METHOD
+		            , A.RECEIVER_NAME
+		            , A.TELEPHONE_NUM1
+		            , A.ZIP_NUM
+		            , A.ADDRESS1
+		     ORDER BY A.ITEM_CODE
+		</if>
+		END
+	</select>
+
+
+
+	<select id="ord101ukrvServiceImpl.getSoNum" parameterType="Map" resultType="rMap">
+		/* ord101ukrvServiceImpl.getSoNum */
+		DECLARE @SO_NUM NVARCHAR(24)
+		      , @SO_SEQ INT
+		      , @COUNT  INT
+
+		SELECT @SO_NUM = A.SO_NUM
+		     , @SO_SEQ = MAX(B1.SO_SEQ)
+		     , @COUNT  = COUNT(B2.SO_SEQ)
+		  FROM SOF200T A WITH(NOLOCK)
+		  INNER JOIN SOF220T B1 WITH(NOLOCK) ON B1.COMP_CODE    = A.COMP_CODE
+		                                    AND B1.DIV_CODE     = A.DIV_CODE
+		                                    AND B1.SO_NUM       = A.SO_NUM
+		  LEFT  JOIN SOF220T B2 WITH(NOLOCK) ON B2.COMP_CODE    = A.COMP_CODE
+		                                    AND B2.DIV_CODE     = A.DIV_CODE
+		                                    AND B2.SO_NUM       = A.SO_NUM
+		                                    AND B2.STATUS_FLAG  = '1'
+		  INNER JOIN (SELECT COMP_CODE, DIV_CODE, MAX(SO_NUM) AS SO_NUM
+		                FROM SOF200T WITH(NOLOCK)
+		               WHERE COMP_CODE = #{S_COMP_CODE}
+		                 AND DIV_CODE  = ''
+		               GROUP BY COMP_CODE, DIV_CODE ) C ON C.COMP_CODE = A.COMP_CODE
+		                                               AND C.DIV_CODE  = A.DIV_CODE
+		                                               AND C.SO_NUM    = A.SO_NUM
+		 WHERE A.COMP_CODE = #{S_COMP_CODE}
+		   AND A.CUSTOM_CODE = #{CUSTOM_CODE}
+		   AND A.DIV_CODE  = ''
+		 GROUP BY A.COMP_CODE, A.SO_NUM
+
+		IF(ISNULL(@COUNT, 0) = 0 OR ISNULL(@SO_NUM, '') = '')
+		    BEGIN
+		        EXEC UNILITE.SP_GetAutoNumComp #{S_COMP_CODE}, '', 'SOF200T', 'O', '', '2', @SO_NUM OUTPUT        --월 채번
+		        SET  @SO_SEQ = 0
+		    END
+
+		SELECT @SO_NUM    AS SO_NUM, @SO_SEQ    AS SO_SEQ
+	</select>
+
+	<insert id="ord101ukrvServiceImpl.insertMaster" parameterType="Map">
+		/*ord101ukrvServiceImpl.insertMaster*/
+		INSERT INTO SOF200T (
+		      COMP_CODE
+		    , DIV_CODE
+		    , SO_NUM
+		    , CUSTOM_CODE
+		    , SO_DATE
+		    , INSERT_DB_USER
+		    , INSERT_DB_TIME
+		    , UPDATE_DB_USER
+		    , UPDATE_DB_TIME
+		)
+		VALUES (
+		      #{S_COMP_CODE}
+		    , ''
+		    , #{SO_NUM}
+		    , #{CUSTOM_CODE}
+		    , #{SO_DATE}
+		    , #{S_USER_ID}
+		    , GETDATE()
+		    , #{S_USER_ID}
+		    , GETDATE()
+		)
+	</insert>
+
+	<update id="ord101ukrvServiceImpl.updateMaster" parameterType="Map">
+		/*ord101ukrvServiceImpl.updateMaster*/
+		UPDATE SOF200T
+		   SET SO_DATE = #{SO_DATE}
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND DIV_CODE  = ''
+		   AND SO_NUM    = #{SO_NUM}
+	</update>
+
+	<insert id="ord101ukrvServiceImpl.insertDetail" parameterType="Map">
+		/*ord101ukrvServiceImpl.insertDetail*/
+		INSERT INTO SOF220T (
+		      COMP_CODE         , DIV_CODE
+		    , SO_NUM            , SO_SEQ            , SO_ITEM_SEQ       , SO_KIND
+		    , ITEM_CODE         , BASIS_P           , DC_RATE           , ORDER_P
+		    , EXTRA_Q           , BASIS_Q           , ORDER_Q           , ORDER_O
+		    , ORDER_TAX_O       , ORDER_UNIT        , TRANS_RATE        , DVRY_DATE
+		    , SALE_CUST_CD      , AGENT_TYPE        , REMARK            , STATUS_FLAG
+		    , DELIV_METHOD      , RECEIVER_NAME     , TELEPHONE_NUM1    , ZIP_NUM        , ADDRESS1
+		    , INSERT_DB_USER    , INSERT_DB_TIME    , UPDATE_DB_USER    , UPDATE_DB_TIME
+		)
+		VALUES (
+		      #{S_COMP_CODE}    , ''
+		    , #{SO_NUM}         , #{SO_SEQ}         , #{SO_SEQ}         , '*'
+		    , #{ITEM_CODE}      , #{ORDER_P}        , '0'               , #{ORDER_P}
+		    , #{ORDER_Q}        , #{ORDER_Q}        , #{ORDER_Q }       , #{ORDER_O}
+		    , #{ORDER_TAX_O}    , #{ORDER_UNIT}     , #{TRNS_RATE}      , #{DVRY_DATE}
+		    , #{CUSTOM_CODE}    , #{AGENT_TYPE}     , #{REMARK}         , #{STATUS_FLAG}
+		    , #{DELIV_METHOD}   , #{RECEIVER_NAME}  , #{TELEPHONE_NUM1} , #{ZIP_NUM}    , #{ADDRESS1}
+		    , #{S_USER_ID}      , GETDATE()         , #{S_USER_ID}      , GETDATE()
+		)
+	</insert>
+</mapper>

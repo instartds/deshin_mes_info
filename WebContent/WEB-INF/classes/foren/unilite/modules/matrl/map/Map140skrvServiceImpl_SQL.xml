@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="map140skrvServiceImpl">
+	<select id="map140skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* map140skrv.Cmap140skrv, Public[fnmap140nq] Query01 ITEM */
+	BEGIN
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+
+		DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+		      , @UserId			NVARCHAR(100)	/* 사용자ID		*/
+		      , @LangType		NVARCHAR(2)		/* 언어구분		*/
+	          , @RefItem		NVARCHAR(01)
+	          , @DateFormat		NVARCHAR(10)
+
+	    SET @CompCode = #{S_COMP_CODE}
+    	SET @UserId   = #{S_USER_ID}
+    	SET @LangType = #{S_LANG_CODE}
+
+		/* 명칭 참조 유형 */
+	    SELECT TOP 1 @RefItem = REF_ITEM
+	    FROM BSA300T WITH (NOLOCK)
+	    WHERE USER_ID = @UserId
+
+	    SET @RefItem = ISNULL(@RefItem, N'0')
+
+		/* 날짜 포맷 유형 설정 */
+	    SELECT TOP 1 @DateFormat = CODE_NAME
+	    FROM BSA100T WITH (NOLOCK)
+	    WHERE COMP_CODE = @CompCode
+			AND MAIN_CODE = N'B044'
+	        AND REF_CODE1 = N'Y'
+
+	    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+		/* 데이터 조회 */
+	    SELECT	B.ITEM_CODE
+			  , CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+					 WHEN @RefItem = '2' THEN B.ITEM_NAME2
+					 ELSE B.ITEM_NAME
+				END				AS ITEM_NAME		/* 품명		*/
+	          , ISNULL(B.SPEC, ' ') SPEC
+			  , B.STOCK_UNIT
+			  , CASE WHEN @RefItem = '1' THEN C.CUSTOM_NAME1
+					 WHEN @RefItem = '2' THEN C.CUSTOM_NAME2
+					 ELSE C.CUSTOM_NAME
+				END				AS CUSTOM_NAME		/* 거래처명	*/
+	          , C.CUSTOM_CODE
+			  , CASE WHEN ISNULL(A.INOUT_DATE, '') = '' THEN ''
+					 ELSE REPLACE(
+						  REPLACE(
+						  REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.INOUT_DATE, 1, 4))
+											 , 'MM',   SUBSTRING(A.INOUT_DATE, 5, 2))
+											 , 'DD',   SUBSTRING(A.INOUT_DATE, 7, 2))
+				END				AS INOUT_DATE		/* 입고일	*/
+	          , A.INOUT_PRSN
+	          , ((CASE A.INOUT_TYPE  WHEN '1' THEN  A.INOUT_Q   ELSE A.INOUT_Q *(-1)   END) - A.ACCOUNT_Q) AS UNACCOUNT_Q		/* 미매입량	*/
+	          ,  (CASE A.INOUT_TYPE  WHEN '1' THEN  A.INOUT_Q   ELSE A.INOUT_Q *(-1)   END)                AS INOUT_Q			/* 입고량	*/
+	          ,  (CASE A.INOUT_TYPE  WHEN '1' THEN  A.ACCOUNT_Q ELSE A.ACCOUNT_Q *(-1) END)                AS ACCOUNT_Q		    /* 매입량	*/
+	          , A.MONEY_UNIT
+	          , A.INOUT_FOR_P
+	          , (((CASE A.INOUT_TYPE WHEN '1' THEN A.INOUT_Q ELSE A.INOUT_Q *(-1) END) - A.ACCOUNT_Q) * A.INOUT_FOR_P) AS UNACCOUNT_O		    /* 미매입액	*/
+	          , A.EXCHG_RATE_O
+	          , (((CASE A.INOUT_TYPE WHEN '1' THEN A.INOUT_Q ELSE A.INOUT_Q *(-1) END) - A.ACCOUNT_Q) * A.INOUT_FOR_P * A.EXCHG_RATE_O) / UNILITE.fnGetExchangeRateBasis (A.COMP_CODE, A.MONEY_UNIT) AS CON_O	/* 환산액	*/
+			  , CASE WHEN @LangType = 'KR' THEN M1.CODE_NAME
+			  		 WHEN @LangType = 'EN' THEN M1.CODE_NAME_EN
+					 WHEN @LangType = 'CN' THEN M1.CODE_NAME_CN
+					 WHEN @LangType = 'JP' THEN M1.CODE_NAME_JP
+										   ELSE M1.CODE_NAME
+				END				AS INOUT_TYPE		/* 입고유형	*/
+			  , CASE WHEN @LangType = 'KR' THEN M2.CODE_NAME
+			  		 WHEN @LangType = 'EN' THEN M2.CODE_NAME_EN
+					 WHEN @LangType = 'CN' THEN M2.CODE_NAME_CN
+					 WHEN @LangType = 'JP' THEN M2.CODE_NAME_JP
+										   ELSE M2.CODE_NAME
+				END				AS ORDER_TYPE		/* 발주형태	*/
+	          , A.INOUT_NUM
+	          , A.INOUT_SEQ
+	          , A.REMARK
+	          , A.PROJECT_NO
+	    FROM            BTR100T A   WITH (NOLOCK)
+	        INNER JOIN  BPR100T B   WITH (NOLOCK) ON A.ITEM_CODE  = B.ITEM_CODE
+	                                             AND A.COMP_CODE  = B.COMP_CODE
+	        INNER JOIN  BCM100T C   WITH (NOLOCK) ON A.INOUT_CODE = C.CUSTOM_CODE
+	                                             AND A.COMP_CODE  = C.COMP_CODE
+	        INNER JOIN  BSA100T M1  WITH (NOLOCK) ON M1.MAIN_CODE = N'M103'
+	                                             AND M1.SUB_CODE  = A.INOUT_TYPE_DETAIL
+	                                             AND M1.COMP_CODE = A.COMP_CODE
+	        INNER JOIN  BSA100T M2  WITH (NOLOCK) ON M2.MAIN_CODE = N'M001'
+	                                             AND M2.SUB_CODE  = A.ORDER_TYPE
+	                                             AND M2.COMP_CODE = A.COMP_CODE
+	    WHERE  A.COMP_CODE      = @CompCode
+			AND  A.DIV_CODE     = #{DIV_CODE}
+			AND  A.INOUT_TYPE IN ('1', '4')
+			AND  A.CREATE_LOC IN ('2','4','6')  /* 2:자재, 4:외주, 6:수입   (1:영업, 3:생산,5:수출) */
+			AND  A.ACCOUNT_YNC  = N'Y'
+			AND  ABS(A.INOUT_Q) &gt; ABS(A.ACCOUNT_Q)
+			AND  A.SALE_C_YN    = N'N'
+
+				/* 선택조건 Start */
+		<if test="@foren.Ognl@isNotEmpty(ORDER_FR_DATE)">
+				AND A.INOUT_DATE       &gt;= #{ORDER_FR_DATE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ORDER_FR_DATE)">
+				AND A.INOUT_DATE       &lt;= #{ORDER_TO_DATE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+				AND A.ORDER_TYPE        = #{ORDER_TYPE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+				AND A.WH_CODE           = #{WH_CODE}
+		</if>
+
+		<!--2021.08 표준화 작업 Start-->
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND B.ITEM_CODE = #{ITEM_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+			AND B.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND		(@RefItem       = N'0' AND B.ITEM_NAME  LIKE N'%' + #{ITEM_NAME} + N'%')
+				OR	(@RefItem       = N'1' AND B.ITEM_NAME1 LIKE N'%' + #{ITEM_NAME} + N'%')
+				OR	(@RefItem       = N'2' AND B.ITEM_NAME2 LIKE N'%' + #{ITEM_NAME} + N'%')
+		</if>
+
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			AND C.CUSTOM_CODE =  #{CUSTOM_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+			AND C.CUSTOM_CODE LIKE #{CUSTOM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			AND		(@RefItem       = N'0' AND C.CUSTOM_NAME  LIKE N'%' + #{CUSTOM_NAME} + N'%')
+				OR	(@RefItem       = N'1' AND C.CUSTOM_NAME1 LIKE N'%' + #{CUSTOM_NAME} + N'%')
+				OR	(@RefItem       = N'2' AND C.CUSTOM_NAME2 LIKE N'%' + #{CUSTOM_NAME} + N'%')
+		</if>
+		<!--2021.08 표준화 작업 End-->
+		<if test="@foren.Ognl@isNotEmpty(INOUT_TYPE_DETAIL)">
+				AND A.INOUT_TYPE_DETAIL = #{INOUT_TYPE_DETAIL}
+		</if>
+			/* 선택조건 End	*/
+
+		ORDER BY   B.ITEM_CODE
+		          ,C.CUSTOM_CODE
+		          ,A.INOUT_DATE
+		          ,A.MONEY_UNIT
+END
+<!-- SET @END_TIME   = GETDATE()
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'map140skrv', '미지급결의현황 조회', #{ORDER_FR_DATE}, #{ORDER_TO_DATE}, @DIFF_TIME
+
+		SET NOCOUNT OFF
+		SET ARITHABORT OFF
+	END
+ -->
+
+	</select>
+
+</mapper>

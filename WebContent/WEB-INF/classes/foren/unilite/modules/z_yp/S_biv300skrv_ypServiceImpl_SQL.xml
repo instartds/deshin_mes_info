@@ -1,0 +1,1108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_biv300skrv_ypServiceImpl">
+
+	<select id="s_biv300skrv_ypServiceImpl.userWhcode" parameterType="Map" resultType="rMap">	/* 창고 초기화 */
+		SELECT
+			A.WH_CODE
+		FROM BSA210T A WITH(NOLOCK)
+			LEFT JOIN BSA300T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+											AND B.DEPT_CODE = A.TREE_CODE
+		WHERE A.COMP_CODE = #{S_COMP_CODE}
+		  AND B.USER_ID = #{S_USER_ID}
+	</select>
+
+	<select id="s_biv300skrv_ypServiceImpl.selectMasterList" parameterType="Map" resultType="rMap">		/* 품목별 */
+        --s_biv300skrv_yp.Cs_biv300skrv_yp[fnBiv300QSt1] Query03
+        /*
+        현재고 현황 조회(품목/창고별)
+        */
+        BEGIN
+            DECLARE         @COMP_CODE          NVARCHAR(08)                -- (필수) 법인코드
+                          , @DIV_CODE           NVARCHAR(08)                -- (필수) 사업장코드
+
+                          , @WH_CODE            NVARCHAR(08)                -- (선택) 창고코드
+
+                          , @ITEM_ACCOUNT       NVARCHAR(02)                -- (선택) 품목 계정코드
+
+                          , @ITEM_CODE          NVARCHAR(20)                -- (선택) 품목코드
+                          , @ITEM_NAME          NVARCHAR(200)               -- (선택) 품목명
+        --
+                          , @ITEM_LEVEL1        NVARCHAR(10)                -- 대분류
+                          , @ITEM_LEVEL2        NVARCHAR(10)                -- 중분류
+                          , @ITEM_LEVEL3        NVARCHAR(10)                -- 소분류
+        --
+                          , @SUBCON_FLAG        NVARCHAR(02)                -- 외주재고 포함 여부(Y/N)
+                          , @QUERY_TYPE         NVARCHAR(02)                -- 조회유형 (1: 품목별,  2: 창고별)
+                          , @USER_ID            NVARCHAR(100)                -- (필수) USER ID
+
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+
+            SET @COMP_CODE       = #{S_COMP_CODE}
+            SET @DIV_CODE        = #{DIV_CODE}
+
+            SET @WH_CODE         = #{WH_CODE}
+            SET @ITEM_ACCOUNT    = #{ITEM_ACCOUNT}
+
+            SET @ITEM_CODE       = #{ITEM_CODE}
+            SET @ITEM_NAME       = #{ITEM_NAME}
+        --
+            SET @ITEM_LEVEL1     = #{TXTLV_L1}
+            SET @ITEM_LEVEL2     = #{TXTLV_L2}
+            SET @ITEM_LEVEL3     = #{TXTLV_L3}
+        --
+            SET @SUBCON_FLAG     = #{SUBCON_FLAG}   -- 외주재고 포함 여부(1: 미포함, 2: 포함)
+            SET @QUERY_TYPE      = #{QUERY_TYPE}   -- 조회유형          (1: 품목별, 2: 창고별)
+            SET @USER_ID         = #{S_USER_ID}
+
+            SET @QUERY_TYPE      = CASE WHEN @QUERY_TYPE  = ''  THEN '1' ELSE SUBSTRING(@QUERY_TYPE, 1, 1) END
+            SET @SUBCON_FLAG     = CASE WHEN @SUBCON_FLAG = ''  THEN '1'
+                                        WHEN @QUERY_TYPE  = '2' THEN '1'
+                                        WHEN SUBSTRING(@SUBCON_FLAG, 2, 1) = 'N'  THEN '1'
+                                        WHEN SUBSTRING(@SUBCON_FLAG, 2, 1) = 'Y'  THEN '2'
+                                        ELSE SUBSTRING(@SUBCON_FLAG, 1, 1)
+                                   END  -- 창고별 조회일 경우, 외주재고는 제외 처리함.
+
+        -----------------------------------------------------------------------------------------------------------------------
+            DECLARE @RefItem            NVARCHAR(01)
+
+            SELECT TOP 1 @RefItem = REF_ITEM
+            FROM   BSA300T WITH (NOLOCK)
+            WHERE  USER_ID = @USER_ID
+
+            SET @RefItem = ISNULL(@RefItem, '')
+
+        -----------------------------------------------------------------------------------------------------------------------
+
+            SELECT
+                   CASE WHEN @QUERY_TYPE = '1' THEN A.ITEM_ACCOUNT_NAME
+                        WHEN @QUERY_TYPE = '2' THEN A.WH_NAME
+                        ELSE ''
+                   END                                                                                                  AS ITEM_ACCOUNT
+                 , CASE WHEN @QUERY_TYPE = '1' THEN A.ITEM_ACCOUNT
+                        WHEN @QUERY_TYPE = '2' THEN A.WH_CODE
+                        ELSE ''
+                   END                                                                                                  AS ACCOUNT1
+                 , A.DIV_CODE                                                                                           AS DIV_CODE
+                 , A.ITEM_CODE                                                                                          AS ITEM_CODE
+                 , A.ITEM_NAME                                                                                          AS ITEM_NAME
+                 , A.SPEC                                                                                               AS SPEC
+                 , A.STOCK_UNIT                                                                                         AS STOCK_UNIT
+                 , CASE WHEN SUM(ISNULL(STOCK_Q, 0)) = 0 THEN 0
+                        ELSE SUM(ROUND(ISNULL(STOCK_AMT, 0), 5)) / SUM(ISNULL(STOCK_Q, 0))
+                   END                                                                                                  AS STOCK_P
+                 , SUM(ISNULL(STOCK_Q, 0))                                                                              AS STOCK_Q
+                 , SUM(ISNULL(STOCK_AMT, 0))                                                                  AS STOCK_AMT
+                 , SUM(ISNULL(GOOD_STOCK_Q, 0))                                                                         AS GOOD_STOCK_Q
+                 , SUM(ISNULL(GOOD_STOCK_AMT, 0))                                                             AS GOOD_STOCK_AMT
+                 , SUM(ISNULL(BAD_STOCK_Q, 0))                                                                          AS BAD_STOCK_Q
+                 , SUM(ISNULL(BAD_STOCK_AMT, 0))                                                              AS BAD_STOCK_AMT
+                 , ISNULL(LOCATION, '')                                                                                 AS LOCATION
+                 , ISNULL(CUSTOM_CODE, '')                                                                              AS CUSTOM_CODE
+                 , ISNULL(CUSTOM_NAME, '')                                                                              AS CUSTOM_NAME
+
+            FROM   (
+                   SELECT A.COMP_CODE, A.DIV_CODE, ISNULL(C2.LOCATION, '') AS LOCATION
+                        , A.ITEM_CODE
+                        , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                               WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                               WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                               ELSE C1.ITEM_NAME
+                          END                                                                                           AS ITEM_NAME
+                        , C2.ITEM_ACCOUNT                                                                               AS ITEM_ACCOUNT
+                        , M2.CODE_NAME                                                                                  AS ITEM_ACCOUNT_NAME
+                        , ISNULL(C1.SPEC, '')                                                                           AS SPEC
+                        , ISNULL(C1.STOCK_UNIT, '')                                                                     AS STOCK_UNIT
+                        , CASE WHEN @QUERY_TYPE = '1' THEN '' ELSE A.WH_CODE    END                                     AS WH_CODE
+                        , CASE WHEN @QUERY_TYPE = '1' THEN '' ELSE D1.TREE_NAME END                                     AS WH_NAME
+
+        -- 입고+(1), 출고-(2), 반품+(3)
+                        , ISNULL(A.STOCK_Q, 0)                                                                          AS STOCK_Q
+                        , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')    -- 기준단가 적용 제품/반제품 금액
+                                    THEN CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.STOCK_Q, 0))
+                               ELSE ISNULL(A.STOCK_I, 0)
+                          END                                                                                           AS STOCK_AMT
+        --
+                        , ISNULL(A.GOOD_STOCK_Q, 0)                                                                     AS GOOD_STOCK_Q
+                        , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+                                    THEN CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                               ELSE CONVERT(NUMERIC(30, 6), ISNULL(A.AVERAGE_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                          END                                                                                           AS GOOD_STOCK_AMT
+        --
+                        , ISNULL(A.BAD_STOCK_Q, 0)                                                                      AS BAD_STOCK_Q
+                        , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+                                    THEN CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.STOCK_Q, 0)) -
+                                         CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                               ELSE ISNULL(A.STOCK_I, 0) -
+                                    CONVERT(NUMERIC(30, 6), ISNULL(A.AVERAGE_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                          END                                                                                           AS BAD_STOCK_AMT
+                        , C2.CUSTOM_CODE                                                                                AS CUSTOM_CODE
+                        , CASE WHEN @RefItem = '0' THEN C3.CUSTOM_NAME
+                               WHEN @RefItem = '1' THEN C3.CUSTOM_NAME1
+                               WHEN @RefItem = '2' THEN C3.CUSTOM_NAME2
+                               ELSE C3.CUSTOM_NAME
+                          END                                                                                           AS CUSTOM_NAME
+                   FROM              BIV100T  A  WITH (NOLOCK)
+                          LEFT  JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE                                             -- 품목
+                                                              AND C1.ITEM_CODE  = A.ITEM_CODE
+                          LEFT  JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE                                             -- 사업장 품목
+                                                              AND C2.DIV_CODE   = A.DIV_CODE
+                                                              AND C2.ITEM_CODE  = A.ITEM_CODE
+                          LEFT  JOIN BCM100T  C3 WITH (NOLOCK) ON C3.COMP_CODE  = C2.COMP_CODE                                            -- 주거래처
+                                                              AND C3.CUSTOM_CODE= C2.CUSTOM_CODE
+                          LEFT  JOIN BSA220T  D1 WITH (NOLOCK) ON D1.COMP_CODE  = A.COMP_CODE                                             -- 창고
+                                                              AND D1.TYPE_LEVEL = A.DIV_CODE
+                                                              AND D1.TREE_CODE  = A.WH_CODE
+                          LEFT  JOIN BSA100T  M1 WITH (NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE                                             -- 단가처리 기준
+                                                              AND M1.MAIN_CODE   = 'B069'
+                                                              AND M1.SUB_CODE    = '1'                                                     -- 기준재고단가
+                                                              AND M1.REF_CODE1   = 'Y'
+                          LEFT  JOIN BSA100T  M2 WITH (NOLOCK) ON M2.COMP_CODE  = C2.COMP_CODE
+                                                              AND M2.MAIN_CODE  = 'B020'                                                  -- 계정구분
+                                                              AND M2.SUB_CODE   = C2.ITEM_ACCOUNT
+                   WHERE  A.COMP_CODE      = @COMP_CODE
+                   AND    A.DIV_CODE       = @DIV_CODE
+                   AND  ((A.STOCK_Q       != 0.0) OR (A.GOOD_STOCK_Q != 0.0) OR (A.BAD_STOCK_Q != 0.0))
+                   AND  ((A.WH_CODE        = @WH_CODE         AND @WH_CODE      != '') OR (@WH_CODE      = ''))        -- 창고
+                   AND  ((C2.ITEM_ACCOUNT  = @ITEM_ACCOUNT    AND @ITEM_ACCOUNT != '') OR (@ITEM_ACCOUNT = ''))        -- 계정
+                   AND  ((A.ITEM_CODE   LIKE @ITEM_CODE + '%' AND @ITEM_CODE    != '') OR (@ITEM_CODE    = ''))        -- 품목
+                   AND  ((
+                         (C1.ITEM_NAME  LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '0'))
+                   OR    (C1.ITEM_NAME1 LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '1'))
+                   OR    (C1.ITEM_NAME2 LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '2'))
+                         ) OR (@ITEM_NAME = ''))
+                   AND  ((C1.ITEM_LEVEL1   = @ITEM_LEVEL1     AND @ITEM_LEVEL1  != '') OR (@ITEM_LEVEL1  = ''))        -- 대분류
+                   AND  ((C1.ITEM_LEVEL2   = @ITEM_LEVEL2     AND @ITEM_LEVEL2  != '') OR (@ITEM_LEVEL2  = ''))        -- 중분류
+                   AND  ((C1.ITEM_LEVEL3   = @ITEM_LEVEL3     AND @ITEM_LEVEL3  != '') OR (@ITEM_LEVEL3  = ''))        -- 소분류
+                   UNION ALL  -- 외주처 현재고
+                   SELECT A.COMP_CODE, A.DIV_CODE, ISNULL(C2.LOCATION, '') AS LOCATION
+                        , A.ITEM_CODE
+                        , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                               WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                               WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                               ELSE C1.ITEM_NAME
+                          END                                                                                           AS ITEM_NAME
+                        , C2.ITEM_ACCOUNT                                                                               AS ITEM_ACCOUNT
+                        , M2.CODE_NAME                                                                                  AS ITEM_ACCOUNT_NAME
+                        , ISNULL(C1.SPEC, '')                                                                           AS SPEC
+                        , ISNULL(C1.STOCK_UNIT, '')                                                                     AS STOCK_UNIT
+                        , ''                                                                                            AS WH_CODE
+                        , ''                                                                                            AS WH_NAME
+
+        -- 입고+(1), 출고-(2), 반품+(3)
+                        , ISNULL(A.STOCK_Q, 0)                                                                          AS STOCK_Q
+                        , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')    -- 기준단가 적용 제품/반제품 금액
+                                    THEN CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.STOCK_Q, 0))
+                               ELSE ISNULL(A.STOCK_I, 0)
+                          END                                                                                           AS STOCK_AMT
+        --
+                        , ISNULL(A.GOOD_STOCK_Q, 0)                                                                     AS GOOD_STOCK_Q
+                        , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+                                    THEN CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                               ELSE CONVERT(NUMERIC(30, 6), ISNULL(A.AVERAGE_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                          END                                                                                           AS GOOD_STOCK_AMT
+        --
+                        , ISNULL(A.BAD_STOCK_Q, 0)                                                                      AS BAD_STOCK_Q
+                        , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+                                    THEN CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.STOCK_Q, 0)) -
+                                         CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                               ELSE ISNULL(A.STOCK_I, 0) -
+                                    CONVERT(NUMERIC(30, 6), ISNULL(A.AVERAGE_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                          END                                                                                           AS BAD_STOCK_AMT
+                        , C2.CUSTOM_CODE                                                                                AS CUSTOM_CODE
+                        , CASE WHEN @RefItem = '0' THEN C3.CUSTOM_NAME
+                               WHEN @RefItem = '1' THEN C3.CUSTOM_NAME1
+                               WHEN @RefItem = '2' THEN C3.CUSTOM_NAME2
+                               ELSE C3.CUSTOM_NAME
+                          END                                                                                           AS CUSTOM_NAME
+                   FROM              BIZ100T  A  WITH (NOLOCK)
+                          LEFT  JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE                                            -- 품목
+                                                              AND C1.ITEM_CODE   = A.ITEM_CODE
+                          LEFT  JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE   = A.COMP_CODE                                            -- 사업장 품목
+                                                              AND C2.DIV_CODE    = A.DIV_CODE
+                                                              AND C2.ITEM_CODE   = A.ITEM_CODE
+                          LEFT  JOIN BCM100T  C3 WITH (NOLOCK) ON C3.COMP_CODE   = C2.COMP_CODE                                            -- 주거래처
+                                                              AND C3.CUSTOM_CODE = C2.CUSTOM_CODE
+                          LEFT  JOIN BSA100T  M1 WITH (NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE                                            -- 단가처리 기준
+                                                              AND M1.MAIN_CODE   = 'B069'
+                                                              AND M1.SUB_CODE    = '1'                                                    -- 기준재고단가
+                                                              AND M1.REF_CODE1   = 'Y'
+                          LEFT  JOIN BSA100T  M2 WITH (NOLOCK) ON M2.COMP_CODE   = C2.COMP_CODE
+                                                              AND M2.MAIN_CODE   = 'B020'                                                 -- 계정구분
+                                                              AND M2.SUB_CODE    = C2.ITEM_ACCOUNT
+                   WHERE  @SUBCON_FLAG     = '2'
+                   AND    A.COMP_CODE      = @COMP_CODE
+                   AND    A.DIV_CODE       = @DIV_CODE
+                   AND  ((A.STOCK_Q       != 0.0) OR (A.GOOD_STOCK_Q != 0.0) OR (A.BAD_STOCK_Q != 0.0))
+                   AND  ((C2.ITEM_ACCOUNT  = @ITEM_ACCOUNT    AND @ITEM_ACCOUNT != '') OR (@ITEM_ACCOUNT = ''))        -- 계정
+                   AND  ((A.ITEM_CODE   LIKE @ITEM_CODE + '%' AND @ITEM_CODE    != '') OR (@ITEM_CODE    = ''))        -- 품목
+                   AND  ((
+                         (C1.ITEM_NAME  LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '0'))
+                   OR    (C1.ITEM_NAME1 LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '1'))
+                   OR    (C1.ITEM_NAME2 LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '2'))
+                         ) OR (@ITEM_NAME = ''))
+                   AND  ((C1.ITEM_LEVEL1   = @ITEM_LEVEL1     AND @ITEM_LEVEL1  != '') OR (@ITEM_LEVEL1  = ''))        -- 대분류
+                   AND  ((C1.ITEM_LEVEL2   = @ITEM_LEVEL2     AND @ITEM_LEVEL2  != '') OR (@ITEM_LEVEL2  = ''))        -- 중분류
+                   AND  ((C1.ITEM_LEVEL3   = @ITEM_LEVEL3     AND @ITEM_LEVEL3  != '') OR (@ITEM_LEVEL3  = ''))        -- 소분류
+                   ) A
+             WHERE 1=1
+                   GROUP BY A.COMP_CODE, A.DIV_CODE, A.LOCATION
+                          , A.ITEM_ACCOUNT, A.ITEM_ACCOUNT_NAME, A.WH_CODE, A.WH_NAME
+                          , A.ITEM_CODE, A.ITEM_NAME, A.SPEC, A.STOCK_UNIT, A.CUSTOM_CODE, A.CUSTOM_NAME
+                   HAVING SUM(ISNULL(STOCK_Q, 0)) != 0
+                   ORDER BY ITEM_ACCOUNT, A.ITEM_CODE
+
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END
+	</select>
+
+	<select id="s_biv300skrv_ypServiceImpl.selectMasterList2" parameterType="Map" resultType="rMap">		/* 창고별 */
+        --s_biv300skrv_yp.Cs_biv300skrv_yp[fnBiv300QSt1] Query03
+        /*
+        현재고 현황 조회(품목/창고별)
+        */
+        BEGIN
+            DECLARE         @COMP_CODE          NVARCHAR(08)                -- (필수) 법인코드
+                          , @DIV_CODE           NVARCHAR(08)                -- (필수) 사업장코드
+
+                          , @WH_CODE            NVARCHAR(08)                -- (선택) 창고코드
+
+                          , @ITEM_ACCOUNT       NVARCHAR(02)                -- (선택) 품목 계정코드
+
+                          , @ITEM_CODE          NVARCHAR(20)                -- (선택) 품목코드
+                          , @ITEM_NAME          NVARCHAR(200)               -- (선택) 품목명
+        --
+                          , @ITEM_LEVEL1        NVARCHAR(10)                -- 대분류
+                          , @ITEM_LEVEL2        NVARCHAR(10)                -- 중분류
+                          , @ITEM_LEVEL3        NVARCHAR(10)                -- 소분류
+        --
+                          , @SUBCON_FLAG        NVARCHAR(02)                -- 외주재고 포함 여부(Y/N)
+                          , @QUERY_TYPE         NVARCHAR(02)                -- 조회유형 (1: 품목별,  2: 창고별)
+                          , @USER_ID            NVARCHAR(100)                -- (필수) USER ID
+
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+
+            SET @COMP_CODE       = #{S_COMP_CODE}
+            SET @DIV_CODE        = #{DIV_CODE}
+
+            SET @WH_CODE         = #{WH_CODE}
+            SET @ITEM_ACCOUNT    = #{ITEM_ACCOUNT}
+
+            SET @ITEM_CODE       = #{ITEM_CODE}
+            SET @ITEM_NAME       = #{ITEM_NAME}
+        --
+            SET @ITEM_LEVEL1     = #{TXTLV_L1}
+            SET @ITEM_LEVEL2     = #{TXTLV_L2}
+            SET @ITEM_LEVEL3     = #{TXTLV_L3}
+        --
+            SET @SUBCON_FLAG     = #{SUBCON_FLAG}   -- 외주재고 포함 여부(1: 미포함, 2: 포함)
+            SET @QUERY_TYPE      = #{QUERY_TYPE}   -- 조회유형          (1: 품목별, 2: 창고별)
+            SET @USER_ID         = #{S_USER_ID}
+
+            SET @QUERY_TYPE      = CASE WHEN @QUERY_TYPE  = ''  THEN '1' ELSE SUBSTRING(@QUERY_TYPE, 1, 1) END
+            SET @SUBCON_FLAG     = CASE WHEN @SUBCON_FLAG = ''  THEN '1'
+                                        WHEN @QUERY_TYPE  = '2' THEN '1'
+                                        WHEN SUBSTRING(@SUBCON_FLAG, 2, 1) = 'N'  THEN '1'
+                                        WHEN SUBSTRING(@SUBCON_FLAG, 2, 1) = 'Y'  THEN '2'
+                                        ELSE SUBSTRING(@SUBCON_FLAG, 1, 1)
+                                   END  -- 창고별 조회일 경우, 외주재고는 제외 처리함.
+
+        -----------------------------------------------------------------------------------------------------------------------
+            DECLARE @RefItem            NVARCHAR(01)
+
+            SELECT TOP 1 @RefItem = REF_ITEM
+            FROM   BSA300T WITH (NOLOCK)
+            WHERE  USER_ID = @USER_ID
+
+            SET @RefItem = ISNULL(@RefItem, '')
+
+        -----------------------------------------------------------------------------------------------------------------------
+
+            SELECT
+                   CASE WHEN @QUERY_TYPE = '1' THEN A.ITEM_ACCOUNT_NAME
+                        WHEN @QUERY_TYPE = '2' THEN A.WH_NAME
+                        ELSE ''
+                   END                                                                                                  AS ITEM_ACCOUNT
+                 , CASE WHEN @QUERY_TYPE = '1' THEN A.ITEM_ACCOUNT
+                        WHEN @QUERY_TYPE = '2' THEN A.WH_CODE
+                        ELSE ''
+                   END                                                                                                  AS ACCOUNT1
+                 , A.DIV_CODE                                                                                           AS DIV_CODE
+                 , A.ITEM_CODE                                                                                          AS ITEM_CODE
+                 , A.ITEM_NAME                                                                                          AS ITEM_NAME
+                 , A.SPEC                                                                                               AS SPEC
+                 , A.STOCK_UNIT                                                                                         AS STOCK_UNIT
+                 , CASE WHEN SUM(ISNULL(STOCK_Q, 0)) = 0 THEN 0
+                        ELSE SUM(ROUND(ISNULL(STOCK_AMT, 0), 5)) / SUM(ISNULL(STOCK_Q, 0))
+                   END                                                                                                  AS STOCK_P
+                 , SUM(ISNULL(STOCK_Q, 0))                                                                              AS STOCK_Q
+                 , SUM(ISNULL(STOCK_AMT, 0))                                                                  AS STOCK_AMT
+                 , SUM(ISNULL(GOOD_STOCK_Q, 0))                                                                         AS GOOD_STOCK_Q
+                 , SUM(ISNULL(GOOD_STOCK_AMT, 0))                                                             AS GOOD_STOCK_AMT
+                 , SUM(ISNULL(BAD_STOCK_Q, 0))                                                                          AS BAD_STOCK_Q
+                 , SUM(ISNULL(BAD_STOCK_AMT, 0))                                                              AS BAD_STOCK_AMT
+                 , ISNULL(LOCATION, '')                                                                                 AS LOCATION
+                 , ISNULL(CUSTOM_CODE, '')                                                                              AS CUSTOM_CODE
+                 , ISNULL(CUSTOM_NAME, '')                                                                              AS CUSTOM_NAME
+
+            FROM   (
+                   SELECT A.COMP_CODE, A.DIV_CODE, ISNULL(C2.LOCATION, '') AS LOCATION
+                        , A.ITEM_CODE
+                        , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                               WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                               WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                               ELSE C1.ITEM_NAME
+                          END                                                                                           AS ITEM_NAME
+                        , C2.ITEM_ACCOUNT                                                                               AS ITEM_ACCOUNT
+                        , M2.CODE_NAME                                                                                  AS ITEM_ACCOUNT_NAME
+                        , ISNULL(C1.SPEC, '')                                                                           AS SPEC
+                        , ISNULL(C1.STOCK_UNIT, '')                                                                     AS STOCK_UNIT
+                        , CASE WHEN @QUERY_TYPE = '1' THEN '' ELSE A.WH_CODE    END                                     AS WH_CODE
+                        , CASE WHEN @QUERY_TYPE = '1' THEN '' ELSE D1.TREE_NAME END                                     AS WH_NAME
+
+        -- 입고+(1), 출고-(2), 반품+(3)
+                        , ISNULL(A.STOCK_Q, 0)                                                                          AS STOCK_Q
+                        , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')    -- 기준단가 적용 제품/반제품 금액
+                                    THEN CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.STOCK_Q, 0))
+                               ELSE ISNULL(A.STOCK_I, 0)
+                          END                                                                                           AS STOCK_AMT
+        --
+                        , ISNULL(A.GOOD_STOCK_Q, 0)                                                                     AS GOOD_STOCK_Q
+                        , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+                                    THEN CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                               ELSE CONVERT(NUMERIC(30, 6), ISNULL(A.AVERAGE_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                          END                                                                                           AS GOOD_STOCK_AMT
+        --
+                        , ISNULL(A.BAD_STOCK_Q, 0)                                                                      AS BAD_STOCK_Q
+                        , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+                                    THEN CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.STOCK_Q, 0)) -
+                                         CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                               ELSE ISNULL(A.STOCK_I, 0) -
+                                    CONVERT(NUMERIC(30, 6), ISNULL(A.AVERAGE_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                          END                                                                                           AS BAD_STOCK_AMT
+                        , C2.CUSTOM_CODE                                                                                AS CUSTOM_CODE
+                        , CASE WHEN @RefItem = '0' THEN C3.CUSTOM_NAME
+                               WHEN @RefItem = '1' THEN C3.CUSTOM_NAME1
+                               WHEN @RefItem = '2' THEN C3.CUSTOM_NAME2
+                               ELSE C3.CUSTOM_NAME
+                          END                                                                                           AS CUSTOM_NAME
+                   FROM              BIV100T  A  WITH (NOLOCK)
+                          LEFT  JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE                                             -- 품목
+                                                              AND C1.ITEM_CODE  = A.ITEM_CODE
+                          LEFT  JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE                                             -- 사업장 품목
+                                                              AND C2.DIV_CODE   = A.DIV_CODE
+                                                              AND C2.ITEM_CODE  = A.ITEM_CODE
+                          LEFT  JOIN BCM100T  C3 WITH (NOLOCK) ON C3.COMP_CODE  = C2.COMP_CODE                                            -- 주거래처
+                                                              AND C3.CUSTOM_CODE= C2.CUSTOM_CODE
+                          LEFT  JOIN BSA220T  D1 WITH (NOLOCK) ON D1.COMP_CODE  = A.COMP_CODE                                             -- 창고
+                                                              AND D1.TYPE_LEVEL = A.DIV_CODE
+                                                              AND D1.TREE_CODE  = A.WH_CODE
+                          LEFT  JOIN BSA100T  M1 WITH (NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE                                             -- 단가처리 기준
+                                                              AND M1.MAIN_CODE   = 'B069'
+                                                              AND M1.SUB_CODE    = '1'                                                     -- 기준재고단가
+                                                              AND M1.REF_CODE1   = 'Y'
+                          LEFT  JOIN BSA100T  M2 WITH (NOLOCK) ON M2.COMP_CODE  = C2.COMP_CODE
+                                                              AND M2.MAIN_CODE  = 'B020'                                                  -- 계정구분
+                                                              AND M2.SUB_CODE   = C2.ITEM_ACCOUNT
+                   WHERE  A.COMP_CODE      = @COMP_CODE
+                   AND    A.DIV_CODE       = @DIV_CODE
+                   AND  ((A.STOCK_Q       != 0.0) OR (A.GOOD_STOCK_Q != 0.0) OR (A.BAD_STOCK_Q != 0.0))
+                   AND  ((A.WH_CODE        = @WH_CODE         AND @WH_CODE      != '') OR (@WH_CODE      = ''))        -- 창고
+                   AND  ((C2.ITEM_ACCOUNT  = @ITEM_ACCOUNT    AND @ITEM_ACCOUNT != '') OR (@ITEM_ACCOUNT = ''))        -- 계정
+                   AND  ((A.ITEM_CODE   LIKE @ITEM_CODE + '%' AND @ITEM_CODE    != '') OR (@ITEM_CODE    = ''))        -- 품목
+                   AND  ((
+                         (C1.ITEM_NAME  LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '0'))
+                   OR    (C1.ITEM_NAME1 LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '1'))
+                   OR    (C1.ITEM_NAME2 LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '2'))
+                         ) OR (@ITEM_NAME = ''))
+                   AND  ((C1.ITEM_LEVEL1   = @ITEM_LEVEL1     AND @ITEM_LEVEL1  != '') OR (@ITEM_LEVEL1  = ''))        -- 대분류
+                   AND  ((C1.ITEM_LEVEL2   = @ITEM_LEVEL2     AND @ITEM_LEVEL2  != '') OR (@ITEM_LEVEL2  = ''))        -- 중분류
+                   AND  ((C1.ITEM_LEVEL3   = @ITEM_LEVEL3     AND @ITEM_LEVEL3  != '') OR (@ITEM_LEVEL3  = ''))        -- 소분류
+                   UNION ALL  -- 외주처 현재고
+                   SELECT A.COMP_CODE, A.DIV_CODE, ISNULL(C2.LOCATION, '') AS LOCATION
+                        , A.ITEM_CODE
+                        , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                               WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                               WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                               ELSE C1.ITEM_NAME
+                          END                                                                                           AS ITEM_NAME
+                        , C2.ITEM_ACCOUNT                                                                               AS ITEM_ACCOUNT
+                        , M2.CODE_NAME                                                                                  AS ITEM_ACCOUNT_NAME
+                        , ISNULL(C1.SPEC, '')                                                                           AS SPEC
+                        , ISNULL(C1.STOCK_UNIT, '')                                                                     AS STOCK_UNIT
+                        , ''                                                                                            AS WH_CODE
+                        , ''                                                                                            AS WH_NAME
+
+        -- 입고+(1), 출고-(2), 반품+(3)
+                        , ISNULL(A.STOCK_Q, 0)                                                                          AS STOCK_Q
+                        , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')    -- 기준단가 적용 제품/반제품 금액
+                                    THEN CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.STOCK_Q, 0))
+                               ELSE ISNULL(A.STOCK_I, 0)
+                          END                                                                                           AS STOCK_AMT
+        --
+                        , ISNULL(A.GOOD_STOCK_Q, 0)                                                                     AS GOOD_STOCK_Q
+                        , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+                                    THEN CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                               ELSE CONVERT(NUMERIC(30, 6), ISNULL(A.AVERAGE_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                          END                                                                                           AS GOOD_STOCK_AMT
+        --
+                        , ISNULL(A.BAD_STOCK_Q, 0)                                                                      AS BAD_STOCK_Q
+                        , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+                                    THEN CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.STOCK_Q, 0)) -
+                                         CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                               ELSE ISNULL(A.STOCK_I, 0) -
+                                    CONVERT(NUMERIC(30, 6), ISNULL(A.AVERAGE_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                          END                                                                                           AS BAD_STOCK_AMT
+                        , C2.CUSTOM_CODE                                                                                AS CUSTOM_CODE
+                        , CASE WHEN @RefItem = '0' THEN C3.CUSTOM_NAME
+                               WHEN @RefItem = '1' THEN C3.CUSTOM_NAME1
+                               WHEN @RefItem = '2' THEN C3.CUSTOM_NAME2
+                               ELSE C3.CUSTOM_NAME
+                          END                                                                                           AS CUSTOM_NAME
+                   FROM              BIZ100T  A  WITH (NOLOCK)
+                          LEFT  JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE                                            -- 품목
+                                                              AND C1.ITEM_CODE   = A.ITEM_CODE
+                          LEFT  JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE   = A.COMP_CODE                                            -- 사업장 품목
+                                                              AND C2.DIV_CODE    = A.DIV_CODE
+                                                              AND C2.ITEM_CODE   = A.ITEM_CODE
+                          LEFT  JOIN BCM100T  C3 WITH (NOLOCK) ON C3.COMP_CODE   = C2.COMP_CODE                                            -- 주거래처
+                                                              AND C3.CUSTOM_CODE = C2.CUSTOM_CODE
+                          LEFT  JOIN BSA100T  M1 WITH (NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE                                            -- 단가처리 기준
+                                                              AND M1.MAIN_CODE   = 'B069'
+                                                              AND M1.SUB_CODE    = '1'                                                    -- 기준재고단가
+                                                              AND M1.REF_CODE1   = 'Y'
+                          LEFT  JOIN BSA100T  M2 WITH (NOLOCK) ON M2.COMP_CODE   = C2.COMP_CODE
+                                                              AND M2.MAIN_CODE   = 'B020'                                                 -- 계정구분
+                                                              AND M2.SUB_CODE    = C2.ITEM_ACCOUNT
+                   WHERE  @SUBCON_FLAG     = '2'
+                   AND    A.COMP_CODE      = @COMP_CODE
+                   AND    A.DIV_CODE       = @DIV_CODE
+                   AND  ((A.STOCK_Q       != 0.0) OR (A.GOOD_STOCK_Q != 0.0) OR (A.BAD_STOCK_Q != 0.0))
+                   AND  ((C2.ITEM_ACCOUNT  = @ITEM_ACCOUNT    AND @ITEM_ACCOUNT != '') OR (@ITEM_ACCOUNT = ''))        -- 계정
+                   AND  ((A.ITEM_CODE   LIKE @ITEM_CODE + '%' AND @ITEM_CODE    != '') OR (@ITEM_CODE    = ''))        -- 품목
+                   AND  ((
+                         (C1.ITEM_NAME  LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '0'))
+                   OR    (C1.ITEM_NAME1 LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '1'))
+                   OR    (C1.ITEM_NAME2 LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '2'))
+                         ) OR (@ITEM_NAME = ''))
+                   AND  ((C1.ITEM_LEVEL1   = @ITEM_LEVEL1     AND @ITEM_LEVEL1  != '') OR (@ITEM_LEVEL1  = ''))        -- 대분류
+                   AND  ((C1.ITEM_LEVEL2   = @ITEM_LEVEL2     AND @ITEM_LEVEL2  != '') OR (@ITEM_LEVEL2  = ''))        -- 중분류
+                   AND  ((C1.ITEM_LEVEL3   = @ITEM_LEVEL3     AND @ITEM_LEVEL3  != '') OR (@ITEM_LEVEL3  = ''))        -- 소분류
+                   ) A
+             WHERE 1=1
+                   GROUP BY A.COMP_CODE, A.DIV_CODE, A.LOCATION
+                          , A.ITEM_ACCOUNT, A.ITEM_ACCOUNT_NAME, A.WH_CODE, A.WH_NAME
+                          , A.ITEM_CODE, A.ITEM_NAME, A.SPEC, A.STOCK_UNIT, A.CUSTOM_CODE, A.CUSTOM_NAME
+                   HAVING SUM(ISNULL(STOCK_Q, 0)) != 0
+                   ORDER BY ITEM_ACCOUNT, A.ITEM_CODE
+
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END
+	</select>
+
+	<select id="s_biv300skrv_ypServiceImpl.selectMasterList3" parameterType="Map" resultType="rMap">		/* LOT별 */
+		         /* s_biv300skrv_yp.Cs_biv300skrv_yp[fnBiv300QSt4] Query02 */
+             /* 현재고 현황 조회(LOT별) */
+             BEGIN
+				SET NOCOUNT ON
+				SET ARITHABORT ON
+
+				DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+					  , @UserId      NVARCHAR(100) /* 사용자ID    */
+					  , @LangType    NVARCHAR(2)  /* 언어구분    */
+					  , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+					  , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+
+		    SET @CompCode = #{S_COMP_CODE}
+		    SET @UserId   = #{S_USER_ID}
+		    SET @LangType = #{S_LANG_CODE}
+
+				/* 명칭 참조 유형 */
+				SELECT TOP 1 @RefItem = REF_ITEM
+				  FROM BSA300T WITH (NOLOCK)
+				 WHERE USER_ID = @UserId
+
+				SET @RefItem = ISNULL(@RefItem, N'0')
+
+				/* 날짜 포맷 유형 설정 */
+				SELECT TOP 1 @DateFormat = CODE_NAME
+				  FROM BSA100T WITH (NOLOCK)
+				 WHERE COMP_CODE = @CompCode
+				   AND MAIN_CODE = N'B044'
+				   AND REF_CODE1 = N'Y'
+
+				SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+				/* 데이터 조회 */
+				SELECT TOP 1 @RefItem = REF_ITEM
+                 FROM   BSA300T WITH (NOLOCK)
+                 WHERE  USER_ID = #{S_USER_ID}
+
+                 SET @RefItem = ISNULL(@RefItem, '0')
+
+
+                 DECLARE         @LotYN               NVARCHAR(01)
+
+                 SELECT TOP 1 @LotYN = REF_CODE1
+                 FROM   BSA100T WITH (NOLOCK)
+                 WHERE  COMP_CODE = @CompCode
+                 AND    MAIN_CODE = 'B084'                                   /* 재고합산 유형 */
+                 AND    SUB_CODE  = 'C'                                      /* Lot No. 합산 */
+
+                 SET @LotYN = ISNULL(@LotYN, 'N')
+
+
+                 IF @LotYN = 'N'
+                 BEGIN
+                     SELECT
+                            A.LOT_NO                                                                                       AS LOT_NO
+                          , D1.TREE_CODE                                                                                   AS WH_CODE
+                          , D1.TREE_NAME                                                                                   AS WH_NAME
+                          , A.ITEM_CODE                                                                                    AS ITEM_CODE
+                          , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                                 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                                 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                                 ELSE C1.ITEM_NAME
+                            END                                                                                            AS ITEM_NAME
+                          , ISNULL(C1.SPEC, '')                                                                            AS SPEC
+                          , ISNULL(C1.STOCK_UNIT, '')                                                                      AS STOCK_UNIT
+                          , SUM(ISNULL(A.IN_Q, 0) - ISNULL(A.OUT_Q, 0) + ISNULL(A.RTN_Q, 0))                               AS STOCK
+                          , SUM(CASE WHEN A.ITEM_STATUS = '1' THEN ISNULL(A.IN_Q, 0) - ISNULL(A.OUT_Q, 0) + ISNULL(A.RTN_Q, 0)
+                                     ELSE 0 END)                                                                           AS GOOD_STOCK
+                          , SUM(CASE WHEN A.ITEM_STATUS = '2' THEN ISNULL(A.IN_Q, 0) - ISNULL(A.OUT_Q, 0) + ISNULL(A.RTN_Q, 0)
+                                     ELSE 0 END)                                                                           AS BAD_STOCK
+                          --, A.REMARK
+                          , A.DIV_CODE                                                                                     AS DIV_CODE
+                          , A.WH_CODE                                                                                      AS WH_CODE
+                     FROM              BTR100T  A  WITH (NOLOCK, INDEX(BTR100T_IDX07))
+                            INNER  JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE                                             /* 품목 */
+                                                                AND C1.ITEM_CODE  = A.ITEM_CODE
+                                                                AND ISNULL(C1.STOCK_CARE_YN,'N') = 'Y'                                      /* 2015.10.02 추가 */
+                            INNER  JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE                                             /* 사업장 품목 */
+                                                                AND C2.DIV_CODE   = A.DIV_CODE
+                                                                AND C2.ITEM_CODE  = A.ITEM_CODE
+                            LEFT  JOIN BSA220T  D1 WITH (NOLOCK) ON D1.COMP_CODE  = A.COMP_CODE                                             /* 창고 */
+                                                                AND D1.TYPE_LEVEL = A.DIV_CODE
+                                                                AND D1.TREE_CODE  = A.WH_CODE
+                     WHERE  A.COMP_CODE      = @CompCode
+                     <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                     AND    A.DIV_CODE       = #{DIV_CODE}
+                     </if>
+                     <if test="@foren.Ognl@isNotEmpty(FR_LOT)">
+                     AND    A.LOT_NO        &gt;= #{FR_LOT}              /* FR LOT_NO */
+                     </if>
+                     <if test="@foren.Ognl@isNotEmpty(TO_LOT)">
+                     AND    A.LOT_NO        &lt;= #{TO_LOT}              /* TO LOT_NO */
+                     </if>
+                     <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+                     AND    A.WH_CODE        = #{WH_CODE}             /* 창고 */
+                     </if>
+                     <if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+                     AND    C2.ITEM_ACCOUNT  = #{ITEM_ACCOUNT}        /* 계정 */
+                     </if>
+                     <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+                     AND    A.ITEM_CODE   LIKE #{ITEM_CODE} + '%'     /* 품목 */
+                     </if>
+                     <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+				     AND (CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+				               WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+				                                   ELSE C1.ITEM_NAME
+				     END)        LIKE #{ITEM_NAME}
+				     </if>
+				     AND  ISNULL(A.LOT_NO ,'') <![CDATA[<> ]]>''
+                     GROUP BY A.COMP_CODE, A.DIV_CODE
+                            , A.ITEM_CODE
+                            , C1.ITEM_NAME, C1.ITEM_NAME1, C1.ITEM_NAME2, C1.SPEC, C1.STOCK_UNIT
+                            , A.LOT_NO, A.WH_CODE, D1.TREE_CODE, D1.TREE_NAME--, A.REMARK
+                     HAVING SUM(ISNULL(A.IN_Q, 0) - ISNULL(A.OUT_Q, 0) + ISNULL(A.RTN_Q, 0)) != 0
+                     ORDER BY A.LOT_NO, A.ITEM_CODE
+                 END
+
+                 IF @LotYN = 'Y'
+                 BEGIN
+                     SELECT
+                            A.LOT_NO                                                                                       AS LOT_NO
+                          , D1.TREE_NAME                                                                                   AS WH_NAME
+                          , A.ITEM_CODE                                                                                    AS ITEM_CODE
+                          , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                                 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                                 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                                 ELSE C1.ITEM_NAME
+                            END                                                                                            AS ITEM_NAME
+                          , ISNULL(C1.SPEC, '')                                                                            AS SPEC
+                          , ISNULL(C1.STOCK_UNIT, '')                                                                      AS STOCK_UNIT
+                          , SUM(A.STOCK_Q)																				   AS STOCK
+                          , SUM(A.GOOD_STOCK_Q)																			   AS GOOD_STOCK
+                          , SUM(A.BAD_STOCK_Q)																			   AS BAD_STOCK
+                          --, '' 																							   AS REMARK
+                          , A.DIV_CODE                                                                                     AS DIV_CODE
+                          , A.WH_CODE                                                                                      AS WH_CODE
+                       	  , E.CUSTOM_CODE
+                          , E.CUSTOM_NAME
+                     FROM  (  SELECT A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE, A.LOT_NO
+	                                ,A.GOOD_STOCK_Q, A.BAD_STOCK_Q, A.STOCK_Q, A.CUSTOM_CODE
+	                           FROM BIV150T  A  WITH (NOLOCK)
+
+	                           WHERE A.COMP_CODE = @CompCode
+		                       <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		                     		AND A.DIV_CODE = #{DIV_CODE}
+						       </if>
+			                     AND A.SUM_TYPE  = 'C'
+			                   <if test="INCLUSION == NULL">
+			                     AND A.STOCK_Q  != 0.0
+			                   </if>
+
+						       UNION ALL
+
+	                           SELECT COMP_CODE, DIV_CODE, WH_CODE, ITEM_CODE, LOT_NO
+	                                  ,(CASE WHEN INOUT_TYPE IN ('1', '3') THEN INOUT_Q ELSE (-1) * INOUT_Q END) AS GOOD_STOCK_Q
+	                                  ,0 AS BAD_STOCK_Q
+	                                  ,(CASE WHEN INOUT_TYPE IN ('1', '3') THEN INOUT_Q ELSE (-1) * INOUT_Q END) AS STOCK_Q
+	                                  ,INOUT_CODE
+	                           FROM  BTR100T WITH (NOLOCK)
+	                           WHERE COMP_CODE = @CompCode
+		                       <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		                     		AND DIV_CODE = #{DIV_CODE}
+						       </if>
+							   AND INOUT_DATE &gt;= CONVERT(NVARCHAR(08), GETDATE(), 112)
+						       AND INOUT_DATE &lt;= CONVERT(NVARCHAR(08), DATEADD(D,-1,GETDATE()),112)
+
+                             ) A
+
+                            INNER  JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE                                             /* 품목 */
+                                                                AND C1.ITEM_CODE  = A.ITEM_CODE
+                                                                AND ISNULL(C1.STOCK_CARE_YN,'N') = 'Y'                                      /* 2015.10.02 추가 */
+                            INNER  JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE                                             /* 사업장 품목 */
+                                                                AND C2.DIV_CODE   = A.DIV_CODE
+                                                                AND C2.ITEM_CODE  = A.ITEM_CODE
+                            LEFT  JOIN BSA220T  D1 WITH (NOLOCK) ON D1.COMP_CODE  = A.COMP_CODE                                             /* 창고 */
+                                                                AND D1.TYPE_LEVEL = A.DIV_CODE
+                                                                AND D1.TREE_CODE  = A.WH_CODE
+                            LEFT  JOIN BCM100T   E WITH (NOLOCK) ON E.COMP_CODE   = A.COMP_CODE
+                                                                AND E.CHANNEL = LEFT(A.LOT_NO,2)
+                     WHERE  A.COMP_CODE      = @CompCode
+                     /*
+                     AND    A.SUM_TYPE       = 'C'
+                     AND    A.STOCK_Q       != 0.0
+                     */
+                     <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                     AND    A.DIV_CODE       = #{DIV_CODE}
+				     </if>
+                     <if test="@foren.Ognl@isNotEmpty(FR_LOT)">
+                     AND    A.LOT_NO        &gt;= #{FR_LOT}                 /* FR LOT_NO */
+				     </if>
+                     <if test="@foren.Ognl@isNotEmpty(TO_LOT)">
+                     AND    A.LOT_NO        &lt;= #{TO_LOT}                 /* TO LOT_NO */
+				     </if>
+                     <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+                     AND    A.WH_CODE        = #{WH_CODE}                /* 창고 */
+				     </if>
+                     <if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+                     AND    C2.ITEM_ACCOUNT  = #{ITEM_ACCOUNT}           /* 계정 */
+				     </if>
+                     <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+                     AND    A.ITEM_CODE   LIKE #{ITEM_CODE} + '%'        /* 품목 */
+				     </if>
+                     <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+				     AND (CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+				               WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+				                                   ELSE C1.ITEM_NAME
+				     END)        LIKE #{ITEM_NAME}
+				     </if>
+				     <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)">
+                     AND    C1.ITEM_LEVEL1   = #{ITEM_LEVEL1}             /* 대분류 */
+				     </if>
+                     <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL2)">
+                     AND    C1.ITEM_LEVEL2   = #{ITEM_LEVEL2}             /* 중분류 */
+				     </if>
+                     <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL3)">
+                     AND    C1.ITEM_LEVEL3   = #{ITEM_LEVEL3}             /* 소분류 */
+				     </if>
+					 AND  LEFT(ISNULL(A.LOT_NO,''),2) <![CDATA[<> ]]>''
+                     GROUP BY A.COMP_CODE, A.DIV_CODE
+                            , A.ITEM_CODE
+                            , C1.ITEM_NAME, C1.ITEM_NAME1, C1.ITEM_NAME2, C1.SPEC, C1.STOCK_UNIT
+                            , A.LOT_NO, A.WH_CODE, D1.TREE_CODE, D1.TREE_NAME, E.CUSTOM_CODE, E.CUSTOM_NAME
+                     <if test="INCLUSION == NULL">
+                     HAVING ( (	   SUM(ISNULL(A.STOCK_Q, 0)) 	  != 0
+                     			OR SUM(ISNULL(A.GOOD_STOCK_Q, 0)) != 0
+			                    OR SUM(ISNULL(A.BAD_STOCK_Q, 0))  != 0 )
+			                 )
+                     </if>
+			    /*2010.07.01 총재고, 양품재고, 불량재고 등이 모두 0이면 안보이도록 수정 Park Dong Young*/
+			    /*
+			                     AND (ISNULL(A.STOCK_Q, 0)      != 0
+			                      OR  ISNULL(A.GOOD_STOCK_Q, 0) != 0
+			                      OR  ISNULL(A.BAD_STOCK_Q, 0)  != 0 )
+			    */
+			     ORDER BY A.LOT_NO, A.ITEM_CODE
+	          END
+
+		    SET NOCOUNT OFF
+	        SET ARITHABORT OFF
+
+		  END
+	</select>
+
+	<select id="s_biv300skrv_ypServiceImpl.selectMasterList4" parameterType="Map" resultType="rMap">        /* 외주처별 */
+        --s_biv300skrv_yp.Cs_biv300skrv_yp[fnBiv300QSt5] Query03
+        /*
+        현재고 현황 조회(외주처별)
+        */
+        BEGIN
+            DECLARE         @COMP_CODE          NVARCHAR(08)                -- (필수) 법인코드
+                          , @DIV_CODE           NVARCHAR(08)                -- (필수) 사업장코드
+
+                          , @WH_CODE            NVARCHAR(08)                -- (선택) 창고코드
+
+                          , @ITEM_ACCOUNT       NVARCHAR(02)                -- (선택) 품목 계정코드
+
+                          , @ITEM_CODE          NVARCHAR(20)                -- (선택) 품목코드
+                          , @ITEM_NAME          NVARCHAR(200)               -- (선택) 품목명
+        --
+                          , @ITEM_LEVEL1        NVARCHAR(10)                -- 대분류
+                          , @ITEM_LEVEL2        NVARCHAR(10)                -- 중분류
+                          , @ITEM_LEVEL3        NVARCHAR(10)                -- 소분류
+        --
+                          , @CUSTOM_CODE        NVARCHAR(08)                -- 외주처 코드
+                          , @CUSTOM_NAME        NVARCHAR(40)                -- 외주처명
+        --
+                          , @USER_ID            NVARCHAR(100)                -- (필수) USER ID
+
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+
+            SET @COMP_CODE    = #{S_COMP_CODE}
+            SET @DIV_CODE     = #{DIV_CODE}
+
+            SET @WH_CODE      = #{WH_CODE}
+            SET @ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+
+            SET @ITEM_CODE    = #{ITEM_CODE}
+            SET @ITEM_NAME    = #{ITEM_NAME}
+        --
+            SET @ITEM_LEVEL1  = #{TXTLV_L1}
+            SET @ITEM_LEVEL2  = #{TXTLV_L2}
+            SET @ITEM_LEVEL3  = #{TXTLV_L3}
+        --
+            SET @CUSTOM_CODE  = #{CUSTOM_CODE}
+            SET @CUSTOM_NAME  = #{CUSTOM_NAME}
+        --
+            SET @USER_ID      = #{S_USER_ID}
+
+        -----------------------------------------------------------------------------------------------------------------------
+            DECLARE @RefItem            NVARCHAR(01)
+
+            SELECT TOP 1 @RefItem = REF_ITEM
+            FROM   BSA300T WITH (NOLOCK)
+            WHERE  USER_ID = @USER_ID
+
+            SET @RefItem = ISNULL(@RefItem, '')
+
+        -----------------------------------------------------------------------------------------------------------------------
+
+            SELECT
+                   A.DIV_CODE                                                                                           AS DIV_CODE
+                 , A.CUSTOM_CODE                                                                                        AS CUSTOM_CODE
+                 , A.CUSTOM_NAME                                                                                        AS CUSTOM_NAME
+                 , A.ITEM_CODE                                                                                          AS ITEM_CODE
+                 , A.ITEM_NAME                                                                                          AS ITEM_NAME
+                 , A.SPEC                                                                                               AS SPEC
+                 , A.STOCK_UNIT                                                                                         AS STOCK_UNIT
+                 , CASE WHEN SUM(ISNULL(STOCK_Q, 0)) = 0 THEN 0
+                        ELSE SUM(ROUND(ISNULL(STOCK_AMT, 0), 5)) / SUM(ISNULL(STOCK_Q, 0))
+                   END                                                                                                  AS STOCK_P
+                 , SUM(ISNULL(STOCK_Q, 0))                                                                              AS STOCK_Q
+                 , SUM(ISNULL(STOCK_AMT, 0))                                                                            AS STOCK_AMT
+                 , SUM(ISNULL(GOOD_STOCK_Q, 0))                                                                         AS GOOD_STOCK_Q
+                 , SUM(ISNULL(GOOD_STOCK_AMT, 0))                                                                       AS GOOD_STOCK_AMT
+                 , SUM(ISNULL(BAD_STOCK_Q, 0))                                                                          AS BAD_STOCK_Q
+                 , SUM(ISNULL(BAD_STOCK_AMT, 0))                                                                        AS BAD_STOCK_AMT
+            FROM   (
+                   SELECT A.COMP_CODE, A.DIV_CODE
+                        , A.ITEM_CODE
+                        , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                               WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                               WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                               ELSE C1.ITEM_NAME
+                          END                                                                                           AS ITEM_NAME
+                        , C2.ITEM_ACCOUNT                                                                               AS ITEM_ACCOUNT
+                        , M2.CODE_NAME                                                                                  AS ITEM_ACCOUNT_NAME
+                        , ISNULL(C1.SPEC, '')                                                                           AS SPEC
+                        , ISNULL(C1.STOCK_UNIT, '')                                                                     AS STOCK_UNIT
+                        , A.CUSTOM_CODE                                                                                 AS CUSTOM_CODE
+                        , CASE WHEN @RefItem = '0' THEN D1.CUSTOM_NAME
+                               WHEN @RefItem = '1' THEN D1.CUSTOM_NAME1
+                               WHEN @RefItem = '2' THEN D1.CUSTOM_NAME2
+                               ELSE D1.CUSTOM_NAME
+                          END                                                                                           AS CUSTOM_NAME
+
+        -- 입고+(1), 출고-(2), 반품+(3)
+                        , ISNULL(A.STOCK_Q, 0)                                                                          AS STOCK_Q
+                        , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')    -- 기준단가 적용 제품/반제품 금액
+                                    THEN CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.STOCK_Q, 0))
+                               ELSE ISNULL(A.STOCK_I, 0)
+                          END                                                                                           AS STOCK_AMT
+        --
+                        , ISNULL(A.GOOD_STOCK_Q, 0)                                                                     AS GOOD_STOCK_Q
+                        , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+                                    THEN CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                               ELSE CONVERT(NUMERIC(30, 6), ISNULL(A.AVERAGE_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                          END                                                                                           AS GOOD_STOCK_AMT
+        --
+                        , ISNULL(A.BAD_STOCK_Q, 0)                                                                      AS BAD_STOCK_Q
+                        , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+                                    THEN CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.STOCK_Q, 0)) -
+                                         CONVERT(NUMERIC(30, 6), ISNULL(C2.BASIS_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                               ELSE ISNULL(A.STOCK_I, 0) -
+                                    CONVERT(NUMERIC(30, 6), ISNULL(A.AVERAGE_P, 0) * ISNULL(A.GOOD_STOCK_Q, 0))
+                          END                                                                                           AS BAD_STOCK_AMT
+                   FROM              BIZ100T  A  WITH (NOLOCK)
+                          LEFT  JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE                                            -- 품목
+                                                              AND C1.ITEM_CODE   = A.ITEM_CODE
+                          LEFT  JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE   = A.COMP_CODE                                            -- 사업장 품목
+                                                              AND C2.DIV_CODE    = A.DIV_CODE
+                                                              AND C2.ITEM_CODE   = A.ITEM_CODE
+                          LEFT  JOIN BCM100T  D1 WITH (NOLOCK) ON D1.COMP_CODE   = A.COMP_CODE                                            -- 사업장 품목
+                                                              AND D1.CUSTOM_CODE = A.CUSTOM_CODE
+                          LEFT  JOIN BSA100T  M1 WITH (NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE                                            -- 단가처리 기준
+                                                              AND M1.MAIN_CODE   = 'B069'
+                                                              AND M1.SUB_CODE    = '1'                                                    -- 기준재고단가
+                                                              AND M1.REF_CODE1   = 'Y'
+                          LEFT  JOIN BSA100T  M2 WITH (NOLOCK) ON M2.COMP_CODE   = C2.COMP_CODE
+                                                              AND M2.MAIN_CODE   = 'B020'                                                 -- 계정구분
+                                                              AND M2.SUB_CODE    = C2.ITEM_ACCOUNT
+                   WHERE  A.COMP_CODE      = @COMP_CODE
+                   AND    A.DIV_CODE       = @DIV_CODE
+                   AND    A.STOCK_Q       &lt;&gt; 0.0
+                   AND  ((A.CUSTOM_CODE    = @CUSTOM_CODE     AND @CUSTOM_CODE  &lt;&gt; '') OR (@CUSTOM_CODE  = ''))        -- 외주처
+                   AND  ((C2.ITEM_ACCOUNT  = @ITEM_ACCOUNT    AND @ITEM_ACCOUNT &lt;&gt; '') OR (@ITEM_ACCOUNT = ''))        -- 계정
+                   AND  ((A.ITEM_CODE   LIKE @ITEM_CODE + '%' AND @ITEM_CODE    &lt;&gt; '') OR (@ITEM_CODE    = ''))        -- 품목
+                   AND  ((
+                         (C1.ITEM_NAME  LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    &lt;&gt; '' AND (@RefItem      = '0'))
+                   OR    (C1.ITEM_NAME1 LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    &lt;&gt; '' AND (@RefItem      = '1'))
+                   OR    (C1.ITEM_NAME2 LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    &lt;&gt; '' AND (@RefItem      = '2'))
+                         ) OR (@ITEM_NAME = ''))
+                   AND  ((C1.ITEM_LEVEL1   = @ITEM_LEVEL1     AND @ITEM_LEVEL1  &lt;&gt; '') OR (@ITEM_LEVEL1  = ''))        -- 대분류
+                   AND  ((C1.ITEM_LEVEL2   = @ITEM_LEVEL2     AND @ITEM_LEVEL2  &lt;&gt; '') OR (@ITEM_LEVEL2  = ''))        -- 중분류
+                   AND  ((C1.ITEM_LEVEL3   = @ITEM_LEVEL3     AND @ITEM_LEVEL3  &lt;&gt; '') OR (@ITEM_LEVEL3  = ''))        -- 소분류
+                   ) A
+
+            --'2010.07.01 총재고, 양품재고, 불량재고 등이 모두 0이면 안보이도록 수정 Park Dong Young
+             WHERE 1=1
+               AND (ISNULL(A.STOCK_Q, 0)      &lt;&gt; 0
+                OR  ISNULL(A.GOOD_STOCK_Q, 0) &lt;&gt; 0
+                OR  ISNULL(A.BAD_STOCK_Q, 0)  &lt;&gt; 0 )
+
+                   GROUP BY A.COMP_CODE, A.DIV_CODE
+                          , A.ITEM_ACCOUNT, A.ITEM_ACCOUNT_NAME, A.CUSTOM_CODE, A.CUSTOM_NAME
+                          , A.ITEM_CODE, A.ITEM_NAME, A.SPEC, A.STOCK_UNIT
+                   ORDER BY A.CUSTOM_CODE, A.ITEM_CODE
+
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END
+    </select>
+
+	<select id="s_biv300skrv_ypServiceImpl.selectMasterList5" parameterType="Map" resultType="rMap">        /* CELL별 */
+        --s_biv300skrv_yp.Cs_biv300skrv_yp[fnBiv300QSt6] Query02
+        /*
+        현재고 현황 조회(LOT별)
+        */
+        BEGIN
+            DECLARE         @COMP_CODE          NVARCHAR(08)                -- (필수) 법인코드
+                          , @DIV_CODE           NVARCHAR(08)                -- (필수) 사업장코드
+
+                          , @WH_CODE            NVARCHAR(08)                -- (선택) 창고코드
+
+                          , @ITEM_ACCOUNT       NVARCHAR(02)                -- (선택) 품목 계정코드
+
+                          , @ITEM_CODE          NVARCHAR(20)                -- (선택) 품목코드
+                          , @ITEM_NAME          NVARCHAR(200)               -- (선택) 품목명
+        --
+                          , @ITEM_LEVEL1        NVARCHAR(10)                -- (선택) 대분류
+                          , @ITEM_LEVEL2        NVARCHAR(10)                -- (선택) 중분류
+                          , @ITEM_LEVEL3        NVARCHAR(10)                -- (선택) 소분류
+        --
+                          , @USER_ID            NVARCHAR(100)                -- (필수) USER ID
+
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+
+            SET @COMP_CODE    = #{S_COMP_CODE}
+            SET @DIV_CODE     = #{DIV_CODE}
+
+            SET @WH_CODE      = #{WH_CODE}
+            SET @ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+
+            SET @ITEM_CODE    = #{ITEM_CODE}
+            SET @ITEM_NAME    = #{ITEM_NAME}
+        --
+            SET @ITEM_LEVEL1  = #{TXTLV_L1}
+            SET @ITEM_LEVEL2  = #{TXTLV_L2}
+            SET @ITEM_LEVEL3  = #{TXTLV_L3}
+        --
+            SET @USER_ID      = #{S_USER_ID}
+
+        -----------------------------------------------------------------------------------------------------------------------
+            DECLARE         @RefItem             NVARCHAR(01)
+
+            SELECT TOP 1 @RefItem = REF_ITEM
+            FROM   BSA300T WITH (NOLOCK)
+            WHERE  USER_ID = @USER_ID
+
+            SET @RefItem = ISNULL(@RefItem, '0')
+
+        -----------------------------------------------------------------------------------------------------------------------
+            DECLARE         @LotYN               NVARCHAR(01)
+
+            SELECT TOP 1 @LotYN = REF_CODE1
+            FROM   BSA100T WITH (NOLOCK)
+            WHERE  COMP_CODE = @COMP_CODE
+            AND    MAIN_CODE = 'B084'                                   -- 재고합산 유형
+            AND    SUB_CODE  = 'D'                                      -- Lot No. 합산
+
+            SET @LotYN = ISNULL(@LotYN, 'N')
+        -----------------------------------------------------------------------------------------------------------------------
+
+            IF @LotYN = 'N'
+            BEGIN
+                SELECT
+                       D1.TREE_NAME                                                                                   AS WH_NAME
+                     , D2.WH_CELL_NAME                                                                                AS WH_CELL_NAME
+                     , A.LOT_NO                                                                                       AS LOT_NO
+                     , A.ITEM_CODE                                                                                    AS ITEM_CODE
+                     , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                            WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                            WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                            ELSE C1.ITEM_NAME
+                       END                                                                                            AS ITEM_NAME
+                     , ISNULL(C1.SPEC, '')                                                                            AS SPEC
+                     , ISNULL(C1.STOCK_UNIT, '')                                                                      AS STOCK_UNIT
+                     , SUM(ISNULL(A.IN_Q, 0) - ISNULL(A.OUT_Q, 0) + ISNULL(A.RTN_Q, 0))                               AS STOCK
+                     , SUM(CASE WHEN A.ITEM_STATUS = '1' THEN ISNULL(A.IN_Q, 0) - ISNULL(A.OUT_Q, 0) + ISNULL(A.RTN_Q, 0)
+                                ELSE 0 END)                                                                           AS GOOD_STOCK
+                     , SUM(CASE WHEN A.ITEM_STATUS = '2' THEN ISNULL(A.IN_Q, 0) - ISNULL(A.OUT_Q, 0) + ISNULL(A.RTN_Q, 0)
+                                ELSE 0 END)                                                                           AS BAD_STOCK
+                     --, A.REMARK
+                     , A.DIV_CODE                                                                                     AS DIV_CODE
+                     , A.WH_CODE                                                                                      AS WH_CODE
+                     , A.WH_CELL_CODE                                                                                 AS WH_CELL_CODE
+                FROM              BTR100T  A  WITH (NOLOCK, INDEX(BTR100T_IDX07))
+                       LEFT  JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE    = A.COMP_CODE                                             -- 품목
+                                                           AND C1.ITEM_CODE    = A.ITEM_CODE
+                       LEFT  JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE    = A.COMP_CODE                                             -- 사업장 품목
+                                                           AND C2.DIV_CODE     = A.DIV_CODE
+                                                           AND C2.ITEM_CODE    = A.ITEM_CODE
+                       LEFT  JOIN BSA220T  D1 WITH (NOLOCK) ON D1.COMP_CODE    = A.COMP_CODE                                             -- 창고
+                                                           AND D1.TYPE_LEVEL   = A.DIV_CODE
+                                                           AND D1.TREE_CODE    = A.WH_CODE
+                       LEFT  JOIN BSA225T  D2 WITH (NOLOCK) ON D2.COMP_CODE    = A.COMP_CODE                                             -- CELL창고
+                                                           AND D2.DIV_CODE     = A.DIV_CODE
+                                                           AND D2.WH_CODE      = A.WH_CODE
+                                                           AND D2.WH_CELL_CODE = A.WH_CELL_CODE
+                WHERE  A.COMP_CODE      = @COMP_CODE
+                AND    A.DIV_CODE       = @DIV_CODE
+                AND  ((A.WH_CODE        = @WH_CODE         AND @WH_CODE      != '') OR (@WH_CODE      = ''))        -- 창고
+                AND  ((C2.ITEM_ACCOUNT  = @ITEM_ACCOUNT    AND @ITEM_ACCOUNT != '') OR (@ITEM_ACCOUNT = ''))        -- 계정
+                AND  ((A.ITEM_CODE   LIKE @ITEM_CODE + '%' AND @ITEM_CODE    != '') OR (@ITEM_CODE    = ''))        -- 품목
+                AND  ((
+                      (C1.ITEM_NAME  LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '0'))
+                OR    (C1.ITEM_NAME1 LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '1'))
+                OR    (C1.ITEM_NAME2 LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '2'))
+                      ) OR (@ITEM_NAME = ''))
+                AND  ((C1.ITEM_LEVEL1   = @ITEM_LEVEL1     AND @ITEM_LEVEL1  != '') OR (@ITEM_LEVEL1  = ''))        -- 대분류
+                AND  ((C1.ITEM_LEVEL2   = @ITEM_LEVEL2     AND @ITEM_LEVEL2  != '') OR (@ITEM_LEVEL2  = ''))        -- 중분류
+                AND  ((C1.ITEM_LEVEL3   = @ITEM_LEVEL3     AND @ITEM_LEVEL3  != '') OR (@ITEM_LEVEL3  = ''))        -- 소분류
+                GROUP BY A.COMP_CODE, A.DIV_CODE
+                       , A.ITEM_CODE
+                       , C1.ITEM_NAME, C1.ITEM_NAME1, C1.ITEM_NAME2, C1.SPEC, C1.STOCK_UNIT, A.LOT_NO
+                       , A.WH_CODE, D1.TREE_NAME, A.WH_CELL_CODE, D2.WH_CELL_NAME--, A.REMARK
+                HAVING SUM(ISNULL(A.IN_Q, 0) - ISNULL(A.OUT_Q, 0) + ISNULL(A.RTN_Q, 0)) != 0
+                ORDER BY A.WH_CODE, A.WH_CELL_CODE, A.ITEM_CODE
+            END
+
+            IF @LotYN = 'Y'
+            BEGIN
+                SELECT
+                       D1.TREE_NAME                                                                                   AS WH_NAME
+                     , D2.WH_CELL_NAME                                                                                AS WH_CELL_NAME
+                     , A.LOT_NO                                                                                       AS LOT_NO
+                     , A.ITEM_CODE                                                                                    AS ITEM_CODE
+                     , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                            WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                            WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                            ELSE C1.ITEM_NAME
+                       END                                                                                            AS ITEM_NAME
+                     , ISNULL(C1.SPEC, '')                                                                            AS SPEC
+                     , ISNULL(C1.STOCK_UNIT, '')                                                                      AS STOCK_UNIT
+                     , SUM(ISNULL(A.STOCK_Q, 0))                                                                      AS STOCK
+                     , SUM(ISNULL(A.GOOD_STOCK_Q, 0))                                                                 AS GOOD_STOCK
+                     , SUM(ISNULL(A.BAD_STOCK_Q, 0))                                                                  AS BAD_STOCK
+                     --, B.REMARK
+                     , A.DIV_CODE                                                                                     AS DIV_CODE
+                     , A.WH_CODE                                                                                      AS WH_CODE
+                     , A.WH_CELL_CODE                                                                                 AS WH_CELL_CODE
+                FROM              BIV150T  A  WITH (NOLOCK)
+                       --LEFT  JOIN (
+                       --           SELECT COMP_CODE, DIV_CODE, ITEM_CODE, MAX(REMARK) AS REMARK, WH_CODE, WH_CELL_CODE, LOT_NO
+                       --           FROM   BTR100T WITH (NOLOCK)
+                       --           GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, WH_CODE, WH_CELL_CODE, LOT_NO
+                       --           )        B                ON  B.COMP_CODE    = A.COMP_CODE
+                       --                                    AND  B.DIV_CODE     = A.DIV_CODE
+                       --                                    AND  B.ITEM_CODE    = A.ITEM_CODE
+                       --                                    AND  B.WH_CODE      = A.WH_CODE
+                       --                                    AND  B.WH_CELL_CODE = A.WH_CELL_CODE
+                       --                                    AND  B.LOT_NO       = A.LOT_NO
+                       LEFT  JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE    = A.COMP_CODE                                             -- 품목
+                                                           AND C1.ITEM_CODE    = A.ITEM_CODE
+                       LEFT  JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE    = A.COMP_CODE                                             -- 사업장 품목
+                                                           AND C2.DIV_CODE     = A.DIV_CODE
+                                                           AND C2.ITEM_CODE    = A.ITEM_CODE
+                       LEFT  JOIN BSA220T  D1 WITH (NOLOCK) ON D1.COMP_CODE    = A.COMP_CODE                                             -- 창고
+                                                           AND D1.TYPE_LEVEL   = A.DIV_CODE
+                                                           AND D1.TREE_CODE    = A.WH_CODE
+                       LEFT  JOIN BSA225T  D2 WITH (NOLOCK) ON D2.COMP_CODE    = A.COMP_CODE                                             -- CELL창고
+                                                           AND D2.DIV_CODE     = A.DIV_CODE
+                                                           AND D2.WH_CODE      = A.WH_CODE
+                                                           AND D2.WH_CELL_CODE = A.WH_CELL_CODE
+                WHERE  A.COMP_CODE      = @COMP_CODE
+                AND    A.SUM_TYPE       = 'D'
+                AND    A.STOCK_Q       != 0.0
+                AND  ((A.DIV_CODE       = @DIV_CODE        AND @DIV_CODE     != '') OR (@DIV_CODE     = ''))
+                AND  ((A.WH_CODE        = @WH_CODE         AND @WH_CODE      != '') OR (@WH_CODE      = ''))        -- 창고
+                AND  ((C2.ITEM_ACCOUNT  = @ITEM_ACCOUNT    AND @ITEM_ACCOUNT != '') OR (@ITEM_ACCOUNT = ''))        -- 계정
+                AND  ((A.ITEM_CODE   LIKE @ITEM_CODE + '%' AND @ITEM_CODE    != '') OR (@ITEM_CODE    = ''))        -- 품목
+                AND  ((
+                      (C1.ITEM_NAME  LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '0'))
+                OR    (C1.ITEM_NAME1 LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '1'))
+                OR    (C1.ITEM_NAME2 LIKE '%' + @ITEM_NAME + '%' AND @ITEM_NAME    != '' AND (@RefItem      = '2'))
+                      ) OR (@ITEM_NAME = ''))
+                AND  ((C1.ITEM_LEVEL1   = @ITEM_LEVEL1     AND @ITEM_LEVEL1  != '') OR (@ITEM_LEVEL1  = ''))        -- 대분류
+                AND  ((C1.ITEM_LEVEL2   = @ITEM_LEVEL2     AND @ITEM_LEVEL2  != '') OR (@ITEM_LEVEL2  = ''))        -- 중분류
+                AND  ((C1.ITEM_LEVEL3   = @ITEM_LEVEL3     AND @ITEM_LEVEL3  != '') OR (@ITEM_LEVEL3  = ''))        -- 소분류
+                AND (ISNULL(A.STOCK_Q, 0)      != 0
+                 OR  ISNULL(A.GOOD_STOCK_Q, 0) != 0
+                 OR  ISNULL(A.BAD_STOCK_Q, 0)  != 0 )
+                GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE
+                       , C1.ITEM_NAME, C1.ITEM_NAME1, C1.ITEM_NAME2, C1.SPEC, C1.STOCK_UNIT
+                       , A.WH_CODE, D1.TREE_NAME, A.WH_CELL_CODE, D2.WH_CELL_NAME
+                       --, B.REMARK
+                       , A.LOT_NO
+                ORDER BY A.WH_CODE, A.WH_CELL_CODE, A.LOT_NO, A.ITEM_CODE
+            END
+
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END
+	</select>
+
+	<select id="s_biv300skrv_ypServiceImpl.getgsWHGroupYN" parameterType="Map" resultType="rMap">	/* 창고그룹 사용여부 */
+		SELECT ISNULL(MAX(GROUP_CD),'') GROUP_CD FROM BSA220T WITH (NOLOCK)
+        WHERE  COMP_CODE  = #{S_COMP_CODE}
+	</select>
+</mapper>

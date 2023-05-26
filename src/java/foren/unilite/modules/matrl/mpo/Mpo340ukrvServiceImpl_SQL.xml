@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mpo340ukrvServiceImpl">
+	<select id="mpo340ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/*mpo340ukrvServiceImpl.selectList*/
+		DECLARE @CompCode		NVARCHAR(08)		/* 법인코드	*/
+				, @UserId		NVARCHAR(100)		/* 사용자ID*/
+				, @RefItem		NVARCHAR(01)
+
+			SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_ID}
+
+			/* 명칭 참조 유형 */
+			SELECT TOP 1 @RefItem = REF_ITEM
+			FROM BSA300T WITH (NOLOCK)
+			WHERE USER_ID = @UserId
+
+			SET @RefItem = ISNULL(@RefItem, N'0')
+
+			/* 데이터 조회 */
+			SELECT 
+				 A.DIV_CODE
+				, CASE WHEN A.ORDER_TYPE = '4' THEN '외주'  ELSE '구매' END		AS ORDER_TYPE
+				, B.IN_DIV_CODE
+				, A.CUSTOM_CODE
+				, CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+					   WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+										   ELSE C1.CUSTOM_NAME
+				  END														AS CUSTOM_NAME
+				, B.ORDER_NUM												AS PO_NUM
+				, A.ORDER_DATE 
+				, B.ORDER_SEQ
+				, B.ITEM_CODE
+				, CASE  WHEN @RefItem = '1' THEN C2.ITEM_NAME1
+						WHEN @RefItem = '2' THEN C2.ITEM_NAME2
+						ELSE C2.ITEM_NAME
+				  END														AS ITEM_NAME
+				, C2.SPEC
+				, B.ORDER_UNIT_Q											AS ORDER_Q
+				, ISNULL(E.ORDER_UNIT_Q,0)									AS INSTOCK_Q
+				, B.INIT_DVRY_DATE
+				, B.DVRY_DATE
+				, B.REASON
+				, A.PROJECT_NO
+				, C3.PJT_NAME
+				-- 수주번호, 수주처, 수주품목명
+				, F.ORDER_NUM												AS SO_NUM
+				, (CASE WHEN @RefItem = '1' THEN F2.CUSTOM_NAME1
+						WHEN @RefItem = '2' THEN F2.CUSTOM_NAME2
+											ELSE F2.CUSTOM_NAME
+					END)													AS SO_CUSTOM_NAME
+				, (CASE WHEN @RefItem = '1' THEN F3.ITEM_NAME1
+						WHEN @RefItem = '2' THEN F3.ITEM_NAME2
+											ELSE F3.ITEM_NAME
+					END)													AS SO_ITEM_NAME
+
+			FROM       MPO100T A  WITH (NOLOCK)
+			INNER JOIN MPO200T B  WITH (NOLOCK)  ON  B.COMP_CODE   = A.COMP_CODE
+												AND  B.DIV_CODE    = A.DIV_CODE
+												AND  B.CUSTOM_CODE = A.CUSTOM_CODE
+												AND  B.ORDER_NUM   = A.ORDER_NUM
+			INNER JOIN BCM100T C1 WITH (NOLOCK)  ON C1.COMP_CODE   = A.COMP_CODE
+												AND C1.CUSTOM_CODE = A.CUSTOM_CODE
+			INNER JOIN BPR100T C2 WITH (NOLOCK)  ON C2.COMP_CODE   = B.COMP_CODE
+												AND C2.ITEM_CODE   = B.ITEM_CODE
+			INNER JOIN BPR200T I  WITH (NOLOCK)  ON I.COMP_CODE    = A.COMP_CODE
+												AND I.DIV_CODE     = A.DIV_CODE
+												AND I.ITEM_CODE    = B.ITEM_CODE
+			LEFT  JOIN BCM600T C3 WITH (NOLOCK)  ON C3.COMP_CODE   = A.COMP_CODE
+												AND C3.PJT_CODE    = A.PROJECT_NO
+			LEFT  JOIN  (SELECT S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+							  , CASE S1.CREATE_LOC WHEN '2' THEN S1.ORDER_NUM ELSE S2.ORDER_NUM END AS ORDER_NUM
+							  , CASE S1.CREATE_LOC WHEN '2' THEN S1.ORDER_SEQ ELSE S2.ORDER_SEQ END AS ORDER_SEQ
+							  , SUM(ISNULL(S1.ORDER_UNIT_Q, 0))				AS ORDER_UNIT_Q
+						   FROM BTR100T S1 WITH (NOLOCK)
+						   LEFT JOIN TIA110T S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.DIV_CODE=S2.DIV_CODE AND S1.ORDER_NUM=S2.SO_SER_NO AND S1.ORDER_SEQ=S2.SO_SER
+						  WHERE S1.COMP_CODE  = @CompCode
+						  GROUP BY S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+						      , CASE S1.CREATE_LOC WHEN '2' THEN S1.ORDER_NUM ELSE S2.ORDER_NUM END
+						      , CASE S1.CREATE_LOC WHEN '2' THEN S1.ORDER_SEQ ELSE S2.ORDER_SEQ END  ) E ON  E.COMP_CODE = B.COMP_CODE
+																										AND  E.DIV_CODE  = B.IN_DIV_CODE
+																										AND  E.ITEM_CODE = B.ITEM_CODE
+																										AND  E.ORDER_NUM = B.ORDER_NUM
+																										AND  E.ORDER_SEQ = B.ORDER_SEQ
+			--수주번호, 수주처, 수주품목명 가져오기 위한 JOIN
+			LEFT JOIN SOF110T F  WITH (NOLOCK)   ON F.COMP_CODE		= B.COMP_CODE
+												AND F.OUT_DIV_CODE	= B.DIV_CODE
+												AND F.ORDER_NUM		= B.SO_NUM
+												AND F.SER_NO		= B.SO_SEQ
+			LEFT JOIN SOF100T F1 WITH (NOLOCK)   ON F1.COMP_CODE	= F.COMP_CODE
+												AND F1.DIV_CODE		= F.DIV_CODE
+												AND F1.ORDER_NUM	= F.ORDER_NUM
+			LEFT JOIN BCM100T F2 WITH (NOLOCK)   ON F2.COMP_CODE	= F1.COMP_CODE
+												AND F2.CUSTOM_CODE	= F1.CUSTOM_CODE
+			LEFT JOIN BPR100T F3 WITH (NOLOCK)   ON F3.COMP_CODE	= F.COMP_CODE
+												AND F3.ITEM_CODE	= F.ITEM_CODE
+
+			WHERE A.COMP_CODE = @CompCode
+			<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+				AND A.DIV_CODE = #{DIV_CODE}								--사업장
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ORDER_DATE_FR)">				--발주 시작일
+				AND A.ORDER_DATE &gt;= #{ORDER_DATE_FR}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ORDER_DATE_TO)">				--발주 종료일
+				AND A.ORDER_DATE &lt;= #{ORDER_DATE_TO}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(PO_NUM)">						--발주번호
+				AND B.ORDER_NUM		LIKE #{PO_NUM} + '%'
+			</if>
+			<if test="GUBUN == &quot;1&quot;">								-- 구매
+				AND A.ORDER_TYPE  !=  '4'
+			</if>
+			<if test="GUBUN == &quot;2&quot;">								-- 외주
+				AND A.ORDER_TYPE   =  '4'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_FR)">				--거래처
+				AND A.CUSTOM_CODE	LIKE #{CUSTOM_CODE_FR} +'%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME_FR)">				--거래처명
+				AND C1.CUSTOM_NAME	LIKE #{CUSTOM_NAME_FR} +'%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ORDER_NUM)">					--수주번호
+				AND F1.ORDER_NUM 	LIKE #{ORDER_NUM} +'%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">				--품목계정
+				AND I.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">					--품목코드
+				AND B.ITEM_CODE		LIKE #{ITEM_CODE} +'%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">					--품목명
+				AND C2.ITEM_NAME	LIKE #{ITEM_NAME} +'%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(PJT_CODE)">					--프로젝트 번호
+				AND A.PROJECT_NO	LIKE #{PJT_CODE} +'%'
+			</if>
+				ORDER BY A.CUSTOM_CODE, B.DVRY_DATE, B.ORDER_NUM
+	</select>
+
+
+	<update id="mpo340ukrvServiceImpl.updateDetail" parameterType="Map">
+		UPDATE MPO200T 
+			SET DVRY_DATE 		= #{DVRY_DATE}
+			, REASON    		= #{REASON}
+		WHERE COMP_CODE 		= #{S_COMP_CODE}
+			AND DIV_CODE  		= #{DIV_CODE}
+			AND CUSTOM_CODE 	= #{CUSTOM_CODE}
+			AND ORDER_NUM 		= #{PO_NUM}
+			AND ORDER_SEQ    	= #{ORDER_SEQ}
+	</update>
+</mapper>

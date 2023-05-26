@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="biv305skrvServiceImpl">
+    <select id="biv305skrvServiceImpl.selectList1" parameterType="Map" resultType="rMap">
+        /* biv305skrv.Cbiv305skrv[fnssa450Tnq] Query01 */
+        DECLARE @COMP_CODE      NVARCHAR(10)
+              , @DIV_CODE       NVARCHAR(10)
+              , @PROG_WORK_CODE NVARCHAR(10)
+              , @ITEM_CODE     	NVARCHAR(50)
+              , @LOT_NO         NVARCHAR(30)
+              , @SPEC           NVARCHAR(160)
+              , @RefItem    	NVARCHAR(01) /* 명칭 참조 유형  */
+
+        DECLARE @FR_DATE        NVARCHAR(8)
+              , @TO_DATE        NVARCHAR(8)
+
+        DECLARE @PREV_YYYYMM    NVARCHAR(6)
+
+        SET @COMP_CODE    = #{S_COMP_CODE}
+        SET @DIV_CODE     = #{DIV_CODE}
+        SET @ITEM_CODE    = #{ITEM_CODE}
+        SET @LOT_NO       = #{LOT_NO}
+        SET @SPEC         = #{SPEC}
+        SET @TO_DATE      = #{TO_DATE}
+        
+        /* 데이터 조회 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+		FROM   BSA300T WITH (NOLOCK)
+		WHERE  USER_ID = #{S_USER_ID}
+
+		SET @RefItem = ISNULL(@RefItem, '0')
+
+        SELECT @PREV_YYYYMM = MAX(LAST_YYYYMM)
+          FROM BIV900T WITH(NOLOCK)
+         WHERE COMP_CODE = @COMP_CODE
+           AND DIV_CODE  = @DIV_CODE
+           --20200305 수정: 멀티 선택(WH_CODE, WH_cell_CODE)
+           AND WH_CODE IN
+             <foreach collection="WH_CODE" item="item" separator="," close=")" open="(">
+                 #{item}
+             </foreach>
+
+        IF ISNULL(@PREV_YYYYMM,'') = ''
+            SET @PREV_YYYYMM = '199901'
+            
+        IF @PREV_YYYYMM >= LEFT(@TO_DATE,6)
+            SET @PREV_YYYYMM = CONVERT(VARCHAR(6), DATEADD(MONTH, -1, @TO_DATE), 112)            
+
+        SELECT @FR_DATE = ISNULL(CONVERT(VARCHAR(8), DATEADD(MONTH, 1, @PREV_YYYYMM + '01'), 112),'199901')
+        IF @FR_DATE > @TO_DATE
+            SET @FR_DATE = LEFT(@TO_DATE,6) + '01'        
+
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE ID=OBJECT_ID('tempdb..#tmp_btr100t'))
+			DROP TABLE #tmp_btr100t	
+
+		SELECT COMP_CODE, DIV_CODE, WH_CODE, ISNULL(WH_CELL_CODE,'') AS WH_CELL_CODE, ITEM_CODE, LOT_NO
+				, SUM(CASE WHEN INOUT_TYPE='1' THEN INOUT_Q ELSE 0 END) AS IN_Q
+				, SUM(CASE WHEN INOUT_TYPE='3' THEN INOUT_Q ELSE 0 END) AS RETURN_Q
+				, SUM(CASE WHEN INOUT_TYPE='2' THEN INOUT_Q ELSE 0 END) AS OUT_Q
+		into #tmp_btr100t
+		FROM BTR100T WITH (NOLOCK)
+		WHERE COMP_CODE = @COMP_CODE
+		AND DIV_CODE  = @DIV_CODE
+		--20200305 수정: 멀티 선택(WH_CODE, WH_cell_CODE)
+		AND WH_CODE IN
+        <foreach collection="WH_CODE" item="item" separator="," close=")" open="(">
+            #{item}
+        </foreach>                                       -- 창고
+		--20200305 수정: 멀티 선택(WH_CODE, WH_cell_CODE)
+		<if test="@foren.Ognl@isNotEmpty(WH_CELL_CODE)">
+		AND WH_CELL_CODE IN
+            <foreach collection="WH_CELL_CODE" item="item2" separator="," close=")" open="(">
+                #{item2}
+            </foreach>                                     -- 창고CELL
+		</if>
+		AND INOUT_DATE &gt;= @FR_DATE
+		AND INOUT_DATE &lt;= @TO_DATE
+		GROUP BY COMP_CODE, DIV_CODE, WH_CODE, ISNULL(WH_CELL_CODE,''), ITEM_CODE, LOT_NO
+		
+        SELECT A.WH_CODE
+             , M2.TREE_NAME AS WH_NAME
+             , ISNULL(A.WH_CELL_CODE ,'') AS WH_CELL_CODE
+             , ISNULL(M3.WH_CELL_NAME,'') AS WH_CELL_NAME
+             , M4.ITEM_ACCOUNT
+             , A.ITEM_CODE
+             , CASE WHEN @RefItem = '0' THEN M1.ITEM_NAME
+		             WHEN @RefItem = '1' THEN M1.ITEM_NAME1
+		             WHEN @RefItem = '2' THEN M1.ITEM_NAME2
+		             ELSE M1.ITEM_NAME
+		        END AS ITEM_NAME
+             , A.LOT_NO
+             , M1.STOCK_UNIT
+             , M4.LOCATION
+             , SUM(ISNULL(A.BASIS_Q,0)) AS BASIS_Q
+             , SUM(ISNULL(B.IN_Q,0)) AS IN_Q
+             , SUM(ISNULL(B.RETURN_Q,0)) AS RETURN_Q
+             , SUM(ISNULL(B.OUT_Q,0)) AS OUT_Q
+             , SUM(ISNULL(A.BASIS_Q,0) + ISNULL(B.IN_Q,0) + ISNULL(B.RETURN_Q,0) - ISNULL(B.OUT_Q,0)) AS STOCK_Q
+             , M1.SPEC
+             , D3.MAKE_EXP_DATE AS EXPIRATION_DAY
+          FROM (SELECT COMP_CODE, DIV_CODE, WH_CODE, WH_CELL_CODE, ITEM_CODE, LOT_NO, SUM(BASIS_Q) AS BASIS_Q
+                  FROM (SELECT COMP_CODE, DIV_CODE, WH_CODE, ISNULL(WH_CELL_CODE,'') AS WH_CELL_CODE, ITEM_CODE, LOT_NO, STOCK_Q AS BASIS_Q
+                          FROM BIV250TV S1 WITH (NOLOCK)
+                         WHERE COMP_CODE    = @COMP_CODE
+                           AND DIV_CODE     = @DIV_CODE
+                           AND BASIS_YYYYMM = @PREV_YYYYMM
+                        <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+                           AND ITEM_CODE  LIKE '%' + @ITEM_CODE + '%'
+                        </if>
+                        <if test="@foren.Ognl@isNotEmpty(LOT_NO)">
+                           AND LOT_NO LIKE '%' + @LOT_NO + '%'
+                        </if>
+
+                          --20200305 수정: 멀티 선택(WH_CODE, WH_cell_CODE)
+                           AND WH_CODE IN
+                             <foreach collection="WH_CODE" item="item" separator="," close=")" open="(">
+                                 #{item}
+                             </foreach>                                     -- 창고
+                      <if test="@foren.Ognl@isNotEmpty(WH_CELL_CODE)">
+                           AND WH_CELL_CODE IN
+                             <foreach collection="WH_CELL_CODE" item="item2" separator="," close=")" open="(">
+                                 #{item2}
+                             </foreach>                                     -- 창고CELL
+                      </if>
+
+                        UNION
+
+                        SELECT COMP_CODE, DIV_CODE, WH_CODE, ISNULL(WH_CELL_CODE,'') AS WH_CELL_CODE, ITEM_CODE, LOT_NO, 0 AS BASIS_Q
+                          FROM BIV250TV S1 WITH (NOLOCK)
+                         WHERE COMP_CODE    = @COMP_CODE
+                           AND DIV_CODE     = @DIV_CODE
+                           AND BASIS_YYYYMM > @PREV_YYYYMM
+                           --20200305 수정: 멀티 선택(WH_CODE, WH_cell_CODE)
+                           AND WH_CODE IN
+                            <foreach collection="WH_CODE" item="item" separator="," close=")" open="(">
+                                #{item}
+                            </foreach>                                     -- 창고
+                      <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+                           AND ITEM_CODE  LIKE '%' + @ITEM_CODE + '%'
+                      </if>
+                      <if test="@foren.Ognl@isNotEmpty(LOT_NO)">
+                           AND LOT_NO LIKE '%' + @LOT_NO + '%'
+                      </if>
+                         GROUP BY COMP_CODE, DIV_CODE, WH_CODE, ISNULL(WH_CELL_CODE,'') , ITEM_CODE, LOT_NO) X
+                 GROUP BY COMP_CODE, DIV_CODE, WH_CODE, WH_CELL_CODE, ITEM_CODE, LOT_NO) A
+               LEFT JOIN #tmp_btr100t B 		  ON A.COMP_CODE    = B.COMP_CODE
+							                     AND A.DIV_CODE     = B.DIV_CODE
+							                     AND A.WH_CODE      = B.WH_CODE
+							                     AND A.WH_CELL_CODE = B.WH_CELL_CODE
+							                     AND A.ITEM_CODE    = B.ITEM_CODE
+				                       			 AND A.LOT_NO       = B.LOT_NO
+               LEFT JOIN BPR100T M1 WITH (NOLOCK) ON A.COMP_CODE    = M1.COMP_CODE
+                                                 AND A.ITEM_CODE    = M1.ITEM_CODE
+               LEFT JOIN BPR200T M4 WITH (NOLOCK) ON A.COMP_CODE    = M4.COMP_CODE
+                                                 AND A.DIV_CODE     = M4.DIV_CODE
+                                                 AND A.ITEM_CODE    = M4.ITEM_CODE
+               LEFT JOIN BSA220T M2 WITH (NOLOCK) ON A.COMP_CODE    = M2.COMP_CODE
+                                                 AND A.DIV_CODE     = M2.TYPE_LEVEL
+                                                 AND A.WH_CODE      = M2.TREE_CODE
+               LEFT JOIN BSA225T M3 WITH (NOLOCK) ON A.COMP_CODE    = M3.COMP_CODE
+                                                 AND A.DIV_CODE     = M3.DIV_CODE
+                                                 AND A.WH_CODE      = M3.WH_CODE
+                                                 AND A.WH_CELL_CODE = M3.WH_CELL_CODE
+               LEFT  JOIN ITEM_EXPIR_DATE_V D3 WITH (NOLOCK) ON D3.COMP_CODE=A.COMP_CODE 
+                                                            AND D3.DIV_CODE=A.DIV_CODE 
+                                                            AND D3.ITEM_CODE=A.ITEM_CODE 
+                                                            AND D3.LOT_NO=(CASE WHEN CHARINDEX('-', A.LOT_NO) > 0 THEN LEFT(A.LOT_NO, CHARINDEX('-', A.LOT_NO)-1) ELSE A.LOT_NO END)
+         WHERE 1=1
+        <!-- AND (ISNULL(A.BASIS_Q,0) <![CDATA[<>]]> 0 or
+             ISNULL(B.IN_Q,0) <![CDATA[<>]]> 0 or
+             ISNULL(B.RETURN_Q,0) <![CDATA[<>]]> 0 or
+             ISNULL(B.OUT_Q,0) <![CDATA[<>]]> 0)-->
+
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE = #{ITEM_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND CASE WHEN @RefItem = '0' THEN M1.ITEM_NAME
+		             WHEN @RefItem = '1' THEN M1.ITEM_NAME1
+		             WHEN @RefItem = '2' THEN M1.ITEM_NAME2
+		             ELSE M1.ITEM_NAME
+		        END LIKE '%' + #{ITEM_NAME} + '%' 
+		</if>
+      <if test="@foren.Ognl@isNotEmpty(LOT_NO)">
+           AND A.LOT_NO LIKE '%' + @LOT_NO + '%'
+      </if>
+      <if test="@foren.Ognl@isNotEmpty(SPEC)">
+           AND M1.SPEC LIKE '%' + @SPEC + '%'
+      </if>
+      <if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+           AND M4.ITEM_ACCOUNT IN
+                <foreach collection="ITEM_ACCOUNT" item="item3" separator="," close=")" open="(">
+                    #{item3}
+                </foreach>                                     -- 품목계정
+      </if>
+ 		   GROUP BY A.ITEM_CODE, A.LOT_NO, A.WH_CODE, ISNULL(A.WH_CELL_CODE,''), M1.STOCK_UNIT,  M2.TREE_NAME, M3.WH_CELL_NAME, M4.LOCATION, M1.SPEC
+           , M4.ITEM_ACCOUNT, D3.MAKE_EXP_DATE
+		   , CASE WHEN @RefItem = '0' THEN M1.ITEM_NAME
+		   WHEN @RefItem = '1' THEN M1.ITEM_NAME1
+		   WHEN @RefItem = '2' THEN M1.ITEM_NAME2
+		   ELSE M1.ITEM_NAME
+		   END
+        <if test="STOCK_YN == &quot;NOT_ZERO&quot;">
+        <!-- <![CDATA[
+             HAVING (SUM(ISNULL(A.BASIS_Q,0)) <> 0 OR SUM(ISNULL(B.IN_Q,0)) <> 0 OR SUM(ISNULL(B.RETURN_Q,0)) <> 0 OR SUM(ISNULL(B.OUT_Q,0))<>0)
+        ]]>    -->
+        <![CDATA[
+             HAVING ((SUM(ISNULL(A.BASIS_Q,0)) <> 0 OR SUM(ISNULL(B.IN_Q,0)) <> 0 OR SUM(ISNULL(B.RETURN_Q,0)) <> 0 OR SUM(ISNULL(B.OUT_Q,0))<>0) 
+                      AND SUM(ISNULL(A.BASIS_Q,0) + ISNULL(B.IN_Q,0) + ISNULL(B.RETURN_Q,0) - ISNULL(B.OUT_Q,0)) <> 0)
+        ]]>
+        </if>
+        ORDER BY A.ITEM_CODE, A.LOT_NO
+    </select>
+</mapper>

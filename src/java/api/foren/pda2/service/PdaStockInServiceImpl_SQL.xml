@@ -1,0 +1,486 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="pdaStockInService">
+	<insert id="pdaStockInService.insertMaterialLogData" parameterType="Map">
+    	INSERT INTO L_PDM500_PDA(
+			KEY_VALUE,
+			OPR_FLAG,
+			COMP_CODE,
+			DIV_CODE,
+			WH_CODE,
+			WH_CELL_CODE,
+			INOUT_SEQ,
+			INOUT_DATE,
+			INOUT_PRSN,
+			ITEM_CODE,
+			LOT_NO,
+			INOUT_Q,
+			RECEIPT_NUM,
+			RECEIPT_SEQ,
+			INSERT_DB_USER,
+			INSERT_DB_TIME,
+			UPDATE_DB_USER,
+			UPDATE_DB_TIME)
+		VALUES(
+			#{KEY_VALUE},
+			#{OPR_FLAG},
+			#{COMP_CODE},
+			#{DIV_CODE},
+			#{WH_CODE},
+			#{WH_CELL_CODE},
+			#{INOUT_SEQ},
+			#{INOUT_DATE},
+			#{INOUT_PRSN},
+			#{ITEM_CODE},
+			#{LOT_NO},
+			#{INOUT_Q},
+			#{RECEIPT_NUM},
+			#{RECEIPT_SEQ},
+			#{S_USER_ID},
+			GETDATE(),
+			#{S_USER_ID},
+			GETDATE()
+	       )
+	</insert>
+	
+	<insert id="pdaStockInService.insertProductLogMaster" parameterType="Map">
+		INSERT INTO uniLITE.L_PDS510_PDA( 
+			KEY_VALUE,
+			OPR_FLAG,
+			COMP_CODE,
+			DIV_CODE,
+			WH_CODE,
+			WH_CELL_CODE,
+			INOUT_DATE,
+			INOUT_PRSN,
+			INOUT_SEQ,
+			ITEM_CODE,
+			LOT_NO,
+			INOUT_Q,
+			INSERT_DB_USER,
+			INSERT_DB_TIME,
+			UPDATE_DB_USER,
+			UPDATE_DB_TIME,
+			S_GUBUN_KD,
+			PRODT_NUM
+			)
+		VALUES(
+			#{KEY_VALUE},
+			#{OPR_FLAG},
+			#{COMP_CODE},
+			#{DIV_CODE},
+			#{WH_CODE},
+			#{WH_CELL_CODE},
+			#{INOUT_DATE},
+			#{INOUT_PRSN},
+			#{INOUT_SEQ},
+			#{ITEM_CODE},
+			#{LOT_NO},
+			#{INOUT_Q},
+			#{S_USER_ID},
+			GETDATE(),
+			#{S_USER_ID},
+			GETDATE(),
+			#{S_GUBUN_KD},
+			#{PRODT_NUM}
+	       )
+	</insert>
+	
+	<select id="pdaStockInService.getSearchStockInProductSub1" parameterType="Map" resultType="rMap">
+	/* 생산실적(양품)내역 조회 */
+	DECLARE @InspecFlag NVARCHAR(01)    /* 생산검사 사용여부 */
+		
+		SELECT TOP 1 @InspecFlag = MAX(SUB_CODE)
+		    FROM BSA100T WITH (NOLOCK)
+		    WHERE COMP_CODE = #{COMP_CODE}
+		    AND MAIN_CODE = 'Q004'
+		    AND UPPER(ISNULL(LEFT(REF_CODE1, 1), '')) = 'Y'
+
+		SET @InspecFlag = ISNULL(@InspecFlag, 'N')
+
+		SELECT
+			A.COMP_CODE
+			,A.DIV_CODE
+		    ,A.ITEM_CODE
+		    , C1.ITEM_NAME
+		    , C1.SPEC
+		    , C1.STOCK_UNIT
+		    , A.PRODT_DATE
+		    , A.GOOD_PRODT_Q AS PRODT_Q
+		    , ISNULL(A.GOOD_PRODT_Q, 0) - ISNULL(B.INOUT_Q, 0) AS NOTIN_Q
+		    , A.PRODT_NUM
+			, A.LOT_NO
+		FROM PMR200T A WITH(NOLOCK)
+		LEFT JOIN (
+			SELECT COMP_CODE, DIV_CODE, BASIS_NUM, ITEM_STATUS
+				, SUM(INOUT_Q) AS INOUT_Q
+			  FROM BTR100T WITH (NOLOCK)
+			 WHERE COMP_CODE = #{COMP_CODE}
+			   AND DIV_CODE = #{DIV_CODE}
+			   AND INOUT_TYPE = '1'
+			   AND CREATE_LOC = '1'
+			   AND ITEM_STATUS = '1'
+			GROUP BY COMP_CODE, DIV_CODE, BASIS_NUM, ITEM_STATUS
+		) B ON A.COMP_CODE = B.COMP_CODE
+			AND A.DIV_CODE = B.DIV_CODE
+			AND A.PRODT_NUM = B.BASIS_NUM
+		INNER JOIN BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+		                                    AND C1.ITEM_CODE = A.ITEM_CODE
+		INNER JOIN BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE = A.COMP_CODE
+		                                    AND C2.DIV_CODE = A.DIV_CODE
+		                                    AND C2.ITEM_CODE = A.ITEM_CODE
+		                  
+		WHERE A.COMP_CODE = #{COMP_CODE}
+		    AND A.DIV_CODE = #{DIV_CODE}
+			AND A.ITEM_CODE = #{ITEM_CODE}
+			AND A.WKORD_NUM = #{WKORD_NUM}
+		    AND A.GOOD_PRODT_Q - ISNULL(B.INOUT_Q, 0) > 0
+		    AND ((ISNULL(C2.INSPEC_YN, 'N') = 'N' AND @InspecFlag = 'Y') OR (@InspecFlag = 'N'))
+	
+	</select>
+	
+	<select id="pdaStockInService.getSearchStockInProductReqNum" parameterType="Map" resultType="rMap">
+		        BEGIN
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+
+            DECLARE @COMP_CODE      NVARCHAR(08)    -- (필수) 법인코드
+                  , @DIV_CODE       NVARCHAR(08)    -- (필수) 사업장코드
+                  , @GUBUN          NVARCHAR(01)    -- (필수) 구분(생산실적 : '1', 생산검사 : '2')
+                  , @REQ_NUM        NVARCHAR(20)    -- (필수) 생산실적번호
+                  , @INSPEC_NUM     NVARCHAR(20)    -- (필수) 검사번호
+                  , @DIV_NAME       NVARCHAR(50)
+
+            SET @COMP_CODE  = #{COMP_CODE}
+            SET @DIV_CODE   = #{DIV_CODE}
+            SET @GUBUN      = '1'
+            SET @REQ_NUM    = #{REQ_NUM}
+            SET @DIV_NAME   = (SELECT DIV_NAME FROM BOR120T WHERE COMP_CODE = @COMP_CODE AND DIV_CODE = @DIV_CODE)
+
+      			SELECT A.ITEM_CODE                                                 AS itemCode       ---품목코드
+                      ,  C1.ITEM_NAME                                                AS itemName        ---품목명
+                      ,  A.LOT_NO                                                    AS lotNo           ---LOT번호
+      			
+      				  , 0															 AS inoutQ
+                      ,  C1.STOCK_UNIT                                               AS orderUnit       ---단위
+                      ,  A.PRODT_NUM                                                 AS num        ---생산실적번호
+                      ,  C1.SPEC                                                     AS spec             ---규격
+                      
+              FROM               PMR200T A  WITH (NOLOCK)
+      				INNER JOIN L_PMR928T_KD X WITH (NOLOCK) ON A.COMP_CODE=X.COMP_CODE AND A.DIV_CODE=X.DIV_CODE AND A.PRODT_NUM=X.PRODT_NUM
+                      LEFT  JOIN (
+                                  SELECT  COMP_CODE, DIV_CODE, BASIS_NUM, ITEM_STATUS
+                                          ,  SUM(INOUT_Q) AS GOOD_INOUT_Q
+                                  FROM    BTR100T WITH (NOLOCK)
+                                  WHERE   COMP_CODE   = @COMP_CODE
+                                  AND     DIV_CODE    = @DIV_CODE
+                                  AND     INOUT_TYPE  = '1'
+                                  AND     CREATE_LOC  = '1'
+                                  AND     ITEM_STATUS = '1'
+                                  GROUP   BY COMP_CODE, DIV_CODE, BASIS_NUM, ITEM_STATUS
+                                  )       B               ON A.COMP_CODE   = B.COMP_CODE
+                                                          AND A.DIV_CODE    = B.DIV_CODE
+                                                          AND A.PRODT_NUM   = B.BASIS_NUM
+                      INNER JOIN BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE
+                                                          AND C1.ITEM_CODE  = A.ITEM_CODE
+                      INNER JOIN BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE
+                                                          AND C2.DIV_CODE   = A.DIV_CODE
+                                                          AND C2.ITEM_CODE  = A.ITEM_CODE
+                      INNER JOIN BSA230T C3 WITH (NOLOCK) ON C3.COMP_CODE  = A.COMP_CODE
+                                                          AND C3.TYPE_LEVEL = A.DIV_CODE
+                                                          AND C3.TREE_CODE  = A.WORK_SHOP_CODE
+              WHERE A.COMP_CODE = @COMP_CODE
+                AND A.DIV_CODE = @DIV_CODE
+      		    AND X.REQ_NUM = @REQ_NUM
+
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END 
+	</select>
+	
+	<insert id="pdaStockInService.insertMoveLogMaster" parameterType="Map">
+		INSERT INTO L_BTR100T
+		     ( KEY_VALUE				, OPR_FLAG				, INOUT_NUM			, INOUT_SEQ			, INOUT_TYPE		--1
+			 , INOUT_METH				, INOUT_TYPE_DETAIL		, DEPT_CODE			, ITEM_CODE			, DIV_CODE			--2
+			 , WH_CODE					, WH_CELL_CODE			, INOUT_DATE		, INOUT_CODE_TYPE	, TO_DIV_CODE		--3
+			 , INOUT_CODE				, INOUT_CODE_DETAIL		, ITEM_STATUS		, INOUT_Q			, INOUT_FOR_P		--4
+			 , INOUT_FOR_O				, EXCHG_RATE_O			, INOUT_P			, INOUT_I			, MONEY_UNIT		--5
+			 , BASIS_NUM				, BASIS_SEQ				, CREATE_LOC		, SALE_C_YN			, SALE_DIV_CODE		--6
+			 , SALE_CUSTOM_CODE			, BILL_TYPE				, SALE_TYPE			, INOUT_PRSN		, LOT_NO			--7
+			 , PROJECT_NO				, REMARK				, UPDATE_DB_USER	, UPDATE_DB_TIME	 					--8
+			 , COMP_CODE				, MAKE_EXP_DATE			, MAKE_DATE													--9
+		        )
+		VALUES
+		     ( #{KEY_VALUE}				, #{OPR_FLAG}			, #{INOUT_NUM}		, #{INOUT_SEQ}		, #{INOUT_TYPE}		--1
+		       , #{INOUT_METH}			, #{INOUT_TYPE_DETAIL}	, #{DEPT_CODE}		, #{ITEM_CODE}		, #{DIV_CODE}		--2
+		       , #{WH_CODE}				, #{WH_CELL_CODE}		, #{INOUT_DATE}		, #{INOUT_CODE_TYPE}, #{TO_DIV_CODE}	--3
+		       , #{INOUT_CODE}			, #{INOUT_CODE_DETAIL}	, #{ITEM_STATUS}	, #{INOUT_Q}		, #{INOUT_FOR_P}	--4
+		       , #{INOUT_FOR_O}			, #{EXCHG_RATE_O}		, #{INOUT_P}		, #{INOUT_I}		, #{MONEY_UNIT}		--5
+		       --BASSIS_NUM
+			   , #{BASIS_NUM}			, #{BASIS_SEQ}			, #{CREATE_LOC}		, #{SALE_C_YN}		, #{SALE_DIV_CODE}	--6
+		       , #{SALE_CUSTOM_CODE}	, #{BILL_TYPE}			, #{SALE_TYPE}		, #{INOUT_PRSN}		, #{LOT_NO}			--7
+		       , #{PROJECT_NO}			, #{REMARK}				, #{S_USER_ID}		, GETDATE()						--8
+			   , #{COMP_CODE}			, #{MAKE_EXP_DATE}		, #{MAKE_DATE}												--9
+		          ) 
+		
+	</insert>
+	
+	<select id="pdaStockInService.getStockInItem" parameterType="Map" resultType="rMap">
+		BEGIN
+		
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		    DECLARE @CompCode NVARCHAR(08)
+		        , @ITEM_CODE NVARCHAR(20)
+		        , @LOT_NO NVARCHAR(20)
+		
+		    SET @CompCode = #{COMP_CODE}
+		    SET @ITEM_CODE = #{ITEM_CODE}
+		    SET @LOT_NO = #{LOT_NO}
+		
+		    SELECT TOP 1
+		       A.ITEM_CODE, 
+		       G.ITEM_NAME, 
+		       A.LOT_NO
+		    FROM BTR100T A
+		             LEFT JOIN MPO200T B on B.COMP_CODE = A.COMP_CODE
+		        AND B.DIV_CODE = A.DIV_CODE
+		        AND B.ORDER_NUM = A.ORDER_NUM
+		        AND B.ORDER_SEQ = A.ORDER_SEQ
+		        AND B.ITEM_CODE = A.ITEM_CODE
+		             left join mpo100t c on C.COMP_CODE = A.COMP_CODE
+		        AND C.DIV_CODE = A.DIV_CODE
+		        AND C.ORDER_NUM = A.ORDER_NUM
+		             left join bcm100t d on D.COMP_CODE = A.COMP_CODE
+		        AND D.CUSTOM_CODE = A.INOUT_CODE
+		             left join bsa100t e on E.COMP_CODE = A.COMP_CODE
+		        AND E.MAIN_CODE = 'B024'
+		        AND E.SUB_CODE = A.INOUT_PRSN
+		             left join bsa100t f on F.COMP_CODE = C.COMP_CODE
+		        AND F.MAIN_CODE = 'M201'
+		        AND F.SUB_CODE = C.ORDER_PRSN
+		             left join bpr100t G on G.COMP_CODE = A.COMP_CODE
+		        AND G.ITEM_CODE = A.ITEM_CODE
+		
+		    WHERE A.COMP_CODE = @CompCode
+		      AND A.INOUT_TYPE = '1'
+		      AND A.CREATE_LOC = '2'
+		      AND A.INOUT_TYPE_DETAIL in ('01', '10', '20')
+		      AND A.INOUT_CODE_TYPE = '4'
+		      AND A.ITEM_CODE = @ITEM_CODE
+		      AND A.LOT_NO = @LOT_NO
+		
+		    GROUP BY A.ITEM_CODE, G.ITEM_NAME, A.LOT_NO
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		
+		END
+	</select>
+	
+	<select id="pdaStockInService.getStockInOrderList" parameterType="Map" resultType="rMap">
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+
+			DECLARE 	@CompCode    NVARCHAR(08) /* 법인코드    */
+					  , @ITEM_CODE   NVARCHAR(20) /* 품목코드    */
+					  , @LOT_NO      NVARCHAR(20) /* LOT번호     */
+
+			SET @CompCode    = #{COMP_CODE}
+			SET @ITEM_CODE   = #{ITEM_CODE} 
+			SET @LOT_NO      = #{LOT_NO}
+
+
+				SELECT 
+					/*발주정보      */ 
+					  B.ORDER_NUM                            /*발주번호    */
+					, B.ORDER_SEQ                            /*발주순번    */
+					, D.CUSTOM_NAME                          /*거래처      */
+					, C.ORDER_DATE                           /*발주일자    */
+					, B.ORDER_UNIT_Q                         /*발주수량    */
+					, ISNULL(F.CODE_NAME, '') AS ORDER_PRSN              /*발주담당    */ 
+
+				FROM          BTR100T A 
+					LEFT JOIN MPO200T B on      B.COMP_CODE   = A.COMP_CODE 
+											AND B.DIV_CODE    = A.DIV_CODE 
+											AND B.ORDER_NUM   = A.ORDER_NUM 
+											AND B.ORDER_SEQ   = A.ORDER_SEQ 
+											AND B.ITEM_CODE   = A.ITEM_CODE 
+					left join mpo100t c on      C.COMP_CODE   = A.COMP_CODE 
+											AND C.DIV_CODE    = A.DIV_CODE 
+											AND C.ORDER_NUM   = A.ORDER_NUM
+					left join bcm100t d on      D.COMP_CODE   = A.COMP_CODE 
+											AND D.CUSTOM_CODE = A.INOUT_CODE
+					left join bsa100t e on      E.COMP_CODE   = A.COMP_CODE 
+											AND E.MAIN_CODE   = 'B024' 
+											AND E.SUB_CODE    = A.INOUT_PRSN
+					left join bsa100t f on      F.COMP_CODE   = C.COMP_CODE 
+											AND F.MAIN_CODE   = 'M201' 
+											AND F.SUB_CODE    = C.ORDER_PRSN
+					left join bpr100t G on      G.COMP_CODE   = A.COMP_CODE 
+											AND G.ITEM_CODE   = A.ITEM_CODE
+
+				WHERE     A.COMP_CODE = @CompCode
+					  AND A.INOUT_TYPE = '1' 
+					  AND A.CREATE_LOC = '2' 
+					  AND A.INOUT_TYPE_DETAIL in ('01', '10', '20') 
+					  AND A.INOUT_CODE_TYPE = '4' 
+					  AND A.ITEM_CODE = @ITEM_CODE
+					  AND A.LOT_NO = @LOT_NO
+
+				GROUP BY B.ORDER_NUM, B.ORDER_SEQ, D.CUSTOM_NAME, C.ORDER_DATE, F.CODE_NAME, B.ORDER_UNIT_Q
+				ORDER BY B.ORDER_NUM DESC
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		
+		END
+	</select>
+		
+	<select id="pdaStockInService.getStockInListByOrder" parameterType="Map" resultType="rMap">
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+
+			DECLARE 	@CompCode    NVARCHAR(08) /* 법인코드    */
+					  , @ITEM_CODE   NVARCHAR(20) /* 품목코드    */
+					  , @LOT_NO      NVARCHAR(20) /* LOT번호     */
+					  , @ORDER_NUM   NVARCHAR(20) /* 발주순번    */
+					  , @ORDER_SEQ   NUMERIC(10)  /* 발주순번    */
+
+			SET @CompCode    = #{COMP_CODE}
+			SET @ITEM_CODE   = #{ITEM_CODE}
+			SET @LOT_NO      = #{LOT_NO}
+			SET @ORDER_NUM   = #{ORDER_NUM}
+			SET @ORDER_SEQ   = #{ORDER_SEQ}
+
+
+				SELECT 
+					/*입고정보      */ 
+					  A.LOT_NO                               			/*LOT번호     */
+					, A.ORDER_UNIT_Q                         			/*입고수량    */
+					, ISNULL(A.MAKE_EXP_DATE, '') AS MAKE_EXP_DATE      /*유효일자    */
+					, A.INOUT_DATE                           			/*입고일자    */
+					, ISNULL(E.CODE_NAME, '') AS INOUT_PRSN             /*입고담당    */
+
+				FROM          BTR100T A 
+					LEFT JOIN MPO200T B on      B.COMP_CODE   = A.COMP_CODE 
+											AND B.DIV_CODE    = A.DIV_CODE 
+											AND B.ORDER_NUM   = A.ORDER_NUM 
+											AND B.ORDER_SEQ   = A.ORDER_SEQ 
+											AND B.ITEM_CODE   = A.ITEM_CODE 
+					left join mpo100t c on      C.COMP_CODE   = A.COMP_CODE 
+											AND C.DIV_CODE    = A.DIV_CODE 
+											AND C.ORDER_NUM   = A.ORDER_NUM
+					left join bcm100t d on      D.COMP_CODE   = A.COMP_CODE 
+											AND D.CUSTOM_CODE = A.INOUT_CODE
+					left join bsa100t e on      E.COMP_CODE   = A.COMP_CODE 
+											AND E.MAIN_CODE   = 'B024' 
+											AND E.SUB_CODE    = A.INOUT_PRSN
+					left join bsa100t f on      F.COMP_CODE   = C.COMP_CODE 
+											AND F.MAIN_CODE   = 'M201' 
+											AND F.SUB_CODE    = C.ORDER_PRSN
+					left join bpr100t G on      G.COMP_CODE   = A.COMP_CODE 
+											AND G.ITEM_CODE   = A.ITEM_CODE
+
+				WHERE     A.COMP_CODE = @CompCode
+					  AND A.INOUT_TYPE = '1' 
+					  AND A.CREATE_LOC = '2' 
+					  AND A.INOUT_TYPE_DETAIL in ('01', '10', '20') 
+					  AND A.INOUT_CODE_TYPE = '4' 
+					  AND A.ITEM_CODE = @ITEM_CODE
+					  AND A.LOT_NO = @LOT_NO
+					  AND A.ORDER_NUM = @ORDER_NUM
+					  AND A.ORDER_SEQ = @ORDER_SEQ
+
+				ORDER BY INOUT_DATE DESC
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		
+		END 
+	</select>
+		
+	<select id="pdaStockInService.getStockInListByItem" parameterType="Map" resultType="rMap">
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+
+			DECLARE 	@CompCode    NVARCHAR(08) /* 법인코드    */
+					  , @ITEM_CODE   NVARCHAR(20) /* 품목코드    */
+					  , @LOT_NO      NVARCHAR(20) /* LOT번호     */
+
+			SET @CompCode    = #{COMP_CODE} 
+			SET @ITEM_CODE   = #{ITEM_CODE} 
+			SET @LOT_NO      = #{LOT_NO}
+
+				/*입고정보      */ 
+				SELECT 
+					  A.LOT_NO                               							/*LOT번호   */
+					, A.INOUT_Q                              							/*입고수량    */
+					, ISNULL(A.MAKE_EXP_DATE, '') AS MAKE_EXP_DATE                      /*유효일자    */
+					, A.INOUT_DATE                           							/*입고일자    */
+					, ISNULL(E.CODE_NAME, '') AS INOUT_PRSN              				/*입고담당    */
+					, D.CUSTOM_NAME                          							/*구매처      */ 
+
+				FROM          BTR100T A 
+					LEFT JOIN MPO200T B on      B.COMP_CODE   = A.COMP_CODE 
+											AND B.DIV_CODE    = A.DIV_CODE 
+											AND B.ORDER_NUM   = A.ORDER_NUM 
+											AND B.ORDER_SEQ   = A.ORDER_SEQ 
+											AND B.ITEM_CODE   = A.ITEM_CODE 
+					left join mpo100t c on      C.COMP_CODE   = A.COMP_CODE 
+											AND C.DIV_CODE    = A.DIV_CODE 
+											AND C.ORDER_NUM   = A.ORDER_NUM
+					left join bcm100t d on      D.COMP_CODE   = A.COMP_CODE 
+											AND D.CUSTOM_CODE = A.INOUT_CODE
+					left join bsa100t e on      E.COMP_CODE   = A.COMP_CODE
+											AND E.MAIN_CODE   = 'B024' 
+											AND E.SUB_CODE    = A.INOUT_PRSN
+					left join bsa100t f on      F.COMP_CODE   = C.COMP_CODE 
+											AND F.MAIN_CODE   = 'M201' 
+											AND F.SUB_CODE    = C.ORDER_PRSN
+					left join bpr100t G on      G.COMP_CODE   = A.COMP_CODE 
+											AND G.ITEM_CODE   = A.ITEM_CODE
+
+
+				WHERE     A.COMP_CODE = @CompCode
+					  AND A.INOUT_TYPE = '1' 
+					  AND A.CREATE_LOC = '2' 
+					  AND A.INOUT_TYPE_DETAIL in ('01', '10', '20') 
+					  AND A.INOUT_CODE_TYPE = '4' 
+					  AND A.ITEM_CODE = @ITEM_CODE
+					  AND A.LOT_NO = @LOT_NO
+
+				ORDER BY INOUT_DATE DESC
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		
+		END 
+	</select>
+	
+	<update id="pdaStockInService.spStockInMaterialProcedure" parameterType="Map" statementType="CALLABLE">
+		{call USP_PDA_SetPurchaseInStock (
+			#{KeyValue, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ErrorDesc, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update>
+	
+	<update id="pdaStockInService.spStockInProductProcedure" parameterType="Map" statementType="CALLABLE">
+		{call USP_PDA_SetProdtInStockTrans (
+			#{KeyValue, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ErrorDesc, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update>
+	
+	<update id="pdaStockInService.spStockInMoveProcedure" parameterType="Map" statementType="CALLABLE">
+		{call USP_STOCK_Btr120ukr_PDA (
+			#{KeyValue, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{INOUT_NUM, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ErrorDesc, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update>
+</mapper>

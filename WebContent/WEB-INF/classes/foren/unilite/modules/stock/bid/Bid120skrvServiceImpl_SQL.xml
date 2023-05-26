@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="bid120skrvServiceImpl">
+   <select id="bid120skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+   		/* bid120skrv.Cbid120skrv [fnPrpt310QSt1] QUERY01 */
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+				
+			DECLARE @CompCode  NVARCHAR(08)	/* 법인코드  */
+			    SET @CompCode = #{S_COMP_CODE}
+		
+			/* 조회  */
+			SELECT 
+				  C.ITEM_LEVEL1																			/* 대분류 */
+				, C.ITEM_LEVEL2																			/* 중분류 */ 
+				, C.ITEM_LEVEL3																			/* 소분류 */
+				, SUM(A.STOCK_Q)                                                        AS STOCK_Q	    /* 현재고 */
+				, SUM(A.STOCK_Q * ISNULL(A.PURCHASE_P,0))                               AS STOCK_I 		/* 재고원가 */
+				, SUM(CASE WHEN C.TAX_TYPE = '1' AND D.TAX_TYPE = '1' THEN uniLITE.fnAmtWonCalc(A.STOCK_Q * ISNULL(A.PURCHASE_P,0) * 0.1, D.WON_CALC_BAS) 
+					       WHEN C.TAX_TYPE = '1' AND D.TAX_TYPE = '2' THEN (A.STOCK_Q * ISNULL(A.PURCHASE_P,0)) - uniLITE.fnAmtWonCalc(A.STOCK_Q * ISNULL(A.PURCHASE_P,0) / 1.1, D.WON_CALC_BAS) 
+					                                                  ELSE 0
+			  	       END)																AS STOCK_TAX	 /*원가 부가세*/
+				, SUM(A.STOCK_Q * C.SALE_BASIS_P) 										AS SALE_I		 /*판매가재고 */
+				, SUM(CASE WHEN C.TAX_TYPE = '1' AND D.TAX_TYPE = '1' THEN uniLITE.fnAmtWonCalc((A.STOCK_Q * ISNULL(C.SALE_BASIS_P,0)) * 0.1, D.WON_CALC_BAS) 
+					       WHEN C.TAX_TYPE = '1' AND D.TAX_TYPE = '2' THEN (A.STOCK_Q * ISNULL(C.SALE_BASIS_P,0)) - uniLITE.fnAmtWonCalc((A.STOCK_Q * ISNULL(C.SALE_BASIS_P,0)) / 1.1, D.WON_CALC_BAS) 
+					  ELSE 0
+				  END)																	AS SALE_TAX	    /*판매가 부가세*/
+				  				
+				/* , CASE WHEN C.TAX_TYPE = '1' AND D.TAX_TYPE = '1' THEN  */
+				/*			UNILITE.FNAMTWONCALC(ISNULL(C.SALE_BASIS_P,0)*0.1,D.WON_CALC_BAS) */
+				/*	  WHEN C.TAX_TYPE = '1' AND D.TAX_TYPE = '2' THEN  */
+				/*			ISNULL(C.SALE_BASIS_P,0) - UNILITE.FNAMTWONCALC(ISNULL(C.SALE_BASIS_P,0)/1.1,D.WON_CALC_BAS) */
+				/*	  ELSE 0 */
+				/*  END																	  AS SALE_TAX	 /*판매가 부가세*/ */
+	
+				FROM 
+					(SELECT A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE, B.PURCHASE_CUSTOM_CODE, B.PURCHASE_P,
+					        A.STOCK_Q AS STOCK_Q
+					 FROM BIV150T A WITH(NOLOCK)
+					 LEFT JOIN BIV350T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+													AND A.DIV_CODE = B.DIV_CODE
+													AND A.LOT_NO = B.LOT_NO
+													AND A.WH_CODE = B.WH_CODE
+													AND A.ITEM_CODE = B.ITEM_CODE
+					 UNION ALL
+					 
+					 SELECT A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE, A.PURCHASE_CUSTOM_CODE, A.PURCHASE_P,
+					        A.STOCK_Q AS STOCK_Q
+					 FROM UNILITE.VGetDailyStock A WITH(NOLOCK)
+					 ) A
+				 				
+				     INNER JOIN BPR100T C WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+				    	   				  		      AND C.ITEM_CODE   = A.ITEM_CODE
+  	                 INNER JOIN BCM100T D WITH(NOLOCK) ON D.COMP_CODE   = A.COMP_CODE
+					 		                          AND D.CUSTOM_CODE = A.PURCHASE_CUSTOM_CODE
+					 INNER JOIN BSA210T   E WITH(NOLOCK) ON A.COMP_CODE = E.COMP_CODE
+												   		AND A.DIV_CODE  = E.TYPE_LEVEL
+												   		AND A.WH_CODE   = E.WH_CODE
+			  WHERE	A.COMP_CODE  =	@CompCode
+			  <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+				AND	A.DIV_CODE	 	= #{DIV_CODE}
+			  </if>
+			  <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+				AND	A.WH_CODE	 	= #{WH_CODE}
+			  </if>
+			  <if test="@foren.Ognl@isNotEmpty(TXTLV_L1)">
+	            AND  C.ITEM_LEVEL1   = #{TXTLV_L1}       /* 대분류*/
+		      </if>
+		      <if test="@foren.Ognl@isNotEmpty(TXTLV_L2)">
+		        AND  C.ITEM_LEVEL2   = #{TXTLV_L2}       /* 중분류*/
+		      </if>
+		      <if test="@foren.Ognl@isNotEmpty(TXTLV_L3)">
+		        AND  C.ITEM_LEVEL3   = #{TXTLV_L3}       /* 소분류*/
+		      </if>
+	          <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)"> 
+				AND E.TREE_LEVEL          LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =E.COMP_CODE AND TYPE_LEVEL=E.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+			  </if>
+
+	    	  GROUP BY C.ITEM_LEVEL1, C.ITEM_LEVEL2, C.ITEM_LEVEL3
+	    
+	    SET ARITHABORT OFF	  
+		SET NOCOUNT OFF
+	   
+	END       
+	</select>
+	
+	<select id="bid120skrvServiceImpl.userWhcode" parameterType="Map" resultType="rMap">	/* 창고 초기화 */
+		SELECT
+			A.WH_CODE
+		FROM BSA210T A WITH(NOLOCK)
+			LEFT JOIN BSA300T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+											AND B.DEPT_CODE = A.TREE_CODE
+		WHERE A.COMP_CODE = #{S_COMP_CODE}
+		  AND B.USER_ID = #{S_USER_ID}
+	</select>
+</mapper>

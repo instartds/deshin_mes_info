@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sof220skrvServiceImpl">
+	<select id="sof220skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* sof220skrvServiceImpl.selectList */
+		 DECLARE @UserId           NVARCHAR(100)   /* 사용자 */
+		       , @RefItem          NVARCHAR(01)    /* 명칭 참조 유형 */
+
+		SET @UserId = #{S_USER_ID}
+
+		/* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+		  FROM BSA300T WITH (NOLOCK)
+		 WHERE USER_ID = @UserId
+
+		SET @RefItem = ISNULL(@RefItem, N'0')
+
+		SELECT T.COMP_CODE
+		     , T.DIV_CODE
+		     , T.CUSTOM_CODE
+		     ,(CASE WHEN @RefItem = '1' THEN N.CUSTOM_NAME1
+		            WHEN @RefItem = '2' THEN N.CUSTOM_NAME2
+		                                ELSE N.CUSTOM_NAME
+		       END)                            AS CUSTOM_NAME --고객명
+		     , M.ITEM_LEVEL1
+		     , C3.LEVEL_NAME                   AS LEVEL_NAME  --제품분류
+		     , T.ITEM_CODE
+		     ,(CASE WHEN @RefItem = '1' THEN M.ITEM_NAME1
+		            WHEN @RefItem = '2' THEN M.ITEM_NAME2
+		                                ELSE M.ITEM_NAME
+		       END)                            AS ITEM_NAME   --제품명
+		     , M.SPEC
+		     , CEILING(T.ORDER_Q)              AS ORDER_Q     --초도수량
+		     , CEILING(T.ORDER_O)              AS ORDER_O     --금액
+		     , T.ORDER_DATE                    AS ORDER_DATE  --최초수주일
+		     , T.ORDER_NUM
+		     , T.SER_NO
+		     , SUBSTRING(T.ORDER_DATE, 1, 4) + '.'
+		     + SUBSTRING(T.ORDER_DATE, 5, 2)   AS ORDER_MONTH --수주년월
+		     , T.OUT_DIV_CODE
+		  FROM (
+		        SELECT A.COMP_CODE
+		             , A.DIV_CODE
+		             , A.ITEM_CODE
+		             , B.ORDER_DATE
+		             , A.ORDER_NUM
+		             , A.SER_NO
+		             , B.CUSTOM_CODE
+		             , A.ORDER_Q
+		             , A.ORDER_O
+		             , ROW_NUMBER() OVER (PARTITION BY A.ITEM_CODE ORDER BY B.ORDER_DATE ) AS RankNo
+		             , A.OUT_DIV_CODE
+		          FROM       SOF110T A WITH(NOLOCK)
+		          INNER JOIN SOF100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+		                                           AND A.DIV_CODE  = B.DIV_CODE
+		                                           AND A.ORDER_NUM = B.ORDER_NUM
+		          WHERE A.COMP_CODE    = #{S_COMP_CODE}
+		            AND A.DIV_CODE     = #{DIV_CODE}
+		            AND B.ORDER_DATE  &gt;= #{ORDER_DATE_FR}
+		            AND B.ORDER_DATE  &lt;= #{ORDER_DATE_TO}
+		<if test="@foren.Ognl@isNotEmpty(OUT_DIV_CODE)">
+		            AND A.OUT_DIV_CODE = #{OUT_DIV_CODE}
+		</if>
+		  ) T
+		  LEFT JOIN BPR100T M  WITH(NOLOCK) ON T.COMP_CODE   = M.COMP_CODE
+		                                   AND T.ITEM_CODE   = M.ITEM_CODE
+		  LEFT JOIN BPR000T C3 WITH(NOLOCK) ON C3.COMP_CODE  = T.COMP_CODE
+		                                   AND C3.LEVEL1    != '*'
+		                                   AND C3.LEVEL1     = M.ITEM_LEVEL1
+		                                   AND C3.LEVEL2     = '*'
+		                                   AND C3.LEVEL3     = '*'
+		  LEFT JOIN BCM100T N  WITH(NOLOCK) ON T.COMP_CODE   = N.COMP_CODE
+		                                   AND T.CUSTOM_CODE = N.CUSTOM_CODE
+		 WHERE T.RankNo = 1 
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+		   AND T.ITEM_CODE  = #{ITEM_CODE}                   /* 품목코드  */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+		   AND T.ITEM_CODE  LIKE #{ITEM_CODE} + '%'          /* 품목코드  */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_NAME) and @foren.Ognl@isEmpty(ITEM_CODE)">
+		   AND CASE WHEN @RefItem = '1' THEN M.ITEM_NAME1
+		            WHEN @RefItem = '2' THEN M.ITEM_NAME2
+		                                ELSE M.ITEM_NAME
+		       END           LIKE '%' + #{ITEM_NAME} + '%'   /* 품목명  */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+		   AND T.CUSTOM_CODE  = #{CUSTOM_CODE}               /* 거래처코드  */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+		   AND T.CUSTOM_CODE  LIKE #{CUSTOM_CODE} + '%'      /* 거래처코드  */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+		   AND CASE WHEN @RefItem = '1' THEN N.CUSTOM_NAME1
+		            WHEN @RefItem = '2' THEN N.CUSTOM_NAME2
+		                                ELSE N.CUSTOM_NAME
+		       END           LIKE '%' + #{CUSTOM_NAME} + '%'   /* 거래처명  */
+		</if>
+		 ORDER BY CASE WHEN @RefItem = '1' THEN N.CUSTOM_NAME1
+		               WHEN @RefItem = '2' THEN N.CUSTOM_NAME2
+		                                   ELSE N.CUSTOM_NAME
+		          END
+		        , M.ITEM_LEVEL1
+		        , CASE WHEN @RefItem = '1' THEN M.ITEM_NAME1
+		               WHEN @RefItem = '2' THEN M.ITEM_NAME2
+		                                   ELSE M.ITEM_NAME
+		          END
+	</select>
+</mapper>

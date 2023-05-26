@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mpo050ukrvServiceImpl">
+					
+	<select id="mpo050ukrvServiceImpl.selectMasterList" parameterType="Map" resultType="rMap">
+	
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+				
+			DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+			      , @UserId			NVARCHAR(100)	/* 사용자ID */
+			      , @LangType		NVARCHAR(2)		/* 언어구분 */
+			      , @RefItem		NVARCHAR(01)
+			      , @DateFormat		NVARCHAR(10)
+				
+			SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_ID}
+			SET @LangType = #{S_LANG_CODE}
+				
+			/* 명칭 참조 유형 */
+			SELECT TOP 1 @RefItem = REF_ITEM
+				FROM BSA300T WITH (NOLOCK)
+				WHERE COMP_CODE = @CompCode
+					AND USER_ID = @UserId
+				
+			SET @RefItem = ISNULL(@RefItem, N'0')
+				
+			/* 날짜 포맷 유형 설정 */
+			SELECT TOP 1 @DateFormat = CODE_NAME
+				FROM BSA100T WITH (NOLOCK)
+				WHERE COMP_CODE = @CompCode
+				AND MAIN_CODE = N'B044'
+				AND REF_CODE1 = N'Y'
+				
+			SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		
+		/*--------  조회 ------------------------------------------------------------------*/
+		
+				SELECT   A.COMP_CODE
+						,A.DIV_CODE
+						,A.BILL_NUM
+						,(CASE WHEN ISNULL(A.SALE_DATE, '') = ''
+	                		   THEN ''
+	               			   ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.SALE_DATE, 1, 4))
+	                                                        		   , 'MM'  , SUBSTRING(A.SALE_DATE, 5, 2))
+	                                                                   , 'DD'  , SUBSTRING(A.SALE_DATE, 7, 2))
+	            		END)                                           AS SALE_DATE
+						,C.ITEM_LEVEL1   		/* 대분류 */
+						,C.ITEM_LEVEL2 			/* 중분류 */ 
+						,C.ITEM_LEVEL3 			/* 소분류 */
+						,C.ITEM_CODE   			/* 품목코드 */
+						,C.ITEM_NAME   			/* 도서명  */ 
+						,C.AUTHOR1     			/* 저자1 */
+						,C.PUBLISHER_CODE 		/* 출판사코드 */
+						,C.PUBLISHER     		/* 출판사 */
+						,A.SALE_CUSTOM_CODE     /* 매입처 */			
+						,(CASE WHEN ISNULL(C.PUB_DATE, '') = ''
+	                		   THEN ''
+	               			   ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(C.PUB_DATE, 1, 4))
+	                                                        		   , 'MM'  , SUBSTRING(C.PUB_DATE, 5, 2))
+	                                                                   , 'DD'  , SUBSTRING(C.PUB_DATE, 7, 2))
+	            		END)										   AS PUB_DATE /* 초판발행일 */	
+						,C.BOOK_P     			/* 정가 */
+						,B.SALE_Q     			/* 판매수량 */
+						,B.SALE_AMT_O 			/* 합계금액 */
+						,E.STOCK_Q    			/* 현재고량 */
+						,A.REMARK      			/* 비고 */
+						,F.ORDER_STATUS         /* 구매요청상태 */
+						,F.DEPT_CODE
+						,F.ORDER_PRSN_CODE
+						,(CASE WHEN ISNULL(F.ORDER_REQ_DATE, '') = ''
+	                		   THEN ''
+	               			   ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(F.ORDER_REQ_DATE, 1, 4))
+	                                                        		   , 'MM'  , SUBSTRING(F.ORDER_REQ_DATE, 5, 2))
+	                                                                   , 'DD'  , SUBSTRING(F.ORDER_REQ_DATE, 7, 2))
+	            		END)										   AS ORDER_REQ_DATE  /* 구매요청일자 */
+						,A.BILL_NUM
+						,A.UPDATE_DB_USER
+						,A.UPDATE_DB_TIME
+				
+				FROM
+						  SSA100T A WITH(NOLOCK) 
+				LEFT JOIN SSA110T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+												AND B.DIV_CODE  = A.DIV_CODE
+												AND B.BILL_NUM  = A.BILL_NUM
+				
+				LEFT JOIN BPR100T C WITH(NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+												AND C.ITEM_CODE = B.ITEM_CODE
+												
+				
+				LEFT JOIN BIV200T E WITH(NOLOCK) ON E.COMP_CODE = A.COMP_CODE
+												AND E.DIV_CODE  = A.DIV_CODE 
+												AND E.ITEM_CODE = C.ITEM_CODE
+												
+				LEFT JOIN MPO000T F WITH(NOLOCK) ON F.COMP_CODE = A.COMP_CODE
+												AND F.DIV_CODE  = A.DIV_CODE
+												AND F.ITEM_CODE = C.ITEM_CODE
+
+				WHERE  A.COMP_CODE         = @CompCode
+		
+		
+		/*조회조건----------------------------*/
+			<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+				AND  A.DIV_CODE          	= #{DIV_CODE}				/*사업장*/
+			</if>	
+			<if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+				AND  F.DEPT_CODE            = #{DEPT_CODE}				/*부서코드*/
+			</if>	
+			<if test="@foren.Ognl@isNotEmpty(SALE_DATE_FR)">	
+				AND  A.SALE_DATE 		&gt;= #{SALE_DATE_FR}			/*매출기간 FR*/
+			</if>	
+			<if test="@foren.Ognl@isNotEmpty(SALE_DATE_TO)">	
+				AND  A.SALE_DATE 		&lt;= #{SALE_DATE_TO}			/*매출기간 TO*/
+			</if>	
+			<if test="@foren.Ognl@isNotEmpty(TXTLV_L1)">	
+				AND  C.ITEM_LEVEL1    		= #{TXTLV_L1}				/*대분류*/
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(TXTLV_L2)">	
+				AND  C.ITEM_LEVEL2    		= #{TXTLV_L2}				/*중분류*/
+			</if>	
+			<if test="@foren.Ognl@isNotEmpty(ORDER_REQ_DATE)">	
+				AND  F.ORDER_REQ_DATE		= #{ORDER_REQ_DATE}			/*구매요청일*/
+			</if>	
+			<if test="@foren.Ognl@isNotEmpty(ORDER_PRSN)">	
+				AND  F.ORDER_PRSN_CODE      = #{ORDER_PRSN}				/*구매담당*/
+			</if>	
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+	
+	
+	</select>
+	
+</mapper>

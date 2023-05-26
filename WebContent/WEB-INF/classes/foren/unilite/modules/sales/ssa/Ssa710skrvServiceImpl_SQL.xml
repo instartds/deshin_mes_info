@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ssa710skrvServiceImpl">
+				
+	<select id="ssa710skrvServiceImpl.EtaxDbUser" parameterType="Map" resultType="rMap">		
+		/* ssa710skrv.Cssa710skrv[fnSsa710QStd] Query00 */
+		SELECT TOP 1
+		       ISNULL(SUB_CODE, '01') AS connectSys
+		     , CASE WHEN SUB_CODE = N'01' THEN CASE WHEN ISNULL(REF_CODE10, '') = '' THEN N'BILL'
+		                                            ELSE REF_CODE10
+		                                       END  
+		            WHEN SUB_CODE = N'02' THEN CASE WHEN ISNULL(REF_CODE10, '') = '' THEN N'WEBCASH'
+		                                            ELSE REF_CODE10
+		                                       END  
+		            ELSE N''
+		       END                  AS connectDB
+		  FROM BSA100T WITH (NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND MAIN_CODE = N'S084'
+		   AND SUB_CODE != N'$'
+		   AND REF_CODE1 = N'Y'
+    </select>	
+    
+    <select id="ssa710skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">		
+		  /* ssa710skrv.Cssa710skrv[fnSsa710QStd] Query1 */
+		 BEGIN
+		     SET NOCOUNT ON
+		     SET ARITHABORT ON
+		
+		     DECLARE    @CompCode    NVARCHAR(08) /* 법인코드    */
+		              , @UserId      NVARCHAR(100) /* 사용자ID    */
+		              , @LangType    NVARCHAR(2)  /* 언어구분    */
+		              , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+		              , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+		
+		     SET @CompCode = #{S_COMP_CODE}
+			 SET @UserId   = #{S_USER_ID}
+			 SET @LangType = #{S_LANG_CODE}   
+		
+		     /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+		
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+		
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		      FROM BSA100T WITH (NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+		       AND MAIN_CODE = N'B044'
+		       AND REF_CODE1 = N'Y'
+		
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		
+		 SELECT  M1.CODE_NAME                                         AS EB_TYPE                /* 구분 */
+		       , uniLITE.fnGetUserdate(@CompCode, A.BILL_DATE)        AS BILL_DATE              /* 일자 */                               
+		       , A.CUSTOM_CODE                                        AS CUSTOM_CODE            /* 고객코드 */                             
+		       , C3.CUSTOM_NAME                                       AS CUSTOM_NAME            /* 고객명 */                               
+		       , A.PUB_NUM                                            AS PUB_NUM                /* 번호 */
+		    
+		     <if test="CONNECT_SYS == &quot;01&quot;">
+		           , C1.ERR_CODE       AS ERR_STEP
+		           , C1.ERR_MESG       AS MSG_DESC
+		           , '' AS MSG_DETAIL
+		           , C1.ERR_DATE                                                       /* 오류일시 */
+		     </if>
+		     <if test="CONNECT_SYS != &quot;01&quot;">
+		           , C1.ERR_CD        AS ERR_STEP
+		           , C1.ERR_MSG       AS MSG_DESC
+		           , '' AS MSG_DETAIL
+		           , uniLITE.fnGetUserdate(@CompCode, C1.REGS_DATE) AS ERR_DATE                                          /* 오류일시 */
+		     </if>
+		    
+		       , A.EB_NUM                                                          /* 전자문서번호 */
+		       
+		 FROM (SELECT  COMP_CODE   ,DIV_CODE    ,EB_TYPE
+		             , PUB_NUM     , EB_NUM
+		             , CUSTOM_CODE , BILL_DATE
+		         FROM STB200T WITH (NOLOCK)
+		     GROUP BY COMP_CODE, DIV_CODE, EB_TYPE, PUB_NUM, EB_NUM, CUSTOM_CODE, BILL_DATE) A  
+		    
+		    <if test="CONNECT_SYS == &quot;01&quot;">
+		          INNER JOIN BILL_DB.${CONNECT_DB}.BILL_LOG C1 
+		                               WITH (NOLOCK)  ON C1.BILLSEQ     = A.EB_NUM
+		    
+		    </if>
+		    <if test="CONNECT_SYS != &quot;01&quot;">
+		          INNER JOIN WEBCASH_DB.${CONNECT_DB}.ITIS_ISSU_MSTR AS C1 
+		                               WITH (NOLOCK)  ON C1.ISSU_SEQNO = A.EB_NUM 
+		    </if>
+		    
+		      LEFT JOIN BCM100T C3 WITH (NOLOCK)  ON C3.COMP_CODE   = A.COMP_CODE          
+		                                         AND C3.CUSTOM_CODE = A.CUSTOM_CODE        
+		      LEFT JOIN BSA100T M1 WITH (NOLOCK)  ON M1.COMP_CODE   = A.COMP_CODE          
+		                                         AND M1.SUB_CODE    = A.EB_TYPE            
+		                                         AND M1.MAIN_CODE   = 'S051'               
+		                                         AND M1.SUB_CODE   != '$'                  
+		                   
+		                 
+		 WHERE A.COMP_CODE      = @CompCode
+		   AND A.EB_TYPE        = '1'
+		   <if test="EB_TYPE != &quot;A&quot;">
+		        AND A.EB_TYPE       = #{EB_TYPE}					/* (필수) 1 : 세금계산서, 2 : 거래명세서 */
+	 	   </if>
+		   <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		   		AND A.DIV_CODE       = #{DIV_CODE}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(FR_DATE)">
+		   		AND A.BILL_DATE  &gt;= #{FR_DATE}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(TO_DATE)">
+		   		AND A.BILL_DATE  &lt;= #{TO_DATE}
+		   </if> 
+		   <if test="CONNECT_SYS == &quot;01&quot;">
+		   	   <if test="@foren.Ognl@isNotEmpty(ERR_FR_DATE)">
+		       AND CONVERT(NVARCHAR, C1.ERR_DATE, 112)    &gt;= #{ERR_FR_DATE}
+		   	   </if>
+		   	   <if test="@foren.Ognl@isNotEmpty(ERR_TO_DATE)">
+		       AND CONVERT(NVARCHAR, C1.ERR_DATE, 112)    &lt;= #{ERR_TO_DATE}
+		       </if>
+		   </if>
+		   <if test="CONNECT_SYS != &quot;01&quot;">
+		   	   <if test="@foren.Ognl@isNotEmpty(ERR_TO_DATE)">
+		       AND CONVERT(NVARCHAR, C1.REGS_DATE, 112)    &gt;= #{ERR_FR_DATE}
+		   	   </if>
+		       <if test="@foren.Ognl@isNotEmpty(ERR_TO_DATE)">
+		       AND CONVERT(NVARCHAR, C1.REGS_DATE, 112)    &lt;= #{ERR_TO_DATE}
+		       </if>
+		       AND C1.ERR_CD != '000000'
+		   </if>
+		   
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+				AND A.CUSTOM_CODE 		= #{CUSTOM_CODE}					/* 거래처코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+				AND A.CUSTOM_CODE 		LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+				AND C3.CUSTOM_NAME 		LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+			</if>
+
+		   <if test="@foren.Ognl@isNotEmpty(PUB_NUM)">
+		   		AND A.PUB_NUM       = #{PUB_NUM}
+		   </if>		
+		
+		 UNION ALL
+		
+		 SELECT  M1.CODE_NAME                                         AS EB_TYPE                /* 구분 */
+		       , uniLITE.fnGetUserdate(@CompCode, A.BILL_DATE)       AS BILL_DATE               /* 일자 */                               
+		       , A.CUSTOM_CODE                            AS CUSTOM_CODE           				/* 고객코드 */                             
+		       , C3.CUSTOM_NAME                           AS CUSTOM_NAME           				/* 고객명 */                               
+		       , A.PUB_NUM                                AS PUB_NUM               				/* 번호 */
+		    <if test="CONNECT_SYS == &quot;01&quot;">
+		           , C1.ERR_CODE       AS ERR_STEP
+		           , C1.ERR_MESG       AS MSG_DESC
+		           , '' AS MSG_DETAIL
+		           , C1.ERR_DATE                                                       			/* 오류일시 */
+		    </if>
+		    <if test="CONNECT_SYS != &quot;01&quot;">
+		           , C1.ERR_CD        AS ERR_STEP
+		           , C1.ERR_MSG       AS MSG_DESC
+		           , '' AS MSG_DETAIL
+		           , uniLITE.fnGetUserdate(@CompCode, C1.REGS_DATE) AS ERR_DATE                 /* 오류일시 */
+		    </if>
+		       , A.EB_NUM                                                          				/* 전자문서번호 */
+		       
+		 FROM (SELECT  COMP_CODE   ,DIV_CODE    ,EB_TYPE
+		             , PUB_NUM     , EB_NUM
+		             , CUSTOM_CODE , BILL_DATE
+		         FROM STB200T WITH (NOLOCK)
+		     GROUP BY COMP_CODE, DIV_CODE, EB_TYPE, PUB_NUM, EB_NUM, CUSTOM_CODE, BILL_DATE) A  
+		    
+		    <if test="CONNECT_SYS == &quot;01&quot;">
+		          INNER JOIN BILL_DB.${CONNECT_DB}.BILL_LOG C1 
+		                               WITH (NOLOCK)  ON C1.BILLSEQ     = A.EB_NUM
+		    
+		    </if>
+		    <if test="CONNECT_SYS != &quot;01&quot;">
+		          INNER JOIN WEBCASH_DB.${CONNECT_DB}.ITIS_STS_MSTR AS C1 
+		                               WITH (NOLOCK)  ON C1.ERP_SEQ     = A.EB_NUM
+		    </if>
+		
+		      LEFT JOIN BCM100T C3 WITH (NOLOCK)  ON C3.COMP_CODE   = A.COMP_CODE          
+		                                         AND C3.CUSTOM_CODE = A.CUSTOM_CODE        
+		      LEFT JOIN BSA100T M1 WITH (NOLOCK)  ON M1.COMP_CODE   = A.COMP_CODE          
+		                                         AND M1.SUB_CODE    = A.EB_TYPE            
+		                                         AND M1.MAIN_CODE   = 'S051'               
+		                                         AND M1.SUB_CODE   != '$'                  
+		                   
+		                 
+		 WHERE   A.COMP_CODE    = @CompCode                                                  
+		   AND   A.EB_TYPE      = '2'
+		   <if test="EB_TYPE != &quot;A&quot;">
+		        AND A.EB_TYPE       = #{EB_TYPE}					/* (필수) 1 : 세금계산서, 2 : 거래명세서 */
+	 	   </if>
+		   <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		   		AND A.DIV_CODE       = #{DIV_CODE}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(FR_DATE)">
+		   		AND A.BILL_DATE  &gt;= #{FR_DATE}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(TO_DATE)">
+		   		AND A.BILL_DATE  &lt;= #{TO_DATE}
+		   </if> 
+		   <if test="CONNECT_SYS == &quot;01&quot;">
+		   	   <if test="@foren.Ognl@isNotEmpty(ERR_FR_DATE)">
+		       AND CONVERT(NVARCHAR, C1.ERR_DATE, 112)    &gt;= #{ERR_FR_DATE}
+		   	   </if>
+		   	   <if test="@foren.Ognl@isNotEmpty(ERR_TO_DATE)">
+		       AND CONVERT(NVARCHAR, C1.ERR_DATE, 112)    &lt;= #{ERR_TO_DATE}
+		       </if>
+		   </if>
+		   <if test="CONNECT_SYS != &quot;01&quot;">
+		   	   <if test="@foren.Ognl@isNotEmpty(ERR_TO_DATE)">
+		       AND CONVERT(NVARCHAR, C1.REGS_DATE, 112)    &gt;= #{ERR_FR_DATE}
+		   	   </if>
+		       <if test="@foren.Ognl@isNotEmpty(ERR_TO_DATE)">
+		       AND CONVERT(NVARCHAR, C1.REGS_DATE, 112)    &lt;= #{ERR_TO_DATE}
+		       </if>
+		       AND C1.ERR_CD != '000000'
+		   </if>
+			
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+				AND A.CUSTOM_CODE 		= #{CUSTOM_CODE}					/* 거래처코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+				AND A.CUSTOM_CODE 		LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+				AND C3.CUSTOM_NAME 		LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+			</if>
+
+		   <if test="@foren.Ognl@isNotEmpty(PUB_NUM)">
+		   		AND A.PUB_NUM       = #{PUB_NUM}
+		   </if> 
+		    
+		
+		 SET NOCOUNT OFF
+		 SET ARITHABORT OFF
+		
+		 END
+    </select>
+	
+</mapper>

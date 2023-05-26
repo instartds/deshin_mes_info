@@ -1,0 +1,1299 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_cdr400skrv_inServiceImpl">
+					
+	<select id="s_cdr400skrv_inServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	BEGIN
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+			    
+	    /*1. 자국통화 자릿수 조회*/
+	    DECLARE             @RoundPT            INTEGER
+			    
+	    SELECT  TOP 1
+	            @RoundPT = CASE WHEN ISNUMERIC(REF_CODE2) = 1 THEN CONVERT(INTEGER, REF_CODE2) ELSE 0 END
+	    FROM    BSA100T  WITH (NOLOCK)
+	    WHERE   COMP_CODE = #{S_COMP_CODE}
+	    AND     MAIN_CODE = N'B004'
+	    AND     REF_CODE1 = N'Y'
+			    
+	    /*2. 임시 테이블 선언*/
+	    /*2.1 사내수불 */
+	    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#uniLITE201301311239')) 
+	        DROP TABLE #uniLITE201301311239
+			     
+	    CREATE TABLE #uniLITE201301311239
+	         ( COMP_CODE            NVARCHAR(08)
+	         , DIV_CODE             NVARCHAR(08)
+	         , WH_CODE              NVARCHAR(08)
+	         , ITEM_CODE            NVARCHAR(20)
+	         , INOUT_TYPE           NVARCHAR(03)
+	         , INOUT_TYPE_DETAIL    NVARCHAR(10)
+	         , INOUT_METH           NVARCHAR(02)
+	         , INOUT_CODE_TYPE      NVARCHAR(08)
+	         , CREATE_LOC           NVARCHAR(01)
+	         , INOUT_Q              NUMERIC(30, 6)
+	         , INOUT_CAL_I          NUMERIC(30, 6)
+	         , ITEM_STATUS          NVARCHAR(01)
+	         , WH_NAME              NVARCHAR(50)
+	         , ITEM_NAME            NVARCHAR(160)
+	         , SPEC                 NVARCHAR(160) )
+			    
+	    CREATE CLUSTERED INDEX uniLITE201301311239_IDX01 ON #uniLITE201301311239(COMP_CODE, DIV_CODE, WH_CODE, ITEM_CODE)
+			    
+	    /*2.2 외주수불 */
+	    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#OMEGA202006101214')) 
+	        DROP TABLE #OMEGA202006101214
+			     
+	    CREATE TABLE #OMEGA202006101214
+	         ( COMP_CODE            NVARCHAR(08)
+	         , DIV_CODE             NVARCHAR(08)
+	         , CUSTOM_CODE          NVARCHAR(08)
+	         , ITEM_CODE            NVARCHAR(20)
+	         , INOUT_TYPE           NVARCHAR(03)
+	         , INOUT_TYPE_DETAIL    NVARCHAR(10)
+	         , INOUT_METH           NVARCHAR(02)
+	         , INOUT_CODE_TYPE      NVARCHAR(08)
+	         , CREATE_LOC           NVARCHAR(01)
+	         , INOUT_Q              NUMERIC(30, 6)
+	         , INOUT_I              NUMERIC(30, 6)
+	         , CUSTOM_NAME          NVARCHAR(50)
+	         , ITEM_NAME            NVARCHAR(160)
+	         , SPEC                 NVARCHAR(160) )
+			    
+	    CREATE CLUSTERED INDEX OMEGA202006101214_IDX01 ON #OMEGA202006101214(COMP_CODE, DIV_CODE, CUSTOM_CODE, ITEM_CODE)
+
+	    /*2.3 재무수불 - 원가계산에 적용된 직접재료비,간접재료비 수불 */
+	    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#OMEGA202006222328')) 
+	        DROP TABLE #OMEGA202006222328
+			     
+	    CREATE TABLE #OMEGA202006222328
+	         ( COMP_CODE            NVARCHAR(08)
+	         , DIV_CODE             NVARCHAR(08)
+	         , ITEM_CODE            NVARCHAR(20)
+	         , INOUT_Q              NUMERIC(30, 6)
+	         , INOUT_I              NUMERIC(30, 6)
+	         , ITEM_NAME            NVARCHAR(160)
+	         , SPEC                 NVARCHAR(160) )
+			    
+	    CREATE CLUSTERED INDEX #OMEGA202006222328_IDX01 ON #OMEGA202006222328(COMP_CODE, DIV_CODE, ITEM_CODE)
+
+	    /*3. 조회 데이터 생성*/
+	    INSERT INTO #uniLITE201301311239
+	         ( COMP_CODE         , DIV_CODE          , WH_CODE           , ITEM_CODE          , INOUT_TYPE
+	         , INOUT_TYPE_DETAIL , INOUT_METH        , INOUT_CODE_TYPE   , CREATE_LOC         , INOUT_Q
+	         , INOUT_CAL_I       , ITEM_STATUS       , WH_NAME           , ITEM_NAME         , SPEC )
+	    SELECT A.COMP_CODE
+	         , A.DIV_CODE 
+	         , A.WH_CODE  
+	         , A.ITEM_CODE 
+	         , A.INOUT_TYPE
+	         , A.INOUT_TYPE_DETAIL
+	         , A.INOUT_METH
+	         , A.INOUT_CODE_TYPE
+	         , A.CREATE_LOC
+	         , A.INOUT_Q
+	         , A.INOUT_CAL_I
+	         , A.ITEM_STATUS
+	         , ISNULL(C3.TREE_NAME, '') AS WH_NAME
+	         , ISNULL(C1.ITEM_NAME, '') AS ITEM_NAME
+	         , ISNULL(C1.SPEC     , '') AS SPEC
+	      FROM            BTR100T A  WITH (NOLOCK, INDEX(BTR100T_IDX02))
+	           INNER JOIN BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE     = A.COMP_CODE
+	                                              AND C1.ITEM_CODE     = A.ITEM_CODE
+	                                              AND C1.STOCK_CARE_YN = 'Y'
+	           INNER JOIN BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE     = A.COMP_CODE
+	                                              AND C2.DIV_CODE      = A.DIV_CODE
+	                                              AND C2.ITEM_CODE     = A.ITEM_CODE
+               LEFT  JOIN BSA220T C3 WITH (NOLOCK) ON C3.COMP_CODE     = A.COMP_CODE
+	                                              AND C3.TYPE_LEVEL    = A.DIV_CODE
+	                                              AND C3.TREE_CODE     = A.WH_CODE
+	     WHERE A.COMP_CODE     = #{S_COMP_CODE}
+	       AND A.DIV_CODE      = #{DIV_CODE}
+	       AND A.INOUT_DATE   &gt;= #{WORK_MONTH_FR}+'01'
+	       AND A.INOUT_DATE   &lt;= #{WORK_MONTH_TO}+'31'
+	       <if  test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+	       AND C2.ITEM_ACCOUNT IN
+	       		<foreach collection="ITEM_ACCOUNT" item="item" separator="," open="(" close=")">
+	       			 #{item}
+	       		</foreach>
+	       </if>
+
+	    INSERT INTO #OMEGA202006101214
+	         ( COMP_CODE         , DIV_CODE          , CUSTOM_CODE       , ITEM_CODE          , INOUT_TYPE
+	         , INOUT_TYPE_DETAIL , INOUT_METH        , INOUT_CODE_TYPE   , CREATE_LOC         , INOUT_Q
+	         , INOUT_I           , CUSTOM_NAME       , ITEM_NAME         , SPEC )
+	    SELECT A.COMP_CODE
+	         , A.DIV_CODE 
+	         , A.CUSTOM_CODE  
+	         , A.ITEM_CODE 
+	         , A.INOUT_TYPE
+	         , A.INOUT_TYPE_DETAIL
+	         , A.INOUT_METH
+	         , A.INOUT_CODE_TYPE
+	         , A.CREATE_LOC
+	         , A.INOUT_Q
+	         , A.INOUT_I
+	         , ISNULL(C3.CUSTOM_NAME, '') AS CUSTOM_NAME
+	         , ISNULL(C1.ITEM_NAME  , '') AS ITEM_NAME
+	         , ISNULL(C1.SPEC       , '') AS SPEC
+	      FROM            BIZ600T A  WITH (NOLOCK)
+	           INNER JOIN BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE     = A.COMP_CODE
+	                                              AND C1.ITEM_CODE     = A.ITEM_CODE
+	                                              AND C1.STOCK_CARE_YN = 'Y'
+	           INNER JOIN BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE     = A.COMP_CODE
+	                                              AND C2.DIV_CODE      = A.DIV_CODE
+	                                              AND C2.ITEM_CODE     = A.ITEM_CODE
+	           LEFT  JOIN BCM100T C3 WITH (NOLOCK) ON C3.COMP_CODE     = A.COMP_CODE
+	                                              AND C3.CUSTOM_CODE   = A.CUSTOM_CODE
+	     WHERE A.COMP_CODE     = #{S_COMP_CODE}
+	       AND A.DIV_CODE      = #{DIV_CODE}
+	       AND A.INOUT_DATE   &gt;= #{WORK_MONTH_FR}+'01'
+	       AND A.INOUT_DATE   &lt;= #{WORK_MONTH_TO}+'31'
+	       <if  test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+	       AND C2.ITEM_ACCOUNT IN
+	       		<foreach collection="ITEM_ACCOUNT" item="item" separator="," open="(" close=")">
+	       			 #{item}
+	       		</foreach>
+	       </if>
+
+	    INSERT INTO #OMEGA202006222328
+	         ( COMP_CODE    , DIV_CODE  , ITEM_CODE , INOUT_Q   , INOUT_I
+             , ITEM_NAME    , SPEC )
+        SELECT A.COMP_CODE
+             , A.DIV_CODE
+             , A.ITEM_CODE
+             , SUM(A.INOUT_Q) AS INOUT_Q
+             , SUM(A.INOUT_I) AS INOUT_I
+	         , ISNULL(C1.ITEM_NAME, '') AS ITEM_NAME
+	         , ISNULL(C1.SPEC     , '') AS SPEC
+          FROM (SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, SUM(A.INOUT_Q) AS INOUT_Q, SUM(A.D_AMT) AS INOUT_I
+                  FROM CAM400T A  WITH (NOLOCK)
+                 WHERE A.COMP_CODE   = #{S_COMP_CODE}
+                   AND A.DIV_CODE    = #{DIV_CODE}
+                   AND A.WORK_MONTH  = #{WORK_MONTH_TO}
+                 GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE
+
+                UNION ALL
+                
+                SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, SUM(A.INOUT_Q) AS INOUT_Q, SUM(A.D_AMT) AS INOUT_I
+                  FROM CAM405T A  WITH (NOLOCK)
+                 WHERE A.COMP_CODE   = #{S_COMP_CODE}
+                   AND A.DIV_CODE    = #{DIV_CODE}
+                   AND A.WORK_MONTH  = #{WORK_MONTH_TO}
+                 GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE
+
+                UNION ALL
+                
+                SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, SUM(A.INOUT_Q) AS INOUT_Q, SUM(ISNULL(A.AMT,0)) AS INOUT_I
+                  FROM CAM210T A WITH (NOLOCK)
+                 WHERE A.COMP_CODE   = #{S_COMP_CODE}
+                   AND A.DIV_CODE    = #{DIV_CODE}
+                   AND A.WORK_MONTH  = #{WORK_MONTH_TO}
+                 GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE) A
+	           INNER JOIN BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE     = A.COMP_CODE
+	                                              AND C1.ITEM_CODE     = A.ITEM_CODE
+	                                              AND C1.STOCK_CARE_YN = 'Y'
+	           INNER JOIN BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE     = A.COMP_CODE
+	                                              AND C2.DIV_CODE      = A.DIV_CODE
+	                                              AND C2.ITEM_CODE     = A.ITEM_CODE
+	       <if  test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+	     WHERE C2.ITEM_ACCOUNT IN
+	       		<foreach collection="ITEM_ACCOUNT" item="item" separator="," open="(" close=")">
+	       			 #{item}
+	       		</foreach>
+	       </if>
+         GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, ISNULL(C1.ITEM_NAME, ''), ISNULL(C1.SPEC, '')
+
+	    /*4. 데이터 조회*/
+	    SELECT F.ITEM_CODE
+	         , F.ITEM_NAME
+	         , F.SPEC
+	         , F.WH_CODE
+	         , F.WH_CODE_NM
+	         , F.BASIS_Q
+	         , F.BASIS_AMOUNT_I
+	         , F.InProdt_q
+	         , F.InProdtGood_q
+	         , F.InProdtBad_q
+	         , (CASE WHEN F.InProdt_q        = 0 THEN 0 ELSE F.InProdt_i        / F.InProdt_q        END) AS InProdt_p
+	         , F.InProdt_i
+	         , F.InProdtReplace_q
+	         , (CASE WHEN F.InProdtReplace_q = 0 THEN 0 ELSE F.InProdtReplace_i / F.InProdtReplace_q END) AS InProdtReplace_p
+	         , F.InProdtReplace_i
+	         , F.InBuy_q
+	         , (CASE WHEN F.InBuy_q          = 0 THEN 0 ELSE F.InBuy_i          / F.InBuy_q          END) AS InBuy_p
+	         , F.InBuy_i
+	         , F.InOutOrder_q
+	         , (CASE WHEN F.InOutOrder_q     = 0 THEN 0 ELSE F.InOutOrder_i     / F.InOutOrder_q     END) AS InOutOrder_p
+	         , F.InOutOrder_i
+	         , F.InOther_q
+	         , F.InOther_i
+	         , F.InMove_q
+	         , F.InMove_i
+	         , F.InReplace_q
+	         , F.InReplace_i
+	         , F.InEtc_q
+	         , F.InEtc_i
+             , F.OS_InMove_q
+             , F.OS_InMove_i
+             , F.OS_InEtc_q
+             , F.OS_InEtc_i
+	         , F.InSum_q
+	         , (CASE WHEN F.InSum_q = 0 THEN 0 ELSE F.InSum_i / F.InSum_q END) AS InSum_p
+	         , F.InSum_i
+	         , F.OutProdt_q
+	         , F.OutProdt_i
+	         , F.OutProdtReplace_q
+	         , F.OutProdtReplace_i
+	         , F.OutFinance_q
+	         , F.OutFinance_i
+	         , F.OutSale_q
+	         , F.OutSale_i
+	         , F.OutOutOrder_q
+	         , F.OutOutOrder_i
+	         , F.OutOther_q
+	         , F.OutOther_i
+	         , F.OutMove_q
+	         , F.OutMove_i
+	         , F.OutDisUse_q
+	         , F.OutDisUse_i
+	         , F.OutReplace_q
+	         , F.OutReplace_i
+	         , F.OutEtc_q
+	         , F.OutEtc_i
+             , F.OS_OutOutOrder_q
+             , F.OS_OutOutOrder_i
+             , F.OS_OutEtc_q
+             , F.OS_OutEtc_i
+	         , F.OutSum_q
+	         , (CASE WHEN F.OutSum_q = 0 THEN 0 ELSE F.OutSum_i / F.OutSum_q END) AS OutSum_p
+	         , F.OutSum_i
+	         , F.ITEM_ACCOUNT
+	         , F.ITEM_LEVEL1
+	         , F.ITEM_LEVEL2
+	         , F.ITEM_LEVEL3
+	         , F.STOCK_Q
+	         , (CASE WHEN F.STOCK_Q = 0 THEN 0 ELSE F.STOCK_I / F.STOCK_Q END) AS STOCK_P
+	         , F.STOCK_I
+	      FROM (SELECT F.ITEM_CODE
+			         , F.ITEM_NAME
+			         , F.SPEC
+				<if  test="STATUS=='1'.toString()"> /* 전체 */
+					 , CAST('' AS NVARCHAR(10)) AS WH_CODE
+			         , CAST('' AS NVARCHAR(40)) AS WH_CODE_NM
+			         /* 기초 */ 
+			         , ISNULL((SELECT SUM(ISNULL(BASIS_Q,0))
+			                     FROM BIV200T WITH(NOLOCK)
+			                    WHERE COMP_CODE    = #{S_COMP_CODE}
+			                      AND DIV_CODE     = #{DIV_CODE}
+			                      AND BASIS_YYYYMM = #{WORK_MONTH_FR}
+				     		<if  test="@foren.Ognl@isNotEmpty(WH_CODE)">
+				                  AND WH_CODE      = #{WH_CODE}
+				     		</if>
+				                  AND ITEM_CODE    = F.ITEM_CODE), 0)
+			         + ISNULL((SELECT SUM(ISNULL(BASIS_Q,0))
+   			                     FROM BIZ200T WITH(NOLOCK)
+					            WHERE COMP_CODE    = #{S_COMP_CODE}
+					              AND DIV_CODE     = #{DIV_CODE}
+					              AND BASIS_YYYYMM = #{WORK_MONTH_FR}
+   				            <if  test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+   				                  AND CUSTOM_CODE  = #{CUSTOM_CODE}
+   				            </if>
+   				                  AND ITEM_CODE    = F.ITEM_CODE), 0) AS BASIS_Q
+			         , ISNULL((SELECT SUM(ISNULL(BASIS_AMOUNT_I, 0))
+			                     FROM BIV200T WITH(NOLOCK)
+			                    WHERE COMP_CODE    = #{S_COMP_CODE}
+			                      AND DIV_CODE     = #{DIV_CODE}
+			                      AND BASIS_YYYYMM = #{WORK_MONTH_FR}
+						 	<if  test="@foren.Ognl@isNotEmpty(WH_CODE)">
+						          AND WH_CODE      = #{WH_CODE}
+						    </if>
+			                      AND ITEM_CODE    = F.ITEM_CODE), 0)
+			         + ISNULL((SELECT SUM(ISNULL(BASIS_AMOUNT_I, 0))
+        			             FROM BIZ200T WITH(NOLOCK)
+					            WHERE COMP_CODE    = #{S_COMP_CODE}
+					              AND DIV_CODE     = #{DIV_CODE}
+					              AND BASIS_YYYYMM = #{WORK_MONTH_FR}
+   				            <if  test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+   				                 AND CUSTOM_CODE  = #{CUSTOM_CODE}
+   				            </if>
+        			              AND ITEM_CODE    = F.ITEM_CODE), 0) AS BASIS_AMOUNT_I
+				</if>
+			         
+				<if  test="STATUS=='2'.toString()"> /* 창고별 */
+			         , F.WH_CODE
+			         , F.WH_CODE_NM
+			         /* 기초 */
+			         , ISNULL((SELECT ISNULL(BASIS_Q,0) 
+			                     FROM BIV200T WITH(NOLOCK)
+			                    WHERE COMP_CODE    = #{S_COMP_CODE}
+			                      AND DIV_CODE     = #{DIV_CODE}
+			                      AND BASIS_YYYYMM = #{WORK_MONTH_FR}
+			                      AND WH_CODE      = F.WH_CODE
+			                      AND ITEM_CODE    = F.ITEM_CODE), 0)
+			         + ISNULL((SELECT ISNULL(BASIS_Q,0) 
+			                     FROM BIZ200T WITH(NOLOCK)
+			                    WHERE COMP_CODE    = #{S_COMP_CODE}
+			                      AND DIV_CODE     = #{DIV_CODE}
+			                      AND BASIS_YYYYMM = #{WORK_MONTH_FR}
+			                      AND CUSTOM_CODE  = F.WH_CODE
+			                      AND ITEM_CODE    = F.ITEM_CODE), 0) AS BASIS_Q
+			         , ISNULL((SELECT SUM(ISNULL(BASIS_AMOUNT_I, 0))
+			                     FROM BIV200T WITH(NOLOCK)
+			                    WHERE COMP_CODE    = #{S_COMP_CODE}
+			                      AND DIV_CODE     = #{DIV_CODE}
+			                      AND BASIS_YYYYMM = #{WORK_MONTH_FR}
+			                      AND WH_CODE      = F.WH_CODE
+			                      AND ITEM_CODE    = F.ITEM_CODE), 0)
+			         + ISNULL((SELECT SUM(ISNULL(BASIS_AMOUNT_I, 0))
+			                     FROM BIZ200T WITH(NOLOCK)
+			                    WHERE COMP_CODE    = #{S_COMP_CODE}
+			                      AND DIV_CODE     = #{DIV_CODE}
+			                      AND BASIS_YYYYMM = #{WORK_MONTH_FR}
+			                      AND CUSTOM_CODE  = F.WH_CODE
+			                      AND ITEM_CODE    = F.ITEM_CODE), 0) AS BASIS_AMOUNT_I
+				</if>			    
+			         /* 입고 */
+			         , SUM(InProdt_q)        AS InProdt_q
+			         , SUM(InProdtGood_q)    AS InProdtGood_q
+			         , SUM(InProdtBad_q)     AS InProdtBad_q    , CAST(0 AS NUMERIC(30,6)) AS InProdt_p       , SUM(InProdt_i)        AS InProdt_i        /*생산입고*/
+			         , SUM(InProdtReplace_q) AS InProdtReplace_q, CAST(0 AS NUMERIC(30,6)) AS InProdtReplace_p, SUM(InProdtReplace_i) AS InProdtReplace_i /*제품대체*/
+			         , SUM(InBuy_q)          AS InBuy_q         , CAST(0 AS NUMERIC(30,6)) AS InBuy_p         , SUM(InBuy_i)          AS InBuy_i          /*구매입고*/
+			         , SUM(InOutOrder_q)     AS InOutOrder_q    , CAST(0 AS NUMERIC(30,6)) AS InOutOrder_p    , SUM(InOutOrder_i)     AS InOutOrder_i     /*외주입고*/
+			         , SUM(InOther_q)        AS InOther_q       ,                                               SUM(InOther_i)        AS InOther_i        /*타계정입고*/
+			         , SUM(InMove_q)         AS InMove_q        ,                                               SUM(InMove_i)         AS InMove_i         /*이동입고*/
+			         , SUM(InReplace_q)      AS InReplace_q     ,                                               SUM(InReplace_i)      AS InReplace_i      /*대체입고*/
+			         , SUM(InEtc_q)          AS InEtc_q         ,                                               SUM(InEtc_i)          AS InEtc_i          /*기타입고*/
+			         , SUM(OS_InMove_q)      AS OS_InMove_q     ,                                               SUM(OS_InMove_i)      AS OS_InMove_i      /*외주이동입고*/
+			         , SUM(OS_InEtc_q)       AS OS_InEtc_q      ,                                               SUM(OS_InEtc_i)       AS OS_InEtc_i       /*외주기타입고*/
+			    
+			         /* 입고계 */
+			         , SUM(InProdt_q) + SUM(InProdtReplace_q) + SUM(InBuy_q) + SUM(InOutOrder_q) + SUM(InOther_q) + SUM(InMove_q) + SUM(InReplace_q) + SUM(InEtc_q) + SUM(OS_InMove_q) + SUM(OS_InEtc_q) AS InSum_q
+			         , CAST(0 AS NUMERIC(30,6)) AS InSum_p
+			         , SUM(InProdt_i) + SUM(InProdtReplace_i) + SUM(InBuy_i) + SUM(InOutOrder_i) + SUM(InOther_i) + SUM(InMove_i) + SUM(InReplace_i) + SUM(InEtc_i) + SUM(OS_InMove_i) + SUM(OS_InEtc_i) AS InSum_i
+			    
+			         /* 출고 */
+			         , SUM(OutProdt_q)        AS OutProdt_q       , SUM(OutProdt_i)        AS OutProdt_i          /*생산출고*/
+			         , SUM(OutProdtReplace_q) AS OutProdtReplace_q, SUM(OutProdtReplace_i) AS OutProdtReplace_i   /*제품대체*/
+			         , SUM(OutFinance_q)      AS OutFinance_q     , SUM(OutFinance_i)      AS OutFinance_i        /*재무출고*/
+			         , SUM(OutSale_q)         AS OutSale_q        , SUM(OutSale_i)         AS OutSale_i           /*매출출고*/
+			         , SUM(OutOutOrder_q)     AS OutOutOrder_q    , SUM(OutOutOrder_i)     AS OutOutOrder_i       /*외주이동출고*/
+			         , SUM(OutOther_q)        AS OutOther_q       , SUM(OutOther_i)        AS OutOther_i          /*타계정출고*/
+			         , SUM(OutMove_q)         AS OutMove_q        , SUM(OutMove_i)         AS OutMove_i           /*이동출고*/
+			         , SUM(OutReplace_q)      AS OutReplace_q     , SUM(OutReplace_i)      AS OutReplace_i        /*대체출고*/
+			         , SUM(OutDisUse_q)       AS OutDisUse_q      , SUM(OutDisUse_i)       AS OutDisUse_i         /*폐기*/
+			         , SUM(OutEtc_q)          AS OutEtc_q         , SUM(OutEtc_i)          AS OutEtc_i            /*기타*/
+			         , SUM(OS_OutOutOrder_q)  AS OS_OutOutOrder_q , SUM(OS_OutOutOrder_i)  AS OS_OutOutOrder_i    /*외주생산출고*/
+			         , SUM(OS_OutEtc_q)       AS OS_OutEtc_q      , SUM(OS_OutEtc_i)       AS OS_OutEtc_i         /*외주기타출고*/
+			    
+			         /* 출고계 - 재무출고는 합계에 포함하지 않음*/
+			         , SUM(OutProdt_q) + SUM(OutProdtReplace_q) + SUM(OutSale_q) + SUM(OutOutOrder_q) + SUM(OutOther_q) + SUM(OutMove_q) + SUM(OutReplace_q) + SUM(OutDisUse_q) + SUM(OutEtc_q) + SUM(OS_OutOutOrder_q) + SUM(OS_OutEtc_q) AS OutSum_q
+			         , CAST(0 AS NUMERIC(30,6)) AS OutSum_p
+			         , SUM(OutProdt_i) + SUM(OutProdtReplace_i) + SUM(OutSale_i) + SUM(OutOutOrder_i) + SUM(OutOther_i) + SUM(OutMove_i) + SUM(OutReplace_i) + SUM(OutDisUse_i) + SUM(OutEtc_i) + SUM(OS_OutOutOrder_i) + SUM(OS_OutEtc_i) AS OutSum_i
+			    
+			         /* 품목정보 */
+			         , (SELECT ITEM_ACCOUNT 
+			              FROM BPR200T WITH (NOLOCK)
+			             WHERE ITEM_CODE = F.ITEM_CODE
+			               AND COMP_CODE = #{S_COMP_CODE}
+			               AND DIV_CODE  = #{DIV_CODE} ) AS ITEM_ACCOUNT
+			         , (SELECT ITEM_LEVEL1 
+			              FROM BPR100T WITH (NOLOCK)
+			             WHERE ITEM_CODE = F.ITEM_CODE
+			               AND COMP_CODE = #{S_COMP_CODE}) AS ITEM_LEVEL1
+			         , (SELECT ITEM_LEVEL2 
+			              FROM BPR100T WITH (NOLOCK)
+			             WHERE ITEM_CODE = F.ITEM_CODE
+			               AND COMP_CODE = #{S_COMP_CODE}) AS ITEM_LEVEL2
+			         , (SELECT ITEM_LEVEL3 
+			              FROM BPR100T WITH (NOLOCK)
+			             WHERE ITEM_CODE = F.ITEM_CODE
+			               AND COMP_CODE = #{S_COMP_CODE}) AS ITEM_LEVEL3
+			    
+				<if  test="STATUS=='1'.toString()">   /* 전체*/
+			         /* 기말 */
+			         , ISNULL((SELECT SUM(ISNULL(STOCK_Q,0))
+			                     FROM BIV200T WITH(NOLOCK)
+			                    WHERE COMP_CODE    = #{S_COMP_CODE}
+			                      AND DIV_CODE     = #{DIV_CODE}
+			                      AND BASIS_YYYYMM = #{WORK_MONTH_TO}
+				     		<if  test="@foren.Ognl@isNotEmpty(WH_CODE)">
+				                  AND WH_CODE      = #{WH_CODE}
+				     		</if>
+			                      AND ITEM_CODE    = F.ITEM_CODE), 0)
+			         + ISNULL((SELECT SUM(ISNULL(STOCK_Q,0))
+   			                     FROM BIZ200T WITH(NOLOCK)
+					            WHERE COMP_CODE    = #{S_COMP_CODE}
+					              AND DIV_CODE     = #{DIV_CODE}
+					              AND BASIS_YYYYMM = #{WORK_MONTH_TO}
+   				            <if  test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+   				                  AND CUSTOM_CODE  = #{CUSTOM_CODE}
+   				            </if>
+   				                  AND ITEM_CODE    = F.ITEM_CODE), 0) AS STOCK_Q
+			         , CAST(0 AS NUMERIC(30,6)) AS STOCK_P        
+			         , ISNULL((SELECT SUM(ISNULL(STOCK_I, 0))
+			                     FROM BIV200T WITH(NOLOCK)
+			                    WHERE COMP_CODE    = #{S_COMP_CODE}
+			                      AND DIV_CODE     = #{DIV_CODE}
+			                      AND BASIS_YYYYMM = #{WORK_MONTH_TO}
+				     		<if  test="@foren.Ognl@isNotEmpty(WH_CODE)">
+				                  AND WH_CODE      = #{WH_CODE}
+				     		</if>
+			                      AND ITEM_CODE    = F.ITEM_CODE), 0)
+			         + ISNULL((SELECT SUM(ISNULL(STOCK_I, 0))
+        			             FROM BIZ200T WITH(NOLOCK)
+					            WHERE COMP_CODE    = #{S_COMP_CODE}
+					              AND DIV_CODE     = #{DIV_CODE}
+					              AND BASIS_YYYYMM = #{WORK_MONTH_TO}
+   				            <if  test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+   				                 AND CUSTOM_CODE  = #{CUSTOM_CODE}
+   				            </if>
+        			              AND ITEM_CODE    = F.ITEM_CODE), 0) AS STOCK_I
+				</if>
+
+				<if  test="STATUS=='2'.toString()"> /* 창고별*/
+			         /* 기말 */
+			         , ISNULL((SELECT ISNULL(STOCK_Q,0) 
+			                     FROM BIV200T WITH(NOLOCK)
+			                    WHERE COMP_CODE    = #{S_COMP_CODE}
+			                      AND DIV_CODE     = #{DIV_CODE}
+			                      AND BASIS_YYYYMM = #{WORK_MONTH_TO}
+			                      AND WH_CODE      = F.WH_CODE
+			                      AND ITEM_CODE    = F.ITEM_CODE), 0)
+			         + ISNULL((SELECT ISNULL(STOCK_Q,0) 
+			                     FROM BIZ200T WITH(NOLOCK)
+			                    WHERE COMP_CODE    = #{S_COMP_CODE}
+			                      AND DIV_CODE     = #{DIV_CODE}
+			                      AND BASIS_YYYYMM = #{WORK_MONTH_TO}
+			                      AND CUSTOM_CODE  = F.WH_CODE
+			                      AND ITEM_CODE    = F.ITEM_CODE), 0) AS STOCK_Q
+			         , CAST(0 AS NUMERIC(30,6)) AS STOCK_P        
+			         , ISNULL((SELECT SUM(ISNULL(STOCK_I, 0))
+			                     FROM BIV200T WITH(NOLOCK)
+			                    WHERE COMP_CODE    = #{S_COMP_CODE}
+			                      AND DIV_CODE     = #{DIV_CODE}
+			                      AND BASIS_YYYYMM = #{WORK_MONTH_TO}
+			                      AND WH_CODE      = F.WH_CODE
+			                      AND ITEM_CODE    = F.ITEM_CODE), 0)
+			         + ISNULL((SELECT SUM(ISNULL(STOCK_I, 0))
+			                     FROM BIZ200T WITH(NOLOCK)
+			                    WHERE COMP_CODE    = #{S_COMP_CODE}
+			                      AND DIV_CODE     = #{DIV_CODE}
+			                      AND BASIS_YYYYMM = #{WORK_MONTH_TO}
+			                      AND CUSTOM_CODE  = F.WH_CODE
+			                      AND ITEM_CODE    = F.ITEM_CODE), 0) AS STOCK_I
+				</if>
+			      FROM (SELECT A.ITEM_CODE
+			                 , A.WH_CODE
+                             , A.WH_NAME AS WH_CODE_NM
+			                 , A.ITEM_NAME
+			                 , A.SPEC
+			                 /*생산입고(InProdt)*/
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '3'
+			                          AND A.INOUT_TYPE         = '1' 
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '1')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS InProdt_q
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '3'
+			                          AND A.INOUT_TYPE         = '1' 
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '1')
+			                          AND A.ITEM_STATUS        = '1'
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS InProdtGood_q
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '3'
+			                          AND A.INOUT_TYPE         = '1' 
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '1')
+			                          AND A.ITEM_STATUS        = '2'
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS InProdtBad_q
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '3'
+			                          AND A.INOUT_TYPE         = '1' 
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '1')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         ELSE 0
+			                     END) AS InProdt_i
+			                 /*제품대체(InProdtReplace)*/
+			                 , (CASE WHEN A.INOUT_TYPE         = '1' 
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '7')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS InProdtReplace_q
+			                 , (CASE WHEN A.INOUT_TYPE         = '1' 
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '7')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         ELSE 0
+			                     END) AS InProdtReplace_i
+			                 /*구매입고(InBuy)*/
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '4'
+			                          AND A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '1')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS InBuy_q
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '4'
+			                          AND A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '1')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         ELSE 0
+			                     END) AS InBuy_i
+			                 /*외주입고(InOutOrder)*/
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '5'
+			                          AND A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '1')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS InOutOrder_q
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '5'
+			                          AND A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '1')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         ELSE 0
+			                     END) AS InOutOrder_i
+			                 /*타계정입고(InOther)*/
+			                 , (CASE WHEN A.INOUT_TYPE         = '1'
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '2')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         WHEN A.INOUT_TYPE         = '1'
+			                          AND A.CREATE_LOC         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '2')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS InOther_q
+			                 , (CASE WHEN A.INOUT_TYPE         = '1'
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '2')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         WHEN A.INOUT_TYPE         = '1'
+			                          AND A.CREATE_LOC         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '2')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         ELSE 0
+			                     END) AS InOther_i
+			                 /*이동입고(InMove)*/
+			                 , (CASE WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_METH        IN ('3','D')
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '3')
+			                         THEN ISNULL(A.INOUT_Q,0) 
+			                         WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_METH        IN ('3','D')
+			                          AND A.CREATE_LOC         = '4'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '3')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS InMove_q
+			                 , (CASE WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_METH        IN ('3','D')
+			                          AND A.CREATE_LOC        IN ('2','4') 
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '3')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_METH        IN ('3','D')
+			                          AND A.CREATE_LOC         = '4'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '3')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         ELSE 0
+			                     END) AS InMove_i
+			                 /*대체입고(InReplace)*/
+			                 , (CASE WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '6')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '6')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS InReplace_q
+			                 , (CASE WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '6')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '6')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         ELSE 0
+			                     END) AS InReplace_i
+			                 /*기타입고(InEtc) 생산,구매,외주,타계정,이동,대체입고를 제외한 입고*/
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '3'    /* 생산입고 */
+			                          AND A.INOUT_TYPE         = '1' 
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1' 	/* 제품대체 */
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '7')
+			                         THEN 0
+			                         WHEN A.INOUT_CODE_TYPE    = '4'    /* 구매입고 */	
+			                          AND A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_CODE_TYPE    = '5'    /* 외주입고 */
+			                          AND A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'    /* 타계정입고 */
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '2')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'
+			                          AND A.CREATE_LOC         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '2')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'    /* 이동입고 */
+			                          AND A.INOUT_METH        IN ('3','D')
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '3')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_METH        IN ('3','D')
+			                          AND A.CREATE_LOC         = '4'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '3')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'    /* 대체입고 */
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '6')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '6')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'
+			                         THEN ISNULL(A.INOUT_Q, 0)
+			                         ELSE 0
+			                     END) AS InEtc_q
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '3'    /* 생산입고 */
+			                          AND A.INOUT_TYPE         = '1' 
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1' 	/* 제품대체 */
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '7')
+			                         THEN 0
+			                         WHEN A.INOUT_CODE_TYPE    = '4'    /* 구매입고 */
+			                          AND A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_CODE_TYPE    = '5'    /* 외주입고 */
+			                          AND A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'    /* 타계정입고 */
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '2')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'
+			                          AND A.CREATE_LOC         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '2')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'    /* 이동입고 */
+			                          AND A.INOUT_METH        IN ('3','D')
+			                          AND A.CREATE_LOC        IN ('2','4') 
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '3')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_METH        IN ('3','D')
+			                          AND A.CREATE_LOC         = '4'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '3')
+                                     THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'    /* 대체입고 */
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M103' AND REF_CODE3 = '6')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S006' AND REF_CODE3 = '6')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         ELSE 0
+			                     END) AS InEtc_i
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_InMove_q     , CAST(0 AS NUMERIC(30,6)) AS OS_InMove_i        /*외주이동입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_InEtc_q      , CAST(0 AS NUMERIC(30,6)) AS OS_InEtc_i         /*외주기타입고*/
+			                     			    
+			                 /*생산출고(OutProdt)*/
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '3'
+			                          AND A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC        IN ('2','3')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '1')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS OutProdt_q
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '3'
+			                          AND A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC        IN ('2','3')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '1')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         ELSE 0
+			                     END) AS OutProdt_i
+			                 /*제품대체(OutProdtReplace)*/
+			                 , (CASE WHEN A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '7')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '7')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS OutProdtReplace_q
+			                 , (CASE WHEN A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '7')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '7')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         ELSE 0
+			                     END) AS OutProdtReplace_i
+
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutFinance_q     , CAST(0 AS NUMERIC(30,6)) AS OutFinance_i      /*재무출고*/
+
+			                 /*매출출고(OutSale)*/
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '4'
+			                          AND A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '1')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         WHEN A.INOUT_CODE_TYPE    = '4'
+			                          AND A.INOUT_TYPE         = '3'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S008' AND REF_CODE3 = '1')
+			                         THEN ISNULL(-(A.INOUT_Q),0)
+			                         ELSE 0 END) AS OutSale_q
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '4'
+			                          AND A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '1')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         WHEN A.INOUT_CODE_TYPE    = '4'
+			                          AND A.INOUT_TYPE         = '3'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S008' AND REF_CODE3 = '1')
+			                         THEN ISNULL(-(A.INOUT_CAL_I),0)
+			                         ELSE 0
+			                     END) AS OutSale_i
+			                 /*외주출고(OutOutOrder)*/
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '5'
+			                          AND A.INOUT_TYPE         = '2' 
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '1')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS OutOutOrder_q
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '5'
+			                          AND A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '1')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         ELSE 0
+			                     END) AS OutOutOrder_i
+			                 /*타계정출고(OutOther)*/
+			                 , (CASE WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '2')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '2')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS OutOther_q
+			                 , (CASE WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '2')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '2')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         ELSE 0
+			                     END) AS OutOther_i
+			                 /*이동출고(OutMove)*/
+			                 , (CASE WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_METH        IN ('3','D')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '3')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC        IN ('4')
+			                          AND A.INOUT_METH        IN ('3','D')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '3')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS OutMove_q
+			                 , (CASE WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_METH        IN ('3','D')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '3')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC         = '4'
+			                          AND A.INOUT_METH         IN ('3','D')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '3')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         ELSE 0
+			                     END) AS OutMove_i
+			                 /*대체출고(OutReplace)*/
+			                 , (CASE WHEN A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '6')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '6')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS OutReplace_q
+			                 , (CASE WHEN A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '6')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '6')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         ELSE 0
+			                     END) AS OutReplace_i
+			                 /*폐기출고(OutDisUse)*/
+			                 , (CASE WHEN INOUT_TYPE           = '2'
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '5')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '5')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS OutDisUse_q
+			                 , (CASE WHEN INOUT_TYPE           = '2'
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '5')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '5')
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         ELSE 0
+			                     END) AS OutDisUse_i
+			                 /*기타출고(OutEtc) 생산,매출,외주,타계정,이동,대체,폐기를 제외한 출고*/
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '3'    /* 생산출고 */
+			                          AND A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC        IN ('2','3')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'    /* 제품대체 */
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '7')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '7')
+			                         THEN 0
+			                         WHEN A.INOUT_CODE_TYPE    = '4'    /* 매출출고 */
+			                          AND A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_CODE_TYPE    = '4'
+			                          AND A.INOUT_TYPE         = '3'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S008' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_CODE_TYPE    = '5'    /* 외주출고 */
+			                          AND A.INOUT_TYPE         = '2' 
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'    /* 타계정출고 */
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '2')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '2')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'    /* 이동출고 */
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_METH        IN ('3','D')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '3')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC        IN ('4')
+			                          AND A.INOUT_METH        IN ('3','D')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '3')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'    /* 대체출고 */
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '6')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '6')
+			                         THEN 0
+			                         WHEN INOUT_TYPE           = '2'    /* 폐기출고 */
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '5')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '5')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'
+			                         THEN ISNULL(A.INOUT_Q, 0)
+			                         WHEN A.INOUT_TYPE         = '3'
+			                         THEN ISNULL(A.INOUT_Q, 0) * -1
+			                         ELSE 0
+			                     END) AS OutEtc_q
+			                 , (CASE WHEN A.INOUT_CODE_TYPE    = '3'    /* 생산출고 */
+			                          AND A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC        IN ('2','3')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'    /* 제품대체 */
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '7')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '7')
+			                         THEN 0
+			                         WHEN A.INOUT_CODE_TYPE    = '4'    /* 매출출고 */
+			                          AND A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_CODE_TYPE    = '4'
+			                          AND A.INOUT_TYPE         = '3'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S008' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_CODE_TYPE    = '5'    /* 외주출고 */
+			                          AND A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'    /* 타계정출고 */
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '2')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '2')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'    /* 이동출고 */
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_METH        IN ('3','D')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '3')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC         = '4'
+			                          AND A.INOUT_METH         IN ('3','D')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '3')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'    /* 대체출고 */
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '6')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '6')
+			                         THEN 0
+			                         WHEN INOUT_TYPE           = '2'    /* 폐기출고 */
+			                          AND A.CREATE_LOC        IN ('2','4')
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'M104' AND REF_CODE3 = '5')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'S007' AND REF_CODE3 = '5')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'
+			                         THEN ISNULL(A.INOUT_CAL_I, 0)
+			                         WHEN A.INOUT_TYPE         = '3'
+			                         THEN ISNULL(A.INOUT_CAL_I, 0) * -1
+			                         ELSE 0
+			                     END) AS OutEtc_i
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_OutOutOrder_q, CAST(0 AS NUMERIC(30,6)) AS OS_OutOutOrder_i   /*외주생산출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_OutEtc_q     , CAST(0 AS NUMERIC(30,6)) AS OS_OutEtc_i        /*외주기타출고*/
+			              FROM #uniLITE201301311239 A WITH (NOLOCK)
+			    
+			            UNION ALL
+
+			            SELECT A.ITEM_CODE
+			                 , A.CUSTOM_CODE AS WH_CODE
+                             , A.CUSTOM_NAME AS WH_CODE_NM
+			                 , A.ITEM_NAME
+			                 , A.SPEC
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdt_q
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdtGood_q
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdtBad_q
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdt_i          /*생산입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdtReplace_q, CAST(0 AS NUMERIC(30,6)) AS InProdtReplace_i   /*제품대체*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InBuy_q         , CAST(0 AS NUMERIC(30,6)) AS InBuy_i            /*구매입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InOutOrder_q    , CAST(0 AS NUMERIC(30,6)) AS InOutOrder_i       /*외주입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InOther_q       , CAST(0 AS NUMERIC(30,6)) AS InOther_i          /*타계정입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InMove_q        , CAST(0 AS NUMERIC(30,6)) AS InMove_i           /*이동입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InReplace_q     , CAST(0 AS NUMERIC(30,6)) AS InReplace_i        /*대체입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InEtc_q         , CAST(0 AS NUMERIC(30,6)) AS InEtc_i            /*기타입고*/
+
+                             /*외주이동입고*/
+			                 , (CASE WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = 'MASTER' AND MAIN_CODE = 'M103' AND REF_CODE3 = '1')
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS OS_InMove_q
+			                 , (CASE WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = 'MASTER' AND MAIN_CODE = 'M103' AND REF_CODE3 = '1')
+			                         THEN ISNULL(A.INOUT_I, 0)
+			                         ELSE 0
+			                     END) AS OS_InMove_i
+                             /*외주기타입고*/
+			                 , (CASE WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = 'MASTER' AND MAIN_CODE = 'M103' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS OS_InEtc_q
+			                 , (CASE WHEN A.INOUT_TYPE         = '1'
+			                          AND A.INOUT_TYPE_DETAIL IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = 'MASTER' AND MAIN_CODE = 'M103' AND REF_CODE3 = '1')
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '1'
+			                         THEN ISNULL(A.INOUT_I, 0)
+			                         ELSE 0
+			                     END) AS OS_InEtc_i
+                                                                           
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutProdt_q       , CAST(0 AS NUMERIC(30,6)) AS OutProdt_i         /*생산출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutProdtReplace_q, CAST(0 AS NUMERIC(30,6)) AS OutProdtReplace_i  /*제품대체*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutFinance_q     , CAST(0 AS NUMERIC(30,6)) AS OutFinance_i       /*재무출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutSale_q        , CAST(0 AS NUMERIC(30,6)) AS OutSale_i          /*매출출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutOutOrder_q    , CAST(0 AS NUMERIC(30,6)) AS OutOutOrder_i      /*외주출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutOther_q       , CAST(0 AS NUMERIC(30,6)) AS OutOther_i         /*타계정출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutMove_q        , CAST(0 AS NUMERIC(30,6)) AS OutMove_i          /*이동출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutReplace_q     , CAST(0 AS NUMERIC(30,6)) AS OutReplace_i       /*대체출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutDisUse_q      , CAST(0 AS NUMERIC(30,6)) AS OutDisUse_i        /*폐기*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutEtc_q         , CAST(0 AS NUMERIC(30,6)) AS OutEtc_i           /*기타*/
+                             /*외주생산출고*/
+			                 , (CASE WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC         = '2'
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS OS_OutOutOrder_q
+			                 , (CASE WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC         = '2'
+			                         THEN ISNULL(A.INOUT_I, 0)
+			                         ELSE 0
+			                     END) AS OS_OutOutOrder_i
+                             /*외주기타출고*/
+			                 , (CASE WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC         = '2'
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'
+			                         THEN ISNULL(A.INOUT_Q,0)
+			                         ELSE 0
+			                     END) AS OS_OutEtc_q
+			                 , (CASE WHEN A.INOUT_TYPE         = '2'
+			                          AND A.CREATE_LOC         = '2'
+			                         THEN 0
+			                         WHEN A.INOUT_TYPE         = '2'
+			                         THEN ISNULL(A.INOUT_I,0)
+			                         ELSE 0
+			                     END) AS OS_OutEtc_i
+			              FROM #OMEGA202006101214 A WITH (NOLOCK)
+
+			            UNION ALL
+
+			            SELECT A.ITEM_CODE
+			                 , '' AS WH_CODE
+                             , '' AS WH_CODE_NM
+			                 , A.ITEM_NAME
+			                 , A.SPEC
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdt_q
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdtGood_q
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdtBad_q
+                             , CAST(0 AS NUMERIC(30,6)) AS InProdt_i          /*생산입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdtReplace_q, CAST(0 AS NUMERIC(30,6)) AS InProdtReplace_i   /*제품대체*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InBuy_q         , CAST(0 AS NUMERIC(30,6)) AS InBuy_i            /*구매입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InOutOrder_q    , CAST(0 AS NUMERIC(30,6)) AS InOutOrder_i       /*외주입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InOther_q       , CAST(0 AS NUMERIC(30,6)) AS InOther_i          /*타계정입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InMove_q        , CAST(0 AS NUMERIC(30,6)) AS InMove_i           /*이동입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InReplace_q     , CAST(0 AS NUMERIC(30,6)) AS InReplace_i        /*대체입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InEtc_q         , CAST(0 AS NUMERIC(30,6)) AS InEtc_i            /*기타입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_InMove_q     , CAST(0 AS NUMERIC(30,6)) AS OS_InMove_i        /*외주이동입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_InEtc_q      , CAST(0 AS NUMERIC(30,6)) AS OS_InEtc_i         /*외주기타입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutProdt_q      , CAST(0 AS NUMERIC(30,6)) AS OutProdt_i         /*생산출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutProdtReplace_q, CAST(0 AS NUMERIC(30,6)) AS OutProdtReplace_i /*제품대체*/
+
+			                 , A.INOUT_Q                AS OutFinance_q    , A.INOUT_I                AS OutFinance_i       /*재무출고*/
+
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutSale_q       , CAST(0 AS NUMERIC(30,6)) AS OutSale_i          /*매출출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutOutOrder_q   , CAST(0 AS NUMERIC(30,6)) AS OutOutOrder_i      /*외주출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutOther_q      , CAST(0 AS NUMERIC(30,6)) AS OutOther_i         /*타계정출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutMove_q       , CAST(0 AS NUMERIC(30,6)) AS OutMove_i          /*이동출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutReplace_q    , CAST(0 AS NUMERIC(30,6)) AS OutReplace_i       /*대체출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutDisUse_q     , CAST(0 AS NUMERIC(30,6)) AS OutDisUse_i        /*폐기*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutEtc_q        , CAST(0 AS NUMERIC(30,6)) AS OutEtc_i           /*기타*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_OutOutOrder_q, CAST(0 AS NUMERIC(30,6)) AS OS_OutOutOrder_i   /*외주생산출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_OutEtc_q     , CAST(0 AS NUMERIC(30,6)) AS OS_OutEtc_i        /*외주기타출고*/
+       	                  FROM #OMEGA202006222328 A WITH (NOLOCK)
+
+			            UNION ALL
+
+			            SELECT A.ITEM_CODE
+			                 , A.WH_CODE
+	                         , ISNULL(C3.TREE_NAME, '') AS WH_CODE_NM
+			                 , ISNULL(C1.ITEM_NAME, '') AS ITEM_NAME
+			                 , ISNULL(C1.SPEC     , '') AS SPEC
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdt_q
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdtGood_q
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdtBad_q
+ 	                         , CAST(0 AS NUMERIC(30,6)) AS InProdt_i          /*생산입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdtReplace_q, CAST(0 AS NUMERIC(30,6)) AS InProdtReplace_i   /*제품대체*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InBuy_q         , CAST(0 AS NUMERIC(30,6)) AS InBuy_i            /*구매입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InOutOrder_q    , CAST(0 AS NUMERIC(30,6)) AS InOutOrder_i       /*외주입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InOther_q       , CAST(0 AS NUMERIC(30,6)) AS InOther_i          /*타계정입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InMove_q        , CAST(0 AS NUMERIC(30,6)) AS InMove_i           /*이동입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InReplace_q     , CAST(0 AS NUMERIC(30,6)) AS InReplace_i        /*대체입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InEtc_q         , CAST(0 AS NUMERIC(30,6)) AS InEtc_i            /*기타입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_InMove_q     , CAST(0 AS NUMERIC(30,6)) AS OS_InMove_i        /*외주이동입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_InEtc_q      , CAST(0 AS NUMERIC(30,6)) AS OS_InEtc_i         /*외주기타입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutProdt_q      , CAST(0 AS NUMERIC(30,6)) AS OutProdt_i         /*생산출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutProdtReplace_q, CAST(0 AS NUMERIC(30,6)) AS OutProdtReplace_i /*제품대체*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutFinance_q    , CAST(0 AS NUMERIC(30,6)) AS OutFinance_i       /*재무출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutSale_q       , CAST(0 AS NUMERIC(30,6)) AS OutSale_i          /*매출출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutOutOrder_q   , CAST(0 AS NUMERIC(30,6)) AS OutOutOrder_i      /*외주출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutOther_q      , CAST(0 AS NUMERIC(30,6)) AS OutOther_i         /*타계정출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutMove_q       , CAST(0 AS NUMERIC(30,6)) AS OutMove_i          /*이동출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutReplace_q    , CAST(0 AS NUMERIC(30,6)) AS OutReplace_i       /*대체출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutDisUse_q     , CAST(0 AS NUMERIC(30,6)) AS OutDisUse_i        /*폐기*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutEtc_q        , CAST(0 AS NUMERIC(30,6)) AS OutEtc_i           /*기타*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_OutOutOrder_q, CAST(0 AS NUMERIC(30,6)) AS OS_OutOutOrder_i   /*외주생산출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_OutEtc_q     , CAST(0 AS NUMERIC(30,6)) AS OS_OutEtc_i        /*외주기타출고*/
+			              FROM            BIV200T A  WITH(NOLOCK)
+			                   INNER JOIN BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE     = A.COMP_CODE
+			                                                      AND C1.ITEM_CODE     = A.ITEM_CODE
+			                                                      AND C1.STOCK_CARE_YN = 'Y'
+			                   INNER JOIN BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE     = A.COMP_CODE
+			                                                      AND C2.DIV_CODE      = A.DIV_CODE
+			                                                      AND C2.ITEM_CODE     = A.ITEM_CODE
+                               LEFT  JOIN BSA220T C3 WITH (NOLOCK) ON C3.COMP_CODE     = A.COMP_CODE
+	                                                              AND C3.TYPE_LEVEL    = A.DIV_CODE
+	                                                              AND C3.TREE_CODE     = A.WH_CODE
+			             WHERE A.COMP_CODE      = #{S_COMP_CODE}
+			               AND A.DIV_CODE       = #{DIV_CODE}
+			               AND A.BASIS_YYYYMM  &gt;= #{WORK_MONTH_FR}
+			               AND A.BASIS_YYYYMM  &lt;= #{WORK_MONTH_TO}
+			               <if  test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+			               AND C2.ITEM_ACCOUNT IN
+			               		<foreach collection="ITEM_ACCOUNT" item="item" separator="," open="(" close=")">
+					       			 #{item}
+					       		</foreach>
+			               </if>
+
+			            UNION ALL
+
+			            SELECT A.ITEM_CODE
+			                 , A.CUSTOM_CODE              AS WH_CODE
+	                         , ISNULL(C3.CUSTOM_NAME, '') AS WH_CODE_NM
+			                 , ISNULL(C1.ITEM_NAME  , '') AS ITEM_NAME
+			                 , ISNULL(C1.SPEC       , '') AS SPEC
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdt_q
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdtGood_q
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdtBad_q
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdt_i          /*생산입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InProdtReplace_q, CAST(0 AS NUMERIC(30,6)) AS InProdtReplace_i   /*제품대체*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InBuy_q         , CAST(0 AS NUMERIC(30,6)) AS InBuy_i            /*구매입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InOutOrder_q    , CAST(0 AS NUMERIC(30,6)) AS InOutOrder_i       /*외주입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InOther_q       , CAST(0 AS NUMERIC(30,6)) AS InOther_i          /*타계정입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InMove_q        , CAST(0 AS NUMERIC(30,6)) AS InMove_i           /*이동입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InReplace_q     , CAST(0 AS NUMERIC(30,6)) AS InReplace_i        /*대체입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS InEtc_q         , CAST(0 AS NUMERIC(30,6)) AS InEtc_i            /*기타입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_InMove_q     , CAST(0 AS NUMERIC(30,6)) AS OS_InMove_i        /*외주이동입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_InEtc_q      , CAST(0 AS NUMERIC(30,6)) AS OS_InEtc_i         /*외주기타입고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutProdt_q      , CAST(0 AS NUMERIC(30,6)) AS OutProdt_i         /*생산출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutProdtReplace_q, CAST(0 AS NUMERIC(30,6)) AS OutProdtReplace_i /*제품대체*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutFinance_q    , CAST(0 AS NUMERIC(30,6)) AS OutFinance_i       /*재무출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutSale_q       , CAST(0 AS NUMERIC(30,6)) AS OutSale_i          /*매출출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutOutOrder_q   , CAST(0 AS NUMERIC(30,6)) AS OutOutOrder_i      /*외주출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutOther_q      , CAST(0 AS NUMERIC(30,6)) AS OutOther_i         /*타계정출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutMove_q       , CAST(0 AS NUMERIC(30,6)) AS OutMove_i          /*이동출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutReplace_q    , CAST(0 AS NUMERIC(30,6)) AS OutReplace_i       /*대체출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutDisUse_q     , CAST(0 AS NUMERIC(30,6)) AS OutDisUse_i        /*폐기*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OutEtc_q        , CAST(0 AS NUMERIC(30,6)) AS OutEtc_i           /*기타*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_OutOutOrder_q, CAST(0 AS NUMERIC(30,6)) AS OS_OutOutOrder_i   /*외주생산출고*/
+			                 , CAST(0 AS NUMERIC(30,6)) AS OS_OutEtc_q     , CAST(0 AS NUMERIC(30,6)) AS OS_OutEtc_i        /*외주기타출고*/
+			              FROM            BIZ200T A  WITH(NOLOCK)
+			                   INNER JOIN BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE     = A.COMP_CODE
+			                                                      AND C1.ITEM_CODE     = A.ITEM_CODE
+			                                                      AND C1.STOCK_CARE_YN = 'Y'
+			                   INNER JOIN BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE     = A.COMP_CODE
+			                                                      AND C2.DIV_CODE      = A.DIV_CODE
+			                                                      AND C2.ITEM_CODE     = A.ITEM_CODE
+	                           LEFT  JOIN BCM100T C3 WITH (NOLOCK) ON C3.COMP_CODE     = A.COMP_CODE
+	                                                              AND C3.CUSTOM_CODE   = A.CUSTOM_CODE
+			             WHERE A.COMP_CODE      = #{S_COMP_CODE}
+			               AND A.DIV_CODE       = #{DIV_CODE}
+			               AND A.BASIS_YYYYMM  &gt;= #{WORK_MONTH_FR}
+			               AND A.BASIS_YYYYMM  &lt;= #{WORK_MONTH_TO}
+			               <if  test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+			               AND C2.ITEM_ACCOUNT IN
+			               		<foreach collection="ITEM_ACCOUNT" item="item" separator="," open="(" close=")">
+					       			 #{item}
+					       		</foreach>
+			               </if>
+			           ) F 
+			     WHERE F.ITEM_CODE IS NOT NULL
+			     <if  test="@foren.Ognl@isNotEmpty(WH_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+			           AND F.WH_CODE IN (#{WH_CODE}, #{CUSTOM_CODE})
+			     </if>
+			     <if  test="@foren.Ognl@isNotEmpty(WH_CODE) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+			           AND F.WH_CODE = #{WH_CODE}
+			     </if>
+			     <if  test="@foren.Ognl@isEmpty(WH_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+			           AND F.WH_CODE = #{CUSTOM_CODE}
+			     </if>
+			     <if  test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)">
+			           AND (SELECT ITEM_LEVEL1
+			                  FROM BPR100T WITH (NOLOCK)
+			                 WHERE ITEM_CODE = F.ITEM_CODE
+			                   AND COMP_CODE = #{S_COMP_CODE}) = #{ITEM_LEVEL1}
+			     </if>
+			     <if  test="@foren.Ognl@isNotEmpty(ITEM_LEVEL2)">
+			           AND (SELECT ITEM_LEVEL2
+			                  FROM BPR100T WITH (NOLOCK)
+			                 WHERE ITEM_CODE = F.ITEM_CODE
+			                   AND COMP_CODE = #{S_COMP_CODE}) = #{ITEM_LEVEL2}
+			     </if>
+			      <if  test="@foren.Ognl@isNotEmpty(ITEM_LEVEL3)">
+			           AND (SELECT ITEM_LEVEL3
+			                  FROM BPR100T WITH (NOLOCK)
+			                 WHERE ITEM_CODE = F.ITEM_CODE
+			                   AND COMP_CODE = #{S_COMP_CODE}) = #{ITEM_LEVEL3}
+			     </if>
+			     <if  test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+			           AND   F.ITEM_CODE LIKE #{ITEM_CODE}+'%'
+			     </if>
+			     <if  test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			           AND  (SELECT unilite.fnItemNameComp(#{S_COMP_CODE}, #{DIV_CODE}, F.ITEM_CODE)
+			                   FROM BPR100T WITH(NOLOCK)
+			                  WHERE COMP_CODE = #{S_COMP_CODE}
+			                    AND ITEM_CODE = F.ITEM_CODE ) LIKE #{ITEM_NAME}+'%'
+				</if>
+				<if test="STATUS=='1'.toString()"> /*전체*/
+				GROUP BY ITEM_CODE, ITEM_NAME, SPEC
+				</if> 
+				<if test="STATUS=='2'.toString()"> /*창고별*/
+				GROUP BY ITEM_CODE, WH_CODE, WH_CODE_NM, ITEM_NAME, SPEC
+				</if>     
+			    ) AS F
+		<if test="@foren.Ognl@isNotEmpty(Except)">
+		 WHERE F.BASIS_Q 			&lt;&gt; 0		    OR F.BASIS_AMOUNT_I 	&lt;&gt; 0
+		    OR F.InProdt_q 			&lt;&gt; 0		    OR F.InProdt_p 			&lt;&gt; 0		    OR F.InProdt_i 			&lt;&gt; 0
+		    OR F.InProdtReplace_q	&lt;&gt; 0		    OR F.InProdtReplace_p	&lt;&gt; 0		    OR F.InProdtReplace_i	&lt;&gt; 0
+		    OR F.InBuy_q 			&lt;&gt; 0		    OR F.InBuy_p 			&lt;&gt; 0		    OR F.InBuy_i 			&lt;&gt; 0
+		    OR F.InOutOrder_q 		&lt;&gt; 0		    OR F.InOutOrder_p 		&lt;&gt; 0
+		    OR F.InOutOrder_i 		&lt;&gt; 0		    OR F.InOther_q			&lt;&gt; 0
+		    OR F.InOther_i 			&lt;&gt; 0		    OR F.InMove_q 			&lt;&gt; 0
+		    OR F.InMove_i 			&lt;&gt; 0		    OR F.InReplace_q		&lt;&gt; 0
+		    OR F.InReplace_i		&lt;&gt; 0		    OR F.InEtc_q 			&lt;&gt; 0
+		    OR F.InEtc_i 			&lt;&gt; 0		    OR F.OS_InMove_q 		&lt;&gt; 0
+		    OR F.OS_InMove_i 		&lt;&gt; 0		    OR F.OS_InEtc_q 		&lt;&gt; 0
+		    OR F.OS_InEtc_i 		&lt;&gt; 0		    OR F.InSum_q 			&lt;&gt; 0
+		    OR F.InSum_p 			&lt;&gt; 0		    OR F.InSum_i 			&lt;&gt; 0
+		    OR F.OutProdt_q 		&lt;&gt; 0		    OR F.OutProdt_i 		&lt;&gt; 0
+		    OR F.OutProdtReplace_q	&lt;&gt; 0		    OR F.OutProdtReplace_i	&lt;&gt; 0
+		    OR F.OutFinance_q 		&lt;&gt; 0		    OR F.OutFinance_i 		&lt;&gt; 0
+		    OR F.OutSale_q 			&lt;&gt; 0		    OR F.OutSale_i 			&lt;&gt; 0
+		    OR F.OutOutOrder_q 		&lt;&gt; 0		    OR F.OutOutOrder_i 		&lt;&gt; 0
+		    OR F.OutOther_q 		&lt;&gt; 0		    OR F.OutOther_i 		&lt;&gt; 0
+		    OR F.OutMove_q 			&lt;&gt; 0		    OR F.OutMove_i 			&lt;&gt; 0
+		    OR F.OutReplace_q		&lt;&gt; 0		    OR F.OutReplace_i		&lt;&gt; 0
+		    OR F.OutDisUse_q 		&lt;&gt; 0		    OR F.OutDisUse_i 		&lt;&gt; 0
+		    OR F.OutEtc_q 			&lt;&gt; 0		    OR F.OutEtc_i 			&lt;&gt; 0
+		    OR F.OS_OutOutOrder_q 	&lt;&gt; 0		    OR F.OS_OutOutOrder_i 	&lt;&gt; 0
+		    OR F.OS_OutEtc_q 		&lt;&gt; 0		    OR F.OS_OutEtc_i 		&lt;&gt; 0
+		    OR F.OutSum_q 			&lt;&gt; 0		    OR F.OutSum_p 			&lt;&gt; 0
+		    OR F.OutSum_i 			&lt;&gt; 0		    OR F.STOCK_Q 			&lt;&gt; 0
+		    OR F.STOCK_P 			&lt;&gt; 0		    OR F.STOCK_I 			&lt;&gt; 0
+		</if>
+				
+		<if test="STATUS=='1'.toString()"> /*전체*/
+		ORDER BY F.ITEM_CODE
+		</if>       
+		<if test="STATUS=='2'.toString()"> /*창고별*/
+		ORDER BY F.ITEM_CODE, F.WH_CODE
+		</if>      
+	
+		SET NOCOUNT OFF
+		SET ARITHABORT OFF
+    END
+	</select>
+</mapper>

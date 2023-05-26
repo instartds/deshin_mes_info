@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="hpa300ukrServiceImpl">	
+	
+	<!-- 건강보험에 노인장기요양보험 포함여부 조회 -->
+	<select id="hpa300ukrServiceImpl.selectHealthInsurance" parameterType="rMap" resultType="rMap">
+	SELECT LCI_CALCU_RULE -- 노인장기요양보험 포함 여부 (1:포함하지 않음, 2: 포함)
+	  FROM HBS400T
+	 WHERE COMP_CODE = #{S_COMP_CODE}
+	</select>
+	
+	<!-- 건강보험, 노인장기요양보험 요율 조회 -->
+	<select id="hpa300ukrServiceImpl.selectInsuranceRate" parameterType="rMap" resultType="rMap">
+    	SELECT DISTINCT COMP_CODE
+             , BASE_YEAR
+             , INSUR_RATE
+             , INSUR_RATE1
+             , INSUR_TYPE
+          FROM HAD300T 
+         WHERE COMP_CODE = #{S_COMP_CODE}
+           AND BASE_YEAR = #{BASE_YEAR}
+
+    UNION ALL
+        -- 고용보험
+        SELECT COMP_CODE
+             , #{BASE_YEAR}  AS BASE_YEAR
+             , EMPLOY_RATE   AS INSUR_RATE
+             , 0.00          AS INSUR_RATE1
+             , '3'           AS INSUR_TYPE
+          FROM HBS400T
+	</select>
+	
+	
+	
+	<select id="hpa300ukrServiceImpl.selectList" parameterType="rMap" resultType="rMap">
+		SET ANSI_WARNINGS OFF
+		SET ARITHIGNORE ON
+		SET ARITHABORT OFF
+		
+		DECLARE @COMP_CODE     NVARCHAR(08) <!--법인코드(필수) -->
+		      , @BASE_DATE     NVARCHAR(08) <!--기준일(필수) -->
+		      , @DIV_CODE      NVARCHAR(08) <!--사업장(선택) -->
+		      , @DEPT_CODE_FR  NVARCHAR(08) <!--부서(선택) -->
+		      , @DEPT_CODE_TO  NVARCHAR(08) <!--부서(선택) -->
+		      , @PERSON_NUMB   NVARCHAR(10) <!--사번(선택) -->
+		      , @INSUR_TYPE    NVARCHAR(01) <!--보험구분(필수) -->
+		      , @PAY_PROV_FLAG NVARCHAR(01) <!--지급차수(선택) -->
+		      , @PAY_GUBUN     NVARCHAR(02) <!--고용형태(선택) -->
+		      , @PAY_GUBUN2    NVARCHAR(02) <!--일용직구분(선택) -->
+		
+		   SET @COMP_CODE     = #{S_COMP_CODE}
+		   SET @BASE_DATE     = #{BASE_DATE}
+		   SET @DIV_CODE      = #{DIV_CODE}
+		   SET @DEPT_CODE_FR  = #{DEPT_CODE}
+		   SET @DEPT_CODE_TO  = #{DEPT_CODE2}
+		   SET @PERSON_NUMB   = #{PERSON_NUMB}
+		   SET @INSUR_TYPE    = #{INSUR_TYPE}
+		   SET @PAY_PROV_FLAG = #{PAY_PROV_FLAG}
+		   SET @PAY_GUBUN     = #{PAY_GUBUN}
+		   SET @PAY_GUBUN2    = #{PAY_GUBUN2}
+		
+		SELECT CAST ( '0' AS BIT ) AS CHOICE
+		     , H.DIV_CODE
+		     , H.DEPT_NAME
+		     , H.POST_CODE
+		     , H.NAME
+		     , H.PERSON_NUMB
+		     , uniLITE.fnCipherDecrypt(H.REPRE_NUM, 'R')                 AS REPRE_NUM
+		     , uniLITE.fnGetUserDateComp(H.COMP_CODE, H.JOIN_DATE)           AS JOIN_DATE
+		     , CASE WHEN H.RETR_DATE = '00000000' THEN ''
+		            ELSE uniLITE.fnGetUserDateComp(H.COMP_CODE, H.RETR_DATE)
+		            END                                                  AS RETR_DATE
+		     , H.ANU_INSUR_I                                             AS INSUR_OLD
+		     , 0 AS TOTAL_AMT
+		     , 0 AS LONG_MONTH
+		     , CASE WHEN @INSUR_TYPE = '1' THEN H.ANU_BASE_I   		<!--국민연금 -->
+		            WHEN @INSUR_TYPE = '2' THEN H.MED_AVG_I    		<!--건강보험 -->
+		            WHEN @INSUR_TYPE = '3' THEN H.HIRE_AVG_I   		<!--고용보험 -->
+		            WHEN @INSUR_TYPE = '4' THEN H.MED_AVG_I			<!--노인장기요양보험 -->
+		        END                                                      AS BASE_I
+		     , CASE WHEN @INSUR_TYPE = '1' THEN H.ANU_INSUR_I  		<!--국민연금 -->
+		            WHEN @INSUR_TYPE = '2' THEN H.MED_INSUR_I  		<!--건강보험 -->
+		            WHEN @INSUR_TYPE = '3' THEN H.HIRE_INSUR_I 		<!--고용보험 -->
+		            WHEN @INSUR_TYPE = '4' THEN H.OLD_MED_INSUR_I	<!--노인장기요양보험 -->
+		        END                                                      AS INSUR_I
+		     , H.MED_INSUR_NO
+		     , #{INSUR_TYPE} AS INSUR_TYPE
+		  FROM HUM100T H
+		 WHERE H.COMP_CODE    = @COMP_CODE
+		   AND H.JOIN_DATE   &lt;= @BASE_DATE
+		   AND (H.RETR_DATE  &gt;= @BASE_DATE  OR  H.RETR_DATE = '00000000')
+		   AND ((@DIV_CODE      = '') OR (@DIV_CODE      != '' AND H.DIV_CODE      = @DIV_CODE))
+		   AND ((@DEPT_CODE_FR  = '') OR (@DEPT_CODE_FR  != '' AND H.DEPT_CODE    &gt;= @DEPT_CODE_FR))
+		   AND ((@DEPT_CODE_TO  = '') OR (@DEPT_CODE_TO  != '' AND H.DEPT_CODE    &lt;= @DEPT_CODE_TO))
+		   AND ((@PERSON_NUMB   = '') OR (@PERSON_NUMB   != '' AND H.PERSON_NUMB   = @PERSON_NUMB))
+		   AND ((@PAY_PROV_FLAG = '') OR (@PAY_PROV_FLAG != '' AND H.PAY_PROV_FLAG = @PAY_PROV_FLAG))
+		   AND ((@PAY_GUBUN     = '') OR (@PAY_GUBUN     != '' AND H.PAY_GUBUN     = @PAY_GUBUN))
+		   <!--AND ((@PAY_GUBUN2    = '') OR (@PAY_GUBUN2    != '' AND H.PAY_GUBUN2    = @PAY_GUBUN2)) -->
+		 ORDER BY H.DIV_CODE, H.DEPT_CODE, H.POST_CODE, H.NAME, H.PERSON_NUMB ASC
+	</select>
+	
+	<update id="hpa300ukrServiceImpl.update" parameterType="rMap">
+		UPDATE HUM100T
+		   SET
+		   <if test='INSUR_TYPE =="1" '>
+		   	   ANU_BASE_I     = #{BASE_I}
+		     , ANU_INSUR_I    = #{INSUR_I}
+		   </if>
+		   <if test='INSUR_TYPE =="2" '>
+		   	   MED_AVG_I     = #{BASE_I}
+		     , MED_INSUR_I    = #{INSUR_I}
+		   </if>
+		   <if test='INSUR_TYPE =="3" '>
+		   	   HIRE_AVG_I     = #{BASE_I}
+		     , HIRE_INSUR_I    = #{INSUR_I}
+		   </if>
+		   <if test='INSUR_TYPE =="4" '>
+		     , OLD_MED_INSUR_I    = #{INSUR_I}
+		   </if>
+		     , UPDATE_DB_USER = #{S_USER_ID}
+		     , UPDATE_DB_TIME = GETDATE()
+		 WHERE COMP_CODE      = #{S_COMP_CODE}
+		   AND PERSON_NUMB    = #{PERSON_NUMB}
+	</update>
+	
+	
+	<!-- Excel -->
+	<insert id="hpa300ukrServiceImpl.insertExcelHbs300upload" parameterType="Map">
+    	/*hpa300ukrServiceImpl.insertExcelHbs800upload*/
+    	INSERT INTO HPA300UKR_EXCEL
+    		(_EXCEL_JOBID, 
+    		 _EXCEL_ROWNUM, 
+    		 _EXCEL_HAS_ERROR, 
+    		 _EXCEL_ERROR_MSG, 
+    		  
+    		 NAME,
+    		 REPRE_NUM,
+    		 BASE_I,
+    		 INSUR_I,    		
+    		 
+    		 INSERT_DB_USER, 
+             INSERT_DB_TIME  
+    	 )
+    	VALUES (
+    		 #{_EXCEL_JOBID}, 
+    		 #{_EXCEL_ROWNUM}, 
+    		 #{_EXCEL_HAS_ERROR,jdbcType=VARCHAR}, 
+    		 #{_EXCEL_ERROR,jdbcType=VARCHAR},     		  
+    		  
+    		 #{NAME},
+    		 #{REPRE_NUM},
+    		 #{BASE_I},
+    		 #{INSUR_I},
+    		 
+    		 #{S_USER_ID},
+    		 GETDATE()	   		 
+    	)
+    </insert>
+    
+	<select id="hpa300ukrServiceImpl.selectExcelUploadSheet1" parameterType="Map" resultType="rMap">
+		/*hpa300ukrServiceImpl.selectExcelUploadSheet1*/
+		SELECT  A. _EXCEL_ROWNUM
+              , A._EXCEL_HAS_ERROR       
+              , A._EXCEL_ERROR_MSG
+              
+              , B.DIV_CODE
+              , B.DEPT_NAME
+              , B.POST_CODE
+              , B.PERSON_NUMB      
+              , A.NAME
+              , A.REPRE_NUM
+              , B.JOIN_DATE
+              , B.RETR_DATE
+              , B.ANU_INSUR_I
+              , 0 AS TOTAL_AMT
+              , 0 AS LONG_MONTH
+              , B.MED_INSUR_NO
+              , A.INSUR_TYPE
+              , A.BASE_I
+              , A.INSUR_I
+    		 
+		 FROM          HPA300UKR_EXCEL  A WITH (NOLOCK)
+             LEFT JOIN HUM100T          B WITH (NOLOCK) ON B.COMP_CODE = #{S_COMP_CODE}    
+                                                       AND uniLITE.fnCipherDecrypt(B.REPRE_NUM,'') = REPLACE(A.REPRE_NUM, '-', '')
+		 WHERE _EXCEL_JOBID = #{_EXCEL_JOBID}
+		 ORDER BY _EXCEL_JOBID, _EXCEL_ROWNUM
+	</select>
+    
+    <update id="hpa300ukrServiceImpl.excelValidate" >
+    	/*hbs020ukrServiceImpl.excelValidate*/
+    	UPDATE   A
+		SET 
+				A._EXCEL_HAS_ERROR = (CASE WHEN A.NAME IS NULL 
+										   THEN 'Y' 
+								      ELSE A._EXCEL_HAS_ERROR 
+								      END),
+				A._EXCEL_ERROR_MSG = (CASE WHEN A.NAME IS NULL  
+										   THEN ISNULL(_EXCEL_ERROR_MSG,'') + '해당 사번의 사원이 존재하지 않습니다. ' 
+									  ELSE A._EXCEL_ERROR_MSG END)
+		FROM HPA300UKR_EXCEL A 
+		LEFT JOIN  HUM100T B    
+			ON B.COMP_CODE= #{S_COMP_CODE}
+			AND B.PERSON_NUMB = #{PERSON_NUM} 
+			AND uniLITE.fnCipherDecrypt(B.REPRE_NUM, '') = #{REPRE_NUM}		
+		WHERE A._EXCEL_JOBID = #{_EXCEL_JOBID}
+    </update>
+		
+</mapper>

@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="acm400skrServiceImpl">
+	<select id="acm400skrServiceImpl.selectList" parameterType="Map" resultType="rMap">	
+		--	acm400skrServiceImpl.selectList
+		SELECT C.PUB_DATE
+			 , C.COMPANY_NUM
+			 , MAX(C.CUSTOM_NAME)						AS CUSTOM_NAME
+			 , SUM(C.ERP_SUPPLY_AMT)					AS ERP_SUPPLY_AMT
+			 , SUM(C.ERP_TAX_AMT)						AS ERP_TAX_AMT
+			 , SUM(C.ERP_SUPPLY_AMT + C.ERP_TAX_AMT)	AS ERP_SUM_AMT
+			 , SUM(C.ERP_CNT)							AS ERP_CNT
+			 , SUM(C.CMS_SUPPLY_AMT)					AS CMS_SUPPLY_AMT
+			 , SUM(C.CMS_TAX_AMT)						AS CMS_TAX_AMT
+			 , SUM(C.CMS_SUPPLY_AMT + C.CMS_TAX_AMT)	AS CMS_SUM_AMT
+			 , SUM(C.CMS_CNT)							AS CMS_CNT
+			 , CASE WHEN (SUM(C.ERP_SUPPLY_AMT) != SUM(C.CMS_SUPPLY_AMT)) OR (SUM(C.ERP_TAX_AMT) != SUM(C.CMS_TAX_AMT)) OR (SUM(C.ERP_CNT) != SUM(C.CMS_CNT))	THEN 'N'
+					ELSE 'Y'
+			   END										AS COMP_YN
+		  FROM (
+				SELECT A.PUB_DATE
+					 , B.COMPANY_NUM
+					 , B.CUSTOM_FULL_NAME	AS CUSTOM_NAME
+					 , SUM(A.SUPPLY_AMT_I)	AS ERP_SUPPLY_AMT
+					 , SUM(A.TAX_AMT_I)		AS ERP_TAX_AMT
+					 , COUNT(1)				AS ERP_CNT
+					 , 0					AS CMS_SUPPLY_AMT
+					 , 0					AS CMS_TAX_AMT
+					 , 0					AS CMS_CNT
+				  FROM        ATX100T A WITH(NOLOCK)
+				  INNER JOIN  BCM100T B WITH(NOLOCK) ON A.COMP_CODE		= B.COMP_CODE
+									                AND A.CUSTOM_CODE	= B.CUSTOM_CODE
+				 WHERE A.COMP_CODE	 = #{S_COMP_CODE}
+				   AND A.PUB_DATE	&gt;= #{PUB_DATE_FR}				--	계산서일 FROM
+				   AND A.PUB_DATE	&lt;= #{PUB_DATE_TO}				--	계산서일 TO
+				   AND A.BILL_DIVI_CODE	= #{BILL_DIV_CODE}				--	신고사업장
+				   AND A.INOUT_DIVI	 = #{INOUT_DIVI}						--	매입매출구분
+				   AND ((#{INOUT_DIVI} = '1' AND ((#{BILL_TYPE} = '11' AND A.PROOF_KIND = '51') OR (#{BILL_TYPE} = '20' AND A.PROOF_KIND = '52'))) OR
+						(#{INOUT_DIVI} = '2' AND ((#{BILL_TYPE} = '11' AND A.PROOF_KIND = '11') OR (#{BILL_TYPE} = '20' AND A.PROOF_KIND = '12'))))
+		<if test="@foren.Ognl@isNotEmpty(COMPANY_NUM)">
+				   AND B.COMPANY_NUM = #{COMPANY_NUM}
+		</if>
+				 GROUP BY A.PUB_DATE, B.COMPANY_NUM, B.CUSTOM_FULL_NAME
+				
+				UNION ALL
+		
+				SELECT A3.PUB_DATE
+					 , A3.COMPANY_NUM
+					 , ISNULL(B.CUSTOM_FULL_NAME, A3.CUSTOM_NAME)	AS CUSTOM_FULL_NAME
+					 , 0					 AS ERP_SUPPLY_AMT_I
+					 , 0					 AS ERP_TAX_AMT_I
+					 , 0					 AS ERP_CNT
+					 , SUM(A3.SUPPLY_AMT)	 AS CMS_SUPPLY_AMT
+					 , SUM(A3.TAX_AMT)		 AS CMS_TAX_AMT
+					 , COUNT(1)				 AS CMS_CNT
+				  FROM (
+						SELECT CASE A.INOUT_DIVI
+									WHEN '1' THEN A1.BILL_DIV_CODE
+									WHEN '2' THEN A2.BILL_DIV_CODE
+							   END	AS BILL_DIV_CODE
+							 , A.PUB_DATE
+							 , CASE A.INOUT_DIVI
+									WHEN '1' THEN A.PROV_REGNO
+									WHEN '2' THEN A.BUY_REGNO
+							   END	AS COMPANY_NUM
+							 , CASE A.INOUT_DIVI
+									WHEN '1' THEN A.PROV_COMP_NAME
+									WHEN '2' THEN A.BUY_COMP_NAME
+							   END	AS CUSTOM_NAME
+							 , A.SUPPLY_AMT
+							 , A.TAX_AMT
+						  FROM ACM400T A
+								LEFT OUTER JOIN (SELECT COMP_CODE, COMPANY_NUM, BILL_DIV_CODE FROM BOR120T GROUP BY COMP_CODE, COMPANY_NUM, BILL_DIV_CODE) A1    --- '1' 매입
+											 ON A1.COMP_CODE	= A.COMP_CODE
+											AND A1.COMPANY_NUM	= A.BUY_REGNO --
+								LEFT OUTER JOIN (SELECT COMP_CODE, COMPANY_NUM, BILL_DIV_CODE FROM BOR120T GROUP BY COMP_CODE, COMPANY_NUM, BILL_DIV_CODE) A2    --- '2' 매출
+											 ON A2.COMP_CODE	= A.COMP_CODE
+											AND A2.COMPANY_NUM	= A.PROV_REGNO
+						 WHERE A.COMP_CODE	 = #{S_COMP_CODE}
+						   AND A.PUB_DATE	&gt;= #{PUB_DATE_FR}				--	계산서일 FROM
+						   AND A.PUB_DATE	&lt;= #{PUB_DATE_TO}				--	계산서일 TO
+						   AND A.INOUT_DIVI	 = #{INOUT_DIVI}						--	매입매출구분
+					   ) A3 
+						LEFT OUTER JOIN	BCM100T B WITH(NOLOCK)
+									 ON A3.COMPANY_NUM	= B.COMPANY_NUM
+				 WHERE A3.BILL_DIV_CODE LIKE #{BILL_DIV_CODE}		--신고사업장
+				   AND ISNULL(B.USE_YN, 'N') = 'Y'                  --20210819 추가
+		<if test="@foren.Ognl@isNotEmpty(COMPANY_NUM)">
+				   AND A3.COMPANY_NUM	= #{COMPANY_NUM}
+		</if>
+				 GROUP BY A3.PUB_DATE, A3.COMPANY_NUM, ISNULL(B.CUSTOM_FULL_NAME, A3.CUSTOM_NAME), ISNULL(B.USE_YN, 'N')  --20210819 추가: , ISNULL(B.USE_YN, 'N')
+			   ) C
+		 GROUP BY C.PUB_DATE, C.COMPANY_NUM, C.CUSTOM_NAME
+		<if test="COMP_YN == &quot;Y&quot;">
+		HAVING SUM(C.ERP_SUPPLY_AMT)	 = SUM(C.CMS_SUPPLY_AMT)
+		   AND SUM(C.ERP_TAX_AMT)		 = SUM(C.CMS_TAX_AMT)
+		   AND SUM(C.ERP_CNT)			 = SUM(C.CMS_CNT) 
+		</if>
+		<if test="COMP_YN == &quot;N&quot;">
+		HAVING SUM(C.ERP_SUPPLY_AMT)	!= SUM(C.CMS_SUPPLY_AMT)
+			OR SUM(C.ERP_TAX_AMT)		!= SUM(C.CMS_TAX_AMT)
+			OR SUM(C.ERP_CNT)			!= SUM(C.CMS_CNT) 
+		</if>
+		 ORDER BY C.PUB_DATE, C.COMPANY_NUM
+	</select>
+</mapper>

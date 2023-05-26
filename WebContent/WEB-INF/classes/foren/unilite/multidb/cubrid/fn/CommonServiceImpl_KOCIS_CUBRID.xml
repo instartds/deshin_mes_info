@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="commonServiceImpl_KOCIS_CUBRID">
+
+<!-- CUBRID 용 Unique key 생성 쿼리 -->
+<select id="commonServiceImpl_KOCIS_CUBRID.selectUniqueKey" parameterType="Map" resultType="rMap">
+/* commonServiceImpl_KOCIS_CUBRID.selectUniqueKey */ 
+SELECT ( SELECT TO_CHAR(RANDOM(), '0000000000') + TO_CHAR(SYSDATETIME, 'YYYYMMDDHH24MISSFF') + TO_CHAR(RANDOM()%10000, '00000') ) AS UNIQUE_KEY
+  FROM DB_ROOT
+</select>
+
+<!-- CUBRID 용 BSA300T의 REF_ITEM 리턴 -->
+<select id="commonServiceImpl_KOCIS_CUBRID.getRefItem_01" parameterType="Map" resultType="rMap">
+/* commonServiceImpl_KOCIS_CUBRID.getRefItem_01 */ 
+SELECT NVL(REF_ITEM, '1') AS REF_ITEM
+  FROM BSA300T                            
+ WHERE USER_ID   = #{S_USER_ID} 
+   AND COMP_CODE = #{S_COMP_CODE}
+</select>
+
+<!-- CUBRID 용 BSA300T의 REF_ITEM 리턴 -->
+<select id="commonServiceImpl_KOCIS_CUBRID.getRefItem_02" parameterType="Map" resultType="rMap">
+/* commonServiceImpl_KOCIS_CUBRID.getRefItem_02 */ 
+SELECT M1.REF_CODE1
+  FROM BSA100T M1 
+ WHERE M1.COMP_CODE = #{S_COMP_CODE}
+   AND M1.MAIN_CODE = 'A169'
+   AND M1.SUB_CODE  = '22'
+</select>
+
+<!-- CUBRID 용 BSA100T의 코드 - DATE_FORMAT 리턴 -->
+<select id="commonServiceImpl_KOCIS_CUBRID.getDateFormat_01" parameterType="Map" resultType="rMap">
+/* commonServiceImpl_KOCIS_CUBRID.getDateFormat_01 */ 
+SELECT CODE_NAME AS DATE_FORMAT
+  FROM (
+    SELECT ROWNUM RN, CODE_NAME
+      FROM BSA100T 
+     WHERE COMP_CODE = #{S_COMP_CODE}
+       AND MAIN_CODE = 'B044'
+       AND REF_CODE1 = 'Y'
+) WHERE RN = 1
+</select>
+
+<!-- 예산년도 -->
+<select id="commonServiceImpl_KOCIS_CUBRID.fnGetBudgAcYyyy_01" parameterType="Map" resultType="rMap">
+/* commonServiceImpl_KOCIS_CUBRID.fnGetBudgAcYyyy_01 */
+SELECT  fnGetBudgAcYyyy(#{S_COMP_CODE}, #{BUDG_YYYYMM}) AS AC_YYYY
+  FROM    DB_ROOT
+</select>
+
+<select id="commonServiceImpl_KOCIS_CUBRID.fnGetBudgLevelName_02" parameterType="Map" resultType="rMap">
+/* commonServiceImpl_KOCIS_CUBRID.fnGetBudgLevelName_02 */
+SELECT    CAST(CODE_LEVEL AS INTEGER) AS CODE_LEVEL
+  FROM    AFB300T 
+ WHERE    COMP_CODE   = #{S_COMP_CODE}
+   AND    BASE_CODE   = '01'
+   AND    AC_YYYY     = #{AC_YYYY}
+</select>
+
+<select id="commonServiceImpl_KOCIS_CUBRID.fnGetBudgLevelName_03" parameterType="Map" resultType="rMap">
+/* commonServiceImpl_KOCIS_CUBRID.fnGetBudgLevelName_03 */
+SELECT  A.SUB_CODE, A.CODE_NAME
+  FROM    (
+        SELECT  COMP_CODE, ROW_NUMBER() OVER (ORDER BY SORT_SEQ, SUB_CODE) SEQ
+              , SUB_CODE, CODE_NAME
+        FROM    BSA100T 
+        WHERE   COMP_CODE    = #{S_COMP_CODE}
+        AND     MAIN_CODE    = 'A128'  --예산과목구분
+        AND     SUB_CODE    &lt;&gt; '$'
+   ) A
+ WHERE  A.COMP_CODE     = #{S_COMP_CODE}
+   AND  A.SEQ       &lt;= #{CODE_LEVEL}
+</select>
+
+<!-- 예산설정정보 조회 -->
+<select id="commonServiceImpl_KOCIS_CUBRID.fnGetBudgInfo" parameterType="Map" resultType="rMap">
+/* commonServiceImpl_KOCIS_CUBRID.fnGetBudgInfo */
+    SELECT NVL(S.CTL_UNIT     ,'')      AS CTL_UNIT             --예산통제단위    (1:관        , 2:항      , 3:세항, 4:세세항, 5:목)
+         , NVL(S.FR_CTL_MONTH ,0 )      AS FR_CTL_MONTH         --FROM 통제제외월
+         , NVL(S.TO_CTL_MONTH ,0 )      AS TO_CTL_MONTH         --TO   통제제외월
+         , NVL(B.CTL_CAL_UNIT ,'1')     AS CTL_CAL_UNIT         --예산통제계산단위(1:부서별    , 2:회사전체                        )
+         , NVL(B.CTL_TERM_UNIT,'1')     AS CTL_TERM_UNIT        --예산통제기간단위(1:월        , 2:분기    , 3:반기, 4:년          )
+      FROM            AFB300T AS S 
+           LEFT  JOIN AFB400T AS B  ON B.COMP_CODE   = S.COMP_CODE
+                                   AND B.AC_YYYY     = S.AC_YYYY
+                                   AND B.BUDG_CODE   = #{BUDG_CODE}
+     WHERE S.COMP_CODE = #{S_COMP_CODE}
+       AND S.BASE_CODE = '01'
+       AND S.AC_YYYY   = #{AC_YYYY}
+</select>
+
+<!-- 예산통제단위(AFB300T.CTL_UNIT)에 따른 예산코드 찾기 -->
+<select id="commonServiceImpl_KOCIS_CUBRID.fnPossibleBudgAmt_01" parameterType="Map" resultType="rMap">
+/* commonServiceImpl_KOCIS_CUBRID.fnPossibleBudgAmt_01 */
+    SELECT B.BUDG_CODE
+      FROM            AFB410T AS A 
+           INNER JOIN AFB400T AS B  ON B.COMP_CODE    = A.COMP_CODE
+                                   AND B.AC_YYYY      = A.AC_YYYY
+                                   AND A.BUDG_CODE LIKE B.BUDG_CODE + '%'
+                                   AND B.CODE_LEVEL   = #{CTL_UNIT}
+     WHERE A.COMP_CODE = #{S_COMP_CODE}
+       AND A.AC_YYYY   = #{AC_YYYY}
+       AND A.DEPT_CODE = #{DEPT_CODE}
+       AND A.BUDG_CODE = #{BUDG_CODE}
+</select>
+
+<!-- 예산통제기간단위(AFB400T.CTL_TERM_UNIT)에 따라 실적집계 대상 기간 계산. -->
+<select id="commonServiceImpl_KOCIS_CUBRID.fnPossibleBudgAmt_02" parameterType="Map" resultType="rMap">
+/* commonServiceImpl_KOCIS_CUBRID.fnPossibleBudgAmt_02 */
+    SELECT #{AC_YYYY}                      + SUBSTRING(FN_DATE, 5, 2) AS FRYYYYMM
+         , SUBSTRING(#{BUDG_YYYYMM}, 1, 4) + SUBSTRING(TO_DATE, 5, 2) AS TOYYYYMM
+      FROM BOR100T
+     WHERE COMP_CODE = #{S_COMP_CODE}
+</select>
+
+<!-- 예산통제기간단위(AFB400T.CTL_TERM_UNIT)에 따라 실적집계 대상 기간 계산. -->
+<select id="commonServiceImpl_KOCIS_CUBRID.fnPossibleBudgAmt_03" parameterType="Map" resultType="rMap">
+/* commonServiceImpl_KOCIS_CUBRID.fnPossibleBudgAmt_03 */
+    SELECT SUBSTRING(#{BUDG_YYYYMM}, 1, 4) + RIGHT('00' + REF_CODE1, 2) AS FRYYYYMM
+         , SUBSTRING(#{BUDG_YYYYMM}, 1, 4) + RIGHT('00' + REF_CODE2, 2) AS TOYYYYMM
+      FROM BSA100T
+     WHERE COMP_CODE = #{S_COMP_CODE}
+       AND MAIN_CODE = CASE WHEN #{CTL_TERM_UNIT} = '2'
+                            THEN 'A074'     --분기구분
+                            ELSE 'A075'     --반기구분
+                        END
+       AND SUB_CODE  &lt;&gt; '$'
+       AND REF_CODE1 &lt;= TO_NUMBER(RIGHT(#{BUDG_YYYYMM}, 2))
+       AND REF_CODE2 &gt;= TO_NUMBER(RIGHT(#{BUDG_YYYYMM}, 2))
+</select>
+
+<!-- 실적금액 집계 -->
+<select id="commonServiceImpl_KOCIS_CUBRID.fnPossibleBudgAmt_04" parameterType="Map" resultType="rMap">
+/* commonServiceImpl_KOCIS_CUBRID.fnPossibleBudgAmt_04 */
+        SELECT  NVL(SUM(NVL(BUDG_CONF_I ,0)
+                              + NVL(BUDG_CONV_I ,0)
+                              + NVL(BUDG_ASGN_I ,0)
+                              + NVL(BUDG_SUPP_I ,0)
+                              + NVL(BUDG_IWALL_I,0)
+                              - NVL(EX_AMT_I ,0)
+                              - NVL(AC_AMT_I ,0)
+                              - NVL(DRAFT_AMT,0)
+                              - NVL(ORDER_AMT,0)
+                              - NVL(REQ_AMT  ,0)), 0) AS BALN_I
+             ,  NVL(SUM(NVL(BUDG_CONF_I ,0)
+                              + NVL(BUDG_CONV_I ,0)
+                              + NVL(BUDG_ASGN_I ,0)
+                              + NVL(BUDG_SUPP_I ,0)
+                              + NVL(BUDG_IWALL_I,0)), 0) AS BUDG_I
+             ,  NVL(SUM(NVL(EX_AMT_I ,0)
+                              + NVL(AC_AMT_I ,0)
+                              + NVL(DRAFT_AMT,0)
+                              + NVL(ORDER_AMT,0)
+                              + NVL(REQ_AMT  ,0)), 0) AS ACTUAL_I
+          FROM AFB510T 
+         WHERE COMP_CODE        = #{S_COMP_CODE}
+                    
+           AND ((BUDG_YYYYMM    = #{BUDG_YYYYMM}    AND #{CTL_CAL_UNIT}  = '1') OR
+                (BUDG_YYYYMM   &gt;= #{FRYYYYMM}    AND
+                 BUDG_YYYYMM   &lt;= #{TOYYYYMM}    AND #{CTL_CAL_UNIT} &lt;&gt; '1'))
+                    
+           AND ((DEPT_CODE      = #{DEPT_CODE}      AND #{CTL_CAL_UNIT}   = '1') OR
+                (#{CTL_CAL_UNIT}  = '2'))
+                    
+           AND BUDG_CODE     LIKE #{CTL_BUDG_CODE} + '%'
+           AND BUDG_GUBUN    LIKE #{BUDG_GUBUN}    + '%'
+</select>
+</mapper>

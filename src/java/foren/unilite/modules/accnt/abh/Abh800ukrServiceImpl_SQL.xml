@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="abh800ukrServiceImpl">
+
+	<!-- getBranchInfo에서 사용 중인 Branch 확인하여, 해당 은행에서 조회 (단, 하나은행은 아직 쿼리 없음) -->
+	<select id="abh800ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		SELECT
+            A.COMP_CODE   /*법인  */
+          , A.REMIT_DAY   /*집금일자  */
+          , A.SEQ     /*순번  */
+          , B1.BANK_CODE   						 AS OUT_BANK/*출금은행코드 */
+          , C1.CUSTOM_NAME                       AS OUT_BANK_NM
+          , A.OUT_ACCT_NO   /*출금계좌번호 */
+          , A.OUT_SAVE_CODE  /*출금통장번호 */
+          , M1.SAVE_NAME   AS OUT_SAVE_NAME     -- 출금통장명
+          , B2.BANK_CODE   						AS IN_BANK/*입금은행코드 */
+          , C2.CUSTOM_NAME                       AS IN_BANK_NM
+          , A.IN_ACCT_NO   /*입금계좌번호 */
+          , A.IN_SAVE_CODE   /*입금통장번호 */
+          , M2.SAVE_NAME   AS IN_SAVE_NAME     -- 입금통장명
+          , A.REMIT_AMT   /*이체금액  */
+          , A.FEE_AMT    /*수수료  */
+          , A.REMIT_CURBAL   /*이체후잔액 */
+          , A.REMIT_TIME   /*집금시작시간 */
+          , A.DEPT_CODE   /*부서코드  */
+          , A.DEPT_NAME   /*부서명  */
+          , A.DIV_CODE    /*사업장코드 */
+          , A.EX_DATE    /*결의일자  */
+          , A.EX_NUM    /*결의번호  */
+          , A.AGREE_YN    /*승인여부  */
+          , A.AC_DATE    /*회계일자  */
+          , A.SLIP_NUM    /*회계번호  */
+          , A.INSERT_DB_USER  /*입력자  */
+          , A.INSERT_DB_TIME  /*입력일  */
+          , A.DOC_ID    /*자동순번*/
+         FROM   ABH800T A  WITH (NOLOCK)
+                      LEFT  JOIN ABH100T B1 WITH (NOLOCK) ON B1.COMP_CODE             = A.COMP_CODE
+                                                         AND RIGHT(B1.BR_BANK_CODE, 3) = A.OUT_BANK
+                                                         AND B1.USE_YN                = 'Y'
+                      LEFT  JOIN ABH100T B2 WITH (NOLOCK) ON B2.COMP_CODE             = A.COMP_CODE
+                                                         AND RIGHT(B2.BR_BANK_CODE, 3) = A.IN_BANK
+                                                         AND B2.USE_YN                = 'Y'
+                      LEFT  JOIN BCM100T C1 WITH (NOLOCK) ON C1.COMP_CODE             = B1.COMP_CODE
+                                                         AND C1.CUSTOM_CODE           = B1.BANK_CODE
+                                                         AND C1.CUSTOM_TYPE           = '4'
+                      LEFT  JOIN BCM100T C2 WITH (NOLOCK) ON C2.COMP_CODE             = B2.COMP_CODE
+                                                         AND C2.CUSTOM_CODE           = B2.BANK_CODE
+                                                         AND C2.CUSTOM_TYPE           = '4'
+                      LEFT  JOIN AFS100T M1 WITH (NOLOCK) ON M1.COMP_CODE             = A.COMP_CODE
+                                                         AND M1.SAVE_CODE             = A.OUT_SAVE_CODE
+                      LEFT  JOIN AFS100T M2 WITH (NOLOCK) ON M2.COMP_CODE             = A.COMP_CODE
+                                                         AND M2.SAVE_CODE             = A.IN_SAVE_CODE                                   
+        WHERE A.COMP_CODE = #{S_COMP_CODE} 
+            <if test="@foren.Ognl@isNotEmpty(APPR_DATE_FR)">
+            AND A.REMIT_DAY &gt;= #{APPR_DATE_FR}
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(APPR_DATE_TO)">
+            AND A.REMIT_DAY &lt;= #{APPR_DATE_TO}
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">            
+            AND A.DIV_CODE IN   
+                <foreach collection="DIV_CODE" item="item" separator="," close=")" open="(">    
+                #{item}
+                </foreach>          
+            </if>       
+            <if test="@foren.Ognl@isNotEmpty(BANK_CODE)">
+             AND (A.OUT_BANK = #{BANK_CODE} OR A.IN_BANK = #{BANK_CODE})
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(SAVE_CODE)">
+             AND (A.OUT_SAVE_CODE = #{SAVE_CODE} OR A.IN_SAVE_CODE = #{SAVE_CODE})
+            </if>
+            <if test="WORK_DIVI == &quot;1&quot;"> 
+             AND ISNULL(A.EX_DATE,'') = ''
+            </if>
+            <if test="WORK_DIVI == &quot;2&quot;">
+             AND ISNULL(A.EX_DATE,'') != '' 
+            </if>
+           ORDER BY A.REMIT_DAY, A.SEQ, A.REMIT_TIME
+	</select>	
+
+
+	<!--자동기표일 때, 수정만 가능 / 자동기표 취소일 때, 추가/수정/삭제 모두 불가능 -->
+	<update id="abh800ukrServiceImpl.updateDetail" parameterType="Map">		
+		UPDATE ABH800T
+		   SET DIV_CODE			= #{DIV_CODE}
+		     , DEPT_CODE		= #{DEPT_CODE}
+		     , UPDATE_DB_USER	= #{S_USER_ID}
+		     , UPDATE_DB_TIME	= GETDATE()
+		     
+		 WHERE COMP_CODE		= #{S_COMP_CODE}
+		   AND REMIT_DAY		= #{REMIT_DAY}
+		   AND SEQ				= ${SEQ}
+	</update>
+
+	<!-- SP 실행을 위한 LOG table에 data insert -->
+	<insert id="abh800ukrServiceImpl.insertLogTable" parameterType="Map">     
+	    INSERT INTO L_ABH800T
+	           (
+	             KEY_VALUE
+       		   , OPR_FLAG
+			   , STATE
+			   , COMP_CODE
+			   , REMIT_DAY
+			   , SEQ
+			   , OUT_BANK
+			   , OUT_ACCT_NO
+			   , OUT_SAVE_CODE
+			   , IN_BANK
+			   , IN_ACCT_NO
+			   , IN_SAVE_CODE
+			   , REMIT_AMT
+			   , FEE_AMT
+			   , REMIT_CURBAL
+			   , REMIT_TIME
+			   , DEPT_CODE
+			   , DEPT_NAME
+			   , DIV_CODE
+			   , EX_DATE
+			   , EX_NUM
+			   , AGREE_YN
+			   , AC_DATE
+			   , SLIP_NUM
+			   , INPUT_PATH
+			   , AUTO_NUM
+	           , INSERT_DB_USER
+	           , INSERT_DB_TIME     
+	           )
+	     VALUES
+	           ( 
+	             #{KEY_VALUE}
+       		   , #{OPR_FLAG}         
+			   , #{STATE}
+			   , #{COMP_CODE}
+			   , #{REMIT_DAY}       
+			   , #{DOC_ID}
+			   , #{OUT_BANK}       
+			   , #{OUT_ACCT_NO}
+			   , #{OUT_SAVE_CODE}
+			   , #{IN_BANK}       
+			   , #{IN_ACCT_NO}
+			   , #{IN_SAVE_CODE}
+			   , #{REMIT_AMT}       
+			   , #{FEE_AMT}
+			   , #{REMIT_CURBAL}
+			   , #{REMIT_TIME}       
+			   , #{DEPT_CODE}
+			   , #{DEPT_NAME}
+			   , #{DIV_CODE}       
+			   , #{EX_DATE}
+			   , NULLIF(#{EX_NUM}, 0)
+			   , #{AGREE_YN}       
+			   , #{AC_DATE}
+			   , NULLIF(#{SLIP_NUM}, 0)
+			   , #{INPUT_PATH}
+			   , #{DOC_ID}
+	           , #{S_USER_ID}
+	           , GETDATE()         
+	           ) 
+	</insert>
+	
+    <update id="USP_ACCNT_AutoSlip75" parameterType="Map" statementType="CALLABLE">      
+        {call USP_ACCNT_AutoSlip75 (
+            #{S_COMP_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{INPUT_DATE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{WORK_GUBUN, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{CALL_PATH, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{S_USER_ID, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{KEY_VALUE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{LANG_TYPE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{ERROR_DESC, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+        )}
+    </update>
+    
+    <update id="USP_ACCNT_AutoSlip75Cancel" parameterType="Map" statementType="CALLABLE">      
+        {call USP_ACCNT_AutoSlip75Cancel (
+            #{S_COMP_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{KEY_VALUE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{S_USER_ID, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{LANG_TYPE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{ERROR_DESC, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+        )}
+    </update>
+     
+	
+	<!-- AFS100T List -->
+    <select id="abh800ukrServiceImpl.selectAfs100TList" parameterType="Map" resultType="rMap">
+        /* abh800ukrServiceImpl.selectAfs100TList */
+        SELECT  *
+        FROM    AFS100T WITH (NOLOCK)
+    </select>
+	
+    <!-- 계좌번호 복호화 -->
+    <update id="abh800ukrServiceImpl.updateAfs100T" parameterType="Map">
+        /* abh800ukrServiceImpl.updateAfs100T */
+        UPDATE  AFS100T
+        SET     BANK_ACCOUNT_ORG = #{BANK_ACCOUNT_ORG}
+        WHERE   COMP_CODE   = #{COMP_CODE}
+        AND     SAVE_CODE   = #{SAVE_CODE}
+    </update>
+    
+	<!-- 집금데이터 가져오기 -->
+	<update id="abh800ukrServiceImpl.getCollectionData" parameterType="Map" statementType="CALLABLE">
+		{call USP_HIST_ACCT_CONSOL_SCRA (
+			#{COMP_CODE		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{LANG_TYPE		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{USER_ID		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{ERROR_DESC	, mode=OUT	, jdbcType=VARCHAR	, javaType=java.lang.String}
+		)}
+	</update>
+	
+    <!-- ACCT List -->
+    <select id="abh800ukrServiceImpl.selectAcctList" parameterType="Map" resultType="rMap">
+        /* abh800ukrServiceImpl.selectAcctList */
+        SELECT  DOC_ID 
+              , COMP_CODE
+              , REMIT_DAY
+              , SEQ
+              , OUT_ACCT_NO
+              , IN_ACCT_NO
+              , JOB_YN
+        FROM    ABH800T WITH (NOLOCK)
+        WHERE   1=1
+        AND     JOB_YN = 'N'
+    </select>
+    
+    <!-- 계좌번호 암호화 -->
+    <update id="abh800ukrServiceImpl.updateAcct" parameterType="Map">
+        /* abh800ukrServiceImpl.updateAcct */
+        UPDATE  ABH800T
+        SET     OUT_ACCT_NO = #{OUT_ACCT_NO}
+              , IN_ACCT_NO  = #{IN_ACCT_NO}
+              , JOB_YN      = #{JOB_YN}
+        WHERE   1=1
+        AND     DOC_ID      = #{DOC_ID}
+        AND     JOB_YN      = 'N'
+    </update>
+</mapper>

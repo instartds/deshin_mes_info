@@ -1,0 +1,709 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_str400rkrv_ypServiceImpl">
+	<select id="s_str400rkrv_ypServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+		    SET NOCOUNT ON
+			SET ARITHABORT ON
+
+			DECLARE @CompCode	NVARCHAR(08)	--법인코드
+				  		, @UserId		NVARCHAR(100)	--사용자ID
+
+			SET @CompCode	= #{S_COMP_CODE}
+			SET @UserId		= #{S_USER_ID}
+
+			SELECT A.COMP_CODE
+			     , A.DIV_CODE
+			     , A.INOUT_CODE AS CUSTOM_CODE
+				 , C.CUSTOM_NAME												AS CUSTOM_NAME
+				 , SUM(CASE WHEN A.INOUT_TYPE = '2' THEN ISNULL(A.ORDER_UNIT_O, 0) + ISNULL(A.INOUT_TAX_AMT, 0)
+                            ELSE (ISNULL(A.ORDER_UNIT_O, 0) + ISNULL(A.INOUT_TAX_AMT, 0)) * -1
+                       END)  AS INOUT_AMT_TOT
+			  FROM            BTR100T A WITH (NOLOCK)
+		           LEFT  JOIN BCM100T C WITH (NOLOCK) ON C.COMP_CODE	= A.COMP_CODE
+													 AND C.CUSTOM_CODE	= A.INOUT_CODE
+			 WHERE A.COMP_CODE      = @CompCode
+			   AND A.DIV_CODE       = #{DIV_CODE}										--사업장
+			   AND A.INOUT_DATE    >= #{INOUT_DATE_FR}							--출고일(Fr)
+			   AND A.INOUT_DATE    <![CDATA[<=]]>  #{INOUT_DATE_TO}		--출고일(To)
+			   AND (A.INOUT_TYPE = '2' OR A.INOUT_TYPE = '3')
+			   AND A.INOUT_CODE_TYPE = '4'
+			   <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+			   AND A.INOUT_CODE     = #{CUSTOM_CODE}			--거래처코드
+			   </if>
+			   <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			   AND C.CUSTOM_NAME LIKE #{CUSTOM_NAME} + '%'		--거래처명
+			   </if>
+			   <if test="@foren.Ognl@isNotEmpty(INOUT_PRSN)">
+			   AND A.INOUT_PRSN     = #{INOUT_PRSN}					--출고담당
+			   </if>
+		     GROUP BY A.COMP_CODE, A.DIV_CODE, A.INOUT_CODE, C.CUSTOM_NAME
+			 ORDER BY A.COMP_CODE, A.DIV_CODE, A.INOUT_CODE
+
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+	</select>
+
+    <select id="s_str400rkrv_ypServiceImpl.printList1" parameterType="Map" resultType="rMap">
+       BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+			DECLARE @COMP_CODE				NVARCHAR(08)             --(필수) 법인코드
+		          , @DIV_CODE				NVARCHAR(08)             --(필수) 사업장
+		          , @USER_ID				NVARCHAR(100)             --(필수) USER ID
+		          , @INOUT_DATE_FR			NVARCHAR(08)		     --(선택) 출고일(FR)
+		          , @INOUT_DATE_TO			NVARCHAR(08)             --(선택) 출고일(TO)
+		          , @INOUT_CODE				NVARCHAR(1000)           --(선택) 거래처
+		          , @PRINT_USER				NVARCHAR(100)            --(선택) 출력자
+		          , @VIEW_PRINT_INFO_YN		NVARCHAR(01)             --인쇄출력정보 여부
+
+		    SET @COMP_CODE     = ISNULL(#{S_COMP_CODE}, '')
+		    SET @DIV_CODE      = ISNULL(#{DIV_CODE}, '')
+		    SET @USER_ID       = ISNULL(#{S_USER_ID}, '')
+		    SET @INOUT_DATE_FR = #{INOUT_DATE_FR}
+		    SET @INOUT_DATE_TO = #{INOUT_DATE_TO}
+		    SET @INOUT_CODE    = ISNULL(#{CUSTOM_CODES}, '')
+
+		    SELECT @PRINT_USER = USER_NAME
+		      FROM BSA300T WITH(NOLOCK)
+		     WHERE COMP_CODE = @COMP_CODE
+		       AND USER_ID   = @USER_ID
+
+		    SELECT @VIEW_PRINT_INFO_YN = SUB_CODE
+		      FROM BSA100T WITH(NOLOCK)
+		     WHERE COMP_CODE = @COMP_CODE
+		       AND MAIN_CODE = 'B249'
+		       AND SUB_CODE != '$'
+		       AND REF_CODE1 = 'Y'
+
+			SELECT A.INOUT_NUM
+		         , A.INOUT_DATE													--공급일자
+		         , SUBSTRING(A.INOUT_DATE, 1, 4) AS YYYY						--공급일자YYYY
+		         , SUBSTRING(A.INOUT_DATE, 5, 2) AS MM							--공급일자MM
+		         , SUBSTRING(A.INOUT_DATE, 7, 2) AS DD							--공급일자DD
+		         , A.INOUT_CODE													--거래처 코드
+		         , C.CUSTOM_NAME												--거래처 명
+		         , C.TOP_NAME													--거래처 대표자
+		         , CASE WHEN ISNULL(C.COMPANY_NUM,'') = ''
+				        THEN ''
+		                ELSE SUBSTRING(C.COMPANY_NUM,1,3) + '-' + SUBSTRING(C.COMPANY_NUM,4,2) + '-' + SUBSTRING(C.COMPANY_NUM,6,5)
+		            END AS COMPANY_NUM											--거래처 등록번호
+		         , C.ZIP_CODE													--거래처 우편번호
+		         , RTRIM(ISNULL(C.ADDR1,'') + ISNULL(C.ADDR2,'')) AS ADDR
+		         , E.DIV_CODE    AS MY_CUSTOM_CODE								--사업장코드
+		         , E.DIV_NAME    AS MY_CUSTOM_NAME								--상호
+		         , E.REPRE_NAME  AS MY_TOP_NAME									--대표자
+		         , E.COMP_TYPE													--업태
+		         , E.COMP_CLASS													--종목
+		         , CASE WHEN ISNULL(E.COMPANY_NUM,'') = ''
+		                THEN ''
+					    ELSE SUBSTRING(E.COMPANY_NUM,1,3) + '-' + SUBSTRING(E.COMPANY_NUM,4,2) + '-' + SUBSTRING(E.COMPANY_NUM,6,5)
+		            END          AS MY_COMPANY_NUM								--등록번호
+		         , E.ZIP_CODE    AS MY_ZIP_CODE									--우편번호
+		         , E.ADDR		 AS MY_ADDR										--주소
+		         , E.TELEPHON													--전화번호
+		         , E.FAX_NUM													--팩스
+		         , A.INOUT_NUM   AS INOUT_NUM
+		         , '*' + A.INOUT_NUM + '*' AS BARCODE
+		         , ROW_NUMBER() OVER(PARTITION BY A.INOUT_NUM + A.TAX_TYPE ORDER BY A.COMP_CODE, A.DIV_CODE, A.INOUT_NUM, B.ITEM_NAME, INOUT_SEQ) AS PRINT_SEQ
+		         , A.INOUT_SEQ   AS INOUT_SEQ
+		         , A.ITEM_CODE
+		         , B.ITEM_NAME
+		         , B.SPEC
+		         , CASE WHEN (CASE WHEN A7.SUPPLY_TYPE = '2' THEN CASE WHEN SUBSTRING(T1.LOT_NO, 8, 2) != '00'
+				                                            THEN T3.ORIGIN
+		                                                    ELSE CASE WHEN ISNULL(T5.REF_CODE1, '') = '' THEN T5.CODE_NAME ELSE T5.REF_CODE1 END
+		                                                END
+		                                          ELSE CASE WHEN SUBSTRING(A.LOT_NO, 8, 2) != '00'
+												            THEN A2.ORIGIN
+		                                                    ELSE CASE WHEN ISNULL(A4.REF_CODE1, '') = '' THEN A4.CODE_NAME ELSE A4.REF_CODE1 END
+		                                                END
+		                       END) = ''
+		                THEN ISNULL(A.WONSANGI_NUM, '')
+		                ELSE (CASE WHEN A7.SUPPLY_TYPE = '2' THEN CASE WHEN SUBSTRING(T1.LOT_NO, 8, 2) != '00'
+				                                            THEN T3.ORIGIN
+		                                                    ELSE CASE WHEN ISNULL(T5.REF_CODE1, '') = '' THEN T5.CODE_NAME ELSE T5.REF_CODE1 END
+		                                                END
+		                                          ELSE CASE WHEN SUBSTRING(A.LOT_NO, 8, 2) != '00'
+												            THEN A2.ORIGIN
+		                                                    ELSE CASE WHEN ISNULL(A4.REF_CODE1, '') = '' THEN A4.CODE_NAME ELSE A4.REF_CODE1 END
+		                                                END
+		                       END)
+		            END AS REGION
+		         , A.ORDER_UNIT
+		       --  , ISNULL(A.ORDER_UNIT_Q, 0)        AS INOUT_Q
+		       --  , ISNULL(A.ORDER_UNIT_P, 0)		AS INOUT_P
+		       --  , ISNULL(A.ORDER_UNIT_O, 0)        AS INOUT_O
+		       --  , ISNULL(A.INOUT_TAX_AMT, 0)		AS INOUT_TAX_O
+		       --  , ISNULL(A.ORDER_UNIT_O, 0) + ISNULL(A.INOUT_TAX_AMT, 0)   AS INOUT_TOT
+		       --  , ISNULL(X.ORDER_UNIT_Q, 0)        AS INOUT_Q_AMT
+		       --  , ISNULL(X.ORDER_UNIT_P, 0)		AS INOUT_P_AMT
+		       --  , ISNULL(X.ORDER_UNIT_O, 0)        AS INOUT_O_AMT
+		       --  , ISNULL(X.INOUT_TAX_AMT, 0)		AS INOUT_TAX_O_AMT
+		       --  , ISNULL(X.ORDER_UNIT_O, 0) + ISNULL(X.INOUT_TAX_AMT, 0)   AS INOUT_TOT_AMT
+		       --  , REPLACE(unilite.fnConvertToAmt(ISNULL(X.ORDER_UNIT_O, 0) + ISNULL(X.INOUT_TAX_AMT, 0)), ' ','') + '원정'   AS INOUT_TOT_AMT_KO
+		        , CASE WHEN A.INOUT_TYPE = '3' THEN ISNULL(A.ORDER_UNIT_Q * -1, 0)
+						ELSE ISNULL(A.ORDER_UNIT_Q, 0)
+				   END	AS INOUT_Q
+		         ,  ISNULL(A.ORDER_UNIT_P, 0)	AS INOUT_P
+		         , CASE WHEN A.INOUT_TYPE = '3'THEN ISNULL(A.ORDER_UNIT_O * -1, 0)
+						ELSE ISNULL(A.ORDER_UNIT_O, 0)
+				   END  AS INOUT_O
+		         , CASE WHEN A.INOUT_TYPE = '3'THEN ISNULL(A.INOUT_TAX_AMT * -1, 0)
+						ELSE ISNULL(A.INOUT_TAX_AMT, 0)
+				   END  AS INOUT_TAX_O
+		          , CASE WHEN A.INOUT_TYPE = '3'THEN (ISNULL(A.ORDER_UNIT_O , 0) + ISNULL(A.INOUT_TAX_AMT , 0)) * -1
+						ELSE ISNULL(A.ORDER_UNIT_O, 0) + ISNULL(A.INOUT_TAX_AMT, 0)
+				   END  AS INOUT_TOT
+		         , CASE WHEN A.INOUT_TYPE = '3'THEN ISNULL(X.ORDER_UNIT_Q * -1, 0)
+						ELSE ISNULL(X.ORDER_UNIT_Q, 0)
+				   END  AS INOUT_Q_AMT
+		         ,  ISNULL(X.ORDER_UNIT_P, 0)	AS INOUT_P_AMT
+		         , CASE WHEN A.INOUT_TYPE = '3'THEN ISNULL(X.ORDER_UNIT_O * -1, 0)
+						ELSE ISNULL(X.ORDER_UNIT_O, 0)
+				   END  AS INOUT_O_AMT
+		         , CASE WHEN A.INOUT_TYPE = '3'THEN ISNULL(X.INOUT_TAX_AMT * -1, 0)
+						ELSE ISNULL(X.INOUT_TAX_AMT, 0)
+				   END 	AS INOUT_TAX_O_AMT
+		         , CASE WHEN A.INOUT_TYPE = '3'THEN (ISNULL(X.ORDER_UNIT_O, 0) + ISNULL(X.INOUT_TAX_AMT, 0)) * -1
+						ELSE ISNULL(X.ORDER_UNIT_O, 0) + ISNULL(X.INOUT_TAX_AMT, 0)
+				   END AS INOUT_TOT_AMT
+		         , CASE WHEN A.INOUT_TYPE = '3' THEN REPLACE(unilite.fnConvertToAmt((ISNULL(X.ORDER_UNIT_O, 0) + ISNULL(X.INOUT_TAX_AMT, 0)) * -1), ' ','') + '원정'
+					    ELSE REPLACE(unilite.fnConvertToAmt(ISNULL(X.ORDER_UNIT_O, 0) + ISNULL(X.INOUT_TAX_AMT, 0)), ' ','') + '원정'
+				   END  AS INOUT_TOT_AMT_KO
+		         , CASE WHEN A7.SUPPLY_TYPE = '2' THEN CASE WHEN SUBSTRING(T1.LOT_NO, 8, 2) != '00'
+				                                            THEN T3.FARM_NAME + '(' + T3.CERT_NO + ')'
+		                                                    ELSE CASE WHEN ISNULL(T2.CUSTOM_NAME1, '') = '' THEN T2.CUSTOM_NAME  + '(' + T4.CERT_NO + ')'
+		                                                                                                    ELSE T2.CUSTOM_NAME1 + '(' + T4.CERT_NO + ')'
+		                                                          END
+		                                                END
+		                                          ELSE CASE WHEN SUBSTRING(A.LOT_NO, 8, 2) != '00'
+												            THEN A2.FARM_NAME + '(' + A2.CERT_NO + ')'
+		                                                    ELSE CASE WHEN ISNULL(A1.CUSTOM_NAME1, '') = '' THEN A1.CUSTOM_NAME  + '(' + A3.CERT_NO + ')'
+		                                                                                                    ELSE A1.CUSTOM_NAME1 + '(' + A3.CERT_NO + ')'
+		                                                          END
+		                                                END
+		            END AS REMARK
+		         , @PRINT_USER				AS PRINT_USER                   --출력자 이름
+		         , @VIEW_PRINT_INFO_YN		AS VIEW_PRINT_INFO_YN           --인쇄출력정보 표시여부
+		         , A.INOUT_NUM + A.TAX_TYPE AS GROUP_KEY
+		         , Z.CODE_NAME              AS TAX_TYPE
+		      FROM            BTR100T A       WITH(NOLOCK)
+		           INNER JOIN BPR200T A7      WITH(NOLOCK) ON A7.COMP_CODE        = A.COMP_CODE
+		                                                  AND A7.DIV_CODE         = A.DIV_CODE
+		                                                  AND A7.ITEM_CODE        = A.ITEM_CODE
+		           LEFT  JOIN BCM100T A1      WITH(NOLOCK) ON A1.COMP_CODE        = A.COMP_CODE
+		                                                  AND (ISNULL(A1.CHANNEL, '') = SUBSTRING(A.LOT_NO, 1, 2) AND ISNULL(A.LOT_NO, '') != '')
+		           LEFT  JOIN S_BCM106T_YP A2 WITH(NOLOCK) ON A2.COMP_CODE        = A1.COMP_CODE               --거래처 농가정보
+		                                                  AND A2.CUSTOM_CODE      = A1.CUSTOM_CODE
+		                                                  AND A2.FARM_CODE        = SUBSTRING(A.LOT_NO, 8, 2)
+		           LEFT  JOIN S_BCM100T_YP A3 WITH(NOLOCK) ON A3.COMP_CODE        = A1.COMP_CODE              --인증서
+		                                                  AND A3.CUSTOM_CODE      = A1.CUSTOM_CODE
+		                                                  AND A3.APLY_START_DATE <![CDATA[<=]]>  A.INOUT_DATE
+		                                                  AND A3.APLY_END_DATE   >= A.INOUT_DATE
+		                                                  AND A3.TYPE             = SUBSTRING(A.LOT_NO, 10, 1)
+		           LEFT  JOIN BSA100T A4      WITH(NOLOCK) ON A4.COMP_CODE        = A1.COMP_CODE
+		                                                  AND A4.MAIN_CODE        = 'B056'
+		                                                  AND A4.SUB_CODE         = A1.AREA_TYPE
+		           INNER JOIN BPR100T B       WITH(NOLOCK) ON B.COMP_CODE         = A.COMP_CODE
+		                                                  AND B.ITEM_CODE         = A.ITEM_CODE
+		           INNER JOIN BCM100T C       WITH(NOLOCK) ON C.COMP_CODE         = A.COMP_CODE
+		                                                  AND C.CUSTOM_CODE       = A.INOUT_CODE
+		           INNER JOIN BOR120T E       WITH(NOLOCK) ON E.COMP_CODE         = A.COMP_CODE
+		                                                  AND E.DIV_CODE          = A.DIV_CODE
+		           LEFT  JOIN (SELECT SUM(A.ORDER_UNIT_Q)	AS ORDER_UNIT_Q
+		                            , SUM(A.ORDER_UNIT_P)   AS ORDER_UNIT_P
+		                            , SUM(A.ORDER_UNIT_O)   AS ORDER_UNIT_O
+		                            , SUM(A.INOUT_TAX_AMT)  AS INOUT_TAX_AMT
+		                            , A.COMP_CODE
+		                            , A.DIV_CODE
+		                            , A.INOUT_NUM
+		                            , A.TAX_TYPE
+		                         FROM BTR100T A WITH(NOLOCK)
+		                              INNER JOIN uniLITE.fnSplit(@INOUT_CODE, ',') AS B ON B.VALUE = A.INOUT_CODE
+		                        WHERE A.COMP_CODE   = @COMP_CODE
+		                          AND A.DIV_CODE    = @DIV_CODE
+							      AND A.INOUT_DATE >= @INOUT_DATE_FR
+		                          AND A.INOUT_DATE <![CDATA[<=]]> @INOUT_DATE_TO
+		                          AND (A.INOUT_TYPE = '2' OR A.INOUT_TYPE = '3')
+		                          AND A.INOUT_CODE_TYPE = '4'
+		                        GROUP BY A.COMP_CODE, A.DIV_CODE, A.INOUT_NUM, A.TAX_TYPE) X ON X.COMP_CODE = A.COMP_CODE
+		                                                                                    AND X.DIV_CODE  = A.DIV_CODE
+		                                                                                    AND X.INOUT_NUM = A.INOUT_NUM
+		                                                                                    AND X.TAX_TYPE  = A.TAX_TYPE
+		           INNER JOIN uniLITE.fnSplit(@INOUT_CODE, ',') AS F ON F.VALUE = A.INOUT_CODE
+		           LEFT  JOIN BSA100T Z       WITH(NOLOCK) ON Z.COMP_CODE         = A.COMP_CODE
+		                                                  AND Z.MAIN_CODE         = 'B059'
+		                                                  AND Z.SUB_CODE          = A.TAX_TYPE
+		           LEFT  JOIN PMP100T T       WITH(NOLOCK) ON T.COMP_CODE         = A.COMP_CODE						--사내가공품은 원자재의 인증번호 가져오게..
+		                                                  AND T.DIV_CODE          = A.DIV_CODE
+		                                                  AND T.ORDER_NUM         = A.ORDER_NUM
+		                                                  AND T.SER_NO            = A.ORDER_SEQ
+		                                                  AND T.LOT_NO            = A.LOT_NO
+		           LEFT  JOIN PMP200T T1      WITH(NOLOCK) ON T1.COMP_CODE        = T.COMP_CODE
+		                                                  AND T1.DIV_CODE         = T.DIV_CODE
+		                                                  AND T1.WKORD_NUM        = T.WKORD_NUM
+		           LEFT  JOIN BCM100T T2      WITH(NOLOCK) ON T2.COMP_CODE        = T1.COMP_CODE					--매입처
+		                                                  AND (ISNULL(T2.CHANNEL, '') = SUBSTRING(T1.LOT_NO, 1, 2) AND ISNULL(T1.LOT_NO, '') != '')
+		           LEFT  JOIN S_BCM106T_YP T3 WITH(NOLOCK) ON T3.COMP_CODE        = T2.COMP_CODE					--매입처 농가정보
+		                                                  AND T3.CUSTOM_CODE      = T2.CUSTOM_CODE
+		                                                  AND T3.FARM_CODE        = SUBSTRING(T1.LOT_NO, 8, 2)
+		           LEFT  JOIN S_BCM100T_YP T4 WITH(NOLOCK) ON T4.COMP_CODE        = T2.COMP_CODE					--매입처 인증서
+		                                                  AND T4.CUSTOM_CODE      = T2.CUSTOM_CODE
+		                                                  AND T4.APLY_START_DATE <![CDATA[<=]]> A.INOUT_DATE
+		                                                  AND T4.APLY_END_DATE   >= A.INOUT_DATE
+		                                                  AND T4.TYPE             = SUBSTRING(T1.LOT_NO, 10, 1)
+		           LEFT  JOIN BSA100T T5      WITH(NOLOCK) ON T5.COMP_CODE        = T2.COMP_CODE
+		                                                  AND T5.MAIN_CODE        = 'B056'
+		                                                  AND T5.SUB_CODE         = T2.AREA_TYPE
+			 WHERE A.COMP_CODE   = @COMP_CODE
+		       AND A.DIV_CODE    = @DIV_CODE
+		       AND A.INOUT_DATE >= @INOUT_DATE_FR
+		       AND A.INOUT_DATE <![CDATA[<=]]> @INOUT_DATE_TO
+		       AND (A.INOUT_TYPE = '2' OR A.INOUT_TYPE = '3')
+		       AND A.INOUT_CODE_TYPE = '4'
+			 ORDER BY A.COMP_CODE, A.DIV_CODE, A.INOUT_CODE, A.INOUT_DATE, A.INOUT_NUM, B.ITEM_NAME, A.INOUT_SEQ
+
+			SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+    </select>
+    <select id="s_str400rkrv_ypServiceImpl.printList2" parameterType="Map" resultType="rMap">
+	    BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+			DECLARE @COMP_CODE				NVARCHAR(08)             --(필수) 법인코드
+		          , @DIV_CODE				NVARCHAR(08)             --(필수) 사업장
+		          , @USER_ID				NVARCHAR(100)             --(필수) USER ID
+		          , @INOUT_DATE_FR			NVARCHAR(08)		     --(선택) 출고일(FR)
+		          , @INOUT_DATE_TO			NVARCHAR(08)             --(선택) 출고일(TO)
+		          , @INOUT_CODE				NVARCHAR(1000)           --(선택) 거래처
+		          , @PRINT_USER				NVARCHAR(100)            --(선택) 출력자
+		          , @VIEW_PRINT_INFO_YN		NVARCHAR(01)             --인쇄출력정보 여부
+
+		    SET @COMP_CODE     = ISNULL(#{S_COMP_CODE}, '')
+		    SET @DIV_CODE      = ISNULL(#{DIV_CODE}, '')
+		    SET @USER_ID       = ISNULL(#{S_USER_ID}, '')
+		    SET @INOUT_DATE_FR = #{INOUT_DATE_FR}
+		    SET @INOUT_DATE_TO =#{INOUT_DATE_TO}
+		    SET @INOUT_CODE    = ISNULL(#{CUSTOM_CODES}, '')
+
+		    SELECT @PRINT_USER = USER_NAME
+		      FROM BSA300T WITH(NOLOCK)
+		     WHERE COMP_CODE = @COMP_CODE
+		       AND USER_ID   = @USER_ID
+
+		    SELECT @VIEW_PRINT_INFO_YN = SUB_CODE
+		      FROM BSA100T WITH(NOLOCK)
+		     WHERE COMP_CODE = @COMP_CODE
+		       AND MAIN_CODE = 'B249'
+		       AND SUB_CODE != '$'
+		       AND REF_CODE1 = 'Y'
+
+			SELECT Y.INOUT_NUM + (CASE WHEN Y.INOUT_NUM_CNT = 1 THEN '' ELSE ' 외 ' + CONVERT(NVARCHAR,Y.INOUT_NUM_CNT - 1) + ' 건' END) AS INOUT_NUM
+				 , A.INOUT_DATE
+				 , A.YYYY
+				 , A.MM
+				 , A.DD
+				 , A.INOUT_CODE
+				 , A.CUSTOM_NAME
+				 , A.TOP_NAME
+				 , A.COMPANY_NUM
+				 , A.ZIP_CODE
+				 , A.ADDR
+				 , A.MY_CUSTOM_CODE
+				 , A.MY_CUSTOM_NAME
+				 , A.MY_TOP_NAME
+				 , A.COMP_TYPE
+		         , A.COMP_CLASS
+				 , A.MY_COMPANY_NUM
+				 , A.MY_ZIP_CODE
+				 , A.MY_ADDR
+				 , A.TELEPHON
+				 , A.FAX_NUM
+				 , '*' + Y.INOUT_NUM + '*' AS BARCODE
+		         , ROW_NUMBER() OVER(PARTITION BY Y.INOUT_NUM + A.TAX_TYPE ORDER BY A.COMP_CODE, A.DIV_CODE, Y.INOUT_NUM, A.ITEM_NAME) AS PRINT_SEQ
+		         , A.INOUT_SEQ
+				 , A.ITEM_CODE
+				 , A.ITEM_NAME
+				 , A.SPEC
+				 , A.REGION
+				 , A.ORDER_UNIT
+				-- , A.INOUT_Q	AS INOUT_Q
+				-- , A.INOUT_P	AS INOUT_P
+				-- , A.INOUT_O	AS INOUT_O
+				-- , A.INOUT_TAX_O	AS INOUT_TAX_O
+				-- , A.INOUT_O + A.INOUT_TAX_O AS INOUT_TOT
+		        -- , ISNULL(X.ORDER_UNIT_Q, 0)		AS INOUT_Q_AMT
+		        -- , ISNULL(X.ORDER_UNIT_P, 0)		AS INOUT_P_AMT
+		        -- , ISNULL(X.ORDER_UNIT_O, 0)        AS INOUT_O_AMT
+		        -- , ISNULL(X.INOUT_TAX_AMT,0)		AS INOUT_TAX_O_AMT
+		        -- , ISNULL(X.ORDER_UNIT_O, 0) + ISNULL(X.INOUT_TAX_AMT, 0)   AS INOUT_TOT_AMT
+		        -- , REPLACE(unilite.fnConvertToAmt(ISNULL(X.ORDER_UNIT_O, 0) + ISNULL(X.INOUT_TAX_AMT, 0)), ' ','') + '원정'   AS INOUT_TOT_AMT_KO
+		         , CASE WHEN A.INOUT_TYPE = '3' THEN A.INOUT_Q * -1
+						ELSE A.INOUT_Q
+				   END AS INOUT_Q
+				 , A.INOUT_P  AS INOUT_P
+				 , CASE WHEN A.INOUT_TYPE = '3' THEN A.INOUT_O * -1
+						ELSE A.INOUT_O
+				   END 	AS INOUT_O
+				 , CASE WHEN A.INOUT_TYPE = '3' THEN A.INOUT_TAX_O * -1
+						ELSE A.INOUT_TAX_O
+				   END AS INOUT_TAX_O
+				 , CASE WHEN A.INOUT_TYPE = '3' THEN (A.INOUT_O + A.INOUT_TAX_O) * -1
+						ELSE A.INOUT_O + A.INOUT_TAX_O
+				   END  AS INOUT_TOT
+		         , ISNULL(X.ORDER_UNIT_Q, 0) AS INOUT_Q_AMT
+		         , ISNULL(X.ORDER_UNIT_P, 0) AS INOUT_P_AMT
+		         , ISNULL(X.ORDER_UNIT_O, 0) AS INOUT_O_AMT
+		         , ISNULL(X.INOUT_TAX_AMT,0) AS INOUT_TAX_O_AMT
+		         , ISNULL(X.ORDER_UNIT_O, 0) + ISNULL(X.INOUT_TAX_AMT, 0)  AS INOUT_TOT_AMT
+		         , REPLACE(unilite.fnConvertToAmt(ISNULL(X.ORDER_UNIT_O, 0) + ISNULL(X.INOUT_TAX_AMT, 0)), ' ','') + '원정' AS INOUT_TOT_AMT_KO
+				 , A.REMARK
+		         , @PRINT_USER				AS PRINT_USER                   --출력자 이름
+		         , @VIEW_PRINT_INFO_YN		AS VIEW_PRINT_INFO_YN           --인쇄출력정보 표시여부
+		         , Y.INOUT_NUM	AS GROUP_KEY
+				 , A.TAX_TYPE
+		      FROM (SELECT A.COMP_CODE
+		        	     , A.DIV_CODE
+		        		 , A.INOUT_NUM
+		                 , A.INOUT_DATE													--공급일자
+		                 , SUBSTRING(A.INOUT_DATE, 1, 4) AS YYYY						--공급일자YYYY
+		                 , SUBSTRING(A.INOUT_DATE, 5, 2) AS MM							--공급일자MM
+		                 , SUBSTRING(A.INOUT_DATE, 7, 2) AS DD							--공급일자DD
+		                 , A.INOUT_CODE													--거래처 코드
+		                 , C.CUSTOM_NAME												--거래처 명
+		                 , C.TOP_NAME													--거래처 대표자
+		                 , CASE WHEN ISNULL(C.COMPANY_NUM,'') = ''
+		        		        THEN ''
+		                        ELSE SUBSTRING(C.COMPANY_NUM,1,3) + '-' + SUBSTRING(C.COMPANY_NUM,4,2) + '-' + SUBSTRING(C.COMPANY_NUM,6,5)
+		                    END AS COMPANY_NUM											--거래처 등록번호
+		                 , C.ZIP_CODE													--거래처 우편번호
+		                 , RTRIM(ISNULL(C.ADDR1,'') + ISNULL(C.ADDR2,'')) AS ADDR
+		                 , E.DIV_CODE    AS MY_CUSTOM_CODE								--사업장코드
+		                 , E.DIV_NAME    AS MY_CUSTOM_NAME								--상호
+		                 , E.REPRE_NAME  AS MY_TOP_NAME									--대표자
+		                 , E.COMP_TYPE													--업태
+		                 , E.COMP_CLASS													--종목
+		                 , CASE WHEN ISNULL(E.COMPANY_NUM,'') = ''
+		                        THEN ''
+		        			    ELSE SUBSTRING(E.COMPANY_NUM,1,3) + '-' + SUBSTRING(E.COMPANY_NUM,4,2) + '-' + SUBSTRING(E.COMPANY_NUM,6,5)
+		                    END          AS MY_COMPANY_NUM								--등록번호
+		                 , E.ZIP_CODE    AS MY_ZIP_CODE									--우편번호
+		                 , E.ADDR		 AS MY_ADDR										--주소
+		                 , E.TELEPHON													--전화번호
+		                 , E.FAX_NUM													--팩스
+		                 , A.INOUT_SEQ   AS INOUT_SEQ
+		                 , A.ITEM_CODE
+		                 , B.ITEM_NAME
+		                 , B.SPEC
+		                 , CASE WHEN A7.SUPPLY_TYPE = '2' THEN CASE WHEN SUBSTRING(T1.LOT_NO, 8, 2) != '00'
+		        		                                            THEN T3.ORIGIN
+		                                                            ELSE CASE WHEN ISNULL(T5.REF_CODE1, '') = '' THEN T5.CODE_NAME ELSE T5.REF_CODE1 END
+		                                                        END
+		                                                  ELSE CASE WHEN SUBSTRING(A.LOT_NO, 8, 2) != '00'
+		        										            THEN A2.ORIGIN
+		                                                            ELSE CASE WHEN ISNULL(A4.REF_CODE1, '') = '' THEN A4.CODE_NAME ELSE A4.REF_CODE1 END
+		                                                        END
+		                    END AS REGION
+		                 , A.ORDER_UNIT
+		                 , ISNULL(A.ORDER_UNIT_Q, 0)        AS INOUT_Q
+		                 , ISNULL(A.ORDER_UNIT_P, 0)		AS INOUT_P
+		                 , ISNULL(A.ORDER_UNIT_O, 0)        AS INOUT_O
+		                 , ISNULL(A.INOUT_TAX_AMT, 0)		AS INOUT_TAX_O
+		                 , ISNULL(A.ORDER_UNIT_O, 0) + ISNULL(A.INOUT_TAX_AMT, 0)   AS INOUT_TOT
+		                 , CASE WHEN A7.SUPPLY_TYPE = '2' THEN CASE WHEN SUBSTRING(T1.LOT_NO, 8, 2) != '00'
+		        		                                            THEN T3.FARM_NAME + '(' + T3.CERT_NO + ')'
+		                                                            ELSE CASE WHEN ISNULL(T2.CUSTOM_NAME1, '') = '' THEN T2.CUSTOM_NAME  + '(' + T4.CERT_NO + ')'
+		                                                                                                            ELSE T2.CUSTOM_NAME1 + '(' + T4.CERT_NO + ')'
+		                                                                  END
+		                                                        END
+		                                                  ELSE CASE WHEN SUBSTRING(A.LOT_NO, 8, 2) != '00'
+		        										            THEN A2.FARM_NAME + '(' + A2.CERT_NO + ')'
+		                                                            ELSE CASE WHEN ISNULL(A1.CUSTOM_NAME1, '') = '' THEN A1.CUSTOM_NAME  + '(' + A3.CERT_NO + ')'
+		                                                                                                            ELSE A1.CUSTOM_NAME1 + '(' + A3.CERT_NO + ')'
+		                                                                  END
+		                                                        END
+		                    END AS REMARK
+		                 , Z.CODE_NAME              AS TAX_TYPE
+						 , A.TAX_TYPE				AS TAX_TYPE_CODE
+						 , A.INOUT_TYPE
+		              FROM            BTR100T A       WITH(NOLOCK)
+		                   INNER JOIN BPR200T A7      WITH(NOLOCK) ON A7.COMP_CODE        = A.COMP_CODE
+		                                                          AND A7.DIV_CODE         = A.DIV_CODE
+		                                                          AND A7.ITEM_CODE        = A.ITEM_CODE
+		                   LEFT  JOIN BCM100T A1      WITH(NOLOCK) ON A1.COMP_CODE        = A.COMP_CODE
+		                                                          AND (ISNULL(A1.CHANNEL, '') = SUBSTRING(A.LOT_NO, 1, 2) AND ISNULL(A.LOT_NO, '') != '')
+		                   LEFT  JOIN S_BCM106T_YP A2 WITH(NOLOCK) ON A2.COMP_CODE        = A1.COMP_CODE               --거래처 농가정보
+		                                                          AND A2.CUSTOM_CODE      = A1.CUSTOM_CODE
+		                                                          AND A2.FARM_CODE        = SUBSTRING(A.LOT_NO, 8, 2)
+		                   LEFT  JOIN S_BCM100T_YP A3 WITH(NOLOCK) ON A3.COMP_CODE        = A1.COMP_CODE              --인증서
+		                                                          AND A3.CUSTOM_CODE      = A1.CUSTOM_CODE
+		                                                          AND A3.APLY_START_DATE <![CDATA[<=]]> A.INOUT_DATE
+		                                                          AND A3.APLY_END_DATE   >= A.INOUT_DATE
+		                                                          AND A3.TYPE             = SUBSTRING(A.LOT_NO, 10, 1)
+		                   LEFT  JOIN BSA100T A4      WITH(NOLOCK) ON A4.COMP_CODE        = A1.COMP_CODE
+		                                                          AND A4.MAIN_CODE        = 'B056'
+		                                                          AND A4.SUB_CODE         = A1.AREA_TYPE
+		                   INNER JOIN BPR100T B       WITH(NOLOCK) ON B.COMP_CODE         = A.COMP_CODE
+		                                                          AND B.ITEM_CODE         = A.ITEM_CODE
+		                   INNER JOIN BCM100T C       WITH(NOLOCK) ON C.COMP_CODE         = A.COMP_CODE
+		                                                          AND C.CUSTOM_CODE       = A.INOUT_CODE
+		                   INNER JOIN BOR120T E       WITH(NOLOCK) ON E.COMP_CODE         = A.COMP_CODE
+		                                                          AND E.DIV_CODE          = A.DIV_CODE
+
+		                   INNER JOIN uniLITE.fnSplit(@INOUT_CODE, ',') AS F ON F.VALUE = A.INOUT_CODE
+		                   LEFT  JOIN BSA100T Z       WITH(NOLOCK) ON Z.COMP_CODE         = A.COMP_CODE
+		                                                          AND Z.MAIN_CODE         = 'B059'
+		                                                          AND Z.SUB_CODE          = A.TAX_TYPE
+		                   LEFT  JOIN PMP100T T       WITH(NOLOCK) ON T.COMP_CODE         = A.COMP_CODE						--사내가공품은 원자재의 인증번호 가져오게..
+		                                                          AND T.DIV_CODE          = A.DIV_CODE
+		                                                          AND T.ORDER_NUM         = A.ORDER_NUM
+		                                                          AND T.SER_NO            = A.ORDER_SEQ
+		                                                          AND T.LOT_NO            = A.LOT_NO
+		                   LEFT  JOIN PMP200T T1      WITH(NOLOCK) ON T1.COMP_CODE        = T.COMP_CODE
+		                                                          AND T1.DIV_CODE         = T.DIV_CODE
+		                                                          AND T1.WKORD_NUM        = T.WKORD_NUM
+		                   LEFT  JOIN BCM100T T2      WITH(NOLOCK) ON T2.COMP_CODE        = T1.COMP_CODE					--매입처
+		                                                          AND (ISNULL(T2.CHANNEL, '') = SUBSTRING(T1.LOT_NO, 1, 2) AND ISNULL(T1.LOT_NO, '') != '')
+		                   LEFT  JOIN S_BCM106T_YP T3 WITH(NOLOCK) ON T3.COMP_CODE        = T2.COMP_CODE					--매입처 농가정보
+		                                                          AND T3.CUSTOM_CODE      = T2.CUSTOM_CODE
+		                                                          AND T3.FARM_CODE        = SUBSTRING(T1.LOT_NO, 8, 2)
+		                   LEFT  JOIN S_BCM100T_YP T4 WITH(NOLOCK) ON T4.COMP_CODE        = T2.COMP_CODE					--매입처 인증서
+		                                                          AND T4.CUSTOM_CODE      = T2.CUSTOM_CODE
+		                                                          AND T4.APLY_START_DATE <![CDATA[<=]]> A.INOUT_DATE
+		                                                          AND T4.APLY_END_DATE   >= A.INOUT_DATE
+		                                                          AND T4.TYPE             = SUBSTRING(T1.LOT_NO, 10, 1)
+		                   LEFT  JOIN BSA100T T5      WITH(NOLOCK) ON T5.COMP_CODE        = T2.COMP_CODE
+		                                                          AND T5.MAIN_CODE        = 'B056'
+		                                                          AND T5.SUB_CODE         = T2.AREA_TYPE
+		        	 WHERE A.COMP_CODE   = @COMP_CODE
+		               AND A.DIV_CODE    = @DIV_CODE
+		               AND A.INOUT_DATE >= @INOUT_DATE_FR
+		               AND A.INOUT_DATE <![CDATA[<=]]> @INOUT_DATE_TO
+		               AND (A.INOUT_TYPE = '2' OR A.INOUT_TYPE = '3')
+		               AND A.INOUT_CODE_TYPE = '4') A
+		           LEFT  JOIN (SELECT SUM(A.ORDER_UNIT_Q)	AS ORDER_UNIT_Q
+		                            , SUM(A.ORDER_UNIT_P)   AS ORDER_UNIT_P
+		                            , SUM(A.ORDER_UNIT_O)   AS ORDER_UNIT_O
+		                            , SUM(A.INOUT_TAX_AMT)  AS INOUT_TAX_AMT
+									, MIN(A.INOUT_NUM)		AS INOUT_NUM
+		                            , A.COMP_CODE
+		                            , A.DIV_CODE
+		                            , A.INOUT_CODE
+									, A.INOUT_DATE
+		                            , A.TAX_TYPE
+		                         FROM BTR100T A WITH(NOLOCK)
+		                              INNER JOIN uniLITE.fnSplit(@INOUT_CODE, ',') AS B ON B.VALUE = A.INOUT_CODE
+		                        WHERE A.COMP_CODE   = @COMP_CODE
+		                          AND A.DIV_CODE    = @DIV_CODE
+							      AND A.INOUT_DATE >= @INOUT_DATE_FR
+		                          AND A.INOUT_DATE <![CDATA[<=]]> @INOUT_DATE_TO
+		                          AND (A.INOUT_TYPE = '2')
+		                          AND A.INOUT_CODE_TYPE = '4'
+		                        GROUP BY A.COMP_CODE, A.DIV_CODE, A.INOUT_CODE, A.INOUT_DATE, A.TAX_TYPE) X ON X.COMP_CODE  = A.COMP_CODE
+		                                                                                                   AND X.DIV_CODE   = A.DIV_CODE
+		                                                                                                   AND X.INOUT_CODE = A.INOUT_CODE
+		                                                                                                   AND X.INOUT_DATE = A.INOUT_DATE
+																							               AND X.TAX_TYPE   = A.TAX_TYPE_CODE
+		           LEFT  JOIN (SELECT A.COMP_CODE
+				                    , A.DIV_CODE
+									, MIN(INOUT_NUM)	AS INOUT_NUM
+									, A.INOUT_CODE
+									, A.INOUT_DATE
+									, A.TAX_TYPE
+									, COUNT(A.INOUT_NUM)	AS INOUT_NUM_CNT
+								 FROM (SELECT A.COMP_CODE
+		                                    , A.DIV_CODE
+							        		, A.INOUT_NUM
+		                                    , A.INOUT_CODE
+							        		, A.INOUT_DATE
+		                                    , A.TAX_TYPE
+		                                 FROM BTR100T A WITH(NOLOCK)
+		                                      INNER JOIN uniLITE.fnSplit(@INOUT_CODE, ',') AS B ON B.VALUE = A.INOUT_CODE
+		                                WHERE A.COMP_CODE   = @COMP_CODE
+		                                  AND A.DIV_CODE    = @DIV_CODE
+							              AND A.INOUT_DATE >= @INOUT_DATE_FR
+		                                  AND A.INOUT_DATE <![CDATA[<=]]> @INOUT_DATE_TO
+		                                  AND (A.INOUT_TYPE = '2' OR A.INOUT_TYPE = '3')
+		                                  AND A.INOUT_CODE_TYPE = '4'
+		                                GROUP BY A.COMP_CODE, A.DIV_CODE, A.INOUT_NUM, A.INOUT_CODE, A.INOUT_DATE, A.TAX_TYPE) A
+								GROUP BY A.COMP_CODE, A.DIV_CODE, A.INOUT_CODE, A.INOUT_DATE, A.TAX_TYPE) Y ON Y.COMP_CODE  = A.COMP_CODE
+		                                                                                                   AND Y.DIV_CODE   = A.DIV_CODE
+		                                                                                                   AND Y.INOUT_CODE = A.INOUT_CODE
+		                                                                                                   AND Y.INOUT_DATE = A.INOUT_DATE
+																							               AND Y.TAX_TYPE   = A.TAX_TYPE_CODE
+			 ORDER BY A.COMP_CODE, A.DIV_CODE, A.INOUT_CODE, A.INOUT_DATE, A.ITEM_NAME
+
+			SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+	END
+
+    </select>
+    <select id="s_str400rkrv_ypServiceImpl.printList3" parameterType="Map" resultType="rMap">
+        BEGIN
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+
+        DECLARE @START_TIME DATETIME
+              , @END_TIME   DATETIME
+              , @DIFF_TIME  NUMERIC(10, 0)
+
+        SET @START_TIME = GETDATE()
+
+
+            DECLARE @CompCode       NVARCHAR(08)    /* 법인코드     */
+                  , @UserId         NVARCHAR(100)    /* 사용자ID        */
+                  , @RefItem        NVARCHAR(01)
+                  , @DateFormat     NVARCHAR(10)
+                  , @PRINT_USER          NVARCHAR(100)            --(선택) 출력자
+                  , @VIEW_PRINT_INFO_YN  NVARCHAR(01)             --인쇄출력정보 여부
+
+            SET @CompCode = #{S_COMP_CODE}
+            SET @UserId   = #{S_USER_ID}
+
+            /* 명칭 참조 유형 */
+            SELECT TOP 1 @RefItem = REF_ITEM
+              FROM BSA300T WITH (NOLOCK)
+             WHERE USER_ID = @UserId
+
+            SET @RefItem = ISNULL(@RefItem, N'0')
+
+            SELECT @PRINT_USER = USER_NAME
+                FROM BSA300T WITH(NOLOCK)
+                WHERE COMP_CODE = @CompCode
+                AND USER_ID = @UserId
+
+            SELECT @VIEW_PRINT_INFO_YN = SUB_CODE
+                FROM BSA100T WITH(NOLOCK)
+                WHERE COMP_CODE = @CompCode
+                AND MAIN_CODE = 'B249'
+                AND SUB_CODE != '$'
+                AND REF_CODE1 = 'Y'
+
+            /* 데이터 조회 */
+
+            /* 생성경로가 영업일 경우 */
+            SELECT ROW_NUMBER () OVER (PARTITION BY A.SALE_CUSTOM_CODE ORDER BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, A.SALE_DATE, B.ITEM_CODE) AS PRINT_SEQ
+                 , A.COMP_CODE
+                 , A.DIV_CODE                                                                                       AS DIV_CODE
+                 , uniLITE.fnGetUserDate(A.COMP_CODE, A.SALE_DATE)                     AS SALE_DATE
+                 , SUBSTRING(uniLITE.fnGetUserDate(A.COMP_CODE, A.SALE_DATE), 1, 7)    AS SALE_MONTH
+                 , (CASE WHEN ISNULL(#{SALE_FR_DATE}, '') = ''
+                        THEN ''
+                        ELSE REPLACE(REPLACE(REPLACE('YYYY.MM.DD', 'YYYY', SUBSTRING(#{SALE_FR_DATE}, 1, 4))
+                                                                    , 'MM'  , SUBSTRING(#{SALE_FR_DATE}, 5, 2))
+                                                                    , 'DD'  , SUBSTRING(#{SALE_FR_DATE}, 7, 2))
+                        END)                                                AS SALE_FR_DATE
+                , (CASE WHEN ISNULL(#{SALE_TO_DATE}, '') = ''
+                        THEN ''
+                        ELSE REPLACE(REPLACE(REPLACE('YYYY.MM.DD', 'YYYY', SUBSTRING(#{SALE_TO_DATE}, 1, 4))
+                                                                    , 'MM'  , SUBSTRING(#{SALE_TO_DATE}, 5, 2))
+                                                                    , 'DD'  , SUBSTRING(#{SALE_TO_DATE}, 7, 2))
+                    END)                                                AS SALE_TO_DATE
+                 , A.SALE_CUSTOM_CODE                                                                               AS SALE_CUSTOM_CODE
+                 , C.CUSTOM_NAME                                                                                    AS SALE_CUSTOM_NAME
+                --, B.ITEM_CODE                                                                                     AS ITEM_CODE
+                , D.ITEM_NAME                                                                                       AS ITEM_NAME
+                , E2.CODE_NAME                                                                                      AS SALE_UNIT     --판매단위
+                , E1.CODE_NAME                                                                                      AS TAX_TYPE      --과세구분
+                , SUM(B.SALE_Q)                                                                                     AS SALE_Q        --수량
+                , SUM(B.SALE_AMT_O) / SUM(B.SALE_Q)                                                             AS SALE_P        --단가
+                , SUM(B.SALE_AMT_O)                                                                             AS SALE_AMT_O --매출액
+                , SUM(B.TAX_AMT_O)                                                                                  AS TAX_AMT_O      --세액
+                , SUM(ISNULL(B.SALE_AMT_O, 0) + ISNULL(B.TAX_AMT_O, 0))                                         AS SUM_SALE_AMT   --매출계
+                , B.REMARK                                                                                          AS REMARK         --비고
+                , MAX(Z.SALE_Q_SUM)                                                                                 AS SALE_Q_SUM           --토탈수량
+                , MAX(Z.SALE_AMT_O_SUM)                                                                         AS SALE_AMT_O_SUM   --토탈매출액
+                , MAX(Z.TAX_AMT_O_SUM)                                                                              AS TAX_AMT_O_SUM        --토탈세액
+                , MAX(Z.SUM_SALE_AMT_TOT)                                                                           AS SUM_SALE_AMT_TOT --토탈매출계
+                , replace(unilite.fnConvertToAmt(MAX(Z.SUM_SALE_AMT_TOT)), ' ', '') + '원정'                      AS SUM_SALE_AMT_TOT_KO  --토탈매출계(한글)
+                , F.DIV_CODE    AS MY_CUSTOM_CODE      --사업장코드
+                , F.DIV_NAME    AS MY_CUSTOM_NAME      --상호
+                , F.REPRE_NAME  AS MY_TOP_NAME         --대표자
+                , F.COMP_TYPE                       --업태
+                , F.COMP_CLASS                      --종목
+                , CASE ISNULL(F.COMPANY_NUM,'')
+                        WHEN '' THEN ''
+                        ELSE         SUBSTRING(F.COMPANY_NUM,1,3) + '-'
+                                    + SUBSTRING(F.COMPANY_NUM,4,2) + '-'
+                                    + SUBSTRING(F.COMPANY_NUM,6,5)
+                  END          AS MY_COMPANY_NUM          --등록번호
+                , F.ZIP_CODE    AS MY_ZIP_CODE          --우편번호
+                , F.ADDR AS  MY_ADDR              --주소
+                , F.TELEPHON                            --전화번호
+                , F.FAX_NUM                             --팩스
+                , @PRINT_USER           AS PRINT_USER                   --출력자 이름
+                , @VIEW_PRINT_INFO_YN   AS VIEW_PRINT_INFO_YN           --인쇄출력정보 표시여부
+            FROM           SSA100T A  WITH (NOLOCK)
+                INNER JOIN SSA110T B  WITH (NOLOCK) ON  B.COMP_CODE    = A.COMP_CODE
+                                                    AND B.DIV_CODE     = A.DIV_CODE
+                                                    AND B.BILL_NUM     = A.BILL_NUM
+                LEFT  JOIN BCM100T C  WITH (NOLOCK) ON  C.COMP_CODE    = A.COMP_CODE
+                                                    AND C.CUSTOM_CODE  = A.SALE_CUSTOM_CODE
+                LEFT  JOIN BPR100T D  WITH (NOLOCK) ON  D.COMP_CODE    = B.COMP_CODE
+                                                    AND D.ITEM_CODE    = B.ITEM_CODE
+                LEFT  JOIN BSA100T E1 WITH (NOLOCK) ON  E1.COMP_CODE   = A.COMP_CODE
+                                                    AND E1.MAIN_CODE   = 'B059'
+                                                    AND E1.SUB_CODE    = A.TAX_TYPE
+                LEFT  JOIN BSA100T E2 WITH (NOLOCK) ON  E2.COMP_CODE   = B.COMP_CODE
+                                                    AND E2.MAIN_CODE   = 'B013'
+                                                    AND E2.SUB_CODE    = B.SALE_UNIT
+                INNER JOIN BOR120T F  WITH (NOLOCK) ON F.COMP_CODE   = A.COMP_CODE
+                                                   AND F.DIV_CODE    = A.DIV_CODE
+                LEFT JOIN(
+                    SELECT  A.COMP_CODE,
+                            A.DIV_CODE,
+                            A.SALE_CUSTOM_CODE,
+                            SUM(B.SALE_Q)       AS SALE_Q_SUM,
+                            --SUM(B.SALE_P)     AS SALE_P_SUM,
+                            SUM(B.SALE_AMT_O)   AS SALE_AMT_O_SUM,
+                            SUM(B.TAX_AMT_O)    AS TAX_AMT_O_SUM,
+                            SUM(B.SALE_AMT_O) + SUM(B.TAX_AMT_O) AS SUM_SALE_AMT_TOT
+                      FROM          SSA100T A WITH (NOLOCK)
+                        INNER JOIN  SSA110T B WITH (NOLOCK) ON  B.COMP_CODE    = A.COMP_CODE
+                                                            AND B.DIV_CODE     = A.DIV_CODE
+                                                            AND B.BILL_NUM     = A.BILL_NUM
+                     WHERE A.COMP_CODE           = #{S_COMP_CODE}
+                       AND A.DIV_CODE            = #{DIV_CODE}
+                       AND A.SALE_DATE          &gt;= #{SALE_FR_DATE}
+                       AND A.SALE_DATE          &lt;= #{SALE_TO_DATE}
+                     GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE
+                ) Z ON Z.COMP_CODE        = A.COMP_CODE
+                   AND Z.DIV_CODE         = A.DIV_CODE
+                   AND Z.SALE_CUSTOM_CODE = A.SALE_CUSTOM_CODE
+                <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODES)">
+                INNER JOIN uniLITE.fnSplit(#{CUSTOM_CODES}, ',') AS ZZ ON ZZ.VALUE = A.SALE_CUSTOM_CODE
+                </if>
+            WHERE A.COMP_CODE           = @CompCode
+            AND A.DIV_CODE            = #{DIV_CODE}
+            AND A.SALE_DATE          &gt;= #{SALE_FR_DATE}
+            AND A.SALE_DATE          &lt;= #{SALE_TO_DATE}
+            <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+                AND A.SALE_CUSTOM_CODE         = #{CUSTOM_CODE}
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                AND C.CUSTOM_NAME   LIKE #{CUSTOM_NAME} + '%'
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+                AND B.ITEM_CODE           = #{ITEM_CODE}
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+                AND D.ITEM_NAME     LIKE #{ITEM_NAME} + '%'
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(SALE_PRSN)">
+                AND A.SALE_PRSN           = #{SALE_PRSN}
+            </if>
+           GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, B.ITEM_CODE, C.CUSTOM_NAME, D.ITEM_NAME, E1.CODE_NAME,
+                    F.DIV_CODE, F.DIV_NAME, F.REPRE_NAME, F.COMP_TYPE, F.COMP_CLASS, F.COMPANY_NUM, F.ZIP_CODE, F.ADDR,
+                    F.TELEPHON, F.FAX_NUM, E2.CODE_NAME, B.REMARK, A.SALE_DATE
+
+           ORDER BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, A.SALE_DATE, B.ITEM_CODE
+           SET NOCOUNT OFF
+           SET ARITHABORT OFF
+        END
+    </select>
+</mapper>

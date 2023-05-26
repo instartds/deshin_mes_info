@@ -1,0 +1,411 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="str800ukrvServiceImpl">
+
+	<!-- LOT 필드에 품목정보 없이 LOT_NO만 입력했을 때, 품목정보 가져오는 로직 -->
+	<select id="str800ukrvServiceImpl.getItemInfo" parameterType="Map" resultType="rMap">        /* 반품가능요청참조 */
+		/* str800ukrvServiceImpl.getItemInfo */
+		BEGIN TRY
+
+		DECLARE @COMP_CODE		NVARCHAR(08)
+			  , @DIV_CODE		NVARCHAR(08)
+			  , @ITEM_CODE		NVARCHAR(20)
+			  , @ITEM_NAME		NVARCHAR(200)
+			  , @SPEC			NVARCHAR(160)
+			  , @UNIT			NVARCHAR(03)
+			  , @LOT_NO			NVARCHAR(20)
+			  , @SLOT_NO		NVARCHAR(20)
+			  , @ORDER_UNIT_Q	NUMERIC(30, 6)
+			  , @WH_CODE		NVARCHAR(08)
+			  , @INOUT_NUM		NVARCHAR(20)
+			  , @INOUT_SEQ		NUMERIC(4, 0)
+			  , @REMARK			NVARCHAR(200)
+			  
+			  , @LANG_CODE		NVARCHAR(02)
+			  , @ERR_MSG		NVARCHAR(MAX)
+		
+			SET @COMP_CODE		= #{S_COMP_CODE}
+			SET @DIV_CODE		= #{DIV_CODE}
+			SET @ITEM_CODE		= #{ITEM_CODE}
+			SET @LOT_NO			= #{LOT_NO}
+			SET @WH_CODE		= #{WH_CODE}
+			SET @LANG_CODE		= #{S_LANG_CODE}
+			
+			BEGIN
+				--1.입력한 Lot_no 등록여부 확인
+				SELECT @ITEM_CODE		= UPPER(ISNULL(A.ITEM_CODE, ''))
+				  FROM		BIV150T A WITH(NOLOCK)
+				 INNER JOIN BPR100T B WITH(NOLOCK) ON B.COMP_CODE	= A.COMP_CODE
+		  										   AND B.ITEM_CODE	= A.ITEM_CODE
+				  LEFT JOIN (
+							  SELECT COMP_CODE, DIV_CODE, ITEM_CODE, LOT_NO, INOUT_NUM, INOUT_SEQ, MAX(REMARK) AS REMARK
+								FROM BTR100T WITH (NOLOCK, INDEX(BTR100T_IDX07))
+							   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, LOT_NO, INOUT_NUM, INOUT_SEQ
+							  ) AS C				ON C.COMP_CODE	= A.COMP_CODE
+												   AND C.DIV_CODE	= A.DIV_CODE
+												   AND C.ITEM_CODE	= A.ITEM_CODE
+												   AND C.LOT_NO		= A.LOT_NO
+				 WHERE A.COMP_CODE	= @COMP_CODE
+				   AND A.DIV_CODE	= @DIV_CODE
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+				   AND A.ITEM_CODE	= @ITEM_CODE
+			</if>
+				   AND A.WH_CODE	= @WH_CODE
+				   AND A.LOT_NO		= @LOT_NO
+		   
+				IF (@@ROWCOUNT = 0)					--입력된 LOT_NO가 등록되지 않았을때,
+					BEGIN
+						--SET @ERR_MSG = '등록되지 않은 Lot No. 입니다.;'
+						SET @ERR_MSG = uniLITE.fnGetErrorMsg_omega('800006', '', @LANG_CODE) + ';'			--800006
+						RAISERROR (@ERR_MSG, 16, 1)
+					END
+			
+				ELSE IF (@ORDER_UNIT_Q &lt;= 0)		--입력된 LOT_NO의 재고(양품)량이 0일 때,
+					BEGIN
+						--SET @ERR_MSG = '입력된 Lot No.의 재고가 존재하지 않습니다.;'
+						SET @ERR_MSG = uniLITE.fnGetErrorMsg_omega('800008', '', @LANG_CODE) + ';'			--800008
+						RAISERROR (@ERR_MSG, 16, 1)
+					END
+					
+					
+				SELECT @ITEM_CODE	AS ITEM_CODE
+					 , @ERR_MSG		AS ERR_MSG
+			END
+		END TRY
+
+		BEGIN CATCH
+			IF CHARINDEX(';', @ERR_MSG) = 0
+				SET @ERR_MSG = SUBSTRING(CONVERT(NVARCHAR(20), ERROR_NUMBER()) + ';' + ERROR_MESSAGE(), 1, 1000)
+				SELECT @ERR_MSG AS ERR_MSG
+		END CATCH
+	</select>
+
+	<select id="str800ukrvServiceImpl.selectPrintList" parameterType="Map" resultType="rMap">
+		SELECT 
+			   A.COMP_CODE
+			 , A.DIV_CODE
+			 , A.ITEM_CODE
+			 , MAX(C.ITEM_NAME)			AS ITEM_NAME
+			 , MAX(A.PACK_DATE)			AS PACK_DATE
+			 , SUM(A.QTY) AS SUM_QTY
+			 , B.CUSTOM_ITEM_CODE
+			 , A.BOX_BARCODE
+			 , CASE WHEN EXISTS(SELECT S1.PRODT_DATE 
+                                  FROM PMR100T S1 WITH(NOLOCK)
+                                 WHERE S1.COMP_CODE = A.COMP_CODE
+                                   AND S1.DIV_CODE  = A.DIV_CODE
+                                   AND S1.LOT_NO    = MAX(A.LOT_NO)
+                                )
+                    THEN (SELECT S1.PRODT_DATE 
+                            FROM PMR100T S1 WITH(NOLOCK)
+                           WHERE S1.COMP_CODE   = A.COMP_CODE
+                             AND S1.DIV_CODE    = A.DIV_CODE
+                             AND S1.LOT_NO      = MAX(A.LOT_NO)
+                         )
+                    ELSE (SELECT S2.INOUT_DATE 
+                            FROM BTR100T S2 WITH(NOLOCK)
+                           WHERE S2.COMP_CODE   = A.COMP_CODE
+                             AND S2.DIV_CODE    = A.DIV_CODE
+                             AND S2.LOT_NO      = MAX(A.LOT_NO)
+                             AND S2.INOUT_TYPE  = '1'
+                        )
+               END                      AS PRODT_DATE
+             , CASE WHEN EXISTS(SELECT CONVERT(CHAR(8), DATEADD(MM, 12, S1.PRODT_DATE), 112)
+                                  FROM PMR100T S1 WITH(NOLOCK)
+                                 WHERE S1.COMP_CODE = A.COMP_CODE
+                                   AND S1.DIV_CODE  = A.DIV_CODE
+                                   AND S1.LOT_NO    = MIN(A.LOT_NO))
+                    THEN (SELECT CONVERT(CHAR(8), DATEADD(MM, 12, S1.PRODT_DATE), 112)
+                            FROM PMR100T S1 WITH(NOLOCK)
+                           WHERE S1.COMP_CODE = A.COMP_CODE
+                             AND S1.DIV_CODE  = A.DIV_CODE
+                             AND S1.LOT_NO    = MIN(A.LOT_NO))
+                    ELSE (SELECT CONVERT(CHAR(8), DATEADD(MM, 12, S2.INOUT_DATE), 112)
+                            FROM BTR100T S2 WITH(NOLOCK)
+                           WHERE S2.COMP_CODE = A.COMP_CODE
+                             AND S2.DIV_CODE  = A.DIV_CODE
+                             AND S2.LOT_NO    = MIN(A.LOT_NO)
+                             AND S2.INOUT_TYPE = '1')
+               END                      AS END_DATE
+			 , MAX(C.ITEM_MODEL)		AS ITEM_MODEL
+			 , A.LABEL_CUSTOM
+			 , MAX(R1.CODE_NAME)		AS LABEL_CUSTOM_NAME
+			 , A.LABEL_TYPE
+			 , A.PO_NO
+			 , A.BOX_QTY
+			 , MAX(B.REMARK)			AS REMARK
+			 , R1.CODE_NAME				AS CUSTOM_CODE
+			 --20190123 추가
+			 , R1.REF_CODE3				AS PO_TYPE
+		 FROM STR800T A WITH(NOLOCK)
+		 LEFT JOIN BSA100T K WITH(NOLOCK) ON K.COMP_CODE = A.COMP_CODE 
+										 AND K.MAIN_CODE = 'S105'
+										 AND K.SUB_CODE = A.LABEL_CUSTOM
+		 LEFT JOIN BPR300T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+										 AND B.DIV_CODE = A.DIV_CODE
+										 AND B.TYPE = '2'
+										 AND B.ITEM_CODE = A.ITEM_CODE
+										--AND B.CUSTOM_CODE = A.LABEL_CUSTOM
+										 AND B.CUSTOM_CODE = ISNULL(K.REF_CODE2, '')
+										 AND A.PACK_DATE BETWEEN B.APLY_START_DATE AND B.APLY_END_DATE
+	
+		 LEFT JOIN BPR100T C WITH(NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+										 AND C.ITEM_CODE = A.ITEM_CODE
+
+		LEFT JOIN BSA100T R1 WITH(NOLOCK) ON R1.COMP_CODE = A.COMP_CODE
+										 AND R1.MAIN_CODE = 'S105'
+										 AND R1.SUB_CODE != '$'
+										 AND R1.SUB_CODE = A.LABEL_CUSTOM
+		WHERE A.COMP_CODE = #{S_COMP_CODE}
+		  AND A.DIV_CODE = #{DIV_CODE}
+		  AND A.BOX_BARCODE = #{BOX_BARCODE}
+	
+		GROUP BY A.COMP_CODE, A.DIV_CODE, A.BOX_BARCODE, A.ITEM_CODE,B.CUSTOM_ITEM_CODE,A.LABEL_CUSTOM,A.LABEL_TYPE, A.PO_NO, A.BOX_QTY, R1.CODE_NAME, R1.REF_CODE3
+	</select>
+
+	<!-- 조회팝업 쿼리 -->
+	<select id="str800ukrvServiceImpl.selectInNumMaster" parameterType="Map" resultType="rMap">
+		/* str800ukrvServiceImpl.selectInNumMaster */
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+		
+			DECLARE		@CompCode	NVARCHAR(08) /* 법인코드  */
+					  , @UserId		NVARCHAR(100) /* 사용자ID */
+					  , @RefItem	NVARCHAR(01) /* 명칭 참조 유형  */
+		
+		     SET @CompCode = #{S_COMP_CODE}
+		     SET @UserId   = #{S_USER_ID}
+		
+		     /* 명칭 참조 유형 */
+			SELECT TOP 1 @RefItem = REF_ITEM
+			  FROM BSA300T WITH (NOLOCK)
+			 WHERE COMP_CODE	= @CompCode
+			   AND USER_ID		= @UserId
+		
+			 SET @RefItem = ISNULL(@RefItem, '0')
+		
+			SELECT
+				   A.COMP_CODE
+				 , A.DIV_CODE
+				 , A.BOX_BARCODE
+				 , A.PACK_DATE
+				 , A.ITEM_CODE
+				 ,(CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+						WHEN @RefItem = '2' THEN B.ITEM_NAME2
+											ELSE B.ITEM_NAME
+				   END)											AS ITEM_NAME
+				 , B.SPEC
+				 , B.STOCK_UNIT									AS UNIT
+				 , A.LOT_NO
+				 , A.QTY
+				 , A.INOUT_NUM
+				 , A.INOUT_SEQ
+				 , A.REMARK
+				 , A.WH_CODE
+				 , A.LABEL_CUSTOM
+				 , A.LABEL_TYPE
+				 , C.REF_CODE3									AS PO_TYPE
+				 , A.INSERT_DB_TIME
+				 , A.INSERT_DB_USER
+				 , A.UPDATE_DB_TIME
+				 , A.UPDATE_DB_USER
+			  FROM		STR800T A  WITH (NOLOCK)
+			  LEFT JOIN BPR100T B  WITH (NOLOCK) ON B.COMP_CODE	= A.COMP_CODE
+												AND B.ITEM_CODE	= A.ITEM_CODE
+			  LEFT JOIN BSA100T C  WITH (NOLOCK) ON C.COMP_CODE	= A.COMP_CODE
+												AND C.MAIN_CODE	= 'S105'
+												AND C.SUB_CODE	= A.LABEL_CUSTOM
+		    WHERE  A.COMP_CODE		= @CompCode
+			   AND A.DIV_CODE		= #{DIV_CODE}
+			   
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			   AND A.ITEM_CODE 		= #{ITEM_CODE}						/* 품목코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+			   AND A.ITEM_CODE 		LIKE #{ITEM_CODE} + '%'				/* 품목코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_NAME) and @foren.Ognl@isEmpty(ITEM_CODE)">
+			   AND (CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+						 WHEN @RefItem = '2' THEN B.ITEM_NAME2
+											 ELSE B.ITEM_NAME
+				   END) 			LIKE '%' + #{ITEM_NAME} + '%'		/* 품목명  */
+			</if>
+
+			<if test="@foren.Ognl@isNotEmpty(BOX_BARCODE)">
+			   AND A.BOX_BARCODE	= #{BOX_BARCODE}
+			</if>
+<!-- 일단 주석(추후 결정)
+			<if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+			   AND A.WH_CODE		= #{WH_CODE}
+			</if>
+-->
+			<if test="@foren.Ognl@isNotEmpty(PACK_DATE_FR)">
+			   AND A.PACK_DATE	&gt;= #{PACK_DATE_FR}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(PACK_DATE_TO)">
+			   AND A.PACK_DATE	&lt;= #{PACK_DATE_TO}
+			</if>
+		    ORDER  BY A.BOX_BARCODE, A.PACK_DATE, A.INSERT_DB_TIME
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+
+	<!-- 실제 데이터 조회 쿼리 -->
+	<select id="str800ukrvServiceImpl.selectDetailList" parameterType="Map" resultType="rMap">
+		/* str800ukrvServiceImpl.selectDetailList */
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+		
+			DECLARE		@CompCode	NVARCHAR(08) /* 법인코드  */
+					  , @UserId		NVARCHAR(100) /* 사용자ID */
+					  , @RefItem	NVARCHAR(01) /* 명칭 참조 유형  */
+		
+		     SET @CompCode = #{S_COMP_CODE}
+		     SET @UserId   = #{S_USER_ID}
+		
+		     /* 명칭 참조 유형 */
+			SELECT TOP 1 @RefItem = REF_ITEM
+			  FROM BSA300T WITH (NOLOCK)
+			 WHERE COMP_CODE	= @CompCode
+			   AND USER_ID		= @UserId
+		
+			 SET @RefItem = ISNULL(@RefItem, '0')
+		
+			SELECT
+				   A.COMP_CODE
+				 , A.DIV_CODE
+				 , A.BOX_BARCODE
+				 , A.PACK_DATE
+				 , A.ITEM_CODE
+				 ,(CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+						WHEN @RefItem = '2' THEN B.ITEM_NAME2
+											ELSE B.ITEM_NAME
+				   END)											AS ITEM_NAME
+				 , B.SPEC
+				 , B.STOCK_UNIT									AS UNIT
+				 , A.LOT_NO
+				 , A.QTY
+				 , A.INOUT_NUM
+				 , A.INOUT_SEQ
+				 , A.REMARK
+				 , A.WH_CODE
+				 , A.LABEL_CUSTOM
+				 , A.LABEL_TYPE
+				 , A.INSERT_DB_TIME
+				 , A.INSERT_DB_USER
+				 , A.UPDATE_DB_TIME
+				 , A.UPDATE_DB_USER
+				 , A.PO_NO
+				 , A.BOX_QTY
+				 --20190117 추가
+				 , C.REF_CODE3									AS PO_TYPE
+			  FROM		STR800T A  WITH (NOLOCK)
+			  LEFT JOIN BPR100T B  WITH (NOLOCK) ON B.COMP_CODE	= A.COMP_CODE
+												AND B.ITEM_CODE	= A.ITEM_CODE
+			  LEFT JOIN BSA100T C  WITH (NOLOCK) ON C.COMP_CODE	= A.COMP_CODE
+												AND C.MAIN_CODE	= 'S105'
+												AND C.SUB_CODE	= A.LABEL_CUSTOM
+			 WHERE A.COMP_CODE		= @CompCode
+			   AND A.DIV_CODE		= #{DIV_CODE}
+			   AND A.BOX_BARCODE	= #{BOX_BARCODE}
+			 ORDER BY A.BOX_BARCODE, A.PACK_DATE, A.INSERT_DB_TIME
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+
+
+
+	<!-- CUD 시작 -->
+	<select id="str800ukrvServiceImpl.makeAutoNum" parameterType="Map" resultType="rMap">
+		DECLARE	@AUTO_NUM		NVARCHAR(20)
+		EXEC SP_GetAutoNumComp #{S_COMP_CODE}, #{DIV_CODE}, #{TABLE_ID}, #{PREFIX}, #{BASIS_DATE}, #{AUTO_TYPE}, @AUTO_NUM OUTPUT
+
+		IF ISNULL(@AUTO_NUM, '') != ''
+			SELECT @AUTO_NUM	AS AUTO_NUM
+		ELSE
+			SELECT ''			AS AUTO_NUM
+	</select>
+
+
+	<insert id="str800ukrvServiceImpl.insertDetail" parameterType="Map">
+		/* str800ukrvServiceImpl.insertDetail */
+		INSERT INTO STR800T
+			(
+			   COMP_CODE
+			 , DIV_CODE
+			 , BOX_BARCODE
+			 , PACK_DATE
+			 , ITEM_CODE
+			 , LOT_NO
+			 , QTY
+			 , INOUT_NUM
+	 		 , INOUT_SEQ
+			 , REMARK
+			 , WH_CODE
+			 , LABEL_CUSTOM
+			 , LABEL_TYPE
+			 , PO_NO
+			 , BOX_QTY
+			 , INSERT_DB_TIME
+			 , INSERT_DB_USER
+			 , UPDATE_DB_TIME
+			 , UPDATE_DB_USER
+		)
+		VALUES (
+			   #{S_COMP_CODE}
+			 , #{DIV_CODE}
+			 , #{BOX_BARCODE}
+			 , #{PACK_DATE}
+			 , #{ITEM_CODE}
+			 , #{LOT_NO}
+			 , #{QTY}
+			 , #{INOUT_NUM}
+			 , #{INOUT_SEQ}
+			 , #{REMARK}
+			 , #{WH_CODE}
+			 , #{LABEL_CUSTOM}
+			 , #{LABEL_TYPE}
+			 , #{PO_NO}
+			 , #{BOX_QTY}
+			 , GETDATE()
+			 , #{S_USER_ID}
+			 , GETDATE()
+			 , #{S_USER_ID}
+		)
+	</insert>
+
+	<update id="str800ukrvServiceImpl.updateDetail" parameterType="Map">
+		/* str800ukrvServiceImpl.updateDetail */
+		UPDATE STR800T
+		   SET QTY			= #{QTY}
+			 , REMARK		= #{REMARK}
+			 , LABEL_TYPE	= #{LABEL_TYPE}
+			 , PO_NO		= #{PO_NO}
+			 , BOX_QTY		= #{BOX_QTY}
+			 , UPDATE_DB_TIME = GETDATE()
+			 , UPDATE_DB_USER = #{S_USER_ID}
+		 WHERE COMP_CODE	= #{S_COMP_CODE}
+		   AND DIV_CODE		= #{DIV_CODE}
+		   AND BOX_BARCODE	= #{BOX_BARCODE}
+		   AND PACK_DATE	= #{PACK_DATE}
+		   AND ITEM_CODE	= #{ITEM_CODE}
+		   AND LOT_NO		= #{LOT_NO}
+	</update>
+
+	<update id="str800ukrvServiceImpl.deleteDetail" parameterType="Map">
+		/* str800ukrvServiceImpl.deleteDetail */
+		DELETE FROM STR800T
+		 WHERE COMP_CODE	= #{S_COMP_CODE}
+		   AND DIV_CODE		= #{DIV_CODE}
+		   AND BOX_BARCODE	= #{BOX_BARCODE}
+		   AND PACK_DATE	= #{PACK_DATE}
+		   AND ITEM_CODE	= #{ITEM_CODE}
+		   AND LOT_NO		= #{LOT_NO}
+	</update>
+</mapper>

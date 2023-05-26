@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="afd610skrService">
+	
+	<select id="afd610skrService.selectMasterList" parameterType="Map" resultType="rMap">	    
+	--afd610skr.Cafd610skr[fnafd610nq]Query1
+	BEGIN
+	   SET NOCOUNT ON
+	   SET ARITHABORT ON
+	
+	   -- 1. 날짜 포맷 유형 설정 ------------------------------------------------------------------------------------------
+	   DECLARE @DateFormat         NVARCHAR(01)
+	         , @TimeFormat         NVARCHAR(01)    
+	
+	   SELECT TOP 1 @DateFormat = SUBSTRING(CODE_NAME, 5, 1)
+	   FROM   BSA100T WITH (NOLOCK)
+	   WHERE  COMP_CODE  = #{S_COMP_CODE}
+	   AND    MAIN_CODE  = 'B044'
+	   AND    REF_CODE1  = 'Y'
+	
+	   SET @DateFormat = ISNULL(@DateFormat, '.')
+	   SET @TimeFormat = ISNULL(@TimeFormat, ':')
+	
+	   -- 2. Main Query
+	   SELECT A.ACCNT
+	        , M1.ACCNT_NAME
+	        , A.CUSTOM
+	        , M2.CUSTOM_NAME
+	        , A.LOAN_GUBUN
+	        , A.LOANNO
+	        , A.LOAN_NAME
+	        , uniLITE.fnCipherDecrypt(A.ACCOUNT_NUM,'B') AS ACCOUNT_NUM
+	        , CASE WHEN ISNULL(A.PUB_DATE, '') = '' THEN NULL
+	               ELSE SUBSTRING(A.PUB_DATE, 1, 4) + @DateFormat + 
+	                    SUBSTRING(A.PUB_DATE, 5, 2) + @DateFormat + 
+	                    SUBSTRING(A.PUB_DATE, 7, 2)
+	           END                                        AS PUB_DATE
+	        , CASE WHEN ISNULL(A.EXP_DATE, '') = '' THEN NULL
+	               ELSE SUBSTRING(A.EXP_DATE, 1, 4) + @DateFormat + 
+	                    SUBSTRING(A.EXP_DATE, 5, 2) + @DateFormat + 
+	                    SUBSTRING(A.EXP_DATE, 7, 2)
+	           END                                        AS EXP_DATE
+	        , CASE WHEN ISNULL(A.RENEW_DATE, '') = '' THEN NULL
+	               ELSE SUBSTRING(A.RENEW_DATE, 1, 4) + @DateFormat + 
+	                    SUBSTRING(A.RENEW_DATE, 5, 2) + @DateFormat + 
+	                    SUBSTRING(A.RENEW_DATE, 7, 2)
+	           END                                        AS RENEW_DATE
+	        , A.INT_RATE
+	        , A.AMT_I
+	        -- 차입이 추가로 늘어나는 경우는 차입마스터 금액(AMT_I)를 늘려주고, 상환시 그만큼 장부금액에서 (-)해줘야 함
+	        , CASE WHEN ISNULL(B.BA_REPAY_AMT, 0) = 0
+	                    THEN ISNULL(SUM(C.DR_AMT_I),0)
+	               ELSE A.AMT_I - ISNULL(B.BA_REPAY_AMT, 0) + ISNULL(SUM(C.DR_AMT_I),0) - ISNULL(SUM(C.CR_AMT_I),0)
+	           END                                                                          AS REPAY_AMT_I
+	        , CASE WHEN ISNULL(B.BA_REPAY_AMT, 0) = 0 
+	                    THEN (A.AMT_I - ISNULL(SUM(C.DR_AMT_I),0))
+	               ELSE A.AMT_I - (A.AMT_I - ISNULL(B.BA_REPAY_AMT, 0) + ISNULL(SUM(C.DR_AMT_I),0) - ISNULL(SUM(C.CR_AMT_I),0))
+	           END                                                                          AS BALANCE_AMT_I
+	        , A.REMARK
+	        , A.MONEY_UNIT
+	        , A.FOR_AMT_I
+	        , CASE WHEN ISNULL(B.BA_REPAY_FOR_AMT, 0) = 0
+	                    THEN ISNULL(SUM(C.DR_FOR_AMT_I),0)
+	               ELSE A.FOR_AMT_I - ISNULL(B.BA_REPAY_FOR_AMT, 0) + ISNULL(SUM(C.DR_FOR_AMT_I),0) - ISNULL(SUM(C.CR_FOR_AMT_I),0)
+	           END                                                                          AS FORREPAY_AMT_I
+	        , CASE WHEN ISNULL(B.BA_REPAY_FOR_AMT, 0) = 0
+	                    THEN A.FOR_AMT_I - ISNULL(SUM(C.DR_FOR_AMT_I),0)
+	               ELSE A.FOR_AMT_I - (A.FOR_AMT_I - ISNULL(B.BA_REPAY_FOR_AMT, 0) + ISNULL(SUM(C.DR_FOR_AMT_I),0) - ISNULL(SUM(C.CR_FOR_AMT_I),0))
+	           END                                                                          AS FOR_BALANCE_AMT_I
+	        , A.LCNO
+	        , A.DEPT_CODE
+	        , M3.TREE_NAME
+	     FROM            AFN300T A WITH (NOLOCK)
+	          LEFT  JOIN (SELECT COMP_CODE
+	                           , DIV_CODE
+	                           , ACCNT
+	                           , BOOK_CODE1
+	                           , BOOK_CODE2
+	                           , BOOK_DATA1
+	                           , BOOK_DATA2
+	                           , SUM(ISNULL(CR_AMT_I    , 0)) - SUM(ISNULL(DR_AMT_I    , 0)) AS BA_REPAY_AMT
+	                           , SUM(ISNULL(CR_FOR_AMT_I, 0)) - SUM(ISNULL(DR_FOR_AMT_I, 0)) AS BA_REPAY_FOR_AMT
+	                        FROM AGB200T WITH (NOLOCK)
+	                       WHERE COMP_CODE = #{S_COMP_CODE}
+	                         <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+							  AND DIV_CODE IN
+									<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+									 #{item}
+									</foreach>									
+							  </if>
+	                         AND AC_DATE   = #{ST_DATE}
+	                         AND (BOOK_CODE1 ='P2' OR BOOK_CODE2 ='P2')
+	                       GROUP BY COMP_CODE, DIV_CODE, ACCNT, BOOK_CODE1, BOOK_CODE2, BOOK_DATA1, BOOK_DATA2
+	                     ) B                      ON B.COMP_CODE    = A.COMP_CODE
+	                                             AND B.ACCNT        = A.ACCNT
+	                                             AND ((B.BOOK_CODE1 ='P2' AND B.BOOK_DATA1 = A.LOANNO)
+	                                              OR  (B.BOOK_CODE2 ='P2' AND B.BOOK_DATA2 = A.LOANNO))
+	          LEFT  JOIN AGB200T C  WITH (NOLOCK) ON C.COMP_CODE    = A.COMP_CODE
+	                                             AND C.ACCNT        = A.ACCNT
+	                                             AND ((C.BOOK_CODE1 ='P2' AND C.BOOK_DATA1 = A.LOANNO)
+	                                              OR  (C.BOOK_CODE2 ='P2' AND C.BOOK_DATA2 = A.LOANNO))
+	                                             AND C.AC_DATE     &gt;= #{ST_DATE} + '01'
+	                                             AND C.AC_DATE     &lt;= #{AC_DATE}
+	          INNER JOIN ABA400T M1 WITH (NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE
+	                                             AND M1.ACCNT       = A.ACCNT
+	                                             AND SUBSTRING(M1.SPEC_DIVI,1,1) IN ('P')
+	          INNER JOIN BCM100T M2 WITH (NOLOCK) ON M2.COMP_CODE   = A.COMP_CODE
+	                                             AND M2.CUSTOM_CODE = A.CUSTOM
+	          LEFT  JOIN BSA210T M3 WITH (NOLOCK) ON M3.COMP_CODE   = A.COMP_CODE
+	                                             AND M3.TREE_CODE   = A.DEPT_CODE
+	                                             AND M3.TYPE_LEVEL  = A.DIV_CODE
+	    WHERE A.COMP_CODE      = #{S_COMP_CODE}
+	      AND A.PUB_DATE      &lt;= #{AC_DATE}
+	      AND A.EXP_DATE      &gt;= #{AC_DATE}
+	      <if test="@foren.Ognl@isNotEmpty(LOAN_GUBUN)">
+	      AND A.LOAN_GUBUN     = #{LOAN_GUBUN}
+	      </if>
+	      <if test="@foren.Ognl@isNotEmpty(ACCNT_CODE)">
+	      AND A.ACCNT       LIKE '%' + #{ACCNT_CODE} + '%'
+	      </if>
+	      <if test="@foren.Ognl@isNotEmpty(ACCNT_NAME)">
+	      AND M1.ACCNT_NAME LIKE '%' + #{ACCNT_NAME} + '%'
+	      </if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			AND A.CUSTOM = #{CUSTOM_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+			AND A.CUSTOM LIKE #{CUSTOM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			AND M2.CUSTOM_NAME LIKE '%' + #{CUSTOM_NAME} + '%' 
+		</if> 	      
+
+	      <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+		  AND A.DIV_CODE IN
+				<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+				 #{item}
+				</foreach>									
+		  </if>
+		  <if test="rdoSelect == &quot;EXP&quot;">
+			  <if test="@foren.Ognl@isNotEmpty(DATE_FR)">
+		      AND A.EXP_DATE     &gt;= #{DATE_FR}
+		      </if>
+		      <if test="@foren.Ognl@isNotEmpty(DATE_TO)">
+		      AND A.EXP_DATE     &lt;= #{DATE_TO}
+		      </if>
+		  </if>
+		  <if test="rdoSelect == &quot;RENEW&quot;">
+		      <if test="@foren.Ognl@isNotEmpty(DATE_FR)">
+		      AND A.RENEW_DATE     &gt;= #{DATE_FR}
+		      </if>
+		      <if test="@foren.Ognl@isNotEmpty(DATE_TO)">
+		      AND A.RENEW_DATE     &lt;= #{DATE_TO}
+		      </if>
+	      </if>
+	      <if test="@foren.Ognl@isNotEmpty(DEPT_CODE_FR)">
+	      AND A.DEPT_CODE   LIKE '%' + #{DEPT_CODE_FR} + '%'
+	      </if>
+	      <if test="@foren.Ognl@isNotEmpty(DEPT_NAME_FR)">
+	      AND M3.TREE_NAME  LIKE '%' + #{DEPT_NAME_FR} + '%'
+	      </if>
+	    GROUP BY A.ACCNT , M1.ACCNT_NAME, A.CUSTOM    , M2.CUSTOM_NAME, A.LOAN_GUBUN
+	           , A.LOANNO, A.PUB_DATE   , A.EXP_DATE  , A.INT_RATE    , A.REMARK
+	           , A.AMT_I , A.FOR_AMT_I  , A.MONEY_UNIT, A.LCNO        , A.DEPT_CODE
+	           , M3.TREE_NAME, A.COMP_CODE, B.BA_REPAY_AMT, B.BA_REPAY_FOR_AMT
+	           , A.LOAN_NAME, uniLITE.fnCipherDecrypt(A.ACCOUNT_NUM,'B'), A.RENEW_DATE
+	    ORDER BY M1.ACCNT_NAME, A.LOANNO
+	
+	   SET ARITHABORT OFF
+	   SET NOCOUNT OFF
+	
+	END                                                                                           
+	</select>
+
+</mapper>

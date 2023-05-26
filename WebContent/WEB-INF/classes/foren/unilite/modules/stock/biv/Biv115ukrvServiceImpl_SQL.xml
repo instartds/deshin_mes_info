@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="biv115ukrvService">
+	<select id="biv115ukrvService.YyyymmSet" parameterType="Map" resultType="rMap">		/* 창고콤보 선택시 자동 날짜 지정 */
+	SELECT TOP 1 LAST_YYYYMM, BASIS_YYYYMM
+	  FROM BIV900T
+	 WHERE COMP_CODE = #{S_COMP_CODE}
+	   AND DIV_CODE  = #{DIV_CODE}
+	</select>
+	
+	<select id="biv115ukrvService.WhCodeSet" parameterType="Map" resultType="rMap">		/* 실행할때 창고 검사 */
+	SELECT COUNT(*) AS CNT FROM (
+		SELECT MAX(WH_CODE) as WH_CODE
+		  FROM BIV900T
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND DIV_CODE  = #{DIV_CODE}
+		 GROUP BY LAST_YYYYMM, BASIS_YYYYMM
+	) A 
+	</select>
+	
+	<select id="biv115ukrvService.WhCodeCount" parameterType="Map" resultType="rMap">		/* 실행할때 창고 recordCount검사 */
+	/* biv115ukrvService.WhCodeCount */
+	SELECT A.LAST_YYYYMM
+	     , A.BASIS_YYYYMM
+	     , A.WH_CODE
+	     , (SELECT TREE_NAME 
+	          FROM BSA220T 
+	         WHERE TREE_CODE = A.WH_CODE
+	           AND COMP_CODE = A.COMP_CODE) AS WH_NAME
+	  FROM BIV900T A
+	 WHERE A.COMP_CODE = #{S_COMP_CODE}
+	   AND A.DIV_CODE  = #{DIV_CODE}
+	 ORDER BY A.WH_CODE
+	</select>
+		
+	<select id="biv115ukrvService.insertDetail" parameterType="Map" resultType="rMap">		
+	/*biv115ukrvService.insertDetail*/
+	BEGIN
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+		
+		DECLARE        @COMP_CODE             NVARCHAR(08)
+	                 , @DIV_CODE              NVARCHAR(08)
+	                 , @LAST_YYYYMM           NVARCHAR(10)           /* 최종마감월*/
+	                 , @START_YYYYMM		  NVARCHAR(10)           /* 마감시작월*/
+	                 , @CLOSE_YYYYMM          NVARCHAR(10)           /* 마감종료월*/
+	                 , @BASIS_YYYYMM          NVARCHAR(10)           /* 기초월*/
+	                 , @PROCESS_TYPE          NVARCHAR(10)           /* 처리형태   1: 마감, 2: 취소*/
+	
+	                 , @LANG_TYPE			  NVARCHAR(20)
+	                 , @USER_ID               NVARCHAR(100)           /* 사용자 ID*/
+	                 , @ERR_DESC              NVARCHAR(2000)
+	
+	    SET @COMP_CODE    = #{S_COMP_CODE}
+		SET @DIV_CODE     = #{DIV_CODE}
+		SET @LAST_YYYYMM  = #{LAST_YYYYMM}
+		SET @START_YYYYMM = #{START_YYYYMM}
+		SET @CLOSE_YYYYMM = #{CLOSE_YYYYMM}
+		SET @BASIS_YYYYMM = #{BASIS_YYYYMM}
+		SET @PROCESS_TYPE = #{PROCESS_TYPE}
+		SET @USER_ID      = #{S_USER_ID}
+		SET @LANG_TYPE    = #{S_LANG_CODE}
+	
+	    SET @ERR_DESC     = ''
+	
+	/*  일반변수 선언*/
+	    DECLARE        @StartYYYYMM           NVARCHAR(06)                    /* 월마감 시작월*/
+	                 , @EndYYYYMM             NVARCHAR(06)                    /* 최종 월마감 반영월*/
+	                 , @CurYYYYMM             NVARCHAR(06)                    /* 현재 월*/
+	                 , @LastYYYYMM            NVARCHAR(06)                    /* 이전 월*/
+	                 , @BasisYYYYMM           NVARCHAR(06)                    /* 기초 월*/
+					 , @YearStartYYYYMM       NVARCHAR(06)                    /* 년마감 시작월*/
+	
+	/*  1. Validation Check */
+	    /* 1.1 최종마감월과 현재 마감월 차이 검사*/
+	    SELECT @BasisYYYYMM = ISNULL(MIN(BASIS_YYYYMM), '000000')
+	         , @LastYYYYMM  = ISNULL(MAX(LAST_YYYYMM), '000000')
+	    FROM   BIV900T
+	    WHERE  COMP_CODE = @COMP_CODE
+	    AND    DIV_CODE  = @DIV_CODE
+	
+	    SET @BasisYYYYMM = ISNULL(@BasisYYYYMM, '000000')
+	    SET @LastYYYYMM  = ISNULL(@LastYYYYMM, '000000')
+	
+	    IF @LAST_YYYYMM != ISNULL(@LastYYYYMM, '000000')
+	    BEGIN
+	        SET @ERR_DESC = '54104;'
+	        GOTO ERROR_HANDLER
+	    END
+	
+	
+	
+	/*  2. 재고마감 처리  */
+	    IF @PROCESS_TYPE = '1'
+	    BEGIN
+	        /* 2.1 재고마감을 위한 상수값 조회*/
+	        BEGIN
+	            /* 2.1.2 재고마감 시작일, 종료일 조회*/
+	            SELECT @StartYYYYMM = MIN(BASIS_YYYYMM), @EndYYYYMM = MAX(BASIS_YYYYMM)
+	            FROM   BIV200T WITH (NOLOCK)
+	            WHERE  COMP_CODE = @COMP_CODE
+	            AND    DIV_CODE  = @DIV_CODE
+	
+	            SET @EndYYYYMM   = ISNULL(@EndYYYYMM, CONVERT(NVARCHAR(06), DATEADD(MONTH, 1, GETDATE()), 112))
+	            SET @StartYYYYMM = CASE WHEN ISNULL(@LastYYYYMM, '000000') = '000000' AND ISNULL(@StartYYYYMM, '')  = ''                                  THEN ISNULL((SELECT MIN(SUBSTRING(ISNULL(INOUT_DATE, ''), 1, 6))
+	                                                                                                                                                                   FROM   BTR100T WITH (NOLOCK)
+	                                                                                                                                                                   WHERE  COMP_CODE = @COMP_CODE
+	                                                                                                                                                                   AND    DIV_CODE  = @DIV_CODE), '190000')
+	                                    WHEN ISNULL(@LastYYYYMM, '000000') = '000000' AND ISNULL(@StartYYYYMM, '') != '' AND @StartYYYYMM &gt;= @BasisYYYYMM THEN @StartYYYYMM
+	                                    WHEN ISNULL(@LastYYYYMM, '000000') = '000000' AND ISNULL(@StartYYYYMM, '') != '' AND @StartYYYYMM &lt;  @BasisYYYYMM THEN @BasisYYYYMM
+	                                    ELSE @CLOSE_YYYYMM
+	                               END
+	
+	            IF @StartYYYYMM &gt; @EndYYYYMM
+	                SET @EndYYYYMM = @StartYYYYMM
+	        END  /* End of 2.1 */
+	
+	        /* 2.3 마감 처리(1: 월총평균, 2: 이동평균, 3 : 선입선출)*/
+	        BEGIN
+				
+				--IF EXISTS (SELECT TOP 1 1 FROM BOR120T WITH (NOLOCK) WHERE COMP_CODE=@COMP_CODE AND DIV_CODE=@DIV_CODE AND STOCK_YEAR_EVALUATION_YN='Y')
+				--BEGIN
+				--	--년마감 (@YearStartYYYYMM = @CLOSE_YYYYMM 의 해당년도 1월)
+					
+				--	SET @YearStartYYYYMM = LEFT(@CLOSE_YYYYMM,4)+'01'
+				--	EXEC uniLITE.SP_STOCK_PeriodicAverageClosing4Div2Year @COMP_CODE, @DIV_CODE, @YearStartYYYYMM, @CLOSE_YYYYMM, @USER_ID, @ERR_DESC OUTPUT
+				--END
+				--ELSE
+				--BEGIN
+				--	--월마감
+				--	EXEC uniLITE.SP_STOCK_PeriodicAverageClosing4Div @COMP_CODE, @DIV_CODE, @StartYYYYMM, @EndYYYYMM, @USER_ID, @ERR_DESC OUTPUT
+				--END
+				
+				EXEC uniLITE.SP_STOCK_FIFOClosing4Div @COMP_CODE, @DIV_CODE, @START_YYYYMM, @CLOSE_YYYYMM, @LANG_TYPE, @USER_ID, @ERR_DESC OUTPUT
+				
+	            IF CHARINDEX(';', @ERR_DESC) &gt; 0
+	                GOTO ERROR_HANDLER
+	        END
+	
+	        /* 2.4 마감처리:   최종마감월 = 신규 마감월*/
+	        UPDATE BIV900T
+	        SET    LAST_YYYYMM    = @StartYYYYMM
+	             , UPDATE_DB_USER = @USER_ID
+	             , UPDATE_DB_TIME = GETDATE()
+	        WHERE  COMP_CODE      = @COMP_CODE
+	        AND    DIV_CODE       = @DIV_CODE
+	
+	        INSERT INTO BIV900T(COMP_CODE, DIV_CODE, WH_CODE, LAST_YYYYMM, BASIS_YYYYMM, INSERT_DB_USER, INSERT_DB_TIME, UPDATE_DB_USER, UPDATE_DB_TIME)
+	        SELECT A.COMP_CODE, A.TYPE_LEVEL AS DIV_CODE, A.TREE_CODE AS WH_CODE, @StartYYYYMM, @BASIS_YYYYMM, @USER_ID, GETDATE(), @USER_ID, GETDATE()
+	        FROM              BSA220T A  WITH (NOLOCK)
+	               LEFT  JOIN BIV900T B  WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+	                                                  AND B.DIV_CODE  = A.TYPE_LEVEL
+	                                                  AND B.WH_CODE   = A.TREE_CODE
+	        WHERE  A.COMP_CODE  = @COMP_CODE
+	        AND    A.TYPE_LEVEL = @DIV_CODE
+	        AND    B.COMP_CODE IS NULL
+	    END  /* End of 2. 마감*/
+	
+	
+	/*  3. 재고마감 취소 처리 */
+	    IF @PROCESS_TYPE = '2'
+	    BEGIN
+	        /* 3.1 마감취소월이 기초월보다 작을 수 없다.*/
+	        IF @LAST_YYYYMM &lt;= @BasisYYYYMM
+	        BEGIN
+	            SET @ERR_DESC = '54105;'
+	            GOTO ERROR_HANDLER
+	        END
+	
+	        /* 3.2 회계 원가대체 전표 존재여부 체크*/
+	        IF EXISTS   (
+	                    SELECT  TOP 1 1
+	                    FROM                AGC310T A  WITH (NOLOCK)
+	                            INNER JOIN  BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE = @COMP_CODE
+	                                                                AND M1.MAIN_CODE = N'I009'
+	                                                                AND M1.SUB_CODE  = N'CO'
+	                                                                AND M1.REF_CODE1 = N'Y'
+	                                                                AND M1.USE_YN    = N'Y'
+	                    WHERE   A.COMP_CODE  = @COMP_CODE
+	                    AND     A.DIV_CODE   = @DIV_CODE
+	                    AND     A.FR_AC_DATE = @LAST_YYYYMM
+	                    )
+	        BEGIN
+	            SET @ERR_DESC = '54734;' + uniLITE.fnGetErrorMsg(54734, @LAST_YYYYMM)
+	            GOTO ERROR_HANDLER
+	        END
+	
+	        /* 3.3 마감 취소 처리:   최종마감월 = 이전 마감월 -1*/
+	        UPDATE BIV900T
+	        SET    LAST_YYYYMM    = CONVERT(NVARCHAR(06), DATEADD(MONTH, -1, @LAST_YYYYMM + '01'), 112)
+	             , UPDATE_DB_USER = @USER_ID
+	             , UPDATE_DB_TIME = GETDATE()
+	        WHERE  COMP_CODE      = @COMP_CODE
+	        AND    DIV_CODE       = @DIV_CODE
+	
+	        INSERT INTO BIV900T(COMP_CODE, DIV_CODE, WH_CODE, LAST_YYYYMM, BASIS_YYYYMM, INSERT_DB_USER, INSERT_DB_TIME, UPDATE_DB_USER, UPDATE_DB_TIME)
+	        SELECT A.COMP_CODE, A.TYPE_LEVEL AS DIV_CODE, A.TREE_CODE AS WH_CODE, CONVERT(NVARCHAR(06), DATEADD(MONTH, -1, @LAST_YYYYMM + '01'), 112), @BASIS_YYYYMM, @USER_ID, GETDATE(), @USER_ID, GETDATE()
+	        FROM              BSA220T A  WITH (NOLOCK)
+	               LEFT  JOIN BIV900T B  WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+	                                                  AND B.DIV_CODE  = A.TYPE_LEVEL
+	                                                  AND B.WH_CODE   = A.TREE_CODE
+	        WHERE  A.COMP_CODE  = @COMP_CODE
+	        AND    A.TYPE_LEVEL = @DIV_CODE
+	        AND    B.COMP_CODE IS NULL
+	    END
+	
+	ERROR_HANDLER:
+	    SET NOCOUNT OFF
+	    SET ARITHABORT OFF
+	
+	    IF CHARINDEX(';', @ERR_DESC) &gt; 0
+	        SELECT LEFT(@ERR_DESC, CHARINDEX(';', @ERR_DESC) - 1) AS ERROR_CODE, SUBSTRING(@ERR_DESC, CHARINDEX(';', @ERR_DESC) + 1, LEN(@ERR_DESC)) AS ERROR_DESC
+	    ELSE
+	        SELECT TOP 1 '' AS ERROR_CODE, '' AS ERROR_DESC
+	END
+	</select>	
+</mapper>

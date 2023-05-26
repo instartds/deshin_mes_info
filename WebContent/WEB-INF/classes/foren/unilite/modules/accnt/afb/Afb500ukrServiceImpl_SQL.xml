@@ -1,0 +1,313 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="afb500ukrServiceImpl">
+<select id="afb500ukrServiceImpl.selectBudgName" parameterType="Map" resultType="rMap">			/* BUDG_NAME 컬럼수*/
+--UAccntPopupKrv.CAccntPopupKR[fnGetBudgCode] Query02
+BEGIN
+    DECLARE         @COMP_CODE          NVARCHAR(08)
+
+--  [ 변수 값 할당 ] ------------------------------------------------------------------------------------------
+    SET @COMP_CODE  = #{S_COMP_CODE}
+--  [ 데이터 조회 ] -------------------------------------------------------------------------------------------
+    SELECT  *
+    FROM    uniLITE.fnGetBudgLevelName(@COMP_CODE, #{ST_DATE})
+END	
+</select>	
+
+<select id="afb500ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">				/* 메인*/
+--afb500ukr.Cafb500ukr[fnAfb500QStd] Query02
+BEGIN
+    SET NOCOUNT ON
+
+    DECLARE @COMP_CODE       NVARCHAR(08)   --(필수) 법인코드 
+          , @AC_YYYY         NVARCHAR(04)   --(필수) 예산년도
+          , @DEPT_CODE       NVARCHAR(08)   --(필수) 부서코드
+          , @FR_BUDG_CODE    NVARCHAR(30)   --(선택) FROM 예산과목
+          , @TO_BUDG_CODE    NVARCHAR(30)   --(선택) TO   예산과목
+          , @BUDG_TYPE       NVARCHAR(01)   --(선택) 수지구분
+
+          , @FnDate          NVARCHAR(02)   -- 회계시작년월(월)
+          , @FrBudgYyyyMm    NVARCHAR(08)   -- 시작 예산년월
+          , @ToBudgYyyyMm    NVARCHAR(08)   -- 종료 예산년월
+          , @DataType        NVARCHAR(01)   -- 예산확정테이블의 데이터 존재여부
+
+    SET @COMP_CODE    = #{S_COMP_CODE}
+    SET @AC_YYYY      = #{AC_YYYY}
+    SET @DEPT_CODE    = #{DEPT_CODE}
+    SET @FR_BUDG_CODE = #{BUDG_CODE_FR}
+    SET @TO_BUDG_CODE = #{BUDG_CODE_TO}
+    SET @BUDG_TYPE    = #{BUDG_TYPE}
+
+    --회계기간 가져오기
+    SELECT @FnDate = SUBSTRING(FN_DATE, 5, 2)
+      FROM BOR100T  WITH (NOLOCK)
+     WHERE COMP_CODE = @COMP_CODE
+
+    --사업년도의 첫번째,마지막 예산년월 계산
+    SET @FrBudgYyyyMm = @AC_YYYY + @FnDate + '01'
+    SET @ToBudgYyyyMm = CONVERT(NVARCHAR,DATEADD(DD, -1, DATEADD(MM, 12, @FrBudgYyyyMm)),112)
+
+    --예산편성테이블의 데이터 존재여부 확인
+    SELECT @DataType = CASE WHEN COUNT(1) &gt; 0 THEN '' ELSE 'N' END
+      FROM AFB500T  WITH (NOLOCK)
+     WHERE COMP_CODE    = @COMP_CODE
+       AND BUDG_YYYYMM &gt;= LEFT(@FrBudgYyyyMm, 6)
+       AND BUDG_YYYYMM &lt;= LEFT(@ToBudgYyyyMm, 6)
+       AND DEPT_CODE    = @DEPT_CODE
+       AND ((BUDG_CODE &gt;= @FR_BUDG_CODE AND @FR_BUDG_CODE != '') OR (@FR_BUDG_CODE = ''))
+       AND ((BUDG_CODE &lt;= @TO_BUDG_CODE AND @TO_BUDG_CODE != '') OR (@TO_BUDG_CODE = ''))
+
+    SET @DataType = ISNULL(@DataType, 'N')
+
+
+    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#TMP_AFB500T_090211'))
+        DROP TABLE #TMP_AFB500T_090211
+
+    --예산편성정보 테이블(AFB500T)에서 데이터 조회하여 그리드 포맷에 맞춰 임시테이블 생성
+    --(예산코드명을 레벨순서대로 펼침, 예산금액을 12개월로 펼침)
+    SELECT A.COMP_CODE
+         , A.AC_YYYY
+         , B.BUDG_YYYYMM
+         , A.DEPT_CODE
+         , A.BUDG_CODE
+    
+    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index" >
+         , CASE WHEN L${budgNameInfoList.size}.CODE_LEVEL &gt;=  ${index+1}
+                THEN L${index+1}.BUDG_NAME
+                ELSE ''
+            END AS BUDG_NAME_L${index+1}
+    </foreach>
+    
+         , CASE WHEN ISNULL(B.CAL_DIVI,'') = ''
+                THEN '1'
+                ELSE B.CAL_DIVI
+            END AS CAL_DIVI
+         , ISNULL(B.BUDG_I,0) AS BUDG_I
+    
+    	 , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 0, @FrBudgYyyyMm), 112), 6)
+                     THEN B.BUDG_I
+                     ELSE 0
+            END AS BUDG_I01
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 1, @FrBudgYyyyMm), 112), 6)
+                     THEN B.BUDG_I
+                     ELSE 0
+            END AS BUDG_I02
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 2, @FrBudgYyyyMm), 112), 6)
+                     THEN B.BUDG_I
+                     ELSE 0
+            END AS BUDG_I03
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 3, @FrBudgYyyyMm), 112), 6)
+                     THEN B.BUDG_I
+                     ELSE 0
+            END AS BUDG_I04
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 4, @FrBudgYyyyMm), 112), 6)
+                     THEN B.BUDG_I
+                     ELSE 0
+            END AS BUDG_I05
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 5, @FrBudgYyyyMm), 112), 6)
+                     THEN B.BUDG_I
+                     ELSE 0
+            END AS BUDG_I06
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 6, @FrBudgYyyyMm), 112), 6)
+                     THEN B.BUDG_I
+                     ELSE 0
+            END AS BUDG_I07
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 7, @FrBudgYyyyMm), 112), 6)
+                     THEN B.BUDG_I
+                     ELSE 0
+            END AS BUDG_I08
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 8, @FrBudgYyyyMm), 112), 6)
+                     THEN B.BUDG_I
+                     ELSE 0
+            END AS BUDG_I09
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 9, @FrBudgYyyyMm), 112), 6)
+                     THEN B.BUDG_I
+                     ELSE 0
+            END AS BUDG_I10
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 10, @FrBudgYyyyMm), 112), 6)
+                     THEN B.BUDG_I
+                     ELSE 0
+            END AS BUDG_I11
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 11, @FrBudgYyyyMm), 112), 6)
+                     THEN B.BUDG_I
+                     ELSE 0
+            END AS BUDG_I12
+        
+         , B.INSERT_DB_USER
+         , B.INSERT_DB_TIME
+         , B.UPDATE_DB_USER
+         , B.UPDATE_DB_TIME
+      INTO #TMP_AFB500T_090211
+      FROM            AFB410T AS A  WITH (NOLOCK)
+           LEFT  JOIN AFB500T AS B  WITH (NOLOCK)  ON B.COMP_CODE      = A.COMP_CODE
+                                   AND B.BUDG_YYYYMM   &gt;= LEFT(@FrBudgYyyyMm, 6)
+                                   AND B.BUDG_YYYYMM   &lt;= LEFT(@ToBudgYyyyMm, 6)
+                                   AND B.DEPT_CODE      = A.DEPT_CODE
+                                   AND B.BUDG_CODE      = A.BUDG_CODE
+    
+           INNER JOIN AFB400T AS L${budgNameInfoList.size}
+                              ON L${budgNameInfoList.size}.COMP_CODE     = A.COMP_CODE
+                             AND L${budgNameInfoList.size}.AC_YYYY       = A.AC_YYYY
+                             AND L${budgNameInfoList.size}.BUDG_CODE     = A.BUDG_CODE
+    
+    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index">
+	    <if test="index+1 &lt; budgNameInfoList.size">
+           INNER JOIN AFB400T AS L${budgNameInfoList.size-(index+1)}
+                              ON L${budgNameInfoList.size-(index+1)}.COMP_CODE     = L${budgNameInfoList.size-(index)}.COMP_CODE
+                             AND L${budgNameInfoList.size-(index+1)}.AC_YYYY       = L${budgNameInfoList.size-(index)}.AC_YYYY
+                             AND L${budgNameInfoList.size-(index+1)}.BUDG_CODE     = L${budgNameInfoList.size-(index)}.TREE_LEVEL
+                             AND L${budgNameInfoList.size-(index+1)}.CODE_LEVEL    = L${budgNameInfoList.size-(index)}.CODE_LEVEL - 1
+   		</if>
+	</foreach>
+    
+     WHERE A.COMP_CODE     = @COMP_CODE
+       AND A.AC_YYYY       = @AC_YYYY
+       AND A.DEPT_CODE     = @DEPT_CODE
+       AND A.USE_YN        = N'Y'
+       AND ((A.BUDG_CODE  &gt;= @FR_BUDG_CODE AND @FR_BUDG_CODE != '') OR (@FR_BUDG_CODE = ''))
+       AND ((A.BUDG_CODE  &lt;= @TO_BUDG_CODE AND @TO_BUDG_CODE != '') OR (@TO_BUDG_CODE = ''))
+       AND ((L${budgNameInfoList.size}.BUDG_TYPE  = @BUDG_TYPE    AND @BUDG_TYPE    != '') OR (@BUDG_TYPE    = ''))
+       AND L${budgNameInfoList.size}.GROUP_YN     = N'N'
+
+
+    --임시테이블(#TMP_AFB500T_090211)에서 데이터 조회
+    SELECT COMP_CODE
+         , AC_YYYY
+         , DEPT_CODE
+         , BUDG_CODE
+    
+    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index">
+         , MAX(BUDG_NAME_L${index+1} ) AS BUDG_NAME_L${index+1}
+    </foreach>
+    
+         , MAX(CAL_DIVI)   AS CAL_DIVI
+         , SUM(BUDG_I)     AS BUDG_I
+    
+    	 , SUM(BUDG_I01)   AS BUDG_I01
+         , SUM(BUDG_I02)   AS BUDG_I02
+         , SUM(BUDG_I03)   AS BUDG_I03
+         , SUM(BUDG_I04)   AS BUDG_I04
+         , SUM(BUDG_I05)   AS BUDG_I05
+         , SUM(BUDG_I06)   AS BUDG_I06
+         , SUM(BUDG_I07)   AS BUDG_I07
+         , SUM(BUDG_I08)   AS BUDG_I08
+         , SUM(BUDG_I09)   AS BUDG_I09
+         , SUM(BUDG_I10)   AS BUDG_I10
+         , SUM(BUDG_I11)   AS BUDG_I11
+         , SUM(BUDG_I12)   AS BUDG_I12
+    
+         , MAX(INSERT_DB_USER) AS INSERT_DB_USER
+         , MAX(INSERT_DB_TIME) AS INSERT_DB_TIME
+         , MAX(UPDATE_DB_USER) AS UPDATE_DB_USER
+         , MAX(UPDATE_DB_USER) AS UPDATE_DB_TIME
+         , @FrBudgYyyyMm       AS FR_BUDG_YYYYMM
+         , @DataType           AS DATA_TYPE
+      FROM #TMP_AFB500T_090211  WITH (NOLOCK)
+     GROUP BY COMP_CODE, AC_YYYY, DEPT_CODE, BUDG_CODE
+
+    SET NOCOUNT OFF
+END
+</select>
+
+<select id="afb500ukrServiceImpl.selectDataCnt" parameterType="Map" resultType="rMap">			/* 저장전 예산확정(AFB510T)에서 데이터 존재여부 체크 */
+--afb500ukr.Cafb500ukr[fnAfb500Save] Query01
+SELECT COUNT(1) DATA_CNT
+  FROM AFB510T  WITH (NOLOCK)
+ WHERE COMP_CODE      = #{S_COMP_CODE}
+   AND BUDG_YYYYMM LIKE #{AC_YYYY} + '%'
+   AND DEPT_CODE      = #{DEPT_CODE}
+   AND BUDG_CODE      = #{BUDG_CODE}
+   AND BUDG_GUBUN     = '1'
+</select>
+
+<select id="afb500ukrServiceImpl.selectbudgCloseFg" parameterType="Map" resultType="rMap">		/* 저장전 예산마감정보(AFB010T)에서 마감여부 체크 */
+--afb500ukr.Cafb500ukr[fnAfb500Save] Query02
+SELECT BUDG_CLOSE_FG
+  FROM AFB010T  WITH (NOLOCK)
+ WHERE COMP_CODE  = #{S_COMP_CODE}
+   AND CLOSE_DATE = #{AC_YYYY}
+</select>
+	
+<delete id="afb500ukrServiceImpl.deleteDetail" parameterType="Map">								/* 삭제 */
+-- 변수 선언
+DECLARE @WORK_FLAG      NVARCHAR(01)
+
+-- 변수값 설정
+SET @WORK_FLAG   = #{WORK_FLAG}		
+
+IF (@WORK_FLAG = 'D')
+DELETE FROM AFB500T                                            
+ WHERE COMP_CODE   = #{S_COMP_CODE}  
+   AND BUDG_YYYYMM = #{AC_YYYY}                   
+   AND DEPT_CODE   = #{DEPT_CODE}
+   AND BUDG_CODE   = #{BUDG_CODE}	
+</delete>
+
+<update id="afb500ukrServiceImpl.updateDetail" parameterType="Map">								/* 수정,입력 */		
+--afb500ukr.Cafb500ukr[fnAfb500Save] Query04
+-- 변수 선언
+DECLARE @COMP_CODE      NVARCHAR(08)
+      , @BUDG_YYYYMM    NVARCHAR(06)
+      , @DEPT_CODE      NVARCHAR(08)
+      , @BUDG_CODE      NVARCHAR(30)
+      , @CAL_DIVI       NVARCHAR(01)
+      , @BUDG_I         NUMERIC(30,6)
+      , @USER_ID        NVARCHAR(100)
+      , @WORK_FLAG      NVARCHAR(01)
+
+-- 변수값 설정
+SET @COMP_CODE   = #{S_COMP_CODE}
+SET @BUDG_YYYYMM = #{AC_YYYY}
+SET @DEPT_CODE   = #{DEPT_CODE}
+SET @BUDG_CODE   = #{BUDG_CODE}
+SET @CAL_DIVI    = #{CAL_DIVI}
+SET @BUDG_I      = #{BUDG_I}
+SET @USER_ID     = #{S_USER_ID}
+SET @WORK_FLAG   = #{WORK_FLAG}
+
+-- 계산방법의 기본값은 '1'로 설정
+IF (@CAL_DIVI = '')
+    SET @CAL_DIVI = '1'
+
+-- 데이터 반영 ( UPDATE / INSERT )
+IF (@WORK_FLAG = 'U')
+BEGIN
+    UPDATE AFB500T
+       SET BUDG_I         = @BUDG_I
+         , UPDATE_DB_USER = @USER_ID
+         , UPDATE_DB_TIME = GETDATE()
+     WHERE COMP_CODE   = @COMP_CODE
+       AND BUDG_YYYYMM = @BUDG_YYYYMM
+       AND DEPT_CODE   = @DEPT_CODE
+       AND BUDG_CODE   = @BUDG_CODE
+END
+
+IF ((@@ROWCOUNT = 0) OR (@WORK_FLAG = 'N'))
+BEGIN
+    INSERT INTO AFB500T (
+                          COMP_CODE
+                        , BUDG_YYYYMM
+                        , DEPT_CODE
+                        , BUDG_CODE
+                        , BUDG_I
+                        , CAL_DIVI
+                        , INSERT_DB_USER
+                        , INSERT_DB_TIME
+                        , UPDATE_DB_USER
+                        , UPDATE_DB_TIME
+                        )
+                 VALUES (
+                          @COMP_CODE
+                        , @BUDG_YYYYMM
+                        , @DEPT_CODE
+                        , @BUDG_CODE
+                        , @BUDG_I
+                        , @CAL_DIVI
+                        , @USER_ID
+                        , GETDATE()
+                        , @USER_ID
+                        , GETDATE()
+                        )
+END	
+</update>
+</mapper>

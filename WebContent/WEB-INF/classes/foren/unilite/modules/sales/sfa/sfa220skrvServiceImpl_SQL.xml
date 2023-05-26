@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sfa220skrvServiceImpl">
+	
+	<select id="sfa220skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+				SET NOCOUNT ON
+				SET ARITHABORT ON
+					
+				DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+				      , @UserId			NVARCHAR(100)	/* 사용자ID */
+				      , @LangType		NVARCHAR(2)		/* 언어구분 */
+				      , @RefItem		NVARCHAR(01)
+				      , @DateFormat		NVARCHAR(10)
+					
+				SET @CompCode = #{S_COMP_CODE}
+				SET @UserId   = #{S_USER_ID}
+				SET @LangType = #{S_LANG_CODE}
+					
+				/* 명칭 참조 유형 */
+				SELECT TOP 1 @RefItem = REF_ITEM
+					FROM BSA300T WITH (NOLOCK)
+					WHERE COMP_CODE = @CompCode
+						AND USER_ID = @UserId
+					
+				SET @RefItem = ISNULL(@RefItem, N'0')
+					
+				/* 날짜 포맷 유형 설정 */
+				SELECT TOP 1 @DateFormat = CODE_NAME
+					FROM BSA100T WITH (NOLOCK)
+					WHERE COMP_CODE = @CompCode
+					AND MAIN_CODE = N'B044'
+					AND REF_CODE1 = N'Y'
+				SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')	
+
+				/* 조회 */
+				SELECT 
+				
+				  C.ITEM_LEVEL1																								 /* 대분류 */
+				, C.ITEM_LEVEL2																								 /* 중분류 */
+				, C.ITEM_LEVEL3 																							 /* 소분류 */
+
+				, SUM(B.SALE_Q)																				AS SALE_Q		 /* 매출수량*/
+				
+				, SUM(B.SALE_AMT_O)																			AS SALES_AMT_O  /* 공급가액*/
+				, SUM(B.TAX_AMT_O)																			AS TAX_AMT_O	 /* 부가세  */
+				, SUM(B.SALE_AMT_O + B.TAX_AMT_O)															AS SALE_AMT_O	 /* 매출합계*/
+								
+				, CASE WHEN B.TAX_TYPE = '1' THEN SUM(ROUND(ISNULL(B.PURCHASE_P,0)/1.1, 0) * B.SALE_Q)
+					                         ELSE SUM(ISNULL(B.PURCHASE_P,0) * B.SALE_Q)  END				AS SALE_COST     /* 판매원가*/
+				, CASE WHEN B.TAX_TYPE = '1' THEN SUM(ROUND(ISNULL(B.DISCOUNT_P,0)/1.1, 0) * B.SALE_Q)
+											 ELSE SUM(ISNULL(B.DISCOUNT_P,0) * B.SALE_Q)  END				AS SAVE_MONEY    /* 할인금액*/
+				
+				, SUM(B.SALE_AMT_O) - (CASE WHEN B.TAX_TYPE = '1' THEN SUM(ROUND(ISNULL(B.PURCHASE_P,0)/1.1, 0) * B.SALE_Q)
+					                         ELSE SUM(ISNULL(B.PURCHASE_P,0) * B.SALE_Q)  END) 
+					                - (CASE WHEN B.TAX_TYPE = '1' THEN SUM(ROUND(ISNULL(B.DISCOUNT_P,0)/1.1, 0) * B.SALE_Q)
+											 ELSE SUM(ISNULL(B.DISCOUNT_P,0) * B.SALE_Q)  END)				AS GROSS_PROFIT  /* 매출이익*/
+				
+				, C.ITEM_CODE
+				, C.ITEM_NAME
+				, B.PURCHASE_CUSTOM_CODE
+				, E.CUSTOM_NAME
+
+				FROM       SSA100T A WITH(NOLOCK)
+				INNER JOIN SSA110T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE 
+								                 AND A.DIV_CODE   = B.DIV_CODE
+								         	     AND A.BILL_NUM   = B.BILL_NUM
+				INNER JOIN BPR100T C WITH(NOLOCK) ON A.COMP_CODE = C.COMP_CODE				         							 			 
+								         		 AND B.ITEM_CODE = C.ITEM_CODE
+				LEFT JOIN  BTR100T D WITH(NOLOCK)ON A.COMP_CODE  = D.COMP_CODE
+				                                AND B.DIV_CODE   = D.DIV_CODE
+												AND B.INOUT_NUM  = D.INOUT_NUM
+												AND B.INOUT_SEQ  = D.INOUT_SEQ
+				LEFT JOIN BCM100T E WITH(NOLOCK) ON A.COMP_CODE            = E.COMP_CODE
+												AND B.PURCHASE_CUSTOM_CODE = E.CUSTOM_CODE							 
+				INNER JOIN BSA210T F WITH(NOLOCK) ON A.COMP_CODE  = F.COMP_CODE
+				 								 AND A.DIV_CODE   = F.TYPE_LEVEL
+												 AND A.DEPT_CODE  = F.TREE_CODE					         		  
+								         		  
+				WHERE A.COMP_CODE =@CompCode
+				<if test="@foren.Ognl@isNotEmpty(SALE_DATE_FR)">     
+			    AND    A.SALE_DATE      &gt;= #{SALE_DATE_FR}
+			    </if>
+			    <if test="@foren.Ognl@isNotEmpty(SALE_DATE_TO)">     
+			    AND    A.SALE_DATE      &lt;= #{SALE_DATE_TO}
+			    </if>
+			    <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">     
+				AND    F.TREE_LEVEL        LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =F.COMP_CODE AND TYPE_LEVEL=F.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+				</if>
+			    <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">     
+			    AND    C.ITEM_CODE        LIKE #{ITEM_CODE} + '%'
+			    </if>
+			    <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">     
+			    AND    C.ITEM_NAME        LIKE #{ITEM_NAME} + '%'
+			    </if>
+			    <if test="@foren.Ognl@isNotEmpty(TXTLV_L1)">     
+			    AND    C.ITEM_LEVEL1          = #{TXTLV_L1}
+			    </if>
+			    <if test="@foren.Ognl@isNotEmpty(TXTLV_L2)">     
+			    AND    C.ITEM_LEVEL2          = #{TXTLV_L2}
+			    </if>
+			    <if test="@foren.Ognl@isNotEmpty(TXTLV_L3)">     
+			    AND    C.ITEM_LEVEL3          = #{TXTLV_L3}
+			    </if>
+			    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_FR)">     
+			    AND    E.CUSTOM_CODE      &gt;= #{CUSTOM_CODE_FR}
+			    </if>
+			    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_TO)">     
+			    AND    E.CUSTOM_CODE      &lt;= #{CUSTOM_CODE_TO}
+			    </if>		  
+								         		  
+								         		  
+				GROUP BY C.ITEM_LEVEL1, C.ITEM_LEVEL2, C.ITEM_LEVEL3
+				         , C.ITEM_CODE , C.ITEM_NAME,  B.PURCHASE_CUSTOM_CODE , E.CUSTOM_NAME, B.TAX_TYPE
+				        
+				         
+				ORDER BY C.ITEM_LEVEL1, C.ITEM_LEVEL2, C.ITEM_LEVEL3
+				         							 			 
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+		
+    </select>	
+</mapper>

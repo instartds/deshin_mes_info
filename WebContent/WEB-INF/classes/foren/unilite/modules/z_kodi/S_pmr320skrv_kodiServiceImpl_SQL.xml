@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_pmr320skrv_kodiServiceImpl">
+	<!-- 수주별생산투입공수 합계 데이터 조회 -->
+	<select id="s_pmr320skrv_kodiServiceImpl.selectList" parameterType="Map" resultType="rMap">
+
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+
+			DECLARE @CompCode		NVARCHAR(08)	/* 법인코드      */
+				  , @UserId			NVARCHAR(100)	/* 사용자ID */
+				  , @RefItem		NVARCHAR(01)
+				  , @DateFormat		NVARCHAR(10)
+
+			SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_ID}
+
+			/* 명칭 참조 유형 */
+			SELECT TOP 1 @RefItem = REF_ITEM
+			  FROM BSA300T WITH (NOLOCK)
+			 WHERE USER_ID = @UserId
+
+			SET @RefItem = ISNULL(@RefItem, N'0')
+
+			/* 날짜 포맷 유형 설정 */
+			SELECT TOP 1 @DateFormat = CODE_NAME
+			  FROM BSA100T WITH (NOLOCK)
+			 WHERE COMP_CODE = @CompCode
+			   AND MAIN_CODE = N'B044'
+			   AND REF_CODE1 = N'Y'
+
+			SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+			SELECT A.CUSTOM_CODE							AS CUSTOM_CODE     -- 거래처코드
+				 , CASE WHEN @RefItem = '1' THEN M2.CUSTOM_NAME1
+						WHEN @RefItem = '2' THEN M2.CUSTOM_NAME2
+						ELSE M2.CUSTOM_NAME
+				   END										AS CUSTOM_NAME		-- 거래처명
+				 , A.ORDER_NUM								AS ORDER_NUM		-- 수주번호
+				 , B.SER_NO									AS SER_NO           -- 순번
+				 , B.WEEK_NUM                               AS WEEK_NUM         -- 계획주차
+				 , unilite.fnFormat(A.COMP_CODE, B.ORDER_Q, 'P_FSET_QS')			AS ORDER_Q	                        -- 수주량
+				 , unilite.fnFormat(A.COMP_CODE, B.ORDER_Q - B.OUTSTOCK_Q + B.RETURN_Q, 'P_FSET_QS') AS ORDER_REM_Q		-- 미납량
+				 , unilite.fnFormat(A.COMP_CODE, C.WK_PLAN_Q, 'P_FSET_QS')         AS WK_PLAN_Q                         -- 생산계획량
+				 , unilite.fnFormat(A.COMP_CODE, D.WKORD_Q, 'P_FSET_QS')           AS WKORD_Q                           -- 작업지시량
+				 , B.INIT_DVRY_DATE							AS INIT_DVRY_DATE	-- 납품요청일
+				 , B.DVRY_DATE								AS DVRY_DATE		-- 납품변경일
+				 , F.ITEM_CODE								AS ITEM_CODE        -- 품목
+				 , M1.ITEM_NAME								AS ITEM_NAME        -- 품목명
+				 , G.INOUT_DATE                             AS INOUT_DATE       -- 납품일
+				 , C.WK_PLAN_NUM                            AS WK_PLAN_NUM      -- 생산계획번호
+				 , D.WKORD_NUM                              AS WKORD_NUM        -- 작업지시번호
+				 , E.PRODT_NUM                              AS PRODT_NUM        -- 작업실적번호
+				 , E.PRODT_DATE                             AS PRODT_DATE       -- 생산일
+				 , E.WORK_Q                                 AS WORK_Q           -- 생산량
+				 , E.GOOD_WORK_Q                            AS GOOD_WORK_Q      -- 양품생산량
+				 , E.BAD_WORK_Q                             AS BAD_WORK_Q       -- 불량
+				 , F.IN_STOCK_Q                             AS IN_STOCK_Q       -- 입고량
+				 , E.SAVING_Q                               AS SAVING_Q         -- 관리품
+                 , ISNULL(E.BOX_TRNS_RATE,1)                AS BOX_TRNS_RATE    -- 포장단위수량
+                 , E.BOX_Q                                  AS BOX_Q            -- 포장박스
+				 , E.PIECE                                  AS PIECE            -- 낱개
+                 , E.LOT_NO                                 AS LOT_NO           -- LOT No.
+                 , F.REMARK                                 AS REMARK           -- 비고
+                 , E2.PRODT_DATE                            AS PRODT_DATE_A     -- 제조일
+                 , E1.PRODT_DATE_B                          AS PRODT_DATE_B     -- 충전일
+				 , E1.PRODT_DATE_C                          AS PRODT_DATE_C     -- 포장일
+                 , E2.EXPIRATION_DATE                       AS EXPIRATION_DATE  -- 사용기한
+                 , M3.ITEM_ACCOUNT												-- 품목계정
+			  FROM	  PMP100T D WITH(NOLOCK)
+			  INNER  JOIN PMR100T E WITH(NOLOCK) ON E.COMP_CODE  = D.COMP_CODE
+											   AND E.DIV_CODE    = D.DIV_CODE
+											   AND E.WKORD_NUM   = D.WKORD_NUM
+											   AND E.LINE_END_YN = 'Y'
+              INNER  JOIN PMR200T F WITH(NOLOCK) ON F.COMP_CODE  = E.COMP_CODE
+                                               AND F.DIV_CODE   = E.DIV_CODE
+                                               AND F.WKORD_NUM  = E.WKORD_NUM
+                                               AND F.PRODT_NUM  = E.PRODT_NUM
+                                               AND F.PRODT_DATE = E.PRODT_DATE
+			  INNER JOIN ( SELECT X.COMP_CODE, X.DIV_CODE, X.WKORD_NUM, X.WORK_SHOP_CODE, X.PROG_WORK_CODE
+								 , MAX(X.PRODT_DATE_B) AS PRODT_DATE_B, MAX(X.PRODT_DATE_C) AS PRODT_DATE_C
+							 FROM (
+									SELECT A.COMP_CODE, A.DIV_CODE, A.WKORD_NUM, A.PROG_WORK_CODE, A.WORK_SHOP_CODE
+										 , CASE WHEN ISNULL(C.TEMPC_01, '') = 'B' THEN B.PRODT_DATE ELSE '' END AS PRODT_DATE_B
+										 , CASE WHEN (ISNULL(C.TEMPC_01, '') = 'C' AND B.LINE_END_YN = 'Y') THEN B.PRODT_DATE ELSE '' END AS PRODT_DATE_C
+									  FROM PMP100T A WITH(NOLOCK)
+											INNER JOIN PMR100T B WITH(NOLOCK) ON B.COMP_CODE       = A.COMP_CODE
+																			AND B.DIV_CODE        = A.DIV_CODE
+																			AND B.WKORD_NUM       = A.WKORD_NUM
+																			AND B.PROG_WORK_CODE  = A.PROG_WORK_CODE
+											LEFT JOIN PBS200T C WITH(NOLOCK) ON C.COMP_CODE      = A.COMP_CODE
+																			AND C.DIV_CODE       = A.DIV_CODE
+																			AND C.WORK_SHOP_CODE = A.WORK_SHOP_CODE
+																			AND C.PROG_WORK_CODE = A.PROG_WORK_CODE) AS X
+						   GROUP BY X.COMP_CODE, X.DIV_CODE, X.WKORD_NUM, X.WORK_SHOP_CODE, X.PROG_WORK_CODE
+							   ) AS  E1  ON E1.COMP_CODE    = D.COMP_CODE
+			                            AND E1.DIV_CODE     = D.DIV_CODE
+										AND E1.WKORD_NUM  = D.WKORD_NUM
+										AND E1.PROG_WORK_CODE = D.PROG_WORK_CODE
+										AND E1.WORK_SHOP_CODE = D.WORK_SHOP_CODE
+                LEFT  JOIN ( SELECT A.COMP_CODE
+									  , A.DIV_CODE
+									  , B.LOT_NO
+									  , MAX(B.PRODT_DATE) AS PRODT_DATE
+									  , MAX(B.EXPIRATION_DATE) AS EXPIRATION_DATE
+									  , ISNULL(R3.PROD_ITEM_CODE, '') AS PROD_ITEM_CODE
+							 FROM PMP100T A WITH(NOLOCK)
+							 	 INNER JOIN PMR100T B WITH(NOLOCK)  ON B.COMP_CODE = A.COMP_CODE
+																   AND B.DIV_CODE = A.DIV_CODE
+																   AND B.WKORD_NUM = A.WKORD_NUM
+																   AND B.LINE_END_YN = 'Y'
+								 INNER JOIN BPR100T R1 WITH(NOLOCK) ON R1.COMP_CODE = A.COMP_CODE
+										                           AND R1.ITEM_CODE = A.ITEM_CODE
+								 INNER JOIN BPR200T R2 WITH(NOLOCK) ON R2.COMP_CODE = A.COMP_CODE
+										                           AND R2.DIV_CODE  = A.DIV_CODE
+										                           AND R2.ITEM_CODE = A.ITEM_CODE
+										                           AND R2.ITEM_ACCOUNT IN ('20', '30','50') --성형품, 내용물(벌크) 2020.11.17  반제품도 추가
+                                 LEFT  JOIN BPR500T R3 WITH(NOLOCK) ON R3.COMP_CODE = A.COMP_CODE
+								                                   AND R3.DIV_CODE  = A.DIV_CODE
+																   AND R3.CHILD_ITEM_CODE = A.ITEM_CODE
+
+								 WHERE A.LINE_END_YN = 'Y'
+								 GROUP BY A.COMP_CODE, A.DIV_CODE, B.LOT_NO, ISNULL(R3.PROD_ITEM_CODE, '')
+
+							   ) AS  E2  ON E2.COMP_CODE    = E.COMP_CODE
+			                            AND E2.DIV_CODE     = E.DIV_CODE
+										AND E2.LOT_NO       = E.LOT_NO
+										AND E2.PROD_ITEM_CODE = F.ITEM_CODE
+
+			  LEFT  JOIN SOF110T B WITH(NOLOCK) ON B.COMP_CODE = D.COMP_CODE
+											   AND B.OUT_DIV_CODE  = D.DIV_CODE
+											   AND B.ORDER_NUM = D.SO_NUM
+											   AND B.SER_NO    = D.SO_SEQ
+											   --AND ISNULL(B.CLOSE_YN, 'N') != 'Y'
+              LEFT  JOIN SOF100T A WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+			                                   AND A.DIV_CODE  = B.DIV_CODE
+											   AND A.ORDER_NUM = B.ORDER_NUM
+			  LEFT  JOIN PPL100T C WITH(NOLOCK) ON C.COMP_CODE   = B.COMP_CODE
+											   AND C.DIV_CODE    = B.OUT_DIV_CODE
+											   AND C.ORDER_NUM   = B.ORDER_NUM
+											   AND C.SEQ         = B.SER_NO
+											   AND C.ITEM_CODE   = B.ITEM_CODE
+											   AND C.WK_PLAN_NUM = D.WK_PLAN_NUM
+
+			   LEFT  JOIN (SELECT    COMP_CODE
+									 ,DIV_CODE
+									 ,ORDER_NUM
+									 ,ORDER_SEQ
+									 ,MAX(INOUT_DATE) AS INOUT_DATE
+							 FROM BTR100T WITH(NOLOCK)
+							 WHERE INOUT_TYPE = '2'
+							 GROUP BY COMP_CODE
+									 ,DIV_CODE
+									 ,ORDER_NUM
+									 ,ORDER_SEQ
+									) G			ON  G.COMP_CODE = D.COMP_CODE
+			                                    AND G.DIV_CODE  = D.DIV_CODE
+											    AND G.ORDER_NUM = D.SO_NUM
+											    AND G.ORDER_SEQ = D.SO_SEQ
+			  INNER JOIN BPR100T M1 WITH(NOLOCK) ON M1.COMP_CODE = F.COMP_CODE
+											   AND M1.ITEM_CODE  = F.ITEM_CODE
+			  INNER JOIN BCM100T M2 WITH(NOLOCK) ON M2.COMP_CODE   = A.COMP_CODE
+											   AND M2.CUSTOM_CODE = A.CUSTOM_CODE
+              INNER JOIN BPR200T M3 WITH(NOLOCK) ON M3.COMP_CODE = D.COMP_CODE
+                                                AND M3.DIV_CODE  = D.DIV_CODE
+                                                AND M3.ITEM_CODE = D.ITEM_CODE
+			   LEFT JOIN BSA100T M4 WITH(NOLOCK) ON M4.COMP_CODE = A.COMP_CODE
+												AND M4.MAIN_CODE = 'B020'
+												AND M4.SUB_CODE  = M3.ITEM_ACCOUNT
+												AND M4.SUB_CODE != '$'
+			 WHERE D.COMP_CODE   = @CompCode
+			   AND D.DIV_CODE	 = #{DIV_CODE}
+			   AND D.LINE_END_YN = 'Y'
+
+		    <if test="@foren.Ognl@isNotEmpty(PRODT_DATE_FR)">
+			   AND E.PRODT_DATE  <![CDATA[>=]]> #{PRODT_DATE_FR}
+			</if>
+
+		    <if test="@foren.Ognl@isNotEmpty(PRODT_DATE_TO)">
+			   AND E.PRODT_DATE  <![CDATA[<=]]> #{PRODT_DATE_TO}
+			</if>
+
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+			   AND A.CUSTOM_CODE LIKE  #{CUSTOM_CODE} + '%'
+			</if>
+
+  			<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			   AND M2.CUSTOM_NAME LIKE  #{CUSTOM_NAME} + '%'
+			</if>
+
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+			   AND B.ITEM_CODE LIKE  #{ITEM_CODE} + '%'
+			</if>
+
+  			<if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+			   AND M1.ITEM_NAME LIKE  #{ITEM_NAME} + '%'
+			</if>
+
+  			<if test="@foren.Ognl@isNotEmpty(SO_NUM)">
+			   AND A.ORDER_NUM LIKE  #{SO_NUM} + '%'
+			</if>
+
+  			<if test="@foren.Ognl@isNotEmpty(WKORD_NUM)">
+			   AND D.WKORD_NUM LIKE  #{WKORD_NUM} + '%'
+			</if>
+			<if test="INSPEC_ITEM == &quot;2&quot;">
+			   AND M4.REF_CODE3 = '10'		--제품인 것
+			</if>
+			<if test="INSPEC_ITEM == &quot;1&quot;">
+			   AND M4.REF_CODE3 = '20'      --반제품인 것
+			</if>
+     		ORDER BY D.WKORD_NUM, F.ITEM_CODE, E.PRODT_DATE, E.PRODT_NUM, C.WK_PLAN_NUM, A.CUSTOM_CODE, A.ORDER_NUM, B.SER_NO
+
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+
+
+	</select>
+
+</mapper>

@@ -1,0 +1,571 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="hpa870skrServiceImpl">
+	
+	<select id="hpa870skrServiceImpl.selectColumns" parameterType="loginVO" resultType="rMap">
+		--UHrpt01Krv.CHpa870Ukr[fnHpa870QStd]query01
+			--공제코드를 위한 temp table생성을 위해 기존 table 삭제
+			IF EXISTS(SELECT '1' AS S                  
+							, TABLE_NAME                
+						FROM INFORMATION_SCHEMA.TABLES 
+						WHERE TABLE_NAME = 'HPA900PH_${compCode}' )
+				DROP TABLE HPA900PH_${compCode}			
+			--지급코드를 위한 temp table
+			IF EXISTS(	SELECT '2' AS S                  
+							 , TABLE_NAME                
+						  FROM INFORMATION_SCHEMA.TABLES 
+						 WHERE TABLE_NAME = 'HBO800PH_${compCode}')
+		       DROP TABLE HBO800PH_${compCode}
+
+		--hpa870skr.Chpa870skr[fnHpa870QStd]query02-1
+			SELECT IDENTITY(INT,1,1) AS SEQ  
+			     , SUB_CODE                  
+			     , CODE_NAME                 
+			  INTO HPA900PH_${compCode}
+			  FROM BSA100T                   
+			 WHERE COMP_CODE = '${compCode}'
+			   AND MAIN_CODE = 'H034'        
+			   AND USE_YN    = 'Y'           
+			   AND SUB_CODE != '$'           
+			 ORDER BY REF_CODE2, SUB_CODE    
+		
+		--hpa870skr.Chpa870skr[fnHpa870QStd]query03-1
+			SELECT IDENTITY(INT,1,1) AS W_SEQ 
+			     , WAGES_CODE                 
+			     , WAGES_NAME                 
+			     , WAGES_SEQ                  
+			  INTO HBO800PH_${compCode}
+			  FROM HBS300T                    
+			 WHERE COMP_CODE = '${compCode}'
+			   AND CODE_TYPE = '1'            
+			   AND USE_YN = 'Y'               
+			 ORDER BY WAGES_SEQ, WAGES_CODE   
+
+		BEGIN
+		SET NOCOUNT ON
+			SET ARITHABORT ON
+		
+			DECLARE @HBO800PH_COUNT	INTEGER
+			DECLARE @HPA900PH_COUNT INTEGER
+			
+			SET @HBO800PH_COUNT = (select count(W_SEQ) from HBO800PH_${compCode})
+			SET @HPA900PH_COUNT = (select count(SEQ) from HPA900PH_${compCode})
+			
+			CREATE TABLE #HPA870_Temp
+			(
+				W_SEQ         INT,
+				WAGES_NAME    NVARCHAR(30)
+			)
+			--지급코드 20개 데이터까지만 보여줌
+			INSERT INTO #HPA870_Temp			
+			SELECT TOP 20 W_SEQ, WAGES_NAME from HBO800PH_${compCode}
+
+			--데이터가 20개가 넘을 경우 마지막 20번째 컬럼 이름 정해준다
+			IF @HBO800PH_COUNT &gt;= 20	BEGIN
+										  UPDATE #HPA870_Temp
+											 SET WAGES_NAME = 'z' + uniLITE.fnGetTxt('H0042')
+										   WHERE W_SEQ = 20
+										END
+
+			--공제코드 15개 데이터까지만 보여줌
+			INSERT INTO #HPA870_Temp			
+			SELECT TOP 15 SEQ + 20 as SEQ, CODE_NAME from HPA900PH_${compCode}
+			
+			IF @HBO800PH_COUNT &gt;= 15	BEGIN
+										  UPDATE #HPA870_Temp
+											 SET WAGES_NAME = 'z' + uniLITE.fnGetTxt('H0043')
+										   WHERE W_SEQ = 35
+										END
+			SELECT * FROM #HPA870_Temp
+					
+			DROP table #HPA870_Temp
+		
+		END
+	</select>
+
+	<select id="hpa870skrServiceImpl.selectColumns2" parameterType="Map" resultType="rMap">		
+		--UHrpt01Krv.CHpa870Ukr[fnHpa870QStd]query01
+			--공제코드를 위한 temp table생성을 위해 기존 table 삭제
+			IF EXISTS(SELECT '1' AS S                  
+							, TABLE_NAME                
+						FROM INFORMATION_SCHEMA.TABLES 
+						WHERE TABLE_NAME = 'HPA900PH_${S_COMP_CODE}' )
+				DROP TABLE HPA900PH_${S_COMP_CODE}			
+			--지급코드를 위한 temp table
+			IF EXISTS(	SELECT '2' AS S                  
+							 , TABLE_NAME                
+						  FROM INFORMATION_SCHEMA.TABLES 
+						 WHERE TABLE_NAME = 'HBO800PH_${S_COMP_CODE}')
+		       DROP TABLE HBO800PH_${S_COMP_CODE}
+
+		--hpa870skr.Chpa870skr[fnHpa870QStd]query02-2(급여데이터 목록 임시테이블에 저장)
+		 SELECT IDENTITY(INT,1,1) AS SEQ          
+		      , S.SUB_CODE                        
+		      , S.CODE_NAME                       
+		   INTO HPA900PH_${S_COMP_CODE}
+		   FROM BSA100T S INNER JOIN HPA400T C      
+		                     ON C.COMP_CODE = S.COMP_CODE
+		                    AND C.DED_CODE  = S.SUB_CODE
+		 WHERE C.COMP_CODE   = '${S_COMP_CODE}'
+		   AND C.PAY_YYYYMM &gt;= #{PLAN_DATE_FR}
+		   AND C.PAY_YYYYMM &lt;= #{PLAN_DATE} 
+		   AND S.MAIN_CODE   = 'H034'
+		   AND S.SUB_CODE   != '$'  
+		 GROUP BY S.COMP_CODE, S.SUB_CODE, S.CODE_NAME, S.REF_CODE2
+		 ORDER BY S.REF_CODE2, S.SUB_CODE 
+
+		--hpa870skr.Chpa870skr[fnHpa870QStd]query03-2
+		SELECT IDENTITY(INT,1,1) AS W_SEQ   
+		     , S.WAGES_CODE                 
+		     , S.WAGES_NAME                 
+		     , S.WAGES_SEQ                  
+		  INTO HBO800PH_${S_COMP_CODE}
+		  FROM HBS300T S INNER JOIN HPA300T A 
+		                    ON S.COMP_CODE  = A.COMP_CODE
+		                   AND S.WAGES_CODE = A.WAGES_CODE
+		 WHERE S.COMP_CODE   = '${S_COMP_CODE}'
+		   AND S.CODE_TYPE   = '1'              
+		   AND A.SUPP_TYPE   = '1'              
+		   AND A.PAY_YYYYMM &gt;= #{PLAN_DATE_FR}
+		   AND A.PAY_YYYYMM &lt;= #{PLAN_DATE}
+		 GROUP BY S.WAGES_CODE, S.WAGES_NAME, S.WAGES_SEQ 
+		 ORDER BY S.WAGES_SEQ, S.WAGES_CODE 
+
+
+		BEGIN
+		SET NOCOUNT ON
+			SET ARITHABORT ON
+		
+			DECLARE @HBO800PH_COUNT	INTEGER
+			DECLARE @HPA900PH_COUNT INTEGER
+			
+			SET @HBO800PH_COUNT = (select count(W_SEQ) from HBO800PH_${S_COMP_CODE})
+			SET @HPA900PH_COUNT = (select count(SEQ) from HPA900PH_${S_COMP_CODE})
+			
+			CREATE TABLE #HPA870_Temp
+			(
+				W_SEQ         INT,
+				WAGES_NAME    NVARCHAR(30)
+			)
+			--지급코드 20개 데이터까지만 보여줌
+			INSERT INTO #HPA870_Temp			
+			SELECT TOP 20 W_SEQ, WAGES_NAME from HBO800PH_${S_COMP_CODE}
+
+			--데이터가 20개가 넘을 경우 마지막 20번째 컬럼 이름 정해준다
+			IF @HBO800PH_COUNT &gt;= 20	BEGIN
+										  UPDATE #HPA870_Temp
+											 SET WAGES_NAME = 'z' + uniLITE.fnGetTxt('H0042')
+										   WHERE W_SEQ = 20
+										END
+
+			--공제코드 15개 데이터까지만 보여줌
+			INSERT INTO #HPA870_Temp			
+			select TOP 15 SEQ + 20 as SEQ, CODE_NAME from HPA900PH_${S_COMP_CODE}
+			
+			IF @HBO800PH_COUNT &gt;= 15	BEGIN
+										  UPDATE #HPA870_Temp
+											 SET WAGES_NAME = 'z' + uniLITE.fnGetTxt('H0043')
+										   WHERE W_SEQ = 35
+										END
+			SELECT * FROM #HPA870_Temp
+					
+			--DROP table HBO800PH_${S_COMP_CODE}
+			--DROP table HPA900PH_${S_COMP_CODE}
+			DROP table #HPA870_Temp
+		
+		END
+	</select>
+		
+	<select id="hpa870skrServiceImpl.selectList" parameterType="Map" resultType="rMap">		
+	--hpa870skr.Chpa870skr[fnHpa870p]
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#HPA870SKR_160401'))
+	        DROP TABLE #HPA870SKR_160401
+
+		SELECT ROW_NUMBER() OVER(PARTITION BY M0.PERSON_NUMB ORDER BY M0.DIV_CODE, M0.DEPT_CODE, M0.PERSON_NUMB, M1.PAY_YYYYMM DESC)	
+																								AS NUM
+			 , '1'                                          									AS GUBUN
+			 , M0.DIV_CODE																		AS DIV_CODE
+			 , M0.DEPT_CODE
+		     , M0.DEPT_NAME
+		     , M0.PERSON_NUMB
+		     , M0.NAME
+			 , M0.POST_CODE
+		     , (SELECT CODE_NAME
+		          FROM BSA100T
+		         WHERE COMP_CODE = #{S_COMP_CODE}
+		           AND MAIN_CODE = 'H005'
+		           AND SUB_CODE  = M0.POST_CODE) 												AS POST_NAME
+		     , uniLITE.fnGetUserDateComp(M1.COMP_CODE, M1.PAY_YYYYMM) 							AS PAY_YYYYMM 
+		     , M1.SUPP_TOTAL_I
+		     , M1.REAL_AMOUNT_I
+		     , M1.DED_TOTAL_I 
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S1,0))											AS S1
+		     , M1.BUSI_SHARE_I
+		     , M1.WORKER_COMPEN_I
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S2,0))											AS S2
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S3,0))											AS S3
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S4,0))											AS S4
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S5,0))											AS S5
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S6,0))											AS S6
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S7,0))											AS S7
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S8,0))											AS S8
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S9,0))											AS S9
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S10,0))											AS S10
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S11,0))											AS S11
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S12,0))											AS S12
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S13,0))											AS S13
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S14,0))											AS S14
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S15,0))											AS S15
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S16,0))											AS S16
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S17,0))											AS S17
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S18,0))											AS S18
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S19,0))											AS S19
+		     , CONVERT(NUMERIC(30,0),ISNULL(M2.S20,0))								 			AS S20
+		     , CONVERT(NUMERIC(30,0),ISNULL(M3.A21,0))											AS A21
+		     , CONVERT(NUMERIC(30,0),ISNULL(M3.A22,0))											AS A22
+		     , CONVERT(NUMERIC(30,0),ISNULL(M3.A23,0))											AS A23
+		     , CONVERT(NUMERIC(30,0),ISNULL(M3.A24,0))								 			AS A24
+		     , CONVERT(NUMERIC(30,0),ISNULL(M3.A25,0))									 		AS A25
+		     , CONVERT(NUMERIC(30,0),ISNULL(M3.A26,0))											AS A26
+		     , CONVERT(NUMERIC(30,0),ISNULL(M3.A27,0))								 			AS A27
+		     , CONVERT(NUMERIC(30,0),ISNULL(M3.A28,0)) 											AS A28
+		     , CONVERT(NUMERIC(30,0),ISNULL(M3.A29,0))									 		AS A29
+		     , CONVERT(NUMERIC(30,0),ISNULL(M3.A30,0)) 											AS A30
+		     , CONVERT(NUMERIC(30,0),ISNULL(M3.A31,0))											AS A31
+		     , CONVERT(NUMERIC(30,0),ISNULL(M3.A32,0))										 	AS A32
+		     , CONVERT(NUMERIC(30,0),ISNULL(M3.A33,0))											AS A33
+		     , CONVERT(NUMERIC(30,0),ISNULL(M3.A34,0))											AS A34
+		     , CONVERT(NUMERIC(30,0),ISNULL(M3.A35,0)) 											AS A35
+		  INTO #HPA870SKR_160401
+		  FROM HUM100T M0
+		       INNER JOIN HPA600T M1 ON M1.COMP_CODE   = M0.COMP_CODE
+		                            AND M1.PERSON_NUMB = M0.PERSON_NUMB
+		       LEFT  JOIN (SELECT T1.PERSON_NUMB
+		                        , T1.PAY_YYYYMM
+		                        , T1.SUPP_TYPE
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C1  THEN T1.AMOUNT_I ELSE 0 END) AS 'S1'
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C2  THEN T1.AMOUNT_I ELSE 0 END) AS 'S2'
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C3  THEN T1.AMOUNT_I ELSE 0 END) AS 'S3'
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C4  THEN T1.AMOUNT_I ELSE 0 END) AS 'S4'
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C5  THEN T1.AMOUNT_I ELSE 0 END) AS 'S5'
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C6  THEN T1.AMOUNT_I ELSE 0 END) AS 'S6'
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C7  THEN T1.AMOUNT_I ELSE 0 END) AS 'S7'
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C8  THEN T1.AMOUNT_I ELSE 0 END) AS 'S8'
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C9  THEN T1.AMOUNT_I ELSE 0 END) AS 'S9'
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C10 THEN T1.AMOUNT_I ELSE 0 END) AS 'S10'   
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C11 THEN T1.AMOUNT_I ELSE 0 END) AS 'S11'   
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C12 THEN T1.AMOUNT_I ELSE 0 END) AS 'S12'   
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C13 THEN T1.AMOUNT_I ELSE 0 END) AS 'S13'   
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C14 THEN T1.AMOUNT_I ELSE 0 END) AS 'S14'   
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C15 THEN T1.AMOUNT_I ELSE 0 END) AS 'S15'   
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C16 THEN T1.AMOUNT_I ELSE 0 END) AS 'S16'   
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C17 THEN T1.AMOUNT_I ELSE 0 END) AS 'S17'   
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C18 THEN T1.AMOUNT_I ELSE 0 END) AS 'S18'   
+		                        , SUM(CASE WHEN T1.WAGES_CODE = T4.C19 THEN T1.AMOUNT_I ELSE 0 END) AS 'S19'   
+		                        , MAX(CASE WHEN T4.C20 = 'zzz' 
+		                                        THEN ISNULL(T5.ETC_AMT,0)   
+		                                        ELSE (CASE WHEN T1.WAGES_CODE = T4.C20 THEN T1.AMOUNT_I ELSE 0 END) 
+		                               END) AS S20 
+		                        , T1.COMP_CODE
+		                     FROM HPA300T T1
+		                          LEFT JOIN (SELECT PERSON_NUMB
+		                               , PAY_YYYYMM
+		                               , SUPP_TYPE
+		                               , SUM(AMOUNT_I) AS ETC_AMT 
+		                               , COMP_CODE
+		                            FROM HPA300T  
+		                           WHERE COMP_CODE   =  #{S_COMP_CODE}
+		                             AND SUPP_TYPE   =  '1'
+		                             AND PAY_YYYYMM &gt;=  #{PLAN_DATE_FR}
+		                             AND PAY_YYYYMM &lt;=  #{PLAN_DATE}
+		                             AND WAGES_CODE IN (SELECT WAGES_CODE FROM HBO800PH_${S_COMP_CODE}   WHERE W_SEQ &gt;= 20 )  
+		                           GROUP BY PERSON_NUMB, PAY_YYYYMM, SUPP_TYPE, COMP_CODE) T5 ON T5.COMP_CODE   = T1.COMP_CODE
+		                                                                                     AND T5.PERSON_NUMB = T1.PERSON_NUMB 
+		                                                                                     AND T5.PAY_YYYYMM  = T1.PAY_YYYYMM
+		                                                                                     AND T5.SUPP_TYPE   = T1.SUPP_TYPE 
+		                        , (SELECT MAX(CASE WHEN W_SEQ = 1  THEN WAGES_CODE ELSE '' END) AS 'C1'
+		                                , MAX(CASE WHEN W_SEQ = 2  THEN WAGES_CODE ELSE '' END) AS 'C2'
+		                                , MAX(CASE WHEN W_SEQ = 3  THEN WAGES_CODE ELSE '' END) AS 'C3'
+		                                , MAX(CASE WHEN W_SEQ = 4  THEN WAGES_CODE ELSE '' END) AS 'C4'
+		                                , MAX(CASE WHEN W_SEQ = 5  THEN WAGES_CODE ELSE '' END) AS 'C5'
+		                                , MAX(CASE WHEN W_SEQ = 6  THEN WAGES_CODE ELSE '' END) AS 'C6'
+		                                , MAX(CASE WHEN W_SEQ = 7  THEN WAGES_CODE ELSE '' END) AS 'C7'
+		                                , MAX(CASE WHEN W_SEQ = 8  THEN WAGES_CODE ELSE '' END) AS 'C8'
+		                                , MAX(CASE WHEN W_SEQ = 9  THEN WAGES_CODE ELSE '' END) AS 'C9'
+		                                , MAX(CASE WHEN W_SEQ = 10 THEN WAGES_CODE ELSE '' END) AS 'C10'
+		                                , MAX(CASE WHEN W_SEQ = 11 THEN WAGES_CODE ELSE '' END) AS 'C11'
+		                                , MAX(CASE WHEN W_SEQ = 12 THEN WAGES_CODE ELSE '' END) AS 'C12'
+		                                , MAX(CASE WHEN W_SEQ = 13 THEN WAGES_CODE ELSE '' END) AS 'C13'
+		                                , MAX(CASE WHEN W_SEQ = 14 THEN WAGES_CODE ELSE '' END) AS 'C14'
+		                                , MAX(CASE WHEN W_SEQ = 15 THEN WAGES_CODE ELSE '' END) AS 'C15'
+		                                , MAX(CASE WHEN W_SEQ = 16 THEN WAGES_CODE ELSE '' END) AS 'C16'
+		                                , MAX(CASE WHEN W_SEQ = 17 THEN WAGES_CODE ELSE '' END) AS 'C17'
+		                                , MAX(CASE WHEN W_SEQ = 18 THEN WAGES_CODE ELSE '' END) AS 'C18'
+		                                , MAX(CASE WHEN W_SEQ = 19 THEN WAGES_CODE ELSE '' END) AS 'C19'
+		                                , MAX(CASE WHEN W_SEQ &gt;= 20 
+		                                                THEN 'zzz'  
+		                                                ELSE (CASE WHEN W_SEQ = 20 THEN WAGES_CODE ELSE '' END) 
+		                                       END) AS 'C20'
+		                             FROM HBO800PH_${S_COMP_CODE} ) T4
+		                    WHERE T1.SUPP_TYPE   = '1'
+		                      AND T1.PAY_YYYYMM &gt;= #{PLAN_DATE_FR}
+		                      AND T1.PAY_YYYYMM &lt;= #{PLAN_DATE}
+		                      AND T1.COMP_CODE   = #{S_COMP_CODE}
+		                    GROUP BY T1.PERSON_NUMB,T1.PAY_YYYYMM, T1.SUPP_TYPE, T1.COMP_CODE) M2 ON M2.COMP_CODE   = M1.COMP_CODE
+		                                                                                         AND M2.PERSON_NUMB = M1.PERSON_NUMB
+		                                                                                         AND M2.SUPP_TYPE   = M1.SUPP_TYPE
+		                                                                                         AND M2.PAY_YYYYMM  = M1.PAY_YYYYMM
+		       LEFT  JOIN (SELECT T1.PERSON_NUMB
+		                        , T1.PAY_YYYYMM
+		                        , T1.SUPP_TYPE 
+		                        , SUM(CASE WHEN T1.DED_CODE = T4.C21 THEN T1.DED_AMOUNT_I ELSE 0 END) AS 'A21' 
+		                        , SUM(CASE WHEN T1.DED_CODE = T4.C22 THEN T1.DED_AMOUNT_I ELSE 0 END) AS 'A22' 
+		                        , SUM(CASE WHEN T1.DED_CODE = T4.C23 THEN T1.DED_AMOUNT_I ELSE 0 END) AS 'A23'
+		                        , SUM(CASE WHEN T1.DED_CODE = T4.C24 THEN T1.DED_AMOUNT_I ELSE 0 END) AS 'A24' 
+		                        , SUM(CASE WHEN T1.DED_CODE = T4.C25 THEN T1.DED_AMOUNT_I ELSE 0 END) AS 'A25' 
+		                        , SUM(CASE WHEN T1.DED_CODE = T4.C26 THEN T1.DED_AMOUNT_I ELSE 0 END) AS 'A26' 
+		                        , SUM(CASE WHEN T1.DED_CODE = T4.C27 THEN T1.DED_AMOUNT_I ELSE 0 END) AS 'A27' 
+		                        , SUM(CASE WHEN T1.DED_CODE = T4.C28 THEN T1.DED_AMOUNT_I ELSE 0 END) AS 'A28'
+		                        , SUM(CASE WHEN T1.DED_CODE = T4.C29 THEN T1.DED_AMOUNT_I ELSE 0 END) AS 'A29' 
+		                        , SUM(CASE WHEN T1.DED_CODE = T4.C30 THEN T1.DED_AMOUNT_I ELSE 0 END) AS 'A30' 
+		                        , SUM(CASE WHEN T1.DED_CODE = T4.C31 THEN T1.DED_AMOUNT_I ELSE 0 END) AS 'A31' 
+		                        , SUM(CASE WHEN T1.DED_CODE = T4.C32 THEN T1.DED_AMOUNT_I ELSE 0 END) AS 'A32' 
+		                        , SUM(CASE WHEN T1.DED_CODE = T4.C33 THEN T1.DED_AMOUNT_I ELSE 0 END) AS 'A33' 
+		                        , SUM(CASE WHEN T1.DED_CODE = T4.C34 THEN T1.DED_AMOUNT_I ELSE 0 END) AS 'A34' 
+		                        , MAX(CASE WHEN T4.C35 = 'zz' 
+		                                        THEN ISNULL(T5.ETC_AMT,0)  
+		                                        ELSE (CASE WHEN T1.DED_CODE = T4.C35 THEN T1.DED_AMOUNT_I ELSE 0 END) 
+		                               END ) AS 'A35' 
+		                        , T1.COMP_CODE 
+		                     FROM HPA400T T1
+		                          LEFT JOIN (SELECT PERSON_NUMB
+		                               , PAY_YYYYMM
+		                               , SUPP_TYPE
+		                               , SUM(DED_AMOUNT_I) AS ETC_AMT 
+		                               , COMP_CODE
+		                            FROM HPA400T
+		                           WHERE COMP_CODE    = #{S_COMP_CODE}
+		                             AND SUPP_TYPE    = '1'
+		                             AND PAY_YYYYMM  &gt;= #{PLAN_DATE_FR}
+		                             AND PAY_YYYYMM  &lt;= #{PLAN_DATE}
+		                             AND DED_CODE IN (SELECT SUB_CODE 
+		                                                FROM HPA900PH_${S_COMP_CODE}
+		                                               WHERE SEQ &gt;= 15 ) 
+		                           GROUP BY PERSON_NUMB, PAY_YYYYMM, SUPP_TYPE, COMP_CODE ) T5 ON T5.COMP_CODE   = T1.COMP_CODE
+		                                                                                      AND T5.PERSON_NUMB = T1.PERSON_NUMB  
+		                                                                                      AND T5.PAY_YYYYMM  = T1.PAY_YYYYMM  
+		                                                                                      AND T5.SUPP_TYPE   = T1.SUPP_TYPE  
+		                        , (SELECT MAX(CASE WHEN A.SEQ = 1  THEN A.SUB_CODE ELSE '' END) AS 'C21'  
+		                                , MAX(CASE WHEN A.SEQ = 2  THEN A.SUB_CODE ELSE '' END) AS 'C22'  
+		                                , MAX(CASE WHEN A.SEQ = 3  THEN A.SUB_CODE ELSE '' END) AS 'C23'  
+		                                , MAX(CASE WHEN A.SEQ = 4  THEN A.SUB_CODE ELSE '' END) AS 'C24'  
+		                                , MAX(CASE WHEN A.SEQ = 5  THEN A.SUB_CODE ELSE '' END) AS 'C25'  
+		                                , MAX(CASE WHEN A.SEQ = 6  THEN A.SUB_CODE ELSE '' END) AS 'C26'  
+		                                , MAX(CASE WHEN A.SEQ = 7  THEN A.SUB_CODE ELSE '' END) AS 'C27'  
+		                                , MAX(CASE WHEN A.SEQ = 8  THEN A.SUB_CODE ELSE '' END) AS 'C28'  
+		                                , MAX(CASE WHEN A.SEQ = 9  THEN A.SUB_CODE ELSE '' END) AS 'C29'  
+		                                , MAX(CASE WHEN A.SEQ = 10 THEN A.SUB_CODE ELSE '' END) AS 'C30'  
+		                                , MAX(CASE WHEN A.SEQ = 11 THEN A.SUB_CODE ELSE '' END) AS 'C31'  
+		                                , MAX(CASE WHEN A.SEQ = 12 THEN A.SUB_CODE ELSE '' END) AS 'C32'  
+		                                , MAX(CASE WHEN A.SEQ = 13 THEN A.SUB_CODE ELSE '' END) AS 'C33'  
+		                                , MAX(CASE WHEN A.SEQ = 14 THEN A.SUB_CODE ELSE '' END) AS 'C34'  
+		                                , MAX(CASE WHEN A.SEQ &gt;= 15 THEN 'zz' ELSE   CASE WHEN A.SEQ = 15 THEN A.SUB_CODE ELSE '' END END) 'C35' 
+		                             FROM HPA900PH_${S_COMP_CODE}  A ) T4
+		                    WHERE T1.COMP_CODE    = #{S_COMP_CODE}
+		                      AND T1.SUPP_TYPE    = '1'
+		                      AND T1.PAY_YYYYMM  &gt;= #{PLAN_DATE_FR}
+		                      AND T1.PAY_YYYYMM  &lt;= #{PLAN_DATE}
+		                    GROUP BY T1.PERSON_NUMB, T1.PAY_YYYYMM, T1.SUPP_TYPE, T1.COMP_CODE) M3 ON M3.COMP_CODE   = M1.COMP_CODE
+		                                                                                          AND M3.PERSON_NUMB = M1.PERSON_NUMB 
+		                                                                                          AND M3.PAY_YYYYMM  = M1.PAY_YYYYMM  
+		                                                                                          AND M3.SUPP_TYPE   = M1.SUPP_TYPE   
+		WHERE M1.COMP_CODE    = #{S_COMP_CODE}
+		  AND uniLITE.fnCheckCompDivAuth(M0.COMP_CODE, M0.DIV_CODE, #{S_USER_ID}) = 'Y'
+		  AND M1.PAY_YYYYMM  &gt;= #{PLAN_DATE_FR}
+		  AND M1.PAY_YYYYMM  &lt;= #{PLAN_DATE}
+		  AND M1.SUPP_TYPE    = '1'
+	    
+	    /*부서코드*/
+        <if test="@foren.Ognl@isNotEmpty(DEPTS)">
+		   AND  M1.DEPT_CODE IN
+			 <foreach collection="DEPTS" item="item" separator="," close=")" open="(">
+	          		 #{item}
+	    	 </foreach>
+		</if>
+	    
+	    /*급여지급차수*/
+		<if test="@foren.Ognl@isNotEmpty(PAY_DAY_FLAG)">
+		  	AND M1.PAY_PROV_FLAG = #{PAY_DAY_FLAG}
+		</if>
+	
+	    /*사번*/
+		<if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+		   	AND  M1.PERSON_NUMB LIKE #{PERSON_NUMB} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(NAME)">
+		   	AND  M0.NAME LIKE #{NAME} + '%'
+		</if>
+	
+		/*고용형태*/
+		<if test="@foren.Ognl@isNotEmpty(PAY_GUBUN)">
+		  	AND M1.PAY_GUBUN = #{PAY_GUBUN}
+		</if>
+	    
+		/*일용구분*/
+		<if test="@foren.Ognl@isNotEmpty(rdoSelect)">
+		  	AND M1.PAY_GUBUN2 = #{rdoSelect}
+		</if>
+	
+	    /*급여지급방식*/
+		<if test="@foren.Ognl@isNotEmpty(PAY_CODE)">
+		  	AND M1.Pay_Code = #{PAY_CODE}
+		</if>
+	
+	    ORDER BY M0.DIV_CODE, M0.DEPT_CODE, M0.POST_CODE, M0.NAME, M0.PERSON_NUMB, M1.PAY_YYYYMM DESC
+	 
+	    
+	    
+	    -- 개인별 차액 입력 -----------------------------------------------------------------------------------------------
+		BEGIN 
+			INSERT INTO #HPA870SKR_160401
+				(	  NUM			, GUBUN				, DIV_CODE				, DEPT_CODE		, DEPT_NAME			, PERSON_NUMB		, NAME
+					, POST_CODE		, POST_NAME			, PAY_YYYYMM			, SUPP_TOTAL_I	, REAL_AMOUNT_I		, DED_TOTAL_I 
+					, S1			, BUSI_SHARE_I		, WORKER_COMPEN_I		, S2			, S3				, S4				, S5
+					, S6			, S7				, S8					, S9			, S10				, S11				, S12
+					, S13			, S14				, S15					, S16			, S17				, S18				, S19
+					, S20			, A21				, A22					, A23			, A24				, A25				, A26
+					, A27			, A28				, A29					, A30			, A31				, A32				, A33
+					, A34			, A35
+				)
+			SELECT 
+					  '2'																	AS NUM
+					, '2'																	AS GUBUN
+					, DIV_CODE
+					, DEPT_CODE
+				    , DEPT_NAME
+				    , PERSON_NUMB
+				    , NAME
+					, POST_CODE
+				    , '차액'																	AS POST_NAME
+				    , ''																	AS PAY_YYYYMM 
+					, CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( SUPP_TOTAL_I ))		END--	AS SUPP_TOTAL_I
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( REAL_AMOUNT_I ))		END--	AS REAL_AMOUNT_I
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( DED_TOTAL_I ))		END--	AS DED_TOTAL_I 
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S1 ))					END--	AS S1
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( BUSI_SHARE_I ))		END--	AS BUSI_SHARE_I
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( WORKER_COMPEN_I ))	END--	AS WORKER_COMPEN_I
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S2 ))					END--	AS S2
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S3 ))					END--	AS S3
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S4 ))					END--	AS S4
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S5 ))					END--	AS S5
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S6 ))					END--	AS S6
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S7 ))					END--	AS S7
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S8 ))					END--	AS S8
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S9 ))					END--	AS S9
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S10 ))				END--	AS S10
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S11 ))				END--	AS S11
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S12 ))				END--	AS S12
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S13 ))				END--	AS S13
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S14 ))				END--	AS S14
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S15 ))				END--	AS S15
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S16 ))				END--	AS S16
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S17 ))				END--	AS S17
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S18 ))				END--	AS S18
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S19 ))				END--	AS S19
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( S20 ))				END--	AS S20
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( A21 ))				END--	AS A21
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( A22 ))				END--	AS A22
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( A23 ))				END--	AS A23
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( A24 ))				END--	AS A24
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( A25 ))				END--	AS A25
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( A26 ))				END--	AS A26
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( A27 ))				END--	AS A27
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( A28 ))				END--	AS A28
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( A29 ))				END--	AS A29
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( A30 ))				END--	AS A30
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( A31 ))				END--	AS A31
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( A32 ))				END--	AS A32
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( A33 ))				END--	AS A33
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( A34 ))				END--	AS A34
+				    , CASE WHEN (SELECT COUNT(PERSON_NUMB) FROM #HPA870SKR_160401 WHERE GUBUN = 1 AND PERSON_NUMB = A.PERSON_NUMB GROUP BY PERSON_NUMB) = 1 THEN 0 ELSE SUM((CASE WHEN NUM = 1 THEN 1 ELSE -1 END  ) * ( A35 ))				END--	AS A35
+				FROM #HPA870SKR_160401 A
+				GROUP BY PERSON_NUMB, NAME, DEPT_CODE, DEPT_NAME, POST_CODE, DIV_CODE
+			    ORDER BY DIV_CODE, DEPT_CODE, POST_CODE, NAME, PERSON_NUMB DESC
+
+		END
+	    
+	    -- (합계)개인별 차액  -----------------------------------------------------------------------------------------------
+		BEGIN 
+			INSERT INTO #HPA870SKR_160401
+				(	  NUM			, GUBUN				, DIV_CODE				, DEPT_CODE		, DEPT_NAME			, PERSON_NUMB		, NAME
+					, POST_CODE		, POST_NAME			, PAY_YYYYMM			, SUPP_TOTAL_I	, REAL_AMOUNT_I		, DED_TOTAL_I 
+					, S1			, BUSI_SHARE_I		, WORKER_COMPEN_I		, S2			, S3				, S4				, S5
+					, S6			, S7				, S8					, S9			, S10				, S11				, S12
+					, S13			, S14				, S15					, S16			, S17				, S18				, S19
+					, S20			, A21				, A22					, A23			, A24				, A25				, A26
+					, A27			, A28				, A29					, A30			, A31				, A32				, A33
+					, A34			, A35
+				)
+			SELECT 
+					  '3'																		AS NUM
+					, '3'																		AS GUBUN
+					, '총합계'																		AS DIV_CODE
+					, '총합계'																		AS DEPT_CODE
+					, '총합계'																		AS DEPT_NAME
+				    , ''
+				    , ''
+					, ''
+				    , ''																		AS POST_NAME
+				    , ''																		AS PAY_YYYYMM 
+					, ISNULL(SUM( SUPP_TOTAL_I ),0)			AS SUPP_TOTAL_I
+				    , ISNULL(SUM( REAL_AMOUNT_I ),0)		AS REAL_AMOUNT_I
+				    , ISNULL(SUM( DED_TOTAL_I ),0)			AS DED_TOTAL_I 
+				    , ISNULL(SUM( S1 ),0)					AS S1
+				    , ISNULL(SUM( BUSI_SHARE_I ),0)			AS BUSI_SHARE_I
+				    , ISNULL(SUM( WORKER_COMPEN_I ),0)		AS WORKER_COMPEN_I
+				    , ISNULL(SUM( S2 ),0)					AS S2
+				    , ISNULL(SUM( S3 ),0)					AS S3
+				    , ISNULL(SUM( S4 ),0)					AS S4
+				    , ISNULL(SUM( S5 ),0)					AS S5
+				    , ISNULL(SUM( S6 ),0)					AS S6
+				    , ISNULL(SUM( S7 ),0)					AS S7
+				    , ISNULL(SUM( S8 ),0)					AS S8
+				    , ISNULL(SUM( S9 ),0)					AS S9
+				    , ISNULL(SUM( S10 ),0)					AS S10
+				    , ISNULL(SUM( S11 ),0)					AS S11
+				    , ISNULL(SUM( S12 ),0)					AS S12
+				    , ISNULL(SUM( S13 ),0)					AS S13
+				    , ISNULL(SUM( S14 ),0)					AS S14
+				    , ISNULL(SUM( S15 ),0)					AS S15
+				    , ISNULL(SUM( S16 ),0)					AS S16
+				    , ISNULL(SUM( S17 ),0)					AS S17
+				    , ISNULL(SUM( S18 ),0)					AS S18
+				    , ISNULL(SUM( S19 ),0)					AS S19
+				    , ISNULL(SUM( S20 ),0)					AS S20
+				    , ISNULL(SUM( A21 ),0)					AS A21
+				    , ISNULL(SUM( A22 ),0)					AS A22
+				    , ISNULL(SUM( A23 ),0)					AS A23
+				    , ISNULL(SUM( A24 ),0)					AS A24
+				    , ISNULL(SUM( A25 ),0)					AS A25
+				    , ISNULL(SUM( A26 ),0)					AS A26
+				    , ISNULL(SUM( A27 ),0)					AS A27
+				    , ISNULL(SUM( A28 ),0)					AS A28
+				    , ISNULL(SUM( A29 ),0)					AS A29
+				    , ISNULL(SUM( A30 ),0)					AS A30
+				    , ISNULL(SUM( A31 ),0)					AS A31
+				    , ISNULL(SUM( A32 ),0)					AS A32
+				    , ISNULL(SUM( A33 ),0)					AS A33
+				    , ISNULL(SUM( A34 ),0)					AS A34
+				    , ISNULL(SUM( A35 ),0)					AS A35
+				FROM #HPA870SKR_160401
+				WHERE GUBUN = '2'
+			   HAVING (SUM(SUPP_TOTAL_I) != 0 OR SUM(DED_TOTAL_I) != 0 OR SUM(REAL_AMOUNT_I) != 0)
+
+		END
+	    
+	    -- 최종 데이터 조회 -----------------------------------------------------------------------------------------------
+		 SELECT * FROM #HPA870SKR_160401
+ 			 ORDER BY DIV_CODE, DEPT_CODE, POST_CODE, NAME, PERSON_NUMB, GUBUN
+    </select>
+	
+</mapper>

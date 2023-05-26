@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ssa461skrvServiceImpl">
+	 <select id="ssa461skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* ssa461skrvServiceImpl.selectList */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+		    DECLARE @CompCode    NVARCHAR(08)    /* 법인코드  */
+		          , @DivCode     NVARCHAR(08)    /* 사업장코드  */
+		          , @SaleDateFr  NVARCHAR(08)    /* 매출일FR */
+		          , @SaleDateTo  NVARCHAR(08)    /* 매출일TO */
+		          , @CustomCode  NVARCHAR(08)    /* 거래처코드 */
+		          , @CustomName  NVARCHAR(100)   /* 거래처명 */
+		          , @ItemCode    NVARCHAR(20)    /* 품목코드 */
+		          , @ItemName    NVARCHAR(200)   /* 품목명 */
+		          , @ProjectNo   NVARCHAR(20)    /* 프로젝트 */
+		          , @ProjectNm   NVARCHAR(40)    /* 프로젝트명 */
+		          , @UserId      NVARCHAR(100)   /* 사용자ID */
+		          , @LangType    NVARCHAR(2)     /* 언어구분 */
+		          , @RefItem     NVARCHAR(01)
+
+		    SET @CompCode   = #{S_COMP_CODE}
+		    SET @DivCode    = #{DIV_CODE}
+		    SET @SaleDateFr = #{SALE_FR_DATE}
+		    SET @SaleDateTo = #{SALE_TO_DATE}
+		    SET @CustomCode = #{SALE_CUSTOM_CODE}
+		    SET @CustomName = #{SALE_CUSTOM_NAME}
+		    SET @ItemCode   = #{ITEM_CODE}
+		    SET @ItemName   = #{ITEM_NAME}
+		    SET @ProjectNo  = #{PROJECT_NO}
+		    SET @ProjectNm  = #{PROJECT_NAME}
+		    SET @UserId     = #{S_USER_ID}
+		    SET @LangType   = #{S_LANG_CODE}
+
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		     FROM BSA300T WITH (NOLOCK)
+		    WHERE USER_ID = @UserId
+
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+
+		    /* 임시테이블 삭제 */
+		    /* 최초 데이터 INSERT할 임시테이블  */
+		    IF EXISTS(SELECT TOP 1 1 FROM tempdb.sys.objects WHERE object_id = OBJECT_ID('tempdb..#TEST_PJW'))
+		        BEGIN
+		            DROP TABLE #TEST_PJW
+		        END
+
+		    /* 가공된 데이터 INSERT할 임시테이블  */
+		    IF EXISTS(SELECT TOP 1 1 FROM tempdb.sys.objects WHERE object_id = OBJECT_ID('tempdb..#TEST_PJW2'))
+		        BEGIN
+		            DROP TABLE #TEST_PJW2
+		        END
+
+		    /* 조건에 맞는 데이터 임시테이블에 INSERT */
+		    SELECT A.COMP_CODE
+		         , A.DIV_CODE
+		         , A.BILL_NUM
+		         , A.BILL_SEQ
+		         , A.SALE_CUSTOM_CODE                                         AS CUSTOM_CODE
+		         , (CASE WHEN @RefItem = '0' THEN C1.CUSTOM_NAME
+		                 WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+		                 WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+		                 ELSE C1.CUSTOM_NAME
+		            END)                                                        AS CUSTOM_NAME
+		         , C1.AGENT_TYPE
+		         , C1.BUSI_PRSN                                                 AS SALE_PRSN
+		         , A.ITEM_CODE
+		         , (CASE WHEN @RefItem = '0' THEN P1.ITEM_NAME
+		                 WHEN @RefItem = '1' THEN P1.ITEM_NAME1
+		                 WHEN @RefItem = '2' THEN P1.ITEM_NAME2
+		                 ELSE P1.ITEM_NAME
+		            END)                                                        AS ITEM_NAME
+		         , P1.SPEC
+		         , P2.ITEM_ACCOUNT
+		         , ISNULL(A.SALE_Q, 0)                                          AS SALE_Q
+		         , ISNULL(A.SALE_AMT_O, 0)                                      AS SALE_AMT_O
+		         , ISNULL(A.TAX_AMT_O, 0)                                       AS TAX_AMT_O
+		         , ISNULL(A.SALE_AMT_O, 0) + ISNULL(A.TAX_AMT_O, 0)             AS SALE_TOT_O
+
+		    --   , ISNULL(H.AVERAGE_P,0) * ISNULL(B.SALE_Q,0) * B.TRANS_RATE    AS SALE_COST_AMT /* 매출원가 */
+		         ,  CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(P2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')    -- 기준단가 적용 제품/반제품 금액
+						THEN CONVERT( NUMERIC(30, 6), ISNULL(P2.BASIS_P, 0)) * ISNULL(A.SALE_Q, 0) * A.TRANS_RATE
+					ELSE
+						ISNULL(H.AVERAGE_P,0) * ISNULL(A.SALE_Q,0) * A.TRANS_RATE
+					END 																AS SALE_COST_AMT /* 매출원가 */
+
+		    --     , ISNULL(B.SALE_AMT_O, 0)
+		    --     - (ISNULL(H.AVERAGE_P,0) * ISNULL(B.SALE_Q,0) * B.TRANS_RATE)  AS GROSS_PROFIT  /* 매출이익 */
+				 , ISNULL(A.SALE_AMT_O, 0) -
+		         (CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(P2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')    -- 기준단가 적용 제품/반제품 금액
+						THEN CONVERT( NUMERIC(30, 6), ISNULL(P2.BASIS_P, 0)) * ISNULL(A.SALE_Q, 0) * A.TRANS_RATE
+					ELSE
+						ISNULL(H.AVERAGE_P,0) * ISNULL(A.SALE_Q,0) * A.TRANS_RATE
+					END )						 AS GROSS_PROFIT /* 매출이익 */
+				,ISNULL(A.SALE_LOC_AMT_I, 0) AS SALE_LOC_AMT_I
+		      INTO #TEST_PJW
+			  FROM       SALES_V A  WITH(NOLOCK)
+		     -- FROM       SSA100T A  WITH(NOLOCK)
+		    --  INNER JOIN SSA110T B  WITH(NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+		     --                                   AND B.DIV_CODE     = A.DIV_CODE
+		     --                                   AND B.BILL_NUM     = A.BILL_NUM
+		      INNER JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE
+		                                        AND C1.CUSTOM_CODE = A.SALE_CUSTOM_CODE
+		      INNER JOIN BPR100T P1 WITH(NOLOCK) ON P1.COMP_CODE   = A.COMP_CODE
+		                                        AND P1.ITEM_CODE   = A.ITEM_CODE
+		      INNER JOIN BPR200T P2 WITH(NOLOCK) ON P2.COMP_CODE   = A.COMP_CODE
+		                                        AND P2.DIV_CODE    = A.DIV_CODE
+		                                        AND P2.ITEM_CODE   = A.ITEM_CODE
+			  LEFT JOIN (SELECT  COMP_CODE, DIV_CODE, BASIS_YYYYMM, ITEM_CODE, AVG(AVERAGE_P) AS AVERAGE_P
+							FROM  BIV200T WITH(NOLOCK)
+							GROUP BY COMP_CODE, DIV_CODE, BASIS_YYYYMM, ITEM_CODE) H   ON H.COMP_CODE    =  A.COMP_CODE
+																					  AND H.DIV_CODE     =  A.DIV_CODE
+																					  AND H.BASIS_YYYYMM =  SUBSTRING(A.SALE_DATE, 1, 6)
+																					  AND H.ITEM_CODE    =  A.ITEM_CODE
+            LEFT  JOIN BSA100T  M1 WITH (NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE            -- 단가처리 기준
+                                                AND M1.MAIN_CODE   = 'B069'
+                                                AND M1.SUB_CODE    = '1'                    -- 1:기준재고단가 2:원가계산단가
+                                                AND M1.REF_CODE1   = 'Y'
+		     WHERE A.COMP_CODE   = @CompCode
+		       AND A.DIV_CODE    = @DivCode
+		       AND A.SALE_DATE &gt;= @SaleDateFr
+		       AND A.SALE_DATE &lt;= @SaleDateTo
+
+		<if test="@foren.Ognl@isNotEmpty(NATION_INOUT)">
+		       AND A.NATION_CODE = #{NATION_INOUT}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(SALE_PRSN)">
+		       AND A.SALE_PRSN IN
+		       <foreach collection="SALE_PRSN" item="item" separator="," close=")" open="(">
+		           #{item}
+		       </foreach>
+		</if>
+		
+		
+			<if test="@foren.Ognl@isNotEmpty(SALE_CUSTOM_CODE) and @foren.Ognl@isNotEmpty(SALE_CUSTOM_NAME)">
+			AND A.SALE_CUSTOM_CODE 		= @CustomCode						/* 거래처코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(SALE_CUSTOM_CODE) and @foren.Ognl@isEmpty(SALE_CUSTOM_NAME)">
+			AND A.SALE_CUSTOM_CODE 		LIKE  @CustomCode + '%'				/* 거래처코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(SALE_CUSTOM_NAME) and @foren.Ognl@isEmpty(SALE_CUSTOM_CODE)">
+			AND CASE WHEN @RefItem = '0' THEN C1.CUSTOM_NAME
+					 WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+					 WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+										 ELSE C1.CUSTOM_NAME
+				END 					LIKE '%' + @CustomName + '%'		/* 거래처명  */
+			</if>
+			
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE 		= @ItemCode						/* 품목코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE 		LIKE @ItemCode + '%'			/* 품목코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_NAME) and @foren.Ognl@isEmpty(ITEM_CODE)">
+			AND CASE WHEN @RefItem = '0' THEN P1.ITEM_NAME
+					 WHEN @RefItem = '1' THEN P1.ITEM_NAME1
+					 WHEN @RefItem = '2' THEN P1.ITEM_NAME2
+										 ELSE P1.ITEM_NAME
+				END					LIKE '%' + @ItemName + '%'		/* 품목명  */
+			</if>
+
+		     GROUP BY A.COMP_CODE, A.DIV_CODE, A.BILL_NUM, A.BILL_SEQ
+		            , A.SALE_CUSTOM_CODE, C1.CUSTOM_NAME, C1.CUSTOM_NAME1, C1.CUSTOM_NAME2, C1.AGENT_TYPE, C1.BUSI_PRSN
+		            , A.ITEM_CODE, P1.ITEM_NAME, P1.ITEM_NAME1, P1.ITEM_NAME2, P1.SPEC, P2.ITEM_ACCOUNT
+		            , A.SALE_Q
+		            , A.SALE_AMT_O
+		            , A.TAX_AMT_O
+		            , ISNULL(H.AVERAGE_P, 0), A.TRANS_RATE, A.TRANS_RATE, M1.SUB_CODE, P2.BASIS_P,ISNULL(A.SALE_LOC_AMT_I, 0)
+
+
+		    /* 데이터 조회 */
+		    SELECT A.COMP_CODE
+		         , A.DIV_CODE
+<!-- 탭별로 조회 데이터 변경 -->
+		<if test="ACTIVE_TAB == &quot;tab1_custom&quot;">
+		         , A.CUSTOM_CODE
+		         , A.CUSTOM_NAME
+		         , A.AGENT_TYPE
+		         , A.SALE_PRSN
+		</if>
+		<if test="ACTIVE_TAB == &quot;tab2_item&quot;">
+		         , A.ITEM_CODE
+		         , A.ITEM_NAME
+		         , A.SPEC
+		         , A.ITEM_ACCOUNT
+		</if>
+		         , SUM(A.SALE_Q)                                                   AS SALE_Q
+		         , SUM(A.SALE_AMT_O)                                               AS SALE_AMT_O
+		         , SUM(A.TAX_AMT_O)                                                AS TAX_AMT_O
+		         , SUM(A.SALE_TOT_O)                                               AS SALE_TOT_O
+		         , SUM(A.SALE_COST_AMT)                                            AS SALE_COST_AMT /* 매출원가 */
+		         , SUM(A.GROSS_PROFIT)                                             AS GROSS_PROFIT  /* 매출이익 */
+		         , CASE WHEN SUM(ISNULL(A.SALE_AMT_O, 0)) = 0 THEN 0 
+						ELSE (SUM(ISNULL(A.SALE_AMT_O, 0)) - SUM(A.SALE_COST_AMT)) / SUM(ISNULL(A.SALE_AMT_O, 0)) * 100                  
+				   END															   AS PROFIT_RATE
+		         , SUM(A.SALE_LOC_AMT_I)										   AS SALE_LOC_AMT_I
+		      INTO #TEST_PJW2
+		      FROM #TEST_PJW A WITH(NOLOCK)
+		     GROUP BY A.COMP_CODE, A.DIV_CODE
+<!-- 탭별로 GROUP BY 변경 -->
+		<if test="ACTIVE_TAB == &quot;tab1_custom&quot;">
+		            --거래처별 집계
+		            , A.CUSTOM_CODE, A.CUSTOM_NAME, A.AGENT_TYPE, A.SALE_PRSN
+		</if>
+		<if test="ACTIVE_TAB == &quot;tab2_item&quot;">
+		            --품목별 집계
+		            , A.ITEM_CODE, A.ITEM_NAME, A.SPEC, A.ITEM_ACCOUNT
+		</if>
+		     /*  HAVING SUM(ISNULL(A.SALE_AMT_O, 0)) != 0  -- 무상건일 경우 수량이 빠지는 문제가 생기므로 주석 */
+
+		    SELECT A.COMP_CODE
+		         , A.DIV_CODE
+<!-- 탭별로 조회 데이터 변경 -->
+		<if test="ACTIVE_TAB == &quot;tab1_custom&quot;">
+		         , A.CUSTOM_CODE
+		         , A.CUSTOM_NAME
+		         , A.AGENT_TYPE
+		         , A.SALE_PRSN
+		</if>
+		<if test="ACTIVE_TAB == &quot;tab2_item&quot;">
+		         , A.ITEM_CODE
+		         , A.ITEM_NAME
+		         , A.SPEC
+		         , A.ITEM_ACCOUNT
+		</if>
+		         , A.SALE_Q
+		         , A.SALE_AMT_O
+		         , A.TAX_AMT_O
+		         , A.SALE_TOT_O
+		         , A.SALE_COST_AMT /* 매출원가 */
+		         , A.GROSS_PROFIT  /* 매출이익 */
+		         , A.PROFIT_RATE
+		         , (ISNULL(A.SALE_TOT_O, 0)) / (SELECT SUM(ISNULL(SALE_TOT_O, 1)) FROM #TEST_PJW2) * 100 AS SALES_RATIO
+		         , ROW_NUMBER() OVER(ORDER BY A.SALE_TOT_O DESC)                       AS RANKING
+		         , ROW_NUMBER() OVER(ORDER BY A.PROFIT_RATE DESC, A.GROSS_PROFIT DESC) AS RANKING2
+		         , A.SALE_LOC_AMT_I
+		      FROM #TEST_PJW2 A
+		     GROUP BY A.COMP_CODE, A.DIV_CODE
+<!-- 탭별로 GROUP BY 변경2 -->
+		<if test="ACTIVE_TAB == &quot;tab1_custom&quot;">
+		            , A.CUSTOM_CODE, A.CUSTOM_NAME, A.AGENT_TYPE, A.SALE_PRSN
+		</if>
+		<if test="ACTIVE_TAB == &quot;tab2_item&quot;">
+		            , A.ITEM_CODE, A.ITEM_NAME, A.SPEC, A.ITEM_ACCOUNT
+		</if>
+		            , A.SALE_Q, A.SALE_AMT_O, A.TAX_AMT_O, A.SALE_TOT_O, A.SALE_COST_AMT, A.GROSS_PROFIT, A.PROFIT_RATE, A.SALE_LOC_AMT_I
+		     ORDER BY 15  --RANKING
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	 </select>
+</mapper>

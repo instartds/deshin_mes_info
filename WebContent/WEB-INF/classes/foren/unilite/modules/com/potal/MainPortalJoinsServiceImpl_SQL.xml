@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mainPortalJoinsServiceImpl">
+	
+	<select id="mainPortalJoinsServiceImpl.aprv" parameterType="Map" resultType="rMap">
+		BEGIN
+		    SET NOCOUNT    ON
+		    SET ARITHABORT ON
+		
+		    DECLARE      @COMP_CODE     NVARCHAR(08)
+		               , @USER_ID       NVARCHAR(100)
+		
+		    SET          @COMP_CODE   = #{S_COMP_CODE}
+		    SET          @USER_ID     = #{S_USER_ID}
+		
+		    SELECT  top 1 ISNULL(SUM(CASE WHEN B.IF_DOC_KIND = 'S' THEN 1 ELSE 0 END ) , 0) AS APRV_SLIP_CNT, 
+		            ISNULL(SUM(CASE WHEN B.IF_DOC_KIND = 'D' THEN 1 ELSE 0 END ) , 0) AS APRV_DOC_CNT
+		    FROM               TB_ES_APRV_MAIN_HD       AS A WITH (NOLOCK)
+		            INNER JOIN TB_ES_APRV_REFSYSDOCTYPE AS B WITH (NOLOCK) ON B.IF_CORP_CODE   = A.CORP_CODE
+		                                                                  AND B.IF_SYSTEM_TYPE = A.SYSTEM_TYPE
+		                                                                  AND B.IF_DOC_TYPE    = A.DOC_TYPE 
+		            INNER JOIN (
+		                        -- 자신이 현재 결재순번인 것.
+		                        SELECT  CORP_CODE
+		                              , APPR_MANAGE_NO
+		                        FROM    TB_ES_APRV_LINE WITH (NOLOCK)
+		                        WHERE   CORP_CODE        = @COMP_CODE
+		                        AND     APD_APP_ID       = @USER_ID
+		                        AND     APD_APP_TYPE    IN ( 'A','C' )
+		                        AND     APD_APP_FG      IN ( 'A' )
+		
+		                        UNION ALL
+		
+		                        -- 위임받아서 현재결재순번인 것
+		                        SELECT  A.CORP_CODE
+		                              , A.APPR_MANAGE_NO
+		                        FROM               TB_ES_APRV_LINE AS A WITH (NOLOCK)
+		                                INNER JOIN TB_ES_CARD_MND  AS B WITH (NOLOCK) ON B.COMP_CODE   = A.CORP_CODE
+		                                                                             AND B.ATMN_ID     = A.APD_APP_ID
+		                                                                             AND B.MND_TYPE    = '20'
+		                                                                             AND B.MND_STAT_CD = '0'
+		                                                                             AND GETDATE()    &gt;= B.MND_START_DT
+		                                                                             AND GETDATE()    &lt;= B.MND_END_DT+1
+		                        WHERE   A.CORP_CODE        = @COMP_CODE
+		                        AND     A.APD_APP_ID       = @USER_ID
+		                        AND     A.APD_APP_TYPE    IN ( 'A','C' )
+		                        AND     A.APD_APP_FG      IN ( 'A' )  
+		                        GROUP BY A.CORP_CODE, A.APPR_MANAGE_NO
+		                      )                         AS C               ON C.CORP_CODE      = A.CORP_CODE
+		                                                                  AND C.APPR_MANAGE_NO = A.APPR_MANAGE_NO   
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+	<select id="mainPortalJoinsServiceImpl.card" parameterType="Map" resultType="rMap">
+		BEGIN
+		    SET NOCOUNT    ON
+		    SET ARITHABORT ON
+		
+		    DECLARE      @COMP_CODE     NVARCHAR(08)
+		               , @USER_ID       NVARCHAR(100)
+		               , @PERSON_NUMB   NVARCHAR(20)
+		
+		    SET          @COMP_CODE   = #{S_COMP_CODE}
+		    SET          @USER_ID     = #{S_USER_ID}
+		
+		    -- 1. 사용자ID를 이용하여 사번 참조
+		    SELECT  @PERSON_NUMB = PERSON_NUMB
+		    FROM    BSA300T WITH (NOLOCK)
+		    WHERE   COMP_CODE = @COMP_CODE
+		    AND     USER_ID   = @USER_ID
+		
+		    SET     @PERSON_NUMB = ISNULL(@PERSON_NUMB, '')
+		
+		    -- 2. MAIN QUERY
+		    SELECT    ISNULL(A.CC_MAKE,0)      AS CC_MAKE     --작성중 
+		            , ISNULL(B.CC_APPROVE,0)   AS CC_APPROVE  --결재진행
+		            , ISNULL(C.CC_VOTE,0)      AS CC_VOTE     --품의부결 
+		    FROM
+		              (
+		                SELECT  ISNULL(COUNT(RQDOC_NO),0) AS CC_MAKE
+		                FROM    TB_ES_CARD_REQ WITH (NOLOCK)
+		                WHERE   COMP_CODE      = @COMP_CODE
+		                AND     RQDOC_STAT_CD IN ('10','15') 
+		                AND     INSERT_DB_USER = @PERSON_NUMB
+		              ) A
+		            , (
+		                SELECT  ISNULL(COUNT(RQDOC_NO),0) AS CC_APPROVE
+		                FROM    TB_ES_CARD_REQ WITH (NOLOCK)
+		                WHERE   COMP_CODE      = @COMP_CODE
+		                AND     RQDOC_STAT_CD IN ('20','30') 
+		                AND     INSERT_DB_USER = @PERSON_NUMB
+		              ) B
+		            , (
+		                SELECT  ISNULL(COUNT(RQDOC_NO),0) AS CC_VOTE
+		                FROM    TB_ES_CARD_REQ WITH (NOLOCK)
+		                WHERE   COMP_CODE      = @COMP_CODE
+		                AND     RQDOC_STAT_CD IN ('40') 
+		                AND     INSERT_DB_USER = @PERSON_NUMB
+		              ) C
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		
+		END
+		
+
+	</select>
+	
+	<select id="mainPortalJoinsServiceImpl.slip" parameterType="Map" resultType="rMap">
+		BEGIN
+		    SET NOCOUNT    ON
+		    SET ARITHABORT ON
+		
+		    DECLARE      @COMP_CODE     NVARCHAR(08)
+		               , @USER_ID       NVARCHAR(100)
+		               , @PERSON_NUMB   NVARCHAR(20)
+		               , @FR_DATE       NVARCHAR(08)
+		               , @TO_DATE       NVARCHAR(08)
+		
+		    SET          @COMP_CODE   = #{S_COMP_CODE}
+		    SET          @USER_ID     = #{S_USER_ID}
+		
+		    -- 1. 사용자ID를 이용하여 사번 참조
+		    SELECT  @PERSON_NUMB = PERSON_NUMB
+		    FROM    BSA300T WITH (NOLOCK)
+		    WHERE   COMP_CODE = @COMP_CODE
+		    AND     USER_ID   = @USER_ID
+		
+		    SET     @PERSON_NUMB = ISNULL(@PERSON_NUMB, '')
+		    SET     @TO_DATE     = CONVERT(NVARCHAR(08), GETDATE(), 112)
+			SET     @FR_DATE     = CONVERT(NVARCHAR(08), DATEADD(YEAR, -1, GETDATE()), 112)
+		
+		    SELECT  ISNULL(A.ESP_MAKE,0)      AS ESP_MAKE     --작성중 
+		          , ISNULL(B.ESP_APPROVE,0)   AS ESP_APPROVE  --결재진행
+		          , ISNULL(C.ESP_VOTE,0)      AS ESP_VOTE     --전표부결
+		          , ISNULL(D.ESP_CANCLE,0)    AS ESP_CANCLE   --전표취소
+		    FROM
+		            (
+		             SELECT  ISNULL(COUNT(ELEC_SLIP_NO),0) AS ESP_MAKE
+		             FROM    TB_ES_SLIP_HD WITH (NOLOCK)
+		             WHERE   COMP_CODE            = @COMP_CODE
+		             AND     EMP_ID               = @PERSON_NUMB
+		             AND     GW_STATUS           IN ('0','1') 
+		             --AND     SLIP_STAT_CD        IN ('10','15') 
+		             AND     ELEC_SLIP_TYPE_CD   NOT IN ('B030','B040')
+		            ) A
+		          , (
+		             SELECT  ISNULL(COUNT(ELEC_SLIP_NO),0) AS ESP_APPROVE 
+		             FROM    TB_ES_SLIP_HD WITH (NOLOCK)
+		             WHERE   COMP_CODE            = @COMP_CODE
+		             AND     EMP_ID               = @PERSON_NUMB
+		             AND     GW_STATUS           IN ('D','A') 
+		             --AND     SLIP_STAT_CD        IN ('20','30')
+		             AND     ELEC_SLIP_TYPE_CD   NOT IN ('B030','B040')
+		            ) B
+		          , (
+		             SELECT  ISNULL(COUNT(ELEC_SLIP_NO),0) AS ESP_VOTE 
+		             FROM    TB_ES_SLIP_HD WITH (NOLOCK)
+		             WHERE   COMP_CODE            = @COMP_CODE
+		             AND     EMP_ID               = @PERSON_NUMB
+		             AND     CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) &gt;= @FR_DATE
+		             AND     CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) &lt;= @TO_DATE
+		             AND     GW_STATUS           IN ('R') 
+		             --AND     SLIP_STAT_CD        IN ('40')
+		             AND     ELEC_SLIP_TYPE_CD   NOT IN ('B030','B040')
+		            ) C
+		          , (
+		             SELECT  ISNULL(COUNT(ELEC_SLIP_NO),0) AS ESP_CANCLE 
+		             FROM    TB_ES_SLIP_HD WITH (NOLOCK)
+		             WHERE   COMP_CODE            = @COMP_CODE
+		             AND     EMP_ID               = @PERSON_NUMB
+		             AND     CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) &gt;= @FR_DATE
+		             AND     CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) &lt;= @TO_DATE
+		             AND     GW_STATUS           IN ('W', 'X') 
+		             --AND     SLIP_STAT_CD        IN ('80')
+		             AND     ELEC_SLIP_TYPE_CD   NOT IN ('B030','B040')
+		            ) D
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+		
+	</select>
+	
+	<select id="mainPortalJoinsServiceImpl.aprvinfo" parameterType="Map" resultType="rMap">
+		    SELECT    0      AS PD_MAKE     --작성중 
+		            , 0      AS PD_APPROVE  --결재진행
+		            , 0      AS PD_VOTE     --품의부결 
+	</select>
+	
+	<select id="mainPortalJoinsServiceImpl.selectBoard" parameterType="Map" resultType="rMap">
+		/* mainPortalJoinsServiceImpl.selectBoard */
+  		SELECT BULLETIN_ID,TYPE_FLAG, TITLE, UPDATE_DB_TIME
+	  	FROM (
+			SELECT TOP 5 A.BULLETIN_ID
+				  ,A.TYPE_FLAG
+			      ,CASE WHEN LEN(A.TITLE) > 15 THEN  LEFT(A.TITLE,15) + '...' ELSE A.TITLE END AS TITLE 		
+				  ,CONVERT(NVARCHAR(10), A.UPDATE_DB_TIME, 120) AS UPDATE_DB_TIME
+				  ,'NOTICE' AS TYPE
+			 FROM 			BSA600T A WITH (NOLOCK)
+			WHERE A.COMP_CODE = #{S_COMP_CODE}
+			  AND   A.TYPE_FLAG = '1'
+			ORDER BY BULLETIN_ID DESC ) AS N  
+		UNION 
+		SELECT BULLETIN_ID,TYPE_FLAG, TITLE, UPDATE_DB_TIME
+		FROM (
+			SELECT TOP 5 A.BULLETIN_ID
+				  ,A.TYPE_FLAG
+			      ,CASE WHEN LEN(A.TITLE) > 15 THEN  LEFT(A.TITLE,15) + '...' ELSE A.TITLE END AS TITLE 		
+				  ,CONVERT(NVARCHAR(10), A.UPDATE_DB_TIME, 120) AS UPDATE_DB_TIME
+				  ,'NOTICE' AS TYPE
+			 FROM 			BSA600T A WITH (NOLOCK)
+			WHERE A.COMP_CODE = #{S_COMP_CODE}
+			  AND   A.TYPE_FLAG = '2'
+			ORDER BY BULLETIN_ID DESC      
+		) AS Q       
+	</select>
+</mapper>

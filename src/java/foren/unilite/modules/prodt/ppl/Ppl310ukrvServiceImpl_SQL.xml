@@ -1,0 +1,525 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ppl310ukrvServiceImpl">
+	
+	<update id="ppl310ukrvServiceImpl.capaAutoSave" parameterType="Map">
+		BEGIN
+			SET NOCOUNT ON
+			DECLARE @RTN_TBL TABLE (
+					ITEM_CODE			NVARCHAR(20)
+				    , ITEM_ACCOUNT		NVARCHAR(20)
+				    , WORK_SHOP_CODE	NVARCHAR(20)
+				    , LEVEL				NUMERIC(5)
+				    , PROD_ITEM_CODE	NVARCHAR(20)
+			)
+		
+			DECLARE @sCOMP_CODE          NVARCHAR(08)
+				    , @sDIV_CODE         NVARCHAR(08)
+					, @sPRIORITY         NUMERIC(5)
+				    , @sORDER_NUM        NVARCHAR(20)
+				    , @sSER_NO           NUMERIC(5)
+				    , @sWORK_SHOP_CODE   NVARCHAR(20)
+				    , @sITEM_CODE        NVARCHAR(20)
+				    , @sPROD_ITEM_CODE   NVARCHAR(20)
+		
+			DECLARE Cur1 CURSOR FOR
+			-- 커서에 사용할 SELECT 문장
+				-- APS대상의 BOM
+				SELECT L.COMP_CODE, L.DIV_CODE, L.PRIORITY, L.ORDER_NUM, L.SEQ, L.ITEM_CODE
+				    FROM       PPL300T L WITH(NOLOCK)				  
+				WHERE L.COMP_CODE   = #{S_COMP_CODE}
+				    AND L.DIV_CODE    = #{DIV_CODE}
+					AND L.WEEK_NUM  = #{CAL_NO}
+					AND L.CONFIRM_YN = '2'
+				       		      
+				    ORDER BY L.COMP_CODE, L.DIV_CODE, L.PRIORITY, L.ORDER_NUM, L.SEQ
+		
+			OPEN Cur1
+			FETCH NEXT FROM Cur1 INTO @sCOMP_CODE, @sDIV_CODE, @sPRIORITY, @sORDER_NUM, @sSER_NO, @sPROD_ITEM_CODE
+			WHILE @@FETCH_STATUS = 0
+			BEGIN
+			-- 처리로직 Start
+		  		INSERT @RTN_TBL (
+						    ITEM_CODE
+						, ITEM_ACCOUNT
+						, WORK_SHOP_CODE
+						, LEVEL
+						, PROD_ITEM_CODE
+							    
+				) 
+				SELECT B.ITEM_CODE, B.ITEM_ACCOUNT, B.WORK_SHOP_CODE, A.LEVEL, @sPROD_ITEM_CODE
+				FROM   uniLITE.fnBOMExplosion2(#{S_COMP_CODE}, #{DIV_CODE}, @sPROD_ITEM_CODE, '') A
+				INNER JOIN BPR200T B ON A.div_code = B.DIV_CODE
+									AND A.item_code = B.ITEM_CODE
+				WHERE B.ITEM_ACCOUNT IN ('10', '20', '30')
+				ORDER BY A.SORT_FLD
+		
+			FETCH NEXT FROM Cur1 INTO @sCOMP_CODE, @sDIV_CODE, @sPRIORITY, @sORDER_NUM, @sSER_NO, @sPROD_ITEM_CODE
+			END
+		
+			-- 열린 커서 닫음
+			CLOSE Cur1
+			DEALLOCATE Cur1
+		
+			DECLARE Cur2 CURSOR FOR
+			-- 커서에 사용할 SELECT 문장
+				-- temp table 
+				SELECT T.WORK_SHOP_CODE, T.ITEM_CODE
+				    FROM       @RTN_TBL T 	
+					GROUP BY WORK_SHOP_CODE, ITEM_CODE
+		
+			OPEN Cur2
+			FETCH NEXT FROM Cur2 INTO @sWORK_SHOP_CODE, @sITEM_CODE
+			WHILE @@FETCH_STATUS = 0
+			BEGIN
+		
+				IF NOT EXISTS (SELECT TOP 1 A.ITEM_CODE 
+					                FROM PBS410T A WITH(NOLOCK) 
+								WHERE A.WORK_SHOP_CODE = @sWORK_SHOP_CODE 
+									AND A.ITEM_CODE      = @sITEM_CODE )
+		
+					INSERT INTO PBS410T
+					(
+					COMP_CODE,DIV_CODE,EQU_CODE,WORK_SHOP_CODE,PROG_WORK_CODE,ITEM_CODE,USE_YN
+					, DISP_SEQ		
+					, DISP_RATE		
+					, MULTI_PRODT_CT  
+					, STD_MEN		    
+					, STD_PRODT_Q	    
+					, NET_UPH		    
+					, ACT_SET_M		
+					, ACT_OUT_M		
+					, ACT_UP_RATE	
+					)
+					SELECT #{S_COMP_CODE}, #{DIV_CODE}, B.EQU_CODE, B.WORK_SHOP_CODE, B.PROG_WORK_CODE, A.ITEM_CODE, 'Y'
+					, B.DISP_SEQ		
+					, B.DISP_RATE		
+					, B.MULTI_PRODT_CT  
+					, B.STD_MEN		    
+					, B.STD_PRODT_Q	    
+					, B.NET_UPH		    
+					, B.ACT_SET_M		
+					, B.ACT_OUT_M		
+					, B.ACT_UP_RATE		
+					FROM @RTN_TBL A
+						INNER JOIN PBS405T B ON A.WORK_SHOP_CODE = B.WORK_SHOP_CODE
+					WHERE A.WORK_SHOP_CODE = @sWORK_SHOP_CODE
+						AND A.ITEM_CODE      = @sITEM_CODE 
+		
+			FETCH NEXT FROM Cur2 INTO @sWORK_SHOP_CODE, @sITEM_CODE
+			END
+		
+			-- 열린 커서 닫음
+			CLOSE Cur2
+			DEALLOCATE Cur2
+		
+			SET NOCOUNT OFF
+		END
+	</update>
+	
+	<select id="ppl310ukrvServiceImpl.capaChk" parameterType="Map" resultType="rMap">
+	BEGIN
+		SET NOCOUNT ON
+		DECLARE @RTN_TBL TABLE (
+				ITEM_CODE			NVARCHAR(20)
+			    , ITEM_ACCOUNT		NVARCHAR(20)
+			    , WORK_SHOP_CODE	NVARCHAR(20)
+			    , LEVEL				NUMERIC(5)
+			    , PROD_ITEM_CODE	NVARCHAR(20)
+		)
+	
+		DECLARE @sCOMP_CODE          NVARCHAR(08)
+			    , @sDIV_CODE         NVARCHAR(08)
+				, @sPRIORITY         NUMERIC(5)
+			    , @sORDER_NUM        NVARCHAR(20)
+			    , @sSER_NO           NUMERIC(5)
+			    , @sWORK_SHOP_CODE   NVARCHAR(20)
+			    , @sITEM_CODE        NVARCHAR(20)
+			    , @sPROD_ITEM_CODE   NVARCHAR(20)
+	
+		DECLARE		
+				@ERR_DESC		NVARCHAR(20)
+			   ,@PbsItemCheck	NVARCHAR(max)
+			   ,@RowCount		INT
+		   
+	    SET @RowCount = 0
+		SET @ERR_DESC = ''
+		SET @PbsItemCheck = ''
+		
+		DECLARE Cur1 CURSOR FOR
+		-- 커서에 사용할 SELECT 문장
+			-- APS대상의 BOM
+			SELECT L.COMP_CODE, L.DIV_CODE, L.PRIORITY, L.ORDER_NUM, L.SEQ, L.ITEM_CODE
+			    FROM       PPL300T L WITH(NOLOCK)				  
+			WHERE L.COMP_CODE   = #{S_COMP_CODE}
+			    AND L.DIV_CODE    = #{DIV_CODE}
+				AND L.WEEK_NUM  = #{CAL_NO}
+				AND L.CONFIRM_YN = '2'
+			       		      
+			    ORDER BY L.COMP_CODE, L.DIV_CODE, L.PRIORITY, L.ORDER_NUM, L.SEQ
+	
+		OPEN Cur1
+		FETCH NEXT FROM Cur1 INTO @sCOMP_CODE, @sDIV_CODE, @sPRIORITY, @sORDER_NUM, @sSER_NO, @sPROD_ITEM_CODE
+		WHILE @@FETCH_STATUS = 0
+		BEGIN
+		-- 처리로직 Start
+	  		INSERT @RTN_TBL (
+					    ITEM_CODE
+					, ITEM_ACCOUNT
+					, WORK_SHOP_CODE
+					, LEVEL
+					, PROD_ITEM_CODE
+						    
+			) 
+			SELECT B.ITEM_CODE, B.ITEM_ACCOUNT, B.WORK_SHOP_CODE, A.LEVEL, @sPROD_ITEM_CODE
+			FROM   uniLITE.fnBOMExplosion2(#{S_COMP_CODE}, #{DIV_CODE}, @sPROD_ITEM_CODE, '') A
+			INNER JOIN BPR200T B ON A.div_code = B.DIV_CODE
+								AND A.item_code = B.ITEM_CODE
+			WHERE B.ITEM_ACCOUNT IN ('10', '20', '30')
+			ORDER BY A.SORT_FLD
+	
+		FETCH NEXT FROM Cur1 INTO @sCOMP_CODE, @sDIV_CODE, @sPRIORITY, @sORDER_NUM, @sSER_NO, @sPROD_ITEM_CODE
+		END
+	
+		-- 열린 커서 닫음
+		CLOSE Cur1
+		DEALLOCATE Cur1
+	
+		DECLARE Cur2 CURSOR FOR
+		-- 커서에 사용할 SELECT 문장
+			-- temp table 
+			SELECT T.WORK_SHOP_CODE, T.ITEM_CODE
+			    FROM       @RTN_TBL T 	
+				GROUP BY WORK_SHOP_CODE, ITEM_CODE
+	
+		OPEN Cur2
+		FETCH NEXT FROM Cur2 INTO @sWORK_SHOP_CODE, @sITEM_CODE
+		WHILE @@FETCH_STATUS = 0
+		BEGIN
+	
+			IF NOT EXISTS (SELECT TOP 1 A.ITEM_CODE 
+				                FROM PBS410T A WITH(NOLOCK) 
+							WHERE A.WORK_SHOP_CODE = @sWORK_SHOP_CODE 
+								AND A.ITEM_CODE = @sITEM_CODE )
+			--설비별생산공수 테이블에 item_code 체크
+			BEGIN
+				SET @ERR_DESC = '4444;'
+				SET @PbsItemCheck = @PbsItemCheck + <![CDATA['<br>']]> + @sITEM_CODE +  ','
+			END
+			
+	        SET @RowCount = @RowCount + 1
+	
+		FETCH NEXT FROM Cur2 INTO @sWORK_SHOP_CODE, @sITEM_CODE
+		END
+	
+		-- 열린 커서 닫음
+		CLOSE Cur2
+		DEALLOCATE Cur2
+	
+		SET NOCOUNT OFF
+	END	
+
+	SELECT @RowCount AS ROW_COUNT, @ERR_DESC AS ERR_DESC, @PbsItemCheck AS ITEM_CHECK	
+		
+	</select>
+	
+	<select id="ppl310ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* ppl310ukrvServiceImpl.selectList */
+		DECLARE @CompCode       NVARCHAR(08)    /* 법인코드             */
+		      , @UserId         NVARCHAR(100)    /* 사용자ID                */
+		      , @RefItem        NVARCHAR(01)    /* 명칭 참조 유형     */
+
+		SET @CompCode = #{S_COMP_CODE}
+		SET @UserId   = #{S_USER_ID}
+
+		/* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+		  FROM BSA300T WITH (NOLOCK)
+		 WHERE USER_ID = @UserId
+
+		SET @RefItem = ISNULL(@RefItem, N'0')
+
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.WEEK_NUM
+		     , A.ORDER_NUM
+		     , A.SEQ
+		     , A.CONFIRM_YN       --확정여부
+		     , A.PLAN_TYPE        --생성구분
+		     , A.ITEM_CODE
+		     , (CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+		             WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+		             ELSE C1.ITEM_NAME
+		        END)                                                AS ITEM_NAME
+		     , C1.ITEM_NAME
+		     , C1.SPEC
+		     , C1.STOCK_UNIT
+		     , A.PLAN_QTY         --계획량
+		     , A.DUE_DATE         --요청일
+		     , A.PRIORITY         --우선순위
+		     , A.APS_NUM          --생성번호
+		     , A.PLAN_START_DATE  --계획시작일
+			 , R1.CUSTOM_NAME
+		     , B1.ORDER_DATE
+			 , B2.DVRY_DATE
+			  FROM PPL300T A WITH(NOLOCK)
+		INNER JOIN SOF100T B1 WITH(NOLOCK) ON B1.COMP_CODE = A.COMP_CODE
+										  AND B1.ORDER_NUM = A.ORDER_NUM
+		INNER JOIN SOF110T B2 WITH(NOLOCK) ON B2.COMP_CODE = A.COMP_CODE
+										  AND B2.ORDER_NUM = A.ORDER_NUM
+										  AND B2.SER_NO = A.SEQ
+		 LEFT JOIN BCM100T R1 WITH(NOLOCK) ON R1.COMP_CODE = B1.COMP_CODE
+										  AND R1.CUSTOM_CODE = B1.CUSTOM_CODE
+		  INNER JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+		                                    AND C1.ITEM_CODE = A.ITEM_CODE
+		 WHERE A.COMP_CODE = #{S_COMP_CODE}
+		   AND A.DIV_CODE  = #{DIV_CODE}
+		   AND A.WEEK_NUM  = #{CAL_NO}
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+		   AND A.ITEM_CODE = #{ITEM_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+		   AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+		   AND CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+		            WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+		            ELSE C1.ITEM_NAME
+		       END         LIKE '%' + #{ITEM_NAME} + '%' 
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CONFIRM_YN)">
+		   AND A.CONFIRM_YN = #{CONFIRM_YN}
+		</if>
+	</select>
+
+	<select id="ppl310ukrvServiceImpl.selectOrderNumDetail" parameterType="Map" resultType="rMap">
+		/*ppl310ukrvServiceImpl.selectOrderNumDetail*/
+		DECLARE @CompCode       NVARCHAR(08)    /* 법인코드             */
+		      , @UserId         NVARCHAR(100)    /* 사용자ID                */
+		      , @LangType       NVARCHAR(2)     /* 언어구분             */
+		      , @RefItem        NVARCHAR(01)    /* 명칭 참조 유형     */
+		      , @DateFormat     NVARCHAR(10)    /* 날짜 포맷 유형 설정  */
+
+		SET @CompCode = #{S_COMP_CODE}
+		SET @UserId   = #{S_USER_ID}
+		SET @LangType = #{S_LANG_CODE}
+		
+		/* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+		  FROM BSA300T WITH (NOLOCK)
+		 WHERE USER_ID = @UserId
+		
+		SET @RefItem = ISNULL(@RefItem, N'0')
+		
+		/* 날짜 포맷 유형 설정 */
+		SELECT TOP 1 @DateFormat = CODE_NAME
+		  FROM BSA100T WITH (NOLOCK)
+		 WHERE COMP_CODE = @CompCode
+		   AND MAIN_CODE = N'B044'
+		   AND REF_CODE1 = N'Y'
+		
+		SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		
+		/* 데이터 조회 */
+		SELECT A.DIV_CODE
+		     , B.ITEM_CODE
+		     , (CASE WHEN @RefItem = '1' THEN D.ITEM_NAME1
+		             WHEN @RefItem = '2' THEN D.ITEM_NAME2
+		                                 ELSE D.ITEM_NAME
+		         END)                                               AS ITEM_NAME
+		     , ISNULL(D.SPEC,'')                                    AS SPEC
+		     , (CASE WHEN ISNULL(E.CHILD_ITEM_CODE, '') = '' THEN 'N'
+		             ELSE 'Y'
+		        END)                                                AS BOM_YN
+		     , (CASE WHEN ISNULL(A.ORDER_DATE, '') = ''
+		             THEN ''
+		             ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.ORDER_DATE, 1, 4))
+		                                                     , 'MM'  , SUBSTRING(A.ORDER_DATE, 5, 2))
+		                                                     , 'DD'  , SUBSTRING(A.ORDER_DATE, 7, 2))
+		        END)                                                AS ORDER_DATE
+		     , (CASE WHEN ISNULL(B.DVRY_DATE, '') = ''
+		             THEN ''
+		             ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.DVRY_DATE, 1, 4))
+		                                                     , 'MM'  , SUBSTRING(B.DVRY_DATE, 5, 2))
+		                                                     , 'DD'  , SUBSTRING(B.DVRY_DATE, 7, 2))
+		        END)                                                AS DVRY_DATE
+		     , B.ORDER_Q
+		     , A.ORDER_TYPE
+		     , A.ORDER_PRSN
+		     , B.PO_NUM
+		     , A.PROJECT_NO
+		     , F.PJT_NAME                                           AS PROJECT_NAME
+		     , A.ORDER_NUM
+		     , B.SER_NO
+		     , A.CUSTOM_CODE
+		     , C.CUSTOM_NAME
+		     , A.COMP_CODE
+		     , B.PJT_CODE
+		     , F.PJT_NAME
+		     , F.FR_DATE
+		     , F.TO_DATE
+		     , ISNULL(G.CARE_YN,  'N')                              AS CARE_YN
+		     , G.CARE_REASON
+		     , D.STOCK_UNIT
+		  FROM            SOF100T A WITH (NOLOCK)
+		       INNER JOIN SOF110T B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		                                         AND B.DIV_CODE    = A.DIV_CODE
+		                                         AND B.ORDER_NUM   = A.ORDER_NUM
+		       INNER JOIN BCM100T C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+		                                         AND C.CUSTOM_CODE = A.CUSTOM_CODE
+		       INNER JOIN BPR100T D WITH (NOLOCK) ON D.COMP_CODE   = B.COMP_CODE
+		                                         AND D.ITEM_CODE   = B.ITEM_CODE
+		       LEFT  JOIN BPR200T G WITH (NOLOCK) ON G.COMP_CODE   = A.COMP_CODE
+		                                         AND G.DIV_CODE    = A.DIV_CODE
+		                                         AND G.ITEM_CODE   = B.ITEM_CODE
+		       LEFT  JOIN BCM600T F WITH (NOLOCK) ON A.COMP_CODE   = F.COMP_CODE
+		                                         AND A.PROJECT_NO   = F.PJT_CODE
+		       LEFT  JOIN (SELECT COMP_CODE, DIV_CODE, PROD_ITEM_CODE, MAX(CHILD_ITEM_CODE)  AS  CHILD_ITEM_CODE
+		                     FROM BPR500T WITH (NOLOCK)
+		                    WHERE CHILD_ITEM_CODE <![CDATA[<>]]> '$'
+		                    GROUP BY COMP_CODE, DIV_CODE, PROD_ITEM_CODE) E ON E.COMP_CODE        = B.COMP_CODE
+		                                                                   AND E.DIV_CODE         = B.DIV_CODE
+		                                                                   AND E.PROD_ITEM_CODE   = B.ITEM_CODE
+		 WHERE A.COMP_CODE      = @CompCode
+		  <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+		  AND A.CUSTOM_CODE 		= #{CUSTOM_CODE}					/* 거래처코드  */
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+		  AND A.CUSTOM_CODE 		LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+		  AND C.CUSTOM_NAME 		LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+		  </if>
+		  
+		  <if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+		  AND B.ITEM_CODE 		= #{ITEM_CODE}						/* 품목코드  */
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+		  AND B.ITEM_CODE 		LIKE #{ITEM_CODE} + '%'				/* 품목코드  */
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(ITEM_NAME) and @foren.Ognl@isEmpty(ITEM_CODE)">
+		  AND G.ITEM_NAME 		LIKE '%' + #{ITEM_NAME} + '%'		/* 품목명  */
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(FR_ORDER_DATE)">
+		   AND A.ORDER_DATE    &gt;= #{FR_ORDER_DATE}
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(TO_ORDER_DATE)">
+		   AND A.ORDER_DATE    &lt;= #{TO_ORDER_DATE}
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		   AND A.DIV_CODE       = #{DIV_CODE}
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(ORDER_PRSN)">
+		   AND A.ORDER_PRSN     = #{ORDER_PRSN}
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(PROJECT_NO)">
+		   AND A.PROJECT_NO  LIKE #{PROJECT_NO} + '%'
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+		   AND A.ORDER_TYPE  LIKE #{ORDER_TYPE} + '%'
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(PO_NUM)">
+		   AND B.PO_NUM      LIKE #{PO_NUM} + '%'
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(ORDER_NUM)">
+		   AND A.ORDER_NUM   LIKE #{ORDER_NUM} + '%'
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(PJT_CODE)">
+		   AND F.PJT_CODE    LIKE #{PJT_CODE} + '%'
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(PJT_NAME)">
+		   AND F.PJT_NAME    LIKE #{PJT_NAME} + '%'
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">     /*부서*/
+		   AND E.TREE_LEVEL  LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =E.COMP_CODE AND TYPE_LEVEL=E.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+		  </if>
+		  <!--긴급작업지시등록(코디)수주번호 팝업에서 출고사업장 조건 추가 -->
+		  <if test="@foren.Ognl@isNotEmpty(OUT_DIV_CODE)">
+		   AND B.OUT_DIV_CODE    = #{OUT_DIV_CODE}
+		  </if>
+		 ORDER BY A.CUSTOM_CODE, A.ORDER_DATE, A.ORDER_NUM, B.SER_NO
+	</select>
+
+
+
+	<insert id="ppl310ukrvServiceImpl.insertList" parameterType="Map">
+		/* ppl310ukrvServiceImpl.insertList */
+		DECLARE @ORDER_NUM NVARCHAR(20) = #{ORDER_NUM}
+		      , @SER_NO    INT          = #{SEQ}
+
+		IF ISNULL(@ORDER_NUM, '') = ''
+		BEGIN
+		    DECLARE @AUTO_NUM  NVARCHAR(20)
+		    EXEC SP_GetAutoNumComp #{COMP_CODE}, #{DIV_CODE}, PPL300T, 'A', #{PLAN_DATE}, '', @ORDER_NUM OUTPUT
+		    SET @SER_NO = 1
+		END
+
+		INSERT PPL300T(
+		       COMP_CODE
+		     , DIV_CODE
+		     , WEEK_NUM
+		     , ORDER_NUM
+		     , SEQ
+		     , CONFIRM_YN
+		     , PLAN_TYPE
+		     , ITEM_CODE
+		     , PLAN_QTY
+		     , DUE_DATE
+		     , PRIORITY
+		     , APS_NUM
+		     , PLAN_START_DATE
+		     , REMARK
+		     , UPDATE_DB_USER
+		     , UPDATE_DB_TIME
+		     , INSERT_DB_USER
+		     , INSERT_DB_TIME
+		) VALUES (
+		       #{COMP_CODE}
+		     , #{DIV_CODE}
+		     , #{WEEK_NUM}
+		     , @ORDER_NUM
+		     , @SER_NO
+		     , #{CONFIRM_YN}
+		     , #{PLAN_TYPE}
+		     , #{ITEM_CODE}
+		     , #{PLAN_QTY}
+		     , #{DUE_DATE}
+		     , #{PRIORITY}
+		     , #{APS_NUM}
+		     , (SELECT START_DATE
+		          FROM BCM420T WITH(NOLOCK)
+		         WHERE COMP_CODE = #{COMP_CODE}
+		           AND CAL_NO    = #{WEEK_NUM}
+		           AND CAL_TYPE  = '3')
+		     , #{REMARK}
+		     , #{S_USER_ID}
+		     , GETDATE()
+		     , #{S_USER_ID}
+		     , GETDATE()
+		);
+	</insert>
+
+	<update id="ppl310ukrvServiceImpl.updateList" parameterType="Map">
+		/* ppl310ukrvServiceImpl.updateList */
+		UPDATE PPL300T
+		   SET CONFIRM_YN = #{CONFIRM_YN}
+		     , DUE_DATE   = #{DUE_DATE}
+		     , PLAN_QTY   = #{PLAN_QTY}
+		     , PRIORITY   = #{PRIORITY}
+		 WHERE COMP_CODE = #{COMP_CODE}
+		   AND DIV_CODE  = #{DIV_CODE}
+		   AND WEEK_NUM  = #{WEEK_NUM}
+		   AND ORDER_NUM = #{ORDER_NUM}
+		   AND SEQ       = #{SEQ}
+	</update>
+
+	<update id="ppl310ukrvServiceImpl.deleteList" parameterType="Map">
+		/* ppl310ukrvServiceImpl.deleteList */
+		DELETE PPL300T
+		 WHERE COMP_CODE = #{COMP_CODE}
+		   AND DIV_CODE  = #{DIV_CODE}
+		   AND WEEK_NUM  = #{WEEK_NUM}
+		   AND ORDER_NUM = #{ORDER_NUM}
+		   AND SEQ       = #{SEQ}
+	</update>
+</mapper>

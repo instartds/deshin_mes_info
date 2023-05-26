@@ -1,0 +1,700 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="hrt700ukrServiceImpl">
+
+	<select id="hrt700ukrServiceImpl.selectColumns" parameterType="Map" resultType="rMap">
+		SELECT WAGES_CODE
+			 , WAGES_NAME
+		  FROM HBS300T
+		 WHERE INCOME_KIND = 'RP'
+		
+		UNION ALL
+		
+		SELECT 'RPI'			AS WAGES_CODE
+			 , '퇴직연금기준금'	AS WAGES_NAME
+		
+		UNION ALL
+		
+		SELECT 'T05'			AS WAGES_CODE
+			 , '퇴직연금납부액'	AS WAGES_NAME
+	</select>
+
+	<select id="hrt700ukrServiceImpl.checkPayment" parameterType="Map" resultType="rMap">
+		SELECT COUNT(*)	AS CNT_PAYMENT
+		  FROM HPA600T
+		 WHERE COMP_CODE	= #{S_COMP_CODE}
+		   AND DIV_CODE		IN
+				<foreach collection="DIV_CODE" item="item" separator="," close=")" open="("> #{item} </foreach>
+		   AND PAY_YYYYMM	= #{PAY_YYYYMM}
+	</select>
+
+	<select id="hrt700ukrServiceImpl.checkPension" parameterType="Map" resultType="rMap">
+		SELECT COUNT(*)	AS CNT_PENSION
+		  FROM HRT700T
+		 WHERE COMP_CODE	= #{S_COMP_CODE}
+		   AND DIV_CODE		= #{DIV_CODE}
+		   AND PAY_YYYYMM	= #{PAY_YYYYMM}
+	</select>
+
+	<select id="hrt700ukrServiceImpl.selectNewList" parameterType="Map" resultType="rMap">
+		/* hrt700ukrServiceImpl.selectNewList */
+		DECLARE
+			@COMP_CODE		NVARCHAR(08)	= #{S_COMP_CODE},
+			@DIV_CODE		NVARCHAR(08)	= #{DIV_CODE},
+			@PAY_YYYYMM		NVARCHAR(06)	= #{PAY_YYYYMM},
+			@USER_ID		NVARCHAR(100)	= #{S_USER_ID},
+			
+			@STD_AMOUNT_I	NUMERIC(30, 6),
+			@CALCU_BAS		NVARCHAR(10),
+			
+			@C_COMP_CODE	NVARCHAR(08),
+			@C_DIV_CODE		NVARCHAR(08),
+			@C_PAY_YYYYMM	NVARCHAR(06),
+			@C_SUPP_TYPE	NVARCHAR(10),
+			@C_PERSON_NUMB	NVARCHAR(10),
+			@C_WAGES_CODE	NVARCHAR(10),
+			@C_FORMULA		NVARCHAR(2000),
+			@C_SQL			NVARCHAR(MAX)
+			
+		BEGIN
+			/*	끝전처리 기준 조회	*/
+			IF EXISTS (	SELECT *
+						  FROM HBS330T
+						 WHERE COMP_CODE  = @COMP_CODE
+						   AND WAGES_TYPE = '0'
+						   AND WAGES_CODE = 'T05'	)
+			BEGIN
+				SELECT @STD_AMOUNT_I	= STD_AMOUNT_I
+					 , @CALCU_BAS		= CALCU_BAS
+				  FROM HBS330T
+				 WHERE COMP_CODE  = @COMP_CODE
+				   AND WAGES_TYPE = '0'
+				   AND WAGES_CODE = 'T05'
+			END
+			ELSE
+			BEGIN
+				SET @STD_AMOUNT_I	= 1.000000
+				SET @CALCU_BAS		= '2'
+			END
+			
+			/*	데이터 삭제 - 삭제되는 데이터는 아마 없을듯	*/
+			DELETE
+			  FROM HRT700T
+			 WHERE COMP_CODE	= @COMP_CODE
+			   AND DIV_CODE		= @DIV_CODE
+			   AND PAY_YYYYMM	= @PAY_YYYYMM
+			
+			/*	임시 테이블 생성	*/
+			IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#HRT700TEMP'))
+				DROP TABLE #HRT700TEMP
+			
+			IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#HRT700TEMP2'))
+				DROP TABLE #HRT700TEMP2
+			
+			/*	대상자 선정 (1년 초과자)	*/
+			SELECT A.COMP_CODE
+				 , A.DIV_CODE
+				 , B.PAY_YYYYMM
+				 , B.SUPP_TYPE
+				 , A.PERSON_NUMB
+				 , B.WAGES_CODE
+				 , B.AMOUNT_I
+				 , A.RETR_PENSION_BANK	AS PENS_CUST_CODE
+				 , A.RETR_OT_KIND
+				 , @USER_ID				AS INSERT_DB_USER
+				 , GETDATE()			AS INSERT_DB_TIME
+				 , @USER_ID				AS UPDATE_DB_USER
+				 , GETDATE()			AS UPDATE_DB_TIME
+			  INTO #HRT700TEMP
+			  FROM HUM100T A
+					INNER JOIN		HPA300T B
+								 ON A.COMP_CODE		= B.COMP_CODE
+								AND A.PERSON_NUMB	= B.PERSON_NUMB
+					INNER JOIN		HBS300T C
+								 ON B.COMP_CODE		= C.COMP_CODE
+								AND B.WAGES_CODE	= C.WAGES_CODE
+								AND C.INCOME_KIND	= 'RP'
+			 WHERE B.COMP_CODE	= @COMP_CODE
+			   AND B.PAY_YYYYMM	= @PAY_YYYYMM
+			   AND ((A.PAY_GUBUN != '2') OR (A.PAY_GUBUN = '2' AND A.PAY_GUBUN2 != '1'))
+			   AND DATEDIFF(MONTH, LEFT(A.JOIN_DATE, 6) + '01', @PAY_YYYYMM + '01') &gt; 12
+			
+			/*	대상자 선정 (12개월 차)	*/
+			INSERT INTO #HRT700TEMP
+			SELECT A.COMP_CODE
+				 , A.DIV_CODE
+				 , @PAY_YYYYMM			AS PAY_YYYYMM
+				 , B.SUPP_TYPE
+				 , A.PERSON_NUMB
+				 , B.WAGES_CODE
+				 , SUM(B.AMOUNT_I)		AS AMOUNT_I
+				 , A.RETR_PENSION_BANK	AS PENS_CUST_CODE
+				 , A.RETR_OT_KIND
+				 , @USER_ID				AS INSERT_DB_USER
+				 , GETDATE()			AS INSERT_DB_TIME
+				 , @USER_ID				AS UPDATE_DB_USER
+				 , GETDATE()			AS UPDATE_DB_TIME
+			  FROM HUM100T A
+					INNER JOIN		HPA300T B
+								 ON A.COMP_CODE		= B.COMP_CODE
+								AND A.PERSON_NUMB	= B.PERSON_NUMB
+					INNER JOIN		HBS300T C
+								 ON B.COMP_CODE		= C.COMP_CODE
+								AND B.WAGES_CODE	= C.WAGES_CODE
+								AND C.INCOME_KIND	= 'RP'
+			 WHERE B.COMP_CODE	= @COMP_CODE
+			   AND B.PAY_YYYYMM	&lt;= @PAY_YYYYMM
+			   AND ((A.PAY_GUBUN != '2') OR (A.PAY_GUBUN = '2' AND A.PAY_GUBUN2 != '1'))
+			   AND DATEDIFF(MONTH, LEFT(A.JOIN_DATE, 6) + '01', @PAY_YYYYMM + '01') = 12
+			 GROUP BY A.COMP_CODE
+				 , A.DIV_CODE
+				 , B.SUPP_TYPE
+				 , A.PERSON_NUMB
+				 , B.WAGES_CODE
+				 , A.RETR_PENSION_BANK
+				 , A.RETR_OT_KIND
+			
+			/*	퇴직연금기준금 만들어내기	*/
+			INSERT INTO #HRT700TEMP
+			SELECT A.COMP_CODE
+				 , A.DIV_CODE
+				 , A.PAY_YYYYMM
+				 , A.SUPP_TYPE
+				 , A.PERSON_NUMB
+				 , 'RPI'					AS WAGES_CODE
+				 , SUM(AMOUNT_I)			AS AMOUNT_I
+				 , A.PENS_CUST_CODE
+				 , A.RETR_OT_KIND
+				 , @USER_ID					AS INSERT_DB_USER
+				 , GETDATE()				AS INSERT_DB_TIME
+				 , @USER_ID					AS UPDATE_DB_USER
+				 , GETDATE()				AS UPDATE_DB_TIME
+			  FROM #HRT700TEMP A
+			 GROUP BY A.COMP_CODE
+				 , A.DIV_CODE
+				 , A.PAY_YYYYMM
+				 , A.SUPP_TYPE
+				 , A.PERSON_NUMB
+				 , A.PENS_CUST_CODE
+				 , A.RETR_OT_KIND
+			
+			UNION ALL
+			
+			SELECT A.COMP_CODE
+				 , A.DIV_CODE
+				 , A.PAY_YYYYMM
+				 , A.SUPP_TYPE
+				 , A.PERSON_NUMB
+				 , 'T05'					AS WAGES_CODE
+				 , 0						AS AMOUNT_I
+				 , A.PENS_CUST_CODE
+				 , A.RETR_OT_KIND
+				 , @USER_ID					AS INSERT_DB_USER
+				 , GETDATE()				AS INSERT_DB_TIME
+				 , @USER_ID					AS UPDATE_DB_USER
+				 , GETDATE()				AS UPDATE_DB_TIME
+			  FROM #HRT700TEMP A
+			 GROUP BY A.COMP_CODE
+				 , A.DIV_CODE
+				 , A.PAY_YYYYMM
+				 , A.SUPP_TYPE
+				 , A.PERSON_NUMB
+				 , A.PENS_CUST_CODE
+				 , A.RETR_OT_KIND
+			
+			/*	퇴직연금납부금 만들어내기(계산식 적용)	*/
+			SELECT A.COMP_CODE
+				 , A.DIV_CODE
+				 , A.PAY_YYYYMM
+				 , A.SUPP_TYPE
+				 , A.PERSON_NUMB
+				 , 'T05'					AS WAGES_CODE
+				 , B.CALCU_SEQ
+				 , CASE WHEN B.TYPE = '2' THEN CONVERT(NVARCHAR, A.AMOUNT_I) ELSE B.SELECT_VALUE END	AS SELECT_VALUE
+			  INTO #HRT700TEMP2
+			  FROM #HRT700TEMP A
+					LEFT OUTER JOIN HRT000T B
+								 ON A.COMP_CODE		= B.COMP_CODE
+								AND A.RETR_OT_KIND	= B.OT_KIND_01
+								AND B.SUPP_TYPE		= 'P'
+								AND ISNULL(NULLIF(B.SELECT_VALUE, '#x28;'), '')  &lt;&gt; ''
+			 WHERE WAGES_CODE	= 'RPI'
+			
+			/*	퇴직연금납부금 만들어내기(계산식 적용)	*/
+			DECLARE CUR_T05 CURSOR FOR
+				SELECT A.COMP_CODE
+					 , A.DIV_CODE
+					 , A.PAY_YYYYMM
+					 , A.SUPP_TYPE
+					 , A.PERSON_NUMB
+					 , A.WAGES_CODE
+					 , STUFF((	SELECT ' ' + SELECT_VALUE
+								  FROM #HRT700TEMP2
+								 WHERE PERSON_NUMB = A.PERSON_NUMB
+								 ORDER BY CALCU_SEQ
+								   FOR XML PATH('')	), 1, 1, '')	AS FORMULA
+				  FROM #HRT700TEMP2 A
+				 GROUP BY A.COMP_CODE
+					 , A.DIV_CODE
+					 , A.PAY_YYYYMM
+					 , A.SUPP_TYPE
+					 , A.PERSON_NUMB
+					 , A.WAGES_CODE
+			
+			OPEN CUR_T05
+			FETCH NEXT FROM CUR_T05 INTO @C_COMP_CODE
+									   , @C_DIV_CODE
+									   , @C_PAY_YYYYMM
+									   , @C_SUPP_TYPE
+									   , @C_PERSON_NUMB
+									   , @C_WAGES_CODE
+									   , @C_FORMULA
+			WHILE @@FETCH_STATUS = 0
+			BEGIN
+			
+				SET @C_SQL = '
+					UPDATE #HRT700TEMP
+					   SET AMOUNT_I		= ' + CASE WHEN @CALCU_BAS = '1' THEN 'FLOOR(('
+												   WHEN @CALCU_BAS = '2' THEN 'CEILING(('
+												   WHEN @CALCU_BAS = '3' THEN 'ROUND(('
+											  END + @C_FORMULA + ') / ' + CONVERT(NVARCHAR, @STD_AMOUNT_I) + CASE WHEN @CALCU_BAS = '3' THEN ', 0' ELSE '' END + ') * ' + CONVERT(NVARCHAR, @STD_AMOUNT_I) + '
+					 WHERE COMP_CODE	= ''' + @C_COMP_CODE + '''
+					   AND DIV_CODE		= ''' + @C_DIV_CODE + '''
+					   AND PAY_YYYYMM	= ''' + @C_PAY_YYYYMM + '''
+					   AND SUPP_TYPE	= ''' + @C_SUPP_TYPE + '''
+					   AND PERSON_NUMB	= ''' + @C_PERSON_NUMB + '''
+					   AND WAGES_CODE	= ''' + @C_WAGES_CODE + ''''
+				
+				EXEC(@C_SQL)
+				
+				FETCH NEXT FROM CUR_T05 INTO @C_COMP_CODE
+										   , @C_DIV_CODE
+										   , @C_PAY_YYYYMM
+										   , @C_SUPP_TYPE
+										   , @C_PERSON_NUMB
+										   , @C_WAGES_CODE
+										   , @C_FORMULA
+			END
+			
+			CLOSE CUR_T05
+			DEALLOCATE CUR_T05
+			
+			/*	퇴직연금테이블에 저장	*/
+			INSERT INTO HRT700T
+				 ( COMP_CODE		, DIV_CODE			, PAY_YYYYMM		, SUPP_TYPE
+				 , PERSON_NUMB		, WAGES_CODE		, AMOUNT_I			, PENS_CUST_CODE
+				 , INSERT_DB_USER	, INSERT_DB_TIME	, UPDATE_DB_USER	, UPDATE_DB_TIME	)
+			SELECT A.COMP_CODE
+				 , A.DIV_CODE
+				 , A.PAY_YYYYMM
+				 , A.SUPP_TYPE
+				 , A.PERSON_NUMB
+				 , A.WAGES_CODE
+				 , A.AMOUNT_I
+				 , A.PENS_CUST_CODE
+				 , A.INSERT_DB_USER
+				 , A.INSERT_DB_TIME
+				 , A.UPDATE_DB_USER
+				 , A.UPDATE_DB_TIME
+			  FROM #HRT700TEMP A
+					INNER JOIN		HUM100T B
+								 ON A.COMP_CODE		= B.COMP_CODE
+								AND A.PERSON_NUMB	= B.PERSON_NUMB
+					LEFT OUTER JOIN BSA100T C
+								 ON A.COMP_CODE		= C.COMP_CODE
+								AND C.MAIN_CODE		= 'H221'
+								AND A.PENS_CUST_CODE= C.SUB_CODE
+			 WHERE A.COMP_CODE	= @COMP_CODE
+			   AND A.DIV_CODE	= @DIV_CODE
+			   AND A.PAY_YYYYMM	= @PAY_YYYYMM
+			
+			/*	퇴직연금테이블 조회	*/
+			SELECT A.COMP_CODE
+				 , A.DIV_CODE
+				 , A.PAY_YYYYMM
+				 , A.PERSON_NUMB
+				 , B.NAME
+				 , B.DEPT_CODE
+				 , B.DEPT_NAME
+				 , uniLITE.fnGetUserdateComp(B.COMP_CODE, B.JOIN_DATE)	AS JOIN_DATE
+				 , A.PENS_CUST_CODE
+				 , C.CODE_NAME											AS PENS_CUST_NAME
+				 , D.FORMULA
+				 , E.STD_AMOUNT_I
+				 , E.CALCU_BAS
+		<foreach collection="amtArray" item="item" separator="" close="" open="">
+				 , SUM(CASE WHEN A.WAGES_CODE = '${item}' THEN A.AMOUNT_I ELSE 0 END)	AS AMT_${item}
+		</foreach>
+			  FROM HRT700T A
+					INNER JOIN		HUM100T B
+								 ON A.COMP_CODE		= B.COMP_CODE
+								AND A.PERSON_NUMB	= B.PERSON_NUMB
+					LEFT OUTER JOIN BSA100T C
+								 ON A.COMP_CODE		= C.COMP_CODE
+								AND C.MAIN_CODE		= 'H221'
+								AND A.PENS_CUST_CODE= C.SUB_CODE
+					LEFT OUTER JOIN (
+										SELECT A.OT_KIND_01
+											 , STUFF((	SELECT ' ' + SELECT_VALUE
+														  FROM HRT000T
+														 WHERE SUPP_TYPE	= 'P'
+														   AND OT_KIND_01	= A.OT_KIND_01
+														   AND ISNULL(NULLIF(SELECT_VALUE, '#x28;'), '')  &lt;&gt; ''
+														 ORDER BY CALCU_SEQ
+														   FOR XML PATH('')	), 1, 1, '')	AS FORMULA
+										  FROM HRT000T A
+										 WHERE A.SUPP_TYPE = 'P'
+										 GROUP BY A.OT_KIND_01
+									) D
+								 ON B.RETR_OT_KIND	= D.OT_KIND_01
+					LEFT OUTER JOIN HBS330T E
+								 ON A.COMP_CODE		= E.COMP_CODE
+								AND E.WAGES_TYPE	= '0'
+								AND E.WAGES_CODE	= 'T05'
+			 WHERE A.COMP_CODE		= @COMP_CODE
+			   AND A.DIV_CODE		= @DIV_CODE
+			   AND A.PAY_YYYYMM		= @PAY_YYYYMM
+			 GROUP BY A.COMP_CODE
+				 , A.DIV_CODE
+				 , A.PAY_YYYYMM
+				 , A.PERSON_NUMB
+				 , B.NAME
+				 , B.DEPT_CODE
+				 , B.DEPT_NAME
+				 , uniLITE.fnGetUserdateComp(B.COMP_CODE, B.JOIN_DATE)
+				 , A.PENS_CUST_CODE
+				 , C.CODE_NAME
+				 , D.FORMULA
+				 , E.STD_AMOUNT_I
+				 , E.CALCU_BAS
+			 ORDER BY A.COMP_CODE
+				 , A.DIV_CODE
+				 , B.DEPT_CODE
+				 , B.NAME
+				 , A.PAY_YYYYMM
+		END
+	</select>
+
+	<select id="hrt700ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* hrt700ukrServiceImpl.selectList */
+		DECLARE
+			@COMP_CODE		NVARCHAR(08)	= #{S_COMP_CODE},
+			@PAY_YYYYMM		NVARCHAR(06)	= #{PAY_YYYYMM}
+			
+		BEGIN
+			SELECT A.COMP_CODE
+				 , A.DIV_CODE
+				 , A.PAY_YYYYMM
+				 , A.PERSON_NUMB
+				 , B.NAME
+				 , B.DEPT_CODE
+				 , B.DEPT_NAME
+				 , uniLITE.fnGetUserdateComp(B.COMP_CODE, B.JOIN_DATE)	AS JOIN_DATE
+				 , A.PENS_CUST_CODE
+				 , C.CODE_NAME											AS PENS_CUST_NAME
+				 , D.FORMULA
+				 , E.STD_AMOUNT_I
+				 , E.CALCU_BAS
+		<foreach collection="amtArray" item="item" separator="" close="" open="">
+				 , SUM(CASE WHEN A.WAGES_CODE = '${item}' THEN A.AMOUNT_I ELSE 0 END)	AS AMT_${item}
+		</foreach>
+			  FROM HRT700T A
+					INNER JOIN		HUM100T B
+								 ON A.COMP_CODE		= B.COMP_CODE
+								AND A.PERSON_NUMB	= B.PERSON_NUMB
+					LEFT OUTER JOIN BSA100T C
+								 ON A.COMP_CODE		= C.COMP_CODE
+								AND C.MAIN_CODE		= 'H221'
+								AND A.PENS_CUST_CODE= C.SUB_CODE
+					LEFT OUTER JOIN (
+										SELECT A.OT_KIND_01
+											 , STUFF((	SELECT ' ' + SELECT_VALUE
+														  FROM HRT000T
+														 WHERE SUPP_TYPE	= 'P'
+														   AND OT_KIND_01	= A.OT_KIND_01
+														   AND ISNULL(NULLIF(SELECT_VALUE, '#x28;'), '')  &lt;&gt; ''
+														 ORDER BY CALCU_SEQ
+														   FOR XML PATH('')	), 1, 1, '')	AS FORMULA
+										  FROM HRT000T A
+										 WHERE A.SUPP_TYPE = 'P'
+										 GROUP BY A.OT_KIND_01
+									) D
+								 ON B.RETR_OT_KIND	= D.OT_KIND_01
+					LEFT OUTER JOIN HBS330T E
+								 ON A.COMP_CODE		= E.COMP_CODE
+								AND E.WAGES_TYPE	= '0'
+								AND E.WAGES_CODE	= 'T05'
+			 WHERE A.COMP_CODE		= @COMP_CODE
+			   AND A.DIV_CODE		IN
+					<foreach collection="DIV_CODE" item="item" separator="," close=")" open="("> #{item} </foreach>
+			   AND A.PAY_YYYYMM		= @PAY_YYYYMM
+		<if test="@foren.Ognl@isNotEmpty(DEPT_CODE_FR)">
+			   AND B.DEPT_CODE	   &gt;= #{DEPT_CODE_FR}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(DEPT_CODE_TO)">
+			   AND B.DEPT_CODE	   &lt;= #{DEPT_CODE_TO}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+			   AND A.PERSON_NUMB	= #{PERSON_NUMB}
+		</if>
+		<if test="RDO_TYPE == &quot;N&quot;">
+			   AND B.RETR_DATE		= '00000000'
+		</if>
+			 GROUP BY A.COMP_CODE
+				 , A.DIV_CODE
+				 , A.PAY_YYYYMM
+				 , A.PERSON_NUMB
+				 , B.NAME
+				 , B.DEPT_CODE
+				 , B.DEPT_NAME
+				 , uniLITE.fnGetUserdateComp(B.COMP_CODE, B.JOIN_DATE)
+				 , A.PENS_CUST_CODE
+				 , C.CODE_NAME
+				 , D.FORMULA
+				 , E.STD_AMOUNT_I
+				 , E.CALCU_BAS
+			 ORDER BY A.COMP_CODE
+				 , A.DIV_CODE
+				 , B.DEPT_CODE
+				 , B.NAME
+				 , A.PAY_YYYYMM
+		END
+	</select>
+
+	<update id="hrt700ukrServiceImpl.updateList" parameterType="Map">
+		/*hrt700ukrServiceImpl.updateList*/
+		UPDATE HRT700T
+		   SET AMOUNT_I			= ${AMOUNT_I}
+		     , UPDATE_DB_USER	= #{S_USER_ID}
+		     , UPDATE_DB_TIME	= GETDATE()
+		 WHERE COMP_CODE	= #{COMP_CODE}
+		   AND DIV_CODE		= #{DIV_CODE}
+		   AND PAY_YYYYMM	= #{PAY_YYYYMM}
+		   AND PERSON_NUMB	= #{PERSON_NUMB}
+		   AND WAGES_CODE	= #{WAGES_CODE}
+	</update>
+
+	<delete id="hrt700ukrServiceImpl.deleteList" parameterType="Map">
+		/*hrt700ukrServiceImpl.deleteList*/
+		DELETE
+		  FROM HRT700T
+		 WHERE COMP_CODE	= #{COMP_CODE}
+		   AND DIV_CODE		= #{DIV_CODE}
+		   AND PAY_YYYYMM	= #{PAY_YYYYMM}
+		   AND PERSON_NUMB	= #{PERSON_NUMB}
+	</delete>
+
+	<select id="hrt700ukrServiceImpl.fnGetCloseAll" parameterType="Map" resultType="rMap">
+		DECLARE	@COMP_CODE	NVARCHAR(08),
+				@PAY_YYYYMM	NVARCHAR(06)
+				
+		SET @COMP_CODE	= #{S_COMP_CODE}
+		SET @PAY_YYYYMM	= #{PAY_YYYYMM}
+		
+		SELECT CASE WHEN COUNT(*) = 0 THEN 'N' ELSE 'Y' END	AS CLOSE_TYPE
+		  FROM HBS900T
+		 WHERE COMP_CODE	= @COMP_CODE
+		   AND DIV_CODE		IN
+				<foreach collection="DIV_CODE" item="item" separator="," close=")" open="("> #{item} </foreach>
+		   AND CLOSE_TYPE	= 'P'
+		   AND CLOSE_DATE	&gt;= @PAY_YYYYMM
+		   AND SUPP_TYPE	= 'Z'
+	</select>
+
+	<update id="hrt700ukrServiceImpl.fnSetCloseAll" parameterType="Map">
+		BEGIN
+			DECLARE	@COMP_CODE	NVARCHAR(08),
+					@PAY_YYYYMM	NVARCHAR(06),
+					@CLOSE_TYPE	NVARCHAR(01),
+					@CLOSE_DATE	NVARCHAR(06)
+					
+			SET @COMP_CODE	= #{S_COMP_CODE}
+			SET @PAY_YYYYMM	= #{PAY_YYYYMM}
+			SET @CLOSE_TYPE	= #{CLOSE_TYPE}
+			
+			IF @CLOSE_TYPE = 'Y'
+			BEGIN
+				IF EXISTS (	SELECT *
+							  FROM HBS900T
+							 WHERE COMP_CODE	= @COMP_CODE
+							   AND DIV_CODE		IN
+									<foreach collection="DIV_CODE" item="item" separator="," close=")" open="("> #{item} </foreach>
+							   AND CLOSE_TYPE	= 'P'
+							   AND CLOSE_DATE	&lt;= @PAY_YYYYMM
+							   AND SUPP_TYPE	= 'Z'	)
+				BEGIN
+					UPDATE HBS900T
+					   SET CLOSE_DATE	= @PAY_YYYYMM
+					 WHERE COMP_CODE	= @COMP_CODE
+					   AND DIV_CODE		IN
+							<foreach collection="DIV_CODE" item="item" separator="," close=")" open="("> #{item} </foreach>
+					   AND CLOSE_TYPE	= 'P'
+					   AND SUPP_TYPE	= 'Z'
+				END
+				ELSE
+				BEGIN
+					INSERT INTO HBS900T
+						 ( COMP_CODE		, CLOSE_TYPE		, CLOSE_DATE		, SUPP_TYPE			, DIV_CODE
+						 , INSERT_DB_USER	, INSERT_DB_TIME	, UPDATE_DB_USER	, UPDATE_DB_TIME	)
+					SELECT COMP_CODE
+						 , 'P'				AS CLOSE_TYPE
+						 , @PAY_YYYYMM		AS CLOSE_DATE
+						 , 'Z'				AS SUPP_TYPE
+						 , DIV_CODE
+						 , #{S_USER_ID}		AS INSERT_DB_USER
+						 , GETDATE()		AS INSERT_DB_TIME
+						 , #{S_USER_ID}		AS UPDATE_DB_USER
+						 , GETDATE()		AS UPDATE_DB_TIME
+					  FROM BOR120T
+					 WHERE COMP_CODE	= @COMP_CODE
+					   AND DIV_CODE		IN
+							<foreach collection="DIV_CODE" item="item" separator="," close=")" open="("> #{item} </foreach>
+				END
+			END
+		
+			IF @CLOSE_TYPE = 'N' AND	 EXISTS (	SELECT *
+													  FROM HBS900T
+													 WHERE COMP_CODE	= @COMP_CODE
+													   AND DIV_CODE		IN
+															<foreach collection="DIV_CODE" item="item" separator="," close=")" open="("> #{item} </foreach>
+													   AND CLOSE_TYPE	= 'P'
+													   AND CLOSE_DATE	&gt;= @PAY_YYYYMM
+													   AND SUPP_TYPE	= 'Z'	)
+			BEGIN
+				SELECT @CLOSE_DATE	= ISNULL(MAX(PAY_YYYYMM), '')
+				  FROM HRT700T
+				 WHERE COMP_CODE	= @COMP_CODE
+				   AND DIV_CODE		IN
+						<foreach collection="DIV_CODE" item="item" separator="," close=")" open="("> #{item} </foreach>
+				   AND PAY_YYYYMM	&lt; @PAY_YYYYMM
+				
+				IF ISNULL(@CLOSE_DATE, '') = ''
+				BEGIN
+					DELETE
+					  FROM HBS900T
+					 WHERE COMP_CODE	= @COMP_CODE
+					   AND DIV_CODE		IN
+							<foreach collection="DIV_CODE" item="item" separator="," close=")" open="("> #{item} </foreach>
+					   AND CLOSE_TYPE	= 'P'
+					   --AND CLOSE_DATE	&gt;= @PAY_YYYYMM
+					   AND SUPP_TYPE	= 'Z'
+				END
+				ELSE
+				BEGIN
+					UPDATE HBS900T
+					   SET CLOSE_DATE	= @CLOSE_DATE
+					 WHERE COMP_CODE	= @COMP_CODE
+					   AND DIV_CODE		IN
+							<foreach collection="DIV_CODE" item="item" separator="," close=")" open="("> #{item} </foreach>
+					   AND CLOSE_TYPE	= 'P'
+					   --AND CLOSE_DATE	&gt;= @PAY_YYYYMM
+					   AND SUPP_TYPE	= 'Z'
+				END
+			END
+		END
+	</update>
+
+	<!-- Excel Upload-->
+	<update id="hrt700ukrServiceImpl.insertExcelUpload" parameterType="Map">
+	    /* hrt700ukrServiceImpl.insertExcelUpload */
+	    /* temp Table에 insert */    
+	    INSERT INTO L_HRT500T
+	        (
+	           _EXCEL_JOBID 
+	         , _EXCEL_ROWNUM 
+	         , _EXCEL_HAS_ERROR 
+	         , _EXCEL_ERROR_MSG
+	         
+	         , COMP_CODE
+	         , RETR_DATE
+	         , RETR_TYPE
+	         , PERSON_NUMB
+	         
+	         , RETR_RESN
+	         , JOIN_DATE
+	         , DUTY_YYYY
+	         , LONG_MONTH
+	         , LONG_DAY
+	         
+	         , PAY_TOTAL_I
+	         , BONUS_TOTAL_I
+	         , YEAR_TOTAL_I 
+	         , TOT_WAGES_I
+	         , AVG_WAGES_I
+	         , ORI_RETR_ANNU_I
+	         
+	         , INSERT_DB_USER
+	         , INSERT_DB_TIME
+	    )
+	    VALUES (
+	           #{_EXCEL_JOBID} 
+	         , #{_EXCEL_ROWNUM} 
+	         , #{_EXCEL_HAS_ERROR ,jdbcType=VARCHAR} 
+	         , #{_EXCEL_ERROR     ,jdbcType=VARCHAR}
+	              
+	         , #{S_COMP_CODE}
+	         , #{RETR_DATE}
+	         , #{RETR_TYPE}
+	         , #{PERSON_NUMB}
+	          
+	         , #{RETR_RESN}
+	         , #{JOIN_DATE}
+	         , #{DUTY_YYYY}
+	         , #{LONG_MONTH}
+	         , #{LONG_DAY}
+	         
+	         , #{PAY_TOTAL_I}
+	         , #{BONUS_TOTAL_I}
+	         , #{YEAR_TOTAL_I}
+	         , #{TOT_WAGES_I}
+	         , #{AVG_WAGES_I}
+	         , #{ORI_RETR_ANNU_I}
+	         
+	         , #{S_USER_ID}
+	         , GETDATE()
+	    )
+	</update>
+	
+	
+	<select id="hrt700ukrServiceImpl.selectExcelUploadSheet1" parameterType="Map" resultType="rMap">
+	    /* hrt700ukrServiceImpl.selectExcelUploadSheet1 */
+	    SELECT A._EXCEL_JOBID
+	         , A._EXCEL_ROWNUM
+	         , A._EXCEL_HAS_ERROR      
+	         , A._EXCEL_ERROR_MSG
+	                 
+	         , A.COMP_CODE
+	         , B.DIV_CODE                --사업장
+	         , B.DEPT_NAME               --부서
+	         , B.POST_CODE               --직위
+	         , B.NAME                    --사명
+	         , A.PERSON_NUMB             --사번
+	         , A.RETR_TYPE               --구분
+	         , B.JOIN_DATE AS ENTR_DATE  --입사일
+	         , A.JOIN_DATE               --정산시작일
+	         , A.RETR_DATE               --정산일
+	    
+	         , ISNULL(A.DUTY_YYYY, 0)   AS DUTY_YYYY               --근속기간
+	         , ISNULL(A.LONG_MONTH, 0)  AS LONG_MONTH
+	         , ISNULL(A.LONG_DAY, 0)    AS LONG_DAY
+	         , A.PAY_TOTAL_I             --급여총액
+	         , A.BONUS_TOTAL_I           --상여총액
+	         , A.YEAR_TOTAL_I            --년월차종액
+	         , A.TOT_WAGES_I             --합계
+	         , A.AVG_WAGES_I             --평균임금
+	         , A.ORI_RETR_ANNU_I         --퇴직금
+	                             
+	                 
+	         , A.INSERT_DB_USER
+	         , A.INSERT_DB_TIME
+	    
+	      FROM       L_HRT500T A WITH(NOLOCK)
+	      LEFT JOIN  HUM100T B WITH(NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+	                                        AND B.PERSON_NUMB = A.PERSON_NUMB
+	   
+	
+	     WHERE _EXCEL_JOBID = #{_EXCEL_JOBID}
+	     ORDER BY _EXCEL_JOBID, _EXCEL_ROWNUM
+	</select>
+	
+</mapper>

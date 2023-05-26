@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="Sva220skrvService">
+	
+	<select id="Sva220skrvService.selectList" parameterType="Map" resultType="rMap">
+		
+		IF OBJECT_ID('tempdb..##FR_SVA_2015')  IS NOT NULL
+			DROP TABLE ##FR_SVA_2015
+		IF OBJECT_ID('tempdb..##TO_SVA_2015')  IS NOT NULL
+			DROP TABLE ##TO_SVA_2015
+		
+		CREATE TABLE ##FR_SVA_2015
+		(
+		COMP_CODE nvarchar(8)
+		, DIV_CODE	nvarchar(8)
+		, POS_NO	nvarchar(20)
+		, COLUMN_NO	numeric(2,0)
+		, ITEM_CODE	nvarchar(20)
+		, SALE_P	numeric(30,6)
+		, AFTER_CNT	numeric(30,6)
+		PRIMARY KEY (POS_NO, COLUMN_NO, ITEM_CODE, SALE_P)
+		)
+		
+		CREATE TABLE ##TO_SVA_2015
+		(
+		COMP_CODE nvarchar(8)
+		, DIV_CODE	nvarchar(8)
+		, POS_NO	nvarchar(20)
+		, COLUMN_NO	numeric(2,0)
+		, ITEM_CODE	nvarchar(20)
+		, SALE_P	numeric(30,6)
+		, AFTER_CNT	numeric(30,6)
+		PRIMARY KEY (POS_NO, COLUMN_NO, ITEM_CODE, SALE_P)
+		)
+		
+		INSERT INTO ##FR_SVA_2015(COMP_CODE, DIV_CODE, POS_NO, COLUMN_NO, ITEM_CODE, SALE_P, AFTER_CNT)
+		SELECT A.COMP_CODE, A.DIV_CODE, A.POS_NO, A.COLUMN_NO, A.ITEM_CODE, A.SALE_P, A.AFTER_CNT
+		FROM SVA200T A WITH (NOLOCK)
+		INNER JOIN (SELECT COMP_CODE, DIV_CODE, POS_NO, ITEM_CODE, SALE_P, MAX(INOUT_DATE) AS INOUT_DATE 
+					FROM SVA200T WITH (NOLOCK) 
+					WHERE INOUT_DATE &lt; #{INOUT_DATE_FR}							/*{P}필수:조회시작일*/
+					GROUP BY COMP_CODE, DIV_CODE, POS_NO, ITEM_CODE, SALE_P 
+					) B ON A.POS_NO = B.POS_NO
+					   AND A.INOUT_DATE = B.INOUT_DATE
+		               AND A.DIV_CODE	= B.DIV_CODE
+					   AND A.COMP_CODE  = B.COMP_CODE
+					   AND A.ITEM_CODE = B.ITEM_CODE
+					   AND A.SALE_P    = B.SALE_P
+		ORDER BY POS_NO,COLUMN_NO
+		
+		INSERT INTO ##TO_SVA_2015(COMP_CODE, DIV_CODE, POS_NO, COLUMN_NO, ITEM_CODE, SALE_P, AFTER_CNT)
+		SELECT A.COMP_CODE, A.DIV_CODE, A.POS_NO, A.COLUMN_NO, A.ITEM_CODE, A.SALE_P, A.AFTER_CNT
+		FROM SVA200T A WITH (NOLOCK)
+		INNER JOIN (SELECT COMP_CODE, DIV_CODE, POS_NO, ITEM_CODE, SALE_P, MAX(INOUT_DATE) AS INOUT_DATE 
+					FROM SVA200T WITH (NOLOCK) 
+					WHERE INOUT_DATE &lt;= #{INOUT_DATE_TO}							/*{P}필수:조회종료일*/
+					GROUP BY COMP_CODE, DIV_CODE, POS_NO, ITEM_CODE, SALE_P
+					) B ON A.POS_NO = B.POS_NO
+						AND A.INOUT_DATE = B.INOUT_DATE
+					    AND A.DIV_CODE	 = B.DIV_CODE
+						AND A.COMP_CODE  = B.COMP_CODE
+						AND A.ITEM_CODE  = B.ITEM_CODE
+						AND A.SALE_P     = B.SALE_P
+		ORDER BY POS_NO,COLUMN_NO
+		
+		SELECT	A.POS_NO									/*자판기 번호	*/
+				, C.POS_NAME								/*자판기명		*/
+				, A.COLUMN_NO								/*컬럼번호		*/
+				, A.ITEM_CODE								/*품목코드		*/
+				, B.ITEM_NAME								/*품목명칭		*/
+				, A.SALE_P									/*단가		*/
+				, SUM(SALE_Q)			AS SALE_Q			/*판매수량		*/
+				, SUM(SALE_O)			AS SALE_O			/*판매금액		*/
+				, D.AFTER_CNT			AS BEFORE_CNT		/*이월누적도수	*/
+				, E.AFTER_CNT			AS AFTER_CNT		/*당기누적도수	*/
+				--------추가 시작
+				, F.CUSTOM_CODE			AS PURCHASE_CODE	/*매입처코드	*/
+				, G.CUSTOM_NAME			AS PURCHASE_NAME	/*매입처명		*/
+				--------추가 종료
+		
+		FROM 
+		SVA200T A WITH (NOLOCK)
+		INNER JOIN BPR100T B WITH (NOLOCK) ON A.COMP_CODE	=	B.COMP_CODE
+							AND A.ITEM_CODE	=	B.ITEM_CODE
+		INNER JOIN BSA240T C WITH (NOLOCK) ON A.COMP_CODE	=	C.COMP_CODE
+							AND A.DIV_CODE	=	C.DIV_CODE
+							AND A.POS_NO	=	C.POS_NO
+		LEFT JOIN ##FR_SVA_2015 D ON A.COMP_CODE		= D.COMP_CODE
+							AND	A.DIV_CODE		= D.DIV_CODE 
+						    AND A.POS_NO		= D.POS_NO
+							AND A.COLUMN_NO		= D.COLUMN_NO
+							AND A.ITEM_CODE		= D.ITEM_CODE
+							AND A.SALE_P		= D.SALE_P
+		LEFT JOIN ##TO_SVA_2015 E ON A.COMP_CODE		= E.COMP_CODE
+							AND	A.DIV_CODE		= E.DIV_CODE 
+						    AND A.POS_NO		= E.POS_NO
+							AND A.COLUMN_NO		= E.COLUMN_NO
+							AND A.ITEM_CODE		= E.ITEM_CODE
+							AND A.SALE_P		= E.SALE_P
+		--------추가 시작
+		LEFT JOIN BPR400T F WITH (NOLOCK) ON F.COMP_CODE       = A.COMP_CODE
+		   								 AND F.DIV_CODE        = A.DIV_CODE
+		   								 AND F.TYPE            = '1'
+		   								 AND F.ITEM_CODE       = A.ITEM_CODE
+									--	 AND F.APLY_START_DATE &lt;= A.INOUT_DATE								 
+		   							--   AND F.CUSTOM_CODE     = 
+		   							--   AND F.MONEY_UNIT      = 'KRW'
+		   							--   AND F.ORDER_UNIT      = 
+		   								 AND F.APLY_START_DATE + F.CUSTOM_CODE = (SELECT MAX(X.APLY_START_DATE + X.CUSTOM_CODE) AS APLY_START_DATE
+		   																			FROM BPR400T X WITH(NOLOCK)
+		   																			WHERE X.COMP_CODE        = F.COMP_CODE
+		   																			AND X.DIV_CODE         = F.DIV_CODE 
+		   																			AND X.ITEM_CODE        = F.ITEM_CODE
+		   																			--AND X.CUSTOM_CODE      = F.CUSTOM_CODE   /*CUSTOM_CODE 조인이 없어야 한건만 가져옴...*/
+		   																			AND X.MONEY_UNIT       = F.MONEY_UNIT
+		   																			AND X.ORDER_UNIT       = F.ORDER_UNIT
+		   																			AND X.TYPE             = F.TYPE
+		   																			AND X.APLY_START_DATE &lt;= A.INOUT_DATE)
+		LEFT JOIN BCM100T G WITH (NOLOCK) ON F.COMP_CODE	= G.COMP_CODE
+										 AND F.CUSTOM_CODE	= G.CUSTOM_CODE
+		--------추가 종료
+		
+		WHERE A.INOUT_DATE BETWEEN #{INOUT_DATE_FR} AND #{INOUT_DATE_TO}	/*{P}필수: 조회 시작일, 종료일*/
+		  AND A.DIV_CODE	= #{DIV_CODE}									/*{P}필수: 사업장코드*/
+		  AND A.COMP_CODE	= #{S_COMP_CODE}								/*{P}필수: 법인코드*/
+		  <if test="@foren.Ognl@isNotEmpty(POS_CODE)">					
+	      AND A.POS_NO IN
+			<foreach collection="POS_CODE" item="item" separator="," close=")" open="(">
+	          		 #{item}								/*{P}선택: 자판기 번호*/
+	    	</foreach>									
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		  AND A.ITEM_CODE	= #{ITEM_CODE}					/*{P}선택: 품목코드*/
+		  </if>
+		GROUP BY A.POS_NO, C.POS_NAME, A.COLUMN_NO, A.ITEM_CODE, B.ITEM_NAME, A.SALE_P, D.AFTER_CNT, E.AFTER_CNT, F.CUSTOM_CODE, G.CUSTOM_NAME	/*추가됨*/
+
+    </select>	
+</mapper>

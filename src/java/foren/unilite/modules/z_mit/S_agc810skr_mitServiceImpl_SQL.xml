@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_agc810skr_mitServiceImpl">
+	<select id="s_agc810skr_mitServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		    DECLARE @CompCode       NVARCHAR(08)    /* 법인코드            */
+		          , @DateMonth      NVARCHAR(06)    /* 조회월              */
+		          , @UserId         NVARCHAR(100)   /* 사용자ID            */
+		          , @RefItem        NVARCHAR(01)    /* 명칭 참조 유형      */
+		
+		          , @InoutDateFr    NVARCHAR(08)    /* 조회시작일          */
+		          , @InoutDateTo    NVARCHAR(08)    /* 조회종료일          */
+		
+		          , @ThisYearFr         NVARCHAR(08)    /* 당해년도조회시작일  */
+		          , @ThisYearTo         NVARCHAR(08)    /* 당해년도조회시작일  */
+		          , @LastYearFr         NVARCHAR(08)    /* 전년도  조회시작일  */
+		          , @LastYearTo         NVARCHAR(08)    /* 전년도  조회시작일  */
+		          , @BeforeLastYearFr   NVARCHAR(08)    /* 전전년도조회시작일  */
+		          , @BeforeLastYearTo   NVARCHAR(08)    /* 전전년도조회시작일  */
+		
+		    SET @CompCode    = #{S_COMP_CODE}
+		    SET @DateMonth   = #{DATE_MONTH}
+				
+			SET @UserId     = #{S_USER_ID}
+		
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+		
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+		
+		    /* 조회일자 셋팅 */
+		    SET @InoutDateFr      = CONVERT(NVARCHAR(8),DATEADD(YEAR, -2, CONVERT(DATETIME, LEFT(@DateMonth,4) + '0101')), 112)
+		    SET @InoutDateTo      = @DateMonth + '31'
+		                          
+		    SET @ThisYearFr       = LEFT(@DateMonth,4) + '0101'
+		    SET @ThisYearTo       = @DateMonth + '31'
+		                          
+		    SET @LastYearFr       = CONVERT(NVARCHAR(8),DATEADD(YEAR, -1, CONVERT(DATETIME, LEFT(@DateMonth,4) + '0101')), 112)
+		    SET @LastYearTo       = LEFT(@LastYearFr,4) + RIGHT(@DateMonth,2) + '31'
+		    
+		    SET @BeforeLastYearFr = CONVERT(NVARCHAR(8),DATEADD(YEAR, -2, CONVERT(DATETIME, LEFT(@DateMonth,4) + '0101')), 112)
+		    SET @BeforeLastYearTo = LEFT(@BeforeLastYearFr,4) + RIGHT(@DateMonth,2) + '31'
+		
+		    /* 조회 */
+		    SELECT A.COMP_CODE
+		         , A.DIV_CODE
+		         , A.TARGET_COUNT
+		         , A.LEVEL_NAME
+		         , A.ORDER_TYPE
+		         , A.CUSTOM_CODE
+		         , A.CUSTOM_NAME
+		         , A.MONEY_UNIT
+		         , SUM(CASE WHEN A.INOUT_DATE &gt;= @ThisYearFr       AND A.INOUT_DATE &lt;= @ThisYearTo       THEN A.INOUT_FOR_O ELSE 0 END) AS THISYEAR_FOR_O
+		         , SUM(CASE WHEN A.INOUT_DATE &gt;= @ThisYearFr       AND A.INOUT_DATE &lt;= @ThisYearTo       THEN A.INOUT_I     ELSE 0 END) AS THISYEAR_I
+		         , SUM(CASE WHEN A.INOUT_DATE &gt;= @LastYearFr       AND A.INOUT_DATE &lt;= @LastYearTo       THEN A.INOUT_FOR_O ELSE 0 END) AS LASTYEAR_FOR_O
+		         , SUM(CASE WHEN A.INOUT_DATE &gt;= @LastYearFr       AND A.INOUT_DATE &lt;= @LastYearTo       THEN A.INOUT_I     ELSE 0 END) AS LASTYEAR_I
+		         , SUM(CASE WHEN A.INOUT_DATE &gt;= @BeforeLastYearFr AND A.INOUT_DATE &lt;= @BeforeLastYearTo THEN A.INOUT_FOR_O ELSE 0 END) AS BEFORELASTYEAR_FOR_O
+		         , SUM(CASE WHEN A.INOUT_DATE &gt;= @BeforeLastYearFr AND A.INOUT_DATE &lt;= @BeforeLastYearTo THEN A.INOUT_I     ELSE 0 END) AS BEFORELASTYEAR_I
+		      FROM (SELECT A.COMP_CODE
+		                 , A.DIV_CODE
+		                 , A.INOUT_DATE
+		                 , ISNULL(C0.TARGET_COUNT,'2') AS TARGET_COUNT
+		                 , CASE WHEN ISNULL(C0.TARGET_COUNT,'2') = '1'
+		                        THEN C0.LEVEL_NAME
+		                        ELSE '기타'
+		                    END AS LEVEL_NAME                               /* 소분류             */
+		                 , A.ORDER_TYPE                                     /* 발주형태           */
+		                 , A.INOUT_CODE AS CUSTOM_CODE                      /* 매입처             */
+		         	     , CASE WHEN @RefItem = '1' THEN C3.CUSTOM_NAME1
+		         	            WHEN @RefItem = '2' THEN C3.CUSTOM_NAME2
+		         	                                ELSE C3.CUSTOM_NAME
+		         	        END AS CUSTOM_NAME                              /* 매입처명           */
+		         	     , A.MONEY_UNIT
+		                 , A.INOUT_FOR_O           AS INOUT_FOR_O
+		                 , A.INOUT_I + A.EXPENSE_I AS INOUT_I
+		              FROM            BTR100T A  WITH (NOLOCK)
+		                   INNER JOIN BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE       = A.COMP_CODE
+		                                                      AND C1.ITEM_CODE       = A.ITEM_CODE
+		                   INNER JOIN BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE       = A.COMP_CODE
+		                                                      AND C2.DIV_CODE        = A.DIV_CODE
+		                                                      AND C2.ITEM_CODE       = A.ITEM_CODE
+		                   LEFT  JOIN BPR000T C0 WITH (NOLOCK) ON C0.COMP_CODE       = C1.COMP_CODE
+		                                                      AND C0.LEVEL1          = C1.ITEM_LEVEL1
+		                                                      AND C0.LEVEL2          = C1.ITEM_LEVEL2
+		                                                      AND C0.LEVEL3          = C1.ITEM_LEVEL3
+		                   INNER JOIN BCM100T C3 WITH (NOLOCK) ON C3.COMP_CODE       = A.COMP_CODE
+		                                                      AND C3.CUSTOM_CODE     = A.INOUT_CODE
+		             WHERE A.COMP_CODE         = @CompCode   
+		             <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">					
+				       AND A.DIV_CODE IN
+							<foreach collection="DIV_CODE" item="item" separator="," close=")" open="(">
+							 #{item}
+							</foreach>									
+					 </if>
+		               AND A.INOUT_DATE       &gt;= @InoutDateFr
+		               AND A.INOUT_DATE       &lt;= @InoutDateTo
+		               AND A.INOUT_TYPE         = '1'
+	                   AND A.INOUT_METH        IN ('1','2','9')
+		               AND A.INOUT_TYPE_DETAIL IN ('01','10','90','99')
+		               AND C2.ITEM_ACCOUNT     IN ('40','50')) A
+		     GROUP BY A.COMP_CODE, A.DIV_CODE, A.TARGET_COUNT, A.LEVEL_NAME, A.ORDER_TYPE, A.CUSTOM_CODE, A.CUSTOM_NAME, A.MONEY_UNIT
+		     ORDER BY A.COMP_CODE, A.DIV_CODE, A.TARGET_COUNT, A.LEVEL_NAME, A.ORDER_TYPE, A.CUSTOM_CODE
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+</mapper>

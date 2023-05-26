@@ -1,0 +1,997 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sco110ukrvServiceImpl">	
+	<!-- 검색조회창 -->
+	<select id="sco110ukrvServiceImpl.selectCollectNumMaster" parameterType="Map" resultType="rMap">
+		/* sco110ukrv.Csco110ukrv[fnSco110QPop] Query01 */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		    DECLARE @CompCode    NVARCHAR(08)  /* 법인코드    */
+		          , @UserId      NVARCHAR(100) /* 사용자ID */
+		          , @LangType    NVARCHAR(2)   /* 언어구분   */
+		          , @RefItem     NVARCHAR(01)  /* 명칭 참조 유형  */
+		          , @DateFormat  NVARCHAR(10)  /* 날짜 포맷 유형 설정 */
+
+		    SET @CompCode = #{S_COMP_CODE}
+		    SET @UserId   = #{S_USER_ID}
+		    SET @LangType = #{S_LANG_CODE}
+
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		      FROM BSA100T WITH (NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+		       AND MAIN_CODE = N'B044'
+		       AND REF_CODE1 = N'Y'
+
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+		    /* 데이터 조회 */
+		    SELECT DISTINCT A.DIV_CODE                                                      /* 사업장코드*/
+		         , A.CUSTOM_CODE                                                            /* 거래처코드 */
+		         , (CASE WHEN @RefItem = '1' THEN C.CUSTOM_NAME1
+		                 WHEN @RefItem = '2' THEN C.CUSTOM_NAME2
+		                                     ELSE C.CUSTOM_NAME
+		            END)                                             AS CUSTOM_NAME         /* 거래처명 */
+		         ,(CASE WHEN ISNULL(A.COLLECT_DATE , '')= '' THEN ''
+		                ELSE REPLACE(REPLACE(REPLACE(@DateFormat , 'YYYY' , SUBSTRING(A.COLLECT_DATE, 1, 4))
+		                                                         , 'MM'   , SUBSTRING(A.COLLECT_DATE, 5, 2))
+		                                                         , 'DD'   , SUBSTRING(A.COLLECT_DATE, 7, 2))
+		            END)                                             AS COLLECT_DATE         /* 수금일 */
+		         , A.COLLECT_NUM                                                             /* 수금번호 */
+		         , A.MONEY_UNIT                                                              /* 화폐단위 */
+		         ,(SELECT SUM(X.COLLECT_FOR_AMT)
+		              FROM SCO100T X WITH(NOLOCK)
+		             WHERE X.COMP_CODE   = A.COMP_CODE
+		               AND X.DIV_CODE    = A.DIV_CODE
+		               AND X.CUSTOM_CODE = A.CUSTOM_CODE
+		               AND X.COLLECT_NUM = A.COLLECT_NUM
+		               AND(SELECT(CASE ISNULL(AA.REF_CODE1,'')
+		                                 WHEN '' 
+		                                      THEN AA.SUB_CODE
+		                                      ELSE AA.REF_CODE1 
+		                             END)
+		                      FROM BSA100T AA WITH(NOLOCK)
+		                     WHERE AA.COMP_CODE = X.COMP_CODE
+		                       AND AA.MAIN_CODE = 'S017'
+		                       AND AA.SUB_CODE  = X.COLLECT_TYPE)&lt;&gt; '80'              /* 반제이외  */
+		               AND(X.DISHONOR_DATE IS NULL OR X.DISHONOR_DATE = '')                 /* 부도되지 않은 건 */
+		          )                                                 AS COLLECT_FOR_AMT      /* 수금액(외화) */
+		         ,(SELECT SUM(X.COLLECT_AMT)
+		              FROM SCO100T X WITH(NOLOCK)
+		             WHERE X.COMP_CODE   = A.COMP_CODE
+		               AND X.DIV_CODE    = A.DIV_CODE
+		               AND X.CUSTOM_CODE = A.CUSTOM_CODE
+		               AND X.COLLECT_NUM = A.COLLECT_NUM
+		               AND(SELECT(CASE ISNULL(AA.REF_CODE1,'')
+		                                 WHEN '' 
+		                                      THEN AA.SUB_CODE
+		                                      ELSE AA.REF_CODE1 
+		                             END)
+		                      FROM BSA100T AA WITH(NOLOCK)
+		                     WHERE AA.COMP_CODE = X.COMP_CODE
+		                       AND AA.MAIN_CODE = 'S017'
+		                       AND AA.SUB_CODE  = X.COLLECT_TYPE)&lt;&gt; '80'              /* 반제이외 */
+		               AND(X.DISHONOR_DATE IS NULL OR X.DISHONOR_DATE = '')                 /* 부도되지 않은 건 */
+		          )                                                 AS COLLECT_AMT          /* 수금액(자사) */
+		         ,(SELECT SUM(X.COLLECT_FOR_AMT)
+		              FROM SCO100T X  WITH(NOLOCK)
+		             WHERE X.COMP_CODE   = A.COMP_CODE
+		               AND X.DIV_CODE    = A.DIV_CODE
+		               AND X.CUSTOM_CODE = A.CUSTOM_CODE
+		               AND X.COLLECT_NUM = A.COLLECT_NUM
+		               AND(SELECT(CASE ISNULL(AA.REF_CODE1,'')
+		                                 WHEN '' 
+		                                      THEN AA.SUB_CODE
+		                                      ELSE AA.REF_CODE1 
+		                             END)
+		                     FROM BSA100T AA WITH(NOLOCK)
+		                    WHERE AA.COMP_CODE = X.COMP_CODE
+		                      AND AA.MAIN_CODE = 'S017' 
+		                      AND AA.SUB_CODE  = X.COLLECT_TYPE)= '80'                      /* 반제이외*/
+		              AND(X.DISHONOR_DATE IS NULL OR X.DISHONOR_DATE = '')                  /* 부도되지 않은 건....*/
+		          )                                                 AS  REPAY_AMT           /* 반제액*/
+		         , A.COLET_CUST_CD                                                          /* 수금거래처*/
+		         ,(CASE WHEN @RefItem = '1' THEN D.CUSTOM_NAME1
+		                WHEN @RefItem = '2' THEN D.CUSTOM_NAME2
+		                                    ELSE D.CUSTOM_NAME
+		            END)                                            AS COLET_CUST_NM        /* 수금거래처명*/
+		         , A.COLLECT_PRSN                                                           /* 수금담당*/
+		         ,(CASE WHEN ISNULL(A.EX_DATE , '')= '' THEN ''
+		                ELSE REPLACE(REPLACE(REPLACE(@DateFormat , 'YYYY' , SUBSTRING(A.EX_DATE, 1, 4))
+		                                                         , 'MM'   , SUBSTRING(A.EX_DATE, 5, 2))
+		                                                         , 'DD'   , SUBSTRING(A.EX_DATE, 7, 2))
+		            END)                                            AS EX_DATE              /* 결의전표일 */
+		         , A.EX_NUM                                                                 /* 결의전표번호 */
+		         , A.EX_SEQ                                                                 /* 결의전표순번 */
+		         , A.AGREE_YN                                                               /* 결의전표승인여부 */
+		         ,(CASE WHEN ISNULL(A.AC_DATE , '')= '' THEN ''
+		                ELSE REPLACE(REPLACE(REPLACE(@DateFormat , 'YYYY' , SUBSTRING(A.AC_DATE, 1, 4))
+		                                                         , 'MM'   , SUBSTRING(A.AC_DATE, 5, 2))
+		                                                         , 'DD'   , SUBSTRING(A.AC_DATE, 7, 2))
+		            END)                                            AS AC_DATE              /* 회계전표일 */
+		         , A.AC_NUM                                                                 /* 회계전표번호*/
+		         , A.REF_LOC
+		      FROM SCO100T A WITH (NOLOCK)
+		                   LEFT OUTER JOIN SCO200T B WITH (NOLOCK)
+		                                ON B.COMP_CODE   = A.COMP_CODE
+		                               AND B.DIV_CODE    = A.DIV_CODE
+		                               AND B.CUSTOM_CODE = A.CUSTOM_CODE
+		                               AND B.MONEY_UNIT  = A.MONEY_UNIT
+		                        INNER JOIN BCM100T C WITH (NOLOCK) 
+		                                ON C.COMP_CODE   = A.COMP_CODE
+		                               AND C.CUSTOM_CODE = A.CUSTOM_CODE
+		                   LEFT OUTER JOIN BCM100T D WITH (NOLOCK)
+		                                ON D.COMP_CODE   = A.COMP_CODE
+		                               AND D.CUSTOM_CODE = A.COLET_CUST_CD
+--		                       INNER JOIN BSA210T E WITH (NOLOCK)
+--		                                ON E.COMP_CODE   = A.COMP_CODE
+--		                               AND E.TYPE_LEVEL  = A.DIV_CODE
+--		                               AND E.TREE_CODE   = A.DEPT_CODE
+		     WHERE (A.DISHONOR_DATE IS NULL OR A.DISHONOR_DATE = '')                        /* 부도되지 않은 건....*/
+		     <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		        AND A.DIV_CODE         = #{DIV_CODE}    /* 사업장 */
+		     </if>  
+			 <if test="@foren.Ognl@isNotEmpty(COLLECT_DATE_FR)">
+		        AND A.COLLECT_DATE &gt;= #{COLLECT_DATE_FR}    /* 수금일 */
+		     </if>   
+		     <if test="@foren.Ognl@isNotEmpty(COLLECT_DATE_TO)">
+		        AND A.COLLECT_DATE &lt;= #{COLLECT_DATE_TO}
+		     </if>   
+		     
+		     <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+		       AND A.CUSTOM_CODE 		= #{CUSTOM_CODE}					/* 거래처코드  */
+		     </if>
+		     <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+		       AND A.CUSTOM_CODE 		LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+		     </if>
+		     <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+		       AND C.CUSTOM_NAME 		LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+		     </if>
+		     
+		     <if test="@foren.Ognl@isNotEmpty(COLET_CUST_CODE) and @foren.Ognl@isNotEmpty(COLET_CUST_NAME)">
+		       AND A.COLET_CUST_CD 		= #{COLET_CUST_CODE}					/* 수금처코드  */
+		     </if>
+		     <if test="@foren.Ognl@isNotEmpty(COLET_CUST_CODE) and @foren.Ognl@isEmpty(COLET_CUST_NAME)">
+		       AND A.COLET_CUST_CD 		LIKE  #{COLET_CUST_CODE} + '%'			/* 수금처코드  */
+		     </if>
+		     <if test="@foren.Ognl@isNotEmpty(COLET_CUST_NAME) and @foren.Ognl@isEmpty(COLET_CUST_CODE)">
+		       AND D.CUSTOM_NAME 		LIKE '%' + #{COLET_CUST_NAME} + '%'		/* 수금처명  */
+		     </if>
+		     
+		     <if test="@foren.Ognl@isNotEmpty(COLLECT_PRSN)">
+		        AND A.COLLECT_PRSN     = #{COLLECT_PRSN}    /* 수금담당 */
+		     </if>   
+		     <if test="@foren.Ognl@isNotEmpty(PROJECT_NO)">
+		        AND A.PROJECT_NO       = #{PROJECT_NO}    /* 관리번호 */
+		     </if>		        
+		     <if test="@foren.Ognl@isNotEmpty(REF_LOC)">
+		        AND A.REF_LOC          = #{REF_LOC}    /* 생성경로 */
+		     </if>	
+		     
+		     <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">        /*부서*/
+			    AND    E.TREE_LEVEL          LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =E.COMP_CODE AND TYPE_LEVEL=E.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+			</if>	       
+		        AND A.COMP_CODE        = @CompCode   /* 법인코드 */
+<!-- 20210331 추가: 거래처원장 조회(매출/매입)에서 링크 넘어올 때 필요값 SET하기 위해 추가 -->
+		   <if test="@foren.Ognl@isNotEmpty(BASIS_NUM)">
+		       AND A.COLLECT_NUM      = #{BASIS_NUM}
+		   </if>
+
+		     ORDER BY A.DIV_CODE, A.CUSTOM_CODE, COLLECT_DATE DESC, A.COLLECT_NUM DESC
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+    </select>
+	<!-- 매출참조 -->
+	<select id="sco110ukrvServiceImpl.selectSalesNumMaster" parameterType="Map" resultType="rMap">
+		/* ssa101ukrv.Cssa101ukrv[fnSsa101QPop] Query1 */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+		    DECLARE	@CompCode    NVARCHAR(08)  /* 법인코드    */
+		          , @UserId      NVARCHAR(100) /* 사용자ID    */
+		          , @LangType    NVARCHAR(2)   /* 언어구분    */
+		          , @RefItem     NVARCHAR(01)  /* 명칭 참조 유형  */
+		          , @DateFormat  NVARCHAR(10)  /* 날짜 포맷 유형 설정 */
+
+		    SET @CompCode = #{S_COMP_CODE}
+		    SET @UserId   = #{S_USER_ID}
+		    SET @LangType = #{S_LANG_CODE}
+
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		      FROM BSA100T WITH (NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+		       AND MAIN_CODE = N'B044'
+		       AND REF_CODE1 = N'Y'
+
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+		    /* 데이터 조회 */
+		    SELECT A.DIV_CODE
+		         , A.SALE_CUSTOM_CODE
+		         , (CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+		                 WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+		                                     ELSE C1.CUSTOM_NAME
+		             END)                                           AS CUSTOM_NAME
+		         , '' AS ITEM_CODE
+		         , '' AS ITEM_NAME
+		         , CAST(A.SALE_DATE AS DATETIME)                    AS SALE_DATE
+		         , A.BILL_TYPE
+		         , A.ORDER_TYPE                                     AS SALE_TYPE
+		         , M1.CODE_NAME                                     AS SALE_TYPE_NAME
+		         , SUM(ISNULL(B.SALE_Q, 0))                         AS SALE_Q
+		     --   , (A.SALE_AMT_O + ISNULL(A.SALE_LOC_EXP_I, 0) + A.TAX_AMT_O) - ISNULL(C.REMAIN_SALE_AMT, 0)  AS SALE_TOT_O
+		         , (A.SALE_AMT_O +A.TAX_AMT_O)                      AS SALE_TOT_O
+		         , A.SALE_LOC_AMT_I
+		         , A.SALE_LOC_EXP_I
+		         , A.TAX_AMT_O
+		         , A.SALE_PRSN
+		         , M2.CODE_NAME                                     AS SALE_PRSN_NAME
+		         , A.BILL_NUM
+		         , A.PROJECT_NO
+		         , MAX(B.INOUT_NUM) AS INOUT_NUM
+		         , C1.AGENT_TYPE
+		         , C1.CREDIT_YN
+		         , C1.WON_CALC_BAS
+		         , C1.TAX_CALC_TYPE
+		         , C1.TAX_TYPE
+		    FROM              SSA100T  A  WITH (NOLOCK)
+		           INNER JOIN SSA110T  B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+		                                               AND B.DIV_CODE     = A.DIV_CODE
+		                                               AND B.BILL_NUM     = A.BILL_NUM
+		           LEFT  JOIN SCO100T   C WITH (NOLOCK) ON C.COMP_CODE    = A.COMP_CODE 
+		                                               AND C.DIV_CODE     = A.DIV_CODE
+		                                               AND C.BILL_NUM     = A.BILL_NUM
+		           INNER JOIN BCM100T  C1 WITH (NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE
+		                                               AND C1.CUSTOM_CODE = A.SALE_CUSTOM_CODE
+		           LEFT  JOIN BSA100T  M1 WITH (NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE
+		                                               AND M1.MAIN_CODE   = 'S002'              /* 수주유형 */
+		                                               AND M1.SUB_CODE    = A.ORDER_TYPE
+		           LEFT  JOIN BSA100T  M2 WITH (NOLOCK) ON M2.COMP_CODE   = A.COMP_CODE
+		                                               AND M2.MAIN_CODE   = 'S010'              /* 영업담당 */
+		                                               AND M2.SUB_CODE    = A.SALE_PRSN
+		           LEFT  JOIN BPR100T  M3 WITH (NOLOCK) ON M3.COMP_CODE   = B.COMP_CODE
+		                                               AND M3.ITEM_CODE   = B.ITEM_CODE
+--		           INNER JOIN BSA210T D WITH (NOLOCK)   ON D.COMP_CODE    = A.COMP_CODE
+--		                                               AND D.TYPE_LEVEL   = A.DIV_CODE
+--		                                               AND D.TREE_CODE    = A.DEPT_CODE
+		    WHERE  A.COMP_CODE           = @CompCode
+		    <if test="@foren.Ognl@isNotEmpty(SALE_DATE_FR)">
+		      AND    A.SALE_DATE       &gt;= #{SALE_DATE_FR} /* (필수) 시작 매출일 */
+		    </if> 
+		    <if test="@foren.Ognl@isNotEmpty(SALE_DATE_TO)">  
+		      AND    A.SALE_DATE       &lt;= #{SALE_DATE_TO} /* (필수) 종료 매출일 */
+		    </if>  
+		      AND    A.DIV_CODE            = #{DIV_CODE}     /*(필수) 사업장코드 */
+		    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">  
+		      AND    A.SALE_CUSTOM_CODE LIKE #{CUSTOM_CODE}  /* 거래처코드 */
+		    </if>  
+		    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">  
+		      AND    C1.CUSTOM_NAME     LIKE #{CUSTOM_NAME}  /* 거래처명 */
+		    </if>  
+		    <if test="@foren.Ognl@isNotEmpty(SALE_PRSN)">  
+		      AND    A.SALE_PRSN           = #{SALE_PRSN}    /* 영업담당 */
+		    </if>  
+		    <if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">  
+		      AND    A.ORDER_TYPE          = #{ORDER_TYPE}   /* 판매유형 */
+		    </if>  
+		    <if test="@foren.Ognl@isNotEmpty(BILL_TYPE)">  
+		      AND    A.BILL_TYPE           = #{BILL_TYPE}    /* 부가세유형 */
+		    </if>  
+		    <if test="@foren.Ognl@isNotEmpty(PROJECT_NO)">  
+		      AND    A.PROJECT_NO       LIKE #{PROJECT_NO}   /* 관리번호 */
+		    </if>  
+		    <if test="@foren.Ognl@isNotEmpty(INOUT_NUM)">  
+		      AND    B.INOUT_NUM        LIKE #{INOUT_NUM}    /* 출고번호 */
+		    </if>  
+		    <if test="@foren.Ognl@isNotEmpty(BILL_NUM)">  
+		      AND    A.BILL_NUM         LIKE #{BILL_NUM}     /* 매출번호 */
+		    </if>  
+		    <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">  
+		      AND    B.ITEM_CODE           = #{ITEM_CODE}    /* 품목코드 */
+		    </if>  
+		    <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">  
+		      AND    M3.ITEM_NAME          = #{ITEM_NAME}    /* 품목명   */
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">    /*부서*/
+		      AND    D.TREE_LEVEL          LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =D.COMP_CODE AND TYPE_LEVEL=D.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+		    </if>
+		      AND C.COMP_CODE IS NULL
+		    GROUP BY A.COMP_CODE    , A.DIV_CODE        , A.SALE_DATE   , A.BILL_TYPE       , A.ORDER_TYPE
+		           , A.SALE_AMT_O   , A.SALE_LOC_EXP_I  , A.TAX_AMT_O   , A.SALE_LOC_AMT_I  , A.SALE_LOC_EXP_I
+		           , A.TAX_AMT_O    , A.SALE_PRSN       , A.BILL_NUM    , A.PROJECT_NO      , A.SALE_CUSTOM_CODE
+		           , C1.CUSTOM_NAME , M1.CODE_NAME      , M2.CODE_NAME  , C1.CUSTOM_NAME1
+		           , C1.CUSTOM_NAME2, C1.AGENT_TYPE     , C1.CREDIT_YN  , C1.WON_CALC_BAS   , C1.TAX_CALC_TYPE
+		           , C1.TAX_TYPE
+		    ORDER BY C1.CUSTOM_NAME, A.SALE_DATE, A.BILL_NUM, A.SALE_AMT_O
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+
+	<!-- 미수금 참조 -->
+	<select id="sco110ukrvServiceImpl.selectReferList" parameterType="Map" resultType="rMap">
+		/* sco110ukrvServiceImpl.selectReferList */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+		    DECLARE @COMP_CODE       NVARCHAR(08)
+		          , @DIV_CODE        NVARCHAR(08)
+		          , @CUSTOM_CODE     NVARCHAR(20)
+		          , @USER_ID         NVARCHAR(100)
+		          , @MONEY_UNIT      NVARCHAR(20)
+		          , @REF_LOC         NVARCHAR(10)
+
+		    SET @COMP_CODE    = #{S_COMP_CODE}  /*  법인       */
+		    SET @DIV_CODE     = #{DIV_CODE}     /*  사업장     */
+		    SET @CUSTOM_CODE  = #{CUSTOM_CODE}  /*  거래처코드 */
+		    SET @USER_ID      = #{S_USER_ID}    /*  사용자 ID  */
+		    SET @MONEY_UNIT   = #{MONEY_UNIT}   /*  화폐단위   */
+		    SET @REF_LOC      = #{REF_LOC}      /*  참조경로   */
+
+		    SELECT X.*
+		    FROM 
+		    (
+		      -- 영업:세금계산서참조
+		    SELECT
+		           CAST(0 AS BIT)                                                               AS CHOICE
+		         , A.SALE_DIV_CODE
+		         , A.PUB_NUM
+		         , uniLITE.fnGetUserdate(A.COMP_CODE, A.BILL_DATE)                              AS BILL_DATE
+		         , A.BILL_TYPE
+		         --, A.SALE_LOC_AMT_I	--@@
+		         , A.SALE_AMT_O                                                                 AS SALE_LOC_AMT_I
+		         , A.TAX_AMT_O
+		         --, ISNULL(A.SALE_LOC_AMT_I,0) + ISNULL(A.TAX_AMT_O,0)                         AS TOT_SALE_AMT
+		         --, ISNULL(A.SALE_LOC_AMT_I,0) + ISNULL(A.TAX_AMT_O,0) - ISNULL(A.COLET_AMT,0) AS UN_COLL_AMT
+		         , ISNULL(A.SALE_AMT_O,0) + ISNULL(A.TAX_AMT_O,0)                               AS TOT_SALE_AMT
+		         , ISNULL(A.SALE_AMT_O,0) + ISNULL(A.TAX_AMT_O,0) - ISNULL(A.COLET_AMT,0)       AS UN_COLL_AMT
+		         , A.PROJECT_NO
+		         , A.PJT_CODE
+		         , H.PJT_NAME
+		         --, ISNULL(C1.SUB_CODE,'KRW')                                                  AS MONEY_UNIT
+		         , ISNULL(A.MONEY_UNIT,'KRW')                                                   AS MONEY_UNIT
+		         , 1                                                                            AS EXCHAGNE_RATE
+		         , A.REMARK
+		         , A.DIV_CODE
+		         , A.CUSTOM_CODE
+		         , A.COLET_CUST_CD
+		         , A.COLET_AMT
+		         , A.UPDATE_DB_USER
+		         , A.UPDATE_DB_TIME
+		         , A.SALE_PROFIT
+		         , A.COLLECT_CARE
+		         , A.EX_NUM
+		         , A.PUB_FR_DATE
+		         , A.PUB_TO_DATE
+		         , A.SALE_AMT_O
+		         --, ISNULL(A.SALE_LOC_AMT_I,0) + ISNULL(A.TAX_AMT_O,0) - ISNULL(A.COLET_AMT, 0)  AS REF_AMT_LOC --@@
+		         , ISNULL(A.SALE_AMT_O, 0) + ISNULL(A.TAX_AMT_O,0) - ISNULL(A.COLET_AMT, 0)  AS REF_AMT_LOC
+		         , uniLITE.fnGetUserDate(A.COMP_CODE, A.RECEIPT_PLAN_DATE)                      AS RECEIPT_PLAN_DATE
+		         , '1'                                                                          AS REF_LOC
+		      FROM            STB100T AS A  WITH (NOLOCK)
+		           LEFT  JOIN PJT100T AS H  WITH (NOLOCK) ON H.COMP_CODE  = A.COMP_CODE
+		                                                 AND H.DIV_CODE   = A.DIV_CODE
+		                                                 AND H.PJT_CODE   = A.PJT_CODE
+		           LEFT  JOIN BSA100T AS C1 WITH (NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+		                                                 AND C1.MAIN_CODE = 'B004'
+		                                                 AND C1.SUB_CODE &lt;&gt; '$'
+		                                                 AND ISNULL(C1.REF_CODE1,'') = 'Y'
+		     WHERE A.COMP_CODE     = @COMP_CODE
+		       AND A.SALE_DIV_CODE = @DIV_CODE
+		       AND A.CUSTOM_CODE   = @CUSTOM_CODE
+		       AND ISNULL(A.CLOSING_YN,'N') = 'N'
+		       AND ISNULL((ABS(ISNULL(A.SALE_LOC_AMT_I,0.0)) + 
+		                   ABS(ISNULL(A.TAX_AMT_O,0.0)) -
+		                   ABS(ISNULL(A.COLET_AMT,0.0))),0) &gt; 0
+		       --AND ISNULL(C1.SUB_CODE, 'KRW') = @MONEY_UNIT --@@
+		       AND ISNULL(A.MONEY_UNIT, 'KRW') = @MONEY_UNIT
+
+		    UNION ALL
+
+		     --영업: 매출정보참조
+		     SELECT
+		           CAST(0 AS BIT)                                                               AS CHOICE
+		         , A.DIV_CODE                                                                   AS SALE_DIV_CODE
+		         , A.BILL_NUM                                                                   AS PUB_NUM
+		         , uniLITE.fnGetUserdate(A.COMP_CODE, A.SALE_DATE)                              AS BILL_DATE
+		         , A.BILL_TYPE
+		         , A.SALE_LOC_AMT_I
+		         , A.TAX_AMT_O
+		         --, ISNULL(A.SALE_LOC_AMT_I,0) + ISNULL(A.TAX_AMT_O,0)                           AS TOT_SALE_AMT
+		         --, ISNULL(A.SALE_LOC_AMT_I,0) + ISNULL(A.TAX_AMT_O,0) - ISNULL(A.COLLECT_AMT,0) AS UN_COLL_AMT
+		         , ISNULL(A.SALE_AMT_O, 0) + ISNULL(A.TAX_AMT_O, 0)                           AS TOT_SALE_AMT
+		         , ISNULL(A.SALE_AMT_O, 0) + ISNULL(A.TAX_AMT_O, 0) - ISNULL(A.COLLECT_AMT,0) AS UN_COLL_AMT
+		         , A.PROJECT_NO
+		         , A.PJT_CODE
+		         , H.PJT_NAME
+		         , ISNULL(C1.SUB_CODE,'KRW')                                                    AS MONEY_UNIT
+		         , 1                                                                            AS EXCHAGNE_RATE
+		         , A.REMARK
+		         , A.DIV_CODE
+		         , A.SALE_CUSTOM_CODE                                                           AS CUSTOM_CODE
+		         , ISNULL(A.SALE_CUSTOM_CODE, '')                                               AS COLET_CUST_CD
+		         , A.COLLECT_AMT                                                                AS COLET_AMT
+		         , A.UPDATE_DB_USER
+		         , A.UPDATE_DB_TIME
+		         , '*' SALE_PROFIT
+		         , '2'                                                                          AS COLLECT_CARE
+		         , A.EX_NUM
+		         , A.SALE_DATE
+		         , A.SALE_DATE
+		         , A.SALE_AMT_O
+		         , ISNULL(A.SALE_LOC_AMT_I,0) + ISNULL(A.TAX_AMT_O,0) - ISNULL(A.COLLECT_AMT, 0) AS REF_AMT_LOC
+		         , uniLITE.fnGetUserDate(A.COMP_CODE, A.RECEIPT_PLAN_DATE)                       AS RECEIPT_PLAN_DATE
+		         , '2'                                                                           AS REF_LOC
+		      FROM            SSA100T AS A  WITH (NOLOCK)
+		           LEFT  JOIN PJT100T AS H  WITH (NOLOCK) ON H.COMP_CODE  = A.COMP_CODE
+		                                                 AND H.DIV_CODE   = A.DIV_CODE
+		                                                  AND H.PJT_CODE   = A.PJT_CODE
+		           LEFT  JOIN BSA100T AS C1 WITH (NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+		                                                 AND C1.MAIN_CODE = 'B004'
+		                                                 AND C1.SUB_CODE &lt;&gt; '$'
+		                                                 AND ISNULL(C1.REF_CODE1,'') = 'Y'
+		     WHERE A.COMP_CODE        = @COMP_CODE
+		       AND A.DIV_CODE         = @DIV_CODE
+		       AND A.SALE_CUSTOM_CODE = @CUSTOM_CODE
+		       AND ISNULL(A.COL_CLOSE_YN,'N') = 'N'
+		       --AND ISNULL((ABS(ISNULL(A.SALE_LOC_AMT_I,0.0)) +
+		       --            ABS(ISNULL(A.TAX_AMT_O,0.0)) -
+		       --            ABS(ISNULL(A.COLLECT_AMT,0.0))),0) &gt; 0
+		       AND ISNULL((ABS(ISNULL(A.SALE_AMT_O, 0.0)) +
+		                   ABS(ISNULL(A.TAX_AMT_O, 0.0)) -
+		                   ABS(ISNULL(A.COLLECT_AMT, 0.0))),0) &gt; 0
+		       AND ISNULL(C1.SUB_CODE, 'KRW') = @MONEY_UNIT
+			AND A.BILL_TYPE NOT IN ( '10', '50', '40' )
+			
+		    UNION ALL
+
+		    --무역:Local 매출계산서참조
+		    SELECT 
+		          CAST(0 AS BIT) AS CHOICE
+		        , A.SALE_DIV_CODE
+		        , A.PUB_NUM
+		        , uniLITE.fnGetUserdate(A.COMP_CODE, A.BILL_DATE)                              AS BILL_DATE
+		        , A.BILL_TYPE
+		        , A.SALE_AMT_O
+		        , TAX_AMT_O                                                                    AS TAX_AMT_O
+		        , ISNULL(A.SALE_AMT_O, 0)                                                      AS TOT_SALE_AMT
+		        , ISNULL(A.SALE_AMT_O, 0) - ISNULL(A.COLET_AMT,0)                              AS UN_COLL_AMT
+		        , A.PROJECT_NO
+		        , A.PJT_CODE
+		        , '' AS PJT_NAME
+		        , A.AMT_UNIT                                                                   AS MONEY_UNIT
+		        , A.EXCHANGE_RATE                                                              AS EXCHANGE_RATE
+		        , A.REMARK
+		        , A.DIV_CODE
+		        , A.CUSTOM_CODE
+		        , A.COLET_CUST_CD
+		        , A.COLET_AMT
+		        , A.UPDATE_DB_USER
+		        , A.UPDATE_DB_TIME
+		        , A.SALE_PROFIT
+		        , ISNULL(B.COLLECT_CARE, '2') as COLLECT_CARE
+		        , A.EX_NUM
+		        , A.PUB_FR_DATE
+		        , A.PUB_TO_DATE
+		        , A.SALE_AMT_O
+		        , ISNULL(A.SALE_LOC_AMT_I,0) + ISNULL(A.TAX_AMT_O,0) - ISNULL(A.COLET_AMT, 0)  AS REF_AMT_LOC
+		        , uniLITE.fnGetUserDate(A.COMP_CODE, A.RECEIPT_PLAN_DATE)                      AS RECEIPT_PLAN_DATE
+		        , '5L'                                                                         AS REF_LOC
+		     FROM            TTB100T AS A  WITH (NOLOCK)
+		          INNER JOIN BCM100T AS B  WITH (NOLOCK) ON A.COMP_CODE     = B.COMP_CODE
+		                                                AND A.CUSTOM_CODE   = B.CUSTOM_CODE
+		     WHERE A.COMP_CODE   = @COMP_CODE
+		       AND A.DIV_CODE    = @DIV_CODE
+		       AND A.CUSTOM_CODE = @CUSTOM_CODE
+		       AND ISNULL(A.CLOSING_YN,'N') = 'N'
+		       AND ISNULL((ABS(ISNULL(A.SALE_AMT_O,0.0)) + 
+		                  ABS(ISNULL(A.TAX_AMT_O,0.0)) -
+		                  ABS(ISNULL(A.COLET_AMT,0.0))),0) &gt; 0
+		       AND A.AMT_UNIT = @MONEY_UNIT
+
+		    UNION ALL
+
+		    --무역:선적참조(Nego)
+		    SELECT
+		           CAST(0 AS BIT)                                                               AS CHOICE
+		         , A.DIV_CODE                                                                   AS SALE_DIV_CODE
+		         , A.BL_SER_NO                                                                  AS PUB_NUM
+		         , uniLITE.fnGetUserDate(A.COMP_CODE, A.BL_DATE)                                AS BILL_DATE
+		         , '12'                                                                         AS BILL_TYPE
+		         , ISNULL(A.RECEIVE1_AMT,0)                                                     AS SALE_LOC_AMT_I
+		         , 0                                                                            AS TAX_AMT_O
+		         , ISNULL(A.RECEIVE1_AMT,0)                                                     AS TOT_SALE_AMT
+		         , ISNULL(A.RECEIVE1_AMT,0) - ISNULL(A.NEGO1_AMT,0)                             AS UN_COLL_AMT
+		         , A.PROJECT_NO                                                                 AS PROJECT_NO
+		         , ''                                                                           AS PJT_CODE
+		         , ''                                                                           AS PJT_NAME
+		         , A.AMT_UNIT                                                                   AS MONEY_UNIT
+		         , A.EXCHANGE_RATE                                                              AS EXCHANGE_RATE
+		         , A.REMARKS1                                                                   AS REMARK
+		         , A.DIV_CODE                                                                   AS DIV_CODE
+		         , B.IMPORTER                                                                   AS CUSTOM_CODE
+		         , B.IMPORTER                                                                   AS COLET_CUST_CD
+		         , ISNULL(A.NEGO1_AMT,0)                                                        AS COLET_AMT
+		         , A.UPDATE_DB_USER
+		         , A.UPDATE_DB_TIME
+		         , A.SALE_PROFIT
+		         , ISNULL(M1.COLLECT_CARE, '2')                                                 AS COLLECT_CARE
+		         , A.EX_NUM
+		         , uniLITE.fnGetUserDate(A.COMP_CODE, A.BL_DATE)                                AS PUB_FR_DATE
+		         , uniLITE.fnGetUserDate(A.COMP_CODE, A.BL_DATE)                                AS PUB_TO_DATE
+		         , ISNULL(A.BL_AMT,0)                                                           AS SALE_AMT_O
+		         , Floor((ISNULL(A.RECEIVE1_AMT,0) - ISNULL(A.NEGO1_AMT,0)) * A.EXCHANGE_RATE)  AS REF_AMT_LOC
+		         , uniLITE.fnGetUserDate(A.COMP_CODE, A.RECEIPT_PLAN_DATE)                      AS RECEIPT_PLAN_DATE
+		         , '5BM'                                                                        AS REF_LOC
+		      FROM            TED100T A
+		           INNER JOIN TEC100T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE   
+		                                              AND B.DIV_CODE     = A.DIV_CODE    
+		                                              AND B.PASS_SER_NO  = A.PASS_SER_NO 
+		           INNER JOIN BCM100T M1 WITH (NOLOCK) ON M1.COMP_CODE   = B.COMP_CODE
+		                                              AND M1.CUSTOM_CODE = B.IMPORTER
+		     WHERE A.COMP_CODE = @COMP_CODE
+		       AND A.DIV_CODE  = @DIV_CODE
+		       AND B.IMPORTER  = @CUSTOM_CODE
+		       AND A.RECEIVE_PAY_METH1 = 'MLC'
+		       AND (CASE WHEN ISNULL(A.RECEIVE1_AMT,0) &gt;= 0 THEN ISNULL(A.RECEIVE1_AMT,0) - ISNULL(A.NEGO1_AMT,0)
+		                 WHEN ISNULL(A.RECEIVE1_AMT,0) &lt;= 0 THEN (ISNULL(A.RECEIVE1_AMT,0) - ISNULL(A.NEGO1_AMT,0)) * -1
+		            END) &gt; 0 
+		       AND A.AMT_UNIT = @MONEY_UNIT
+
+		    UNION ALL
+
+		     --무역:선적참조(수출대금)
+		    SELECT
+		           CAST(0 AS BIT)                                                               AS CHOICE
+		         , A.DIV_CODE                                                                   AS SALE_DIV_CODE
+		         , A.BL_SER_NO                                                                  AS PUB_NUM
+		         , uniLITE.fnGetUserDate(A.COMP_CODE, A.BL_DATE)                                AS BILL_DATE
+		         , '12'                                                                         AS BILL_TYPE
+		         , ISNULL(A.RECEIVE2_AMT,0)                                                     AS SALE_LOC_AMT_I
+		         , 0                                                                            AS TAX_AMT_O
+		         , ISNULL(A.RECEIVE2_AMT,0)                                                     AS TOT_SALE_AMT
+		         , ISNULL(A.RECEIVE2_AMT,0) - ISNULL(A.NEGO2_AMT,0)                             AS UN_COLL_AMT
+		         , A.PROJECT_NO                                                                 AS PROJECT_NO
+		         , ''                                                                           AS PJT_CODE
+		         , ''                                                                           AS PJT_NAME
+		         , A.AMT_UNIT                                                                   AS MONEY_UNIT
+		         , A.EXCHANGE_RATE                                                              AS EXCHANGE_RATE
+		         , A.REMARKS1                                                                   AS REMARK
+		         , A.DIV_CODE                                                                   AS DIV_CODE
+		         , A.IMPORTER                                                                   AS CUSTOM_CODE
+		         , A.IMPORTER                                                                   AS COLET_CUST_CD
+		         , ISNULL(A.NEGO2_AMT,0)                                                        AS COLET_AMT
+		         , A.UPDATE_DB_USER
+		         , A.UPDATE_DB_TIME
+		         , A.SALE_PROFIT
+		         , ISNULL(M1.COLLECT_CARE, '2')                                                 AS COLLECT_CARE
+		         , A.EX_NUM
+		         , uniLITE.fnGetUserDate(A.COMP_CODE, A.BL_DATE)                                AS PUB_FR_DATE
+		         , uniLITE.fnGetUserDate(A.COMP_CODE, A.BL_DATE)                                AS PUB_TO_DATE
+		         , ISNULL(A.BL_AMT,0)                                                           AS SALE_AMT_O
+		         , Floor((ISNULL(A.RECEIVE2_AMT,0) - ISNULL(A.NEGO2_AMT,0)) * A.EXCHANGE_RATE)  AS REF_AMT_LOC
+		         , uniLITE.fnGetUserDate(A.COMP_CODE, A.RECEIPT_PLAN_DATE)                      AS RECEIPT_PLAN_DATE
+		         , '5BE'                                                                        AS REF_LOC
+		      FROM            TED100T A
+		           LEFT JOIN  TEC100T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+		                                              AND B.DIV_CODE     = A.DIV_CODE
+		                                              AND B.PASS_SER_NO  = A.PASS_SER_NO
+		           INNER JOIN BCM100T M1 WITH (NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE
+		                                              AND M1.CUSTOM_CODE = A.IMPORTER
+		     WHERE A.COMP_CODE = @COMP_CODE
+		       AND A.DIV_CODE  = @DIV_CODE
+		       AND A.IMPORTER  = @CUSTOM_CODE
+		       AND A.RECEIVE_PAY_METH2 = 'ETC'
+		       AND (CASE WHEN ISNULL(A.RECEIVE2_AMT,0) &gt;= 0 THEN ISNULL(A.RECEIVE2_AMT,0) - ISNULL(A.NEGO2_AMT,0)
+		                 WHEN ISNULL(A.RECEIVE2_AMT,0) &lt;= 0 THEN (ISNULL(A.RECEIVE2_AMT,0) - ISNULL(A.NEGO2_AMT,0)) * -1
+		            END) &gt; 0 
+		       AND A.AMT_UNIT = @MONEY_UNIT
+		 ) X 
+		 WHERE X.REF_LOC = @REF_LOC
+		     ORDER BY X.SALE_DIV_CODE, X.PUB_NUM, X.BILL_DATE DESC
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+
+	<select id="sco110ukrvServiceImpl.selectDetailList" parameterType="Map" resultType="rMap">
+		/* sco110ukrvServiceImpl.selectDetailList */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+		    DECLARE @CompCode    NVARCHAR(08)  /* 법인코드    */
+		          , @UserId      NVARCHAR(100) /* 사용자ID    */
+		          , @LangType    NVARCHAR(02)  /* 언어구분    */
+		          , @RefItem     NVARCHAR(01)  /* 명칭 참조 유형  */
+		          , @DateFormat  NVARCHAR(10)  /* 날짜 포맷 유형 설정 */
+
+		    SET @CompCode = #{S_COMP_CODE}
+		    SET @UserId   = #{S_USER_ID}
+		    SET @LangType = #{S_LANG_CODE}
+
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		      FROM BSA100T WITH (NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+		       AND MAIN_CODE = N'B044'
+		       AND REF_CODE1 = N'Y'
+
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+		    /* 4. 데이터 조회 */
+		    SELECT A.COLLECT_SEQ                                                                                        /* 수금순번 */
+		         , C2.SUB_CODE                                                                AS CARD_CUSTOM_CODE		/*카드매입사*/
+		         -- 20210319 카드종류 추가
+		         , A.COLLECT_TYPE_DETAIL                                                                                /*카드사*/
+		         , A.PUB_NUM                                                                                            /* 계산서번호 */
+		         ,(CASE WHEN ISNULL(A.REF_LOC, '1')= '1'   THEN ISNULL(R10.SALE_LOC_AMT_I,0)
+		                WHEN ISNULL(A.REF_LOC, '1')= '2'   THEN ISNULL(R11.SALE_LOC_AMT_I,0)
+		                WHEN ISNULL(A.REF_LOC, '')= '5L'  THEN ISNULL(R5L.SALE_AMT_O  ,0)
+		                WHEN ISNULL(A.REF_LOC, '')= '5BM' THEN ISNULL(R5B.RECEIVE1_AMT  ,0)
+		                WHEN ISNULL(A.REF_LOC, '')= '5BE' THEN ISNULL(R5B.RECEIVE2_AMT  ,0)
+		                                                  ELSE 0
+		             END)                                                                     AS SALE_LOC_AMT_I       /* 공급가액 */
+		         ,(CASE WHEN ISNULL(A.REF_LOC, '1')= '1'   THEN ISNULL(R10.TAX_AMT_O,0)
+		                WHEN ISNULL(A.REF_LOC, '1')= '2'   THEN ISNULL(R11.TAX_AMT_O,0)
+		                WHEN ISNULL(A.REF_LOC, '')= '5L'  THEN 0
+		                WHEN ISNULL(A.REF_LOC, '')= '5BM' THEN 0
+		                WHEN ISNULL(A.REF_LOC, '')= '5BE' THEN 0
+		                                                  ELSE 0
+		             END)                                                                     AS TAX_AMT_O            /* 세액 */
+		         ,(CASE WHEN ISNULL(A.REF_LOC, '1')= '1'   THEN ISNULL(R10.SALE_LOC_AMT_I,0)+ ISNULL(R10.TAX_AMT_O,0)
+		                WHEN ISNULL(A.REF_LOC, '1')= '2'   THEN ISNULL(R11.SALE_LOC_AMT_I,0)+ ISNULL(R11.TAX_AMT_O,0)
+		                WHEN ISNULL(A.REF_LOC, '')= '5L'  THEN ISNULL(R5L.SALE_AMT_O  ,0)
+		                WHEN ISNULL(A.REF_LOC, '')= '5BM' THEN ISNULL(R5B.RECEIVE1_AMT  ,0)
+		                WHEN ISNULL(A.REF_LOC, '')= '5BE' THEN ISNULL(R5B.RECEIVE2_AMT  ,0)
+		                                                  ELSE 0
+		             END)                                                                     AS TOT_SALE_AMT         /* 합계금액 */
+		         ,(CASE WHEN ISNULL(A.REF_LOC, '1')= '1'   THEN ISNULL(R10.SALE_LOC_AMT_I,0)+ ISNULL(R10.TAX_AMT_O,0)- ISNULL(R10.COLET_AMT,0)
+		                WHEN ISNULL(A.REF_LOC, '1')= '2'   THEN ISNULL(R11.SALE_LOC_AMT_I,0)+ ISNULL(R11.TAX_AMT_O,0)- ISNULL(R11.COLLECT_AMT,0)
+		                WHEN ISNULL(A.REF_LOC, '')= '5L'  THEN ISNULL(R5L.SALE_AMT_O,    0)- ISNULL(R5L.COLET_AMT,0)
+		                WHEN ISNULL(A.REF_LOC, '')= '5BM' THEN ISNULL(R5B.RECEIVE1_AMT,  0)- ISNULL(R5B.NEGO1_AMT,0)
+		                WHEN ISNULL(A.REF_LOC, '')= '5BE' THEN ISNULL(R5B.RECEIVE2_AMT,  0)- ISNULL(R5B.NEGO2_AMT,0)
+		                                                  ELSE 0
+		             END)                                                                     AS UN_COLL_AMT          /* 미수잔액 */
+		         , A.COLLECT_TYPE                                                                                     /* 수금유형(수금유형에서선수금관리) */
+		         ,(CASE WHEN(CASE WHEN ISNULL(C1.REF_CODE1,'')= '' THEN C1.SUB_CODE ELSE C1.REF_CODE1 END)= '80'
+		                THEN 0 
+		                ELSE A.COLLECT_FOR_AMT
+		            END)                                                                      AS COLLECT_FOR_AMT      /* 수금액(외화) */
+		         ,(CASE WHEN(CASE WHEN ISNULL(C1.REF_CODE1,'')= '' THEN C1.SUB_CODE ELSE C1.REF_CODE1 END)= '80'
+		                THEN 0 
+		                ELSE A.COLLECT_AMT
+		            END)                                                                      AS COLLECT_AMT          /* 수금액(원화) */
+		         ,(CASE WHEN(CASE WHEN ISNULL(C1.REF_CODE1,'')= '' THEN C1.SUB_CODE ELSE C1.REF_CODE1 END)= '80'
+		                THEN A.COLLECT_FOR_AMT
+		                ELSE 0 
+		            END)                                                                      AS REPAY_AMT            /* 반제액(외화) */
+		         ,(CASE WHEN(CASE WHEN ISNULL(C1.REF_CODE1,'')= '' THEN C1.SUB_CODE ELSE C1.REF_CODE1 END)= '80'
+		                THEN A.COLLECT_AMT
+		                ELSE 0 
+		            END)                                                                      AS REPAY_AMT_WON        /* 반제액(원화) */
+		         , A.MONEY_UNIT                                                                                       /* 화폐단위 */
+		         , A.EXCHANGE_RATE                                                                                    /* 환율 */
+		         , A.NOTE_NUM                                                                                         /* 어음번호 */
+		         ,(CASE WHEN(CASE WHEN ISNULL(C1.REF_CODE1,'')= '' THEN C1.SUB_CODE ELSE C1.REF_CODE1 END)= '30'
+		                  OR(CASE WHEN ISNULL(C1.REF_CODE1,'')= '' THEN C1.SUB_CODE ELSE C1.REF_CODE1 END)= '71' 
+		                THEN CAST(A.NOTE_CREDIT_RATE AS NVARCHAR(10))
+		                ELSE ''
+		            END)                                                                      AS NOTE_CREDIT_RATE     /* 인정율 */
+		         , A.NOTE_TYPE                                                                                        /* 어음구분(1:자수2:타수) */
+		         , A.PUB_CUST_CD                                                                                      /* 어음발행처(은행) */
+		         ,(CASE WHEN @RefItem = '1' THEN M1.CUSTOM_NAME1
+		                WHEN @RefItem = '2' THEN M1.CUSTOM_NAME2
+		                                    ELSE M1.CUSTOM_NAME
+		            END)                                                                      AS PUB_CUST_NM          /* 어음발행처명 */
+		         ,(CASE WHEN ISNULL(A.NOTE_PUB_DATE , '')= '' 
+		                THEN ''
+		                ELSE REPLACE(REPLACE(REPLACE(@DateFormat , 'YYYY' , SUBSTRING(A.NOTE_PUB_DATE, 1, 4))
+		                                                         , 'MM'   , SUBSTRING(A.NOTE_PUB_DATE, 5, 2))
+		                                                         , 'DD'   , SUBSTRING(A.NOTE_PUB_DATE, 7, 2))
+		            END)                                                                       AS NOTE_PUB_DATE       /* 어음발행일 */
+		         , A.PUB_PRSN                                                                                         /* 어음발행인 */
+		         ,(CASE WHEN ISNULL(A.NOTE_DUE_DATE , '')= '' 
+		                THEN ''
+		                ELSE REPLACE(REPLACE(REPLACE(@DateFormat , 'YYYY' , SUBSTRING(A.NOTE_DUE_DATE, 1, 4))
+		                                                         , 'MM'   , SUBSTRING(A.NOTE_DUE_DATE, 5, 2))
+		                                                         , 'DD'   , SUBSTRING(A.NOTE_DUE_DATE, 7, 2))
+		            END)                                                                       AS NOTE_DUE_DATE       /* 어음만기일 */
+		         , A.PUB_ENDOSER                                                                                      /* 배서인 */
+		         ,(CASE WHEN ISNULL(A.DISHONOR_DATE , '')= '' 
+		                THEN ''
+		                ELSE REPLACE(REPLACE(REPLACE(@DateFormat , 'YYYY' , SUBSTRING(A.DISHONOR_DATE, 1, 4))
+		                                                         , 'MM'   , SUBSTRING(A.DISHONOR_DATE, 5, 2))
+		                                                         , 'DD'   , SUBSTRING(A.DISHONOR_DATE, 7, 2))
+		            END)                                                                       AS DISHONOR_DATE       /* 부도일 */
+		         , A.PROJECT_NO                                                                                       /* 관리번호 */
+		         , A.PJT_CODE                                                                                         /* 프로젝트 */
+		         , M5.PJT_NAME                                                                                        /* 프로젝트명 */
+		         , A.SAVE_CODE                                                                                        /* 통장번호CD */
+		         , M4.SAVE_NAME                                                                                       /* 통장번호 */
+		         , A.REF_MONEY_UNIT                                                                                   /* 참조화폐단위 */
+		         , A.REF_EXCHANGE_RATE                                                                                /* 참조환율 */
+		         , A.REMARK                                                                                           /* 비고 */
+		         , A.BILL_DIV_CODE                                                                                    /* 신고사업장코드(세금계산서참조용) */
+		         , A.DIV_CODE                                                                                         /* 사업장코드 */
+		         , A.CUSTOM_CODE                                                                                      /* 거래처코드 */
+		         ,(CASE WHEN ISNULL(A.COLLECT_DATE , '')= '' 
+		                THEN ''
+		                ELSE REPLACE(REPLACE(REPLACE(@DateFormat , 'YYYY' , SUBSTRING(A.COLLECT_DATE, 1, 4))
+		                                                         , 'MM'   , SUBSTRING(A.COLLECT_DATE, 5, 2))
+		                                                         , 'DD'   , SUBSTRING(A.COLLECT_DATE, 7, 2))
+		            END)                                                                       AS COLLECT_DATE        /* 수금일 */
+		         , A.COLET_CUST_CD                                                                                    /* 수금거래처 */
+		         , A.COLLECT_PRSN                                                                                     /* 수금담당 */
+		         , A.COLLECT_DIV                                                                                      /* 수금사업장 */
+		         , A.COLLECT_NUM                                                                                      /* 수금번호 */
+		         , A.UPDATE_DB_USER                                                                                   /* 수정자 */
+		         , A.UPDATE_DB_TIME                                                                                   /* 수정일 */
+		         , A.DEPT_CODE                                                                                        /* 부서코드 */
+		         , A.TREE_NAME                                                                                        /* 부서명 */
+		         , A.SALE_PROFIT                                                                                      /* 사업부 */
+		         , ISNULL(A.EX_DATE,'')AS EX_DATE                                                                     /* 결의전표일 */
+		         , A.EX_NUM                                                                                           /* 결의전표번호 */
+		         , A.EX_SEQ                                                                                           /* 결의전표순번 */
+		         , A.AGREE_YN                                                                                         /* 결의전표승인여부 */
+		         , ISNULL(A.AC_DATE,'')AS AC_DATE                                                                     /* 회계전표일 */
+		         , A.AC_NUM                                                                                           /* 회계전표번호 */
+		         , ISNULL(B.PRE_COLET_AMT,0)- ISNULL(B.PRE_RETN_AMT,0)                         AS UN_PRE_COLL_AMT     /* 선수금잔액(외화) */
+		         , ISNULL(R2.TOTAL_AMT,0)                                                      AS TOTAL_AMT           /* 수금총액(원화) */
+		         , ISNULL(R2.TOTAL_FOR_AMT,0)                                                  AS TOTAL_FOR_AMT       /* 수금총액(외화) */
+		         ,(CASE WHEN @RefItem = '1' THEN M2.CUSTOM_NAME1
+		                WHEN @RefItem = '2' THEN M2.CUSTOM_NAME2
+		                                    ELSE M2.CUSTOM_NAME
+		            END)                                                                       AS CUSTOM_NAME         /* 거래처명 */
+		         ,(CASE WHEN @RefItem = '1' THEN M3.CUSTOM_NAME1
+		                WHEN @RefItem = '2' THEN M3.CUSTOM_NAME2
+		                                    ELSE M3.CUSTOM_NAME
+		            END)                                                                       AS COLET_CUST_NM       /* 수금거래처명 */
+		         ,(CASE WHEN(CASE WHEN ISNULL(C1.REF_CODE1,'')= '' THEN C1.SUB_CODE ELSE C1.REF_CODE1 END)= '80'
+		                THEN 0 
+		                ELSE ISNULL(A.COLLECT_FOR_AMT, 0)
+		            END)                                                                       AS REFER_COLLECT_AMT   /* 참조수금액 */
+		         ,(CASE WHEN(CASE WHEN ISNULL(C1.REF_CODE1,'')= '' THEN C1.SUB_CODE ELSE C1.REF_CODE1 END)= '80'
+		                THEN ISNULL(A.COLLECT_FOR_AMT, 0)
+		                ELSE 0 
+		            END)                                                                       AS REFER_REPAY_AMT     /* 참조반제액(외화) */
+		         ,(CASE WHEN(CASE WHEN ISNULL(C1.REF_CODE1,'')= '' THEN C1.SUB_CODE ELSE C1.REF_CODE1 END)= '80'
+		                THEN ISNULL(A.COLLECT_AMT, 0)
+		                ELSE 0 
+		            END)                                                                       AS REFER_REPAY_AMT_WON /* 참조반제액(원화) */
+		         ,(CASE WHEN ISNULL(A.REF_LOC, '')= '1'   THEN ISNULL(R10.SALE_LOC_AMT_I,0)+ ISNULL(R10.TAX_AMT_O,0)- ISNULL(R10.COLET_AMT,0)
+		                WHEN ISNULL(A.REF_LOC, '')= '2'   THEN ISNULL(R11.SALE_LOC_AMT_I,0)+ ISNULL(R11.TAX_AMT_O,0)- ISNULL(R11.COLLECT_AMT,0)
+		                WHEN ISNULL(A.REF_LOC, '')= '5L'  THEN ISNULL(R5L.SALE_AMT_O  ,0)  - ISNULL(R5L.COLET_AMT,0)
+		                WHEN ISNULL(A.REF_LOC, '')= '5BM' THEN ISNULL(R5B.RECEIVE1_AMT  ,0)- ISNULL(R5B.NEGO1_AMT,0)
+		                WHEN ISNULL(A.REF_LOC, '')= '5BE' THEN ISNULL(R5B.RECEIVE2_AMT  ,0)- ISNULL(R5B.NEGO2_AMT,0)
+		                                                  ELSE 0
+		            END)                                                                       AS REFER_UN_COLL_AMT   /* 참조미수잔액 */
+		         , ISNULL(uniLITE.fnGetBalanceT2(@CompCode
+		                                       , #{DIV_CODE}
+		                                       , #{CUSTOM_CODE}
+		                                       , #{COLL_DATE}
+		                                       , #{MONEY_UNIT}
+		                                       ,'4'), 0)                                       AS REF_UN_COLL_AMT     /* 거래처미수잔액 */
+		         ,(CASE WHEN ISNULL(C1.REF_CODE1,'')= ''
+		                THEN C1.SUB_CODE
+		                ELSE C1.REF_CODE1
+		            END)                                                                       AS REF_CODE1
+		         ,(CASE WHEN ISNULL(A.REF_LOC, '')= '1'    THEN(CASE WHEN ISNULL(ISNULL(R10.BILL_DATE  ,''), '')= ''
+		                                                             THEN ''
+		                                                             ELSE REPLACE(REPLACE(REPLACE(@DateFormat , 'YYYY' , SUBSTRING(ISNULL(R10.BILL_DATE  ,''), 1, 4))
+		                                                                                                      , 'MM'   , SUBSTRING(ISNULL(R10.BILL_DATE  ,''), 5, 2))
+		                                                                                                      , 'DD'   , SUBSTRING(ISNULL(R10.BILL_DATE  ,''), 7, 2))
+		                                                        END)
+		                WHEN ISNULL(A.REF_LOC, '')= '2'    THEN(CASE WHEN ISNULL(ISNULL(R11.SALE_DATE  ,''), '')= ''
+		                                                             THEN ''
+		                                                             ELSE REPLACE(REPLACE(REPLACE(@DateFormat , 'YYYY' , SUBSTRING(ISNULL(R11.SALE_DATE  ,''), 1, 4))
+		                                                                                                      , 'MM'   , SUBSTRING(ISNULL(R11.SALE_DATE  ,''), 5, 2))
+		                                                                                                      , 'DD'   , SUBSTRING(ISNULL(R11.SALE_DATE  ,''), 7, 2))
+		                                                        END)
+		                 WHEN ISNULL(A.REF_LOC, '')= '5L'  THEN(CASE WHEN ISNULL(ISNULL(R5L.BILL_DATE  ,''), '')= '' 
+		                                                             THEN ''
+		                                                             ELSE REPLACE(REPLACE(REPLACE(@DateFormat , 'YYYY' , SUBSTRING(ISNULL(R5L.BILL_DATE ,''), 1, 4))
+		                                                                                                      , 'MM'   , SUBSTRING(ISNULL(R5L.BILL_DATE  ,''), 5, 2))
+		                                                                                                      , 'DD'   , SUBSTRING(ISNULL(R5L.BILL_DATE  ,''), 7, 2))
+		                                                        END)
+		                 WHEN ISNULL(A.REF_LOC, '')= '5BM' THEN(CASE WHEN ISNULL(ISNULL(R5B.BL_DATE  ,''), '')= '' 
+		                                                             THEN ''
+		                                                             ELSE REPLACE(REPLACE(REPLACE(@DateFormat , 'YYYY' , SUBSTRING(ISNULL(R5B.BL_DATE ,''), 1, 4))
+		                                                                                                      , 'MM'   , SUBSTRING(ISNULL(R5B.BL_DATE  ,''), 5, 2))
+		                                                                                                      , 'DD'   , SUBSTRING(ISNULL(R5B.BL_DATE  ,''), 7, 2))
+		                                                        END)
+		                 WHEN ISNULL(A.REF_LOC, '')= '5BE' THEN(CASE WHEN ISNULL(ISNULL(R5B.BL_DATE  ,''), '')= '' 
+		                                                             THEN ''
+		                                                             ELSE REPLACE(REPLACE(REPLACE(@DateFormat , 'YYYY' , SUBSTRING(ISNULL(R5B.BL_DATE ,''), 1, 4))
+		                                                                                                      , 'MM'   , SUBSTRING(ISNULL(R5B.BL_DATE  ,''), 5, 2))
+		                                                                                                      , 'DD'   , SUBSTRING(ISNULL(R5B.BL_DATE  ,''), 7, 2))
+		                                                        END)
+		                                                   ELSE ''
+		             END)                                                                       AS BILL_DATE          /* 계산서일 */
+		         , A.COMP_CODE                                                                                        /* 법인코드 */
+		         , A.CARD_ACC_NUM                                                                                     /* 카드승인번호 */
+		         , A.RECEIPT_NAME                                                                                     /* 입금자명 */
+		         , ISNULL(A.BR_IN_NUM, '')                                                      AS BR_IN_NUM          /* 브랜치수금번호 */
+		         , ''                                                                           AS ACCT_NO
+		         , ''                                                                           AS CURR_UNIT
+		         , ''                                                                           AS ACCT_TXDAY
+		         , 0                                                                            AS ACCT_TXDAY_SEQ
+		         , ''                                                                           AS BANK_CD
+		         , ISNULL(A.REF_AMT_LOC, 0)                                                     AS REF_AMT_LOC
+		         ,(CASE WHEN ISNULL(A.RECEIPT_PLAN_DATE , '')= '' THEN ''
+		                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat , 'YYYY' , SUBSTRING(A.RECEIPT_PLAN_DATE, 1, 4))
+		                                                               , 'MM'   , SUBSTRING(A.RECEIPT_PLAN_DATE, 5, 2))
+		                                                               , 'DD'   , SUBSTRING(A.RECEIPT_PLAN_DATE, 7, 2))
+		            END)                                                                        AS RECEIPT_PLAN_DATE
+		         , A.REF_LOC                                                                                          /* 참조경로 */
+		         , A.BILL_NUM
+		      FROM            SCO100T A   WITH (NOLOCK)
+		           LEFT  JOIN SCO200T B   WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+		                                               AND B.DIV_CODE     = A.DIV_CODE
+		                                               AND B.CUSTOM_CODE  = A.CUSTOM_CODE
+		                                               AND B.MONEY_UNIT   = A.MONEY_UNIT
+		           LEFT  JOIN STB100T R10 WITH (NOLOCK) ON R10.COMP_CODE  = A.COMP_CODE
+		                                               AND R10.DIV_CODE   = A.BILL_DIV_CODE
+		                                               AND R10.PUB_NUM    = A.PUB_NUM
+		           LEFT  JOIN SSA100T R11 WITH (NOLOCK) ON R11.COMP_CODE  = A.COMP_CODE
+		                                               AND R11.DIV_CODE   = A.BILL_DIV_CODE
+		                                               AND R11.BILL_NUM   = A.PUB_NUM
+		           LEFT  JOIN TTB100T R5L WITH (NOLOCK) ON R5L.COMP_CODE  = A.COMP_CODE
+		                                               AND R5L.DIV_CODE   = A.BILL_DIV_CODE
+		                                               AND R5L.PUB_NUM    = A.PUB_NUM
+		           LEFT  JOIN TED100T R5B WITH (NOLOCK) ON R5B.COMP_CODE  = A.COMP_CODE
+		                                               AND R5B.DIV_CODE   = A.BILL_DIV_CODE
+		                                               AND R5B.BL_SER_NO  = A.PUB_NUM
+		           LEFT  JOIN (SELECT A.COMP_CODE
+		                            , A.DIV_CODE
+		                            , A.COLLECT_NUM
+		                            , SUM(A.COLLECT_AMT)     AS TOTAL_AMT
+		                            , SUM(A.COLLECT_FOR_AMT) AS TOTAL_FOR_AMT
+		                         FROM            SCO100T A  WITH (NOLOCK)
+		                              INNER JOIN BSA100T C1 WITH (NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+		                                                                 AND C1.MAIN_CODE = 'S017'  /* 수금유형 */
+		                                                                 AND C1.SUB_CODE  = A.COLLECT_TYPE
+		                        WHERE A.COMP_CODE   = @CompCode
+		                          AND A.DIV_CODE    = #{DIV_CODE} 
+		                          AND A.COLLECT_NUM = #{COLL_NUM} 
+		                          AND ISNULL(A.DISHONOR_DATE,'') = ''                                                           /* 부도제외 */
+		                          AND (CASE WHEN ISNULL(C1.REF_CODE1,'') = '' THEN C1.SUB_CODE ELSE C1.REF_CODE1 END) != '80'   /* 반제제외  */
+		                        GROUP BY A.COMP_CODE, A.DIV_CODE, A.COLLECT_NUM) R2 ON R2.COMP_CODE   = A.COMP_CODE
+		                                                                           AND R2.DIV_CODE    = A.DIV_CODE
+		                                                                           AND R2.COLLECT_NUM = A.COLLECT_NUM
+		           INNER JOIN BSA100T C1  WITH (NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE
+		                                               AND C1.MAIN_CODE   = 'S017'  /* 수금유형 */
+		                                               AND C1.SUB_CODE    = A.COLLECT_TYPE
+		           LEFT  JOIN BSA100T C2 WITH (NOLOCK)  ON C2.COMP_CODE   = A.COMP_CODE
+		                                               AND C2.MAIN_CODE   = N'A028' 
+		                                               AND C2.SUB_CODE    = A.COLLECT_TYPE_DETAIL
+		           LEFT  JOIN BCM100T M1  WITH (NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE
+		                                               AND M1.CUSTOM_CODE = A.PUB_CUST_CD
+		                                               AND M1.CUSTOM_TYPE = '4'
+		           LEFT  JOIN BCM100T M2  WITH (NOLOCK) ON M2.COMP_CODE   = A.COMP_CODE
+		                                               AND M2.CUSTOM_CODE = A.CUSTOM_CODE
+		           LEFT  JOIN BCM100T M3  WITH (NOLOCK) ON M3.COMP_CODE   = A.COMP_CODE
+		                                               AND M3.CUSTOM_CODE = A.COLET_CUST_CD
+		           LEFT  JOIN AFS100T M4  WITH (NOLOCK) ON M4.COMP_CODE   = A.COMP_CODE
+		                                               AND M4.SAVE_CODE   = A.SAVE_CODE
+		           LEFT  JOIN PJT100T M5  WITH (NOLOCK) ON M5.COMP_CODE   = A.COMP_CODE
+		                                               AND M5.DIV_CODE    = A.DIV_CODE
+		                                               AND M5.PJT_CODE    = A.PJT_CODE
+		     WHERE A.COMP_CODE                = @CompCode
+		     <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		       AND A.DIV_CODE                 = #{DIV_CODE}
+		     </if>
+		     <if test="@foren.Ognl@isNotEmpty(COLL_NUM)">
+		       AND A.COLLECT_NUM              = #{COLL_NUM}
+		     </if>
+		     <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+		       AND A.CUSTOM_CODE              = #{CUSTOM_CODE}
+		     </if>
+		     AND ISNULL(A.DISHONOR_DATE,'') = ''  /* 부도제외 */
+		     ORDER BY A.COLLECT_SEQ, A.PUB_NUM
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END	
+    </select>
+
+
+	<select id="sco110ukrvServiceImpl.getEditableYN" parameterType="Map" resultType="rMap">
+		DECLARE @COMP_CODE  NVARCHAR(08)
+		      , @PGM_ID     NVARCHAR(20)
+		      , @USER_ID    NVARCHAR(100)
+
+		SET @COMP_CODE  =  #{S_COMP_CODE}
+		SET @PGM_ID     =  'sco110ukrv'
+		SET @USER_ID    =  #{S_USER_ID}
+
+		SELECT A.REF_CODE1                                                 AS PGM_ID
+		     , N'Y'                                                        AS REGIST_YN   /* 권한 등록여부  */
+		     , MAX(CASE WHEN A.REF_CODE2 = @USER_ID THEN 'Y' ELSE 'N' END) AS MODIFY_YN   /* 수정/삭제여부  */
+		  FROM BSA100T A  WITH (NOLOCK)
+		 WHERE A.COMP_CODE  =  @COMP_CODE
+		   AND A.MAIN_CODE  =  N'BS14'
+		   AND A.SUB_CODE  !=  N'$'
+		   AND A.USE_YN     =  N'Y'
+		   AND A.REF_CODE1  =  @PGM_ID
+		 GROUP BY A.REF_CODE1
+	</select>
+	<select id="sco110ukrvServiceImpl.getGsPLCode" parameterType="Map" resultType="rMap">
+		/* USsa01Krv.CSsa100Ukr[fnSsa100QStd] Query17 */
+		SELECT ISNULL(MAX(CASE WHEN REF_CODE4 = 'P' THEN SUB_CODE END),'') AS P_CODE
+		     , ISNULL(MAX(CASE WHEN REF_CODE4 = 'L' THEN SUB_CODE END),'') AS L_CODE
+		  FROM BSA100T WITH(NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND MAIN_CODE = 'S017'
+		   AND REF_CODE4 IN ('P','L')
+	</select>
+
+	<insert id="sco110ukrvServiceImpl.insertLogDetail" parameterType="Map"> 
+		INSERT INTO L_SCO100T
+		     ( KEY_VALUE            , OPR_FLAG
+		     , COMP_CODE            , DIV_CODE              , COLLECT_NUM           , COLLECT_SEQ
+		     , COLLECT_DATE         , DEPT_CODE             , CUSTOM_CODE           , COLLECT_TYPE          , MONEY_UNIT
+		     , COLLECT_AMT          , EXCHANGE_RATE         , NOTE_NUM              , NOTE_PUB_DATE         , NOTE_DUE_DATE
+		     , PUB_CUST_CD          , PUB_PRSN              , PUB_ENDOSER           , NOTE_TYPE             , DISHONOR_DATE
+		     , EX_DATE              , EX_NUM                , EX_SEQ                , AGREE_YN              , AC_DATE
+		     , AC_NUM               , COLET_CUST_CD         , PROJECT_NO            , PJT_CODE              , COLLECT_PRSN
+		     , PUB_NUM              , REMARK                , TREE_NAME             , SALE_PROFIT           , COLLECT_DIV
+		     , SAVE_CODE            , BILL_NUM              , BILL_DIV_CODE         , J_EX_DATE             , J_EX_NUM
+		     , J_AC_DATE            , J_AC_NUM              , NOTE_CREDIT_RATE      , BR_IN_NUM             , CARD_ACC_NUM
+		     , RECEIPT_NAME         , AD_REFUND_NUM         , AD_REFUND_AMT         , DED_CUSTOM_CODE       , REF_MONEY_UNIT
+		     , REF_EXCHANGE_RATE    , REF_LOC               , COLLECT_FOR_AMT       , RECEIPT_PLAN_DATE     , REF_AMT_LOC
+		     , REF_CODE1            , REPAY_AMT             , REPAY_AMT_WON         , COLLECT_TYPE_DETAIL)
+		VALUES
+		     ( #{KEY_VALUE}         , #{OPR_FLAG}
+		     , #{COMP_CODE}         , #{DIV_CODE}           , #{COLLECT_NUM}        , #{COLLECT_SEQ}
+		     , #{COLLECT_DATE}      , #{DEPT_CODE}          , #{CUSTOM_CODE}        , #{COLLECT_TYPE}       , #{MONEY_UNIT}
+		     , #{COLLECT_AMT}       , #{EXCHANGE_RATE}      , #{NOTE_NUM}           , #{NOTE_PUB_DATE}      , #{NOTE_DUE_DATE}
+		     , #{PUB_CUST_CD}       , #{PUB_PRSN}           , #{PUB_ENDOSER}        , #{NOTE_TYPE}          , #{DISHONOR_DATE}
+		     , #{EX_DATE}           , #{EX_NUM}             , #{EX_SEQ}             , #{AGREE_YN}           , #{AC_DATE}
+		     , #{AC_NUM}            , #{COLET_CUST_CD}      , #{PROJECT_NO}         , #{PJT_CODE}           , #{COLLECT_PRSN}
+		     , #{PUB_NUM}           , #{REMARK}             , #{TREE_NAME}          , #{SALE_PROFIT}        , #{COLLECT_DIV}
+		     , #{SAVE_CODE}         , #{BILL_NUM}           , #{BILL_DIV_CODE}      , #{J_EX_DATE}          , #{J_EX_NUM}
+		     , #{J_AC_DATE}         , #{J_AC_NUM}           , #{NOTE_CREDIT_RATE}   , #{BR_IN_NUM}          , #{CARD_ACC_NUM}
+		     , #{RECEIPT_NAME}      , #{AD_REFUND_NUM}      , #{AD_REFUND_AMT}      , #{DED_CUSTOM_CODE}    , #{REF_MONEY_UNIT}
+		     , #{REF_EXCHANGE_RATE} , #{REF_LOC}            , #{COLLECT_FOR_AMT}    , #{RECEIPT_PLAN_DATE}  , #{REF_AMT_LOC}
+		     , #{REF_CODE1}         , #{REPAY_AMT}          , #{REPAY_AMT_WON}      , #{COLLECT_TYPE_DETAIL})
+	</insert>
+
+	<update id="sco110ukrvServiceImpl.USP_SALES_Sco110ukr" parameterType="Map" statementType="CALLABLE">
+		{call USP_SALES_SCO110UKR (
+			#{KeyValue	, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{CollectNum, mode=OUT	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{ErrorDesc	, mode=OUT	, jdbcType=VARCHAR	, javaType=java.lang.String}
+		)}
+	</update>
+</mapper>

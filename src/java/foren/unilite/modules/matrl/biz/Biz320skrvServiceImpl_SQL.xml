@@ -1,0 +1,293 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="biz320skrvServiceImpl">
+	<select id="biz320skrvServiceImpl.selectRefItem" parameterType="Map" resultType="rMap">
+		SELECT ISNULL(REF_ITEM, '1') AS REF_ITEM
+		  FROM BSA300T
+		 WHERE USER_ID   = #{S_USER_ID}
+		   AND COMP_CODE = #{S_COMP_CODE}
+	</select>
+	<select id="biz320skrvServiceImpl.selectRefAmtFlag" parameterType="Map" resultType="rMap">
+		SELECT ISNULL(MIN(SUB_CODE), '1') AS REF_AMTFLAG
+		  FROM BSA100T
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND MAIN_CODE = 'B069'
+		   AND SUB_CODE  != '$'
+		   AND REF_CODE1 =  'Y'
+	</select>		
+	<select id="biz320skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		
+	BEGIN
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+
+		DECLARE @QRY_TYPE VARCHAR(10)
+
+		SET @QRY_TYPE = ISNULL(#{TYPE},'')
+		--biz320skrv.Cbiz320skrv[fnBiz320QStd] Query04
+		SELECT 
+		   CASE WHEN @QRY_TYPE = '1' THEN K.ITEM_ACCOUNT ELSE K.CUSTOM_CODE END AS INDEX_01
+		 , CASE WHEN @QRY_TYPE = '1' THEN ( SELECT CODE_NAME
+											  FROM BSA100T 
+											 WHERE COMP_CODE = K.COMP_CODE
+											   AND MAIN_CODE = 'B020'
+											   AND SUB_CODE  = K.ITEM_ACCOUNT) 
+									 ELSE ( SELECT CUSTOM_NAME
+											  FROM BCM100T 
+											 WHERE COMP_CODE = K.COMP_CODE
+											   AND CUSTOM_CODE = K.CUSTOM_CODE) 
+		   END AS INDEX_02
+		 , K.ITEM_CODE
+		 , unilite.fnItemNameComp(#{S_COMP_CODE}, #{S_USER_ID}, M.ITEM_CODE) AS ITEM_NAME
+		 , ISNULL(M.SPEC, ' ') AS SPEC
+		 , ISNULL(M.STOCK_UNIT, ' ') AS STOCK_UNIT
+		 , LEFT(K.INOUT_DATE, 7) AS BASIS_YYYYMM
+		 , K.STOCK AS BASIS
+		 , K.INSTOCK
+		 , K.OUTSTOCK
+		 , K.END_STOCK AS STOCK
+
+
+		 , K.STOCK_I AS BASIS_I
+		 , K.INSTOCK_I AS INSTOCK_I
+		 , K.OUTSTOCK_I AS OUTSTOCK_I
+		 , K.END_STOCK_I AS END_STOCK_I
+
+		 
+		 , K.SEQ
+	  FROM (SELECT '1' AS SEQ
+				 , A.COMP_CODE
+				 , B.ITEM_ACCOUNT
+				 , CASE WHEN @QRY_TYPE = '2' THEN A.CUSTOM_CODE  ELSE '' END AS CUSTOM_CODE
+				 , A.ITEM_CODE
+				 , B.ITEM_NAME
+				 , UNILITE.fnGetUserTypeDate(A.COMP_CODE, A.INOUT_DATE, 'M') INOUT_DATE
+				 , SUM(A.BASIS_Q) AS STOCK
+				 , SUM(A.IN_Q) AS INSTOCK
+				 , SUM(A.OUT_Q - A.RET_Q) AS OUTSTOCK
+				 , SUM(A.BASIS_Q + A.IN_Q - A.OUT_Q + A.RET_Q) AS END_STOCK
+
+				 , ISNULL((CASE LEFT(B.ITEM_ACCOUNT,1) WHEN '1' THEN AVG(C.AVERAGE_P) * SUM(A.BASIS_Q)
+												WHEN '2' THEN AVG(C.AVERAGE_P) * SUM(A.BASIS_Q)
+												ELSE  SUM(A.BASIS_O) 
+						END),0) AS STOCK_I
+				, ISNULL((CASE LEFT(B.ITEM_ACCOUNT,1) WHEN '1' THEN AVG(C.AVERAGE_P) * SUM(A.IN_Q)
+													WHEN '2' THEN AVG(C.AVERAGE_P) * SUM(A.IN_Q)
+													ELSE SUM(A.IN_O) 
+						END),0) AS INSTOCK_I
+				, ISNULL((CASE LEFT(B.ITEM_ACCOUNT,1) WHEN '1' THEN AVG(C.AVERAGE_P) * SUM(A.OUT_Q - A.RET_Q)
+													WHEN '2' THEN AVG(C.AVERAGE_P) * SUM(A.OUT_Q - A.RET_Q)
+													ELSE SUM(A.OUT_O - A.RET_O)  
+						END), 0) AS OUTSTOCK_I
+				, ISNULL((CASE LEFT(B.ITEM_ACCOUNT,1) WHEN '1' THEN AVG(C.AVERAGE_P) * SUM(A.BASIS_Q + A.IN_Q - A.OUT_Q + A.RET_Q)
+													WHEN '2' THEN AVG(C.AVERAGE_P) * SUM(A.BASIS_Q + A.IN_Q - A.OUT_Q + A.RET_Q)
+													ELSE AVG(C.AVERAGE_P) * SUM(A.BASIS_Q + A.IN_Q - A.OUT_Q + A.RET_Q) 	--SUM(A.BASIS_O + A.IN_O - A.OUT_O + A.RET_O)
+						END) ,0) AS END_STOCK_I				 
+			  FROM
+				   (SELECT A.ITEM_CODE
+						 , A.COMP_CODE
+						 , A.DIV_CODE
+						 , A.CUSTOM_CODE
+						 , SUBSTRING(A.INOUT_DATE,1,6) INOUT_DATE
+						 , 0 AS BASIS_Q
+						 , (CASE WHEN A.INOUT_TYPE = '1' THEN SUM(A.INOUT_Q) ELSE 0 END) AS IN_Q
+						 , (CASE WHEN A.INOUT_TYPE = '2' THEN SUM(A.INOUT_Q) ELSE 0 END) AS OUT_Q
+						 , (CASE WHEN A.INOUT_TYPE = '3' THEN SUM(A.INOUT_Q) ELSE 0 END) AS RET_Q
+
+						 ,  0 AS BASIS_O
+						 , (CASE WHEN A.INOUT_TYPE = '1' THEN SUM(A.INOUT_I) ELSE 0 END) AS IN_O
+						 , (CASE WHEN A.INOUT_TYPE = '2' THEN SUM(A.INOUT_I) ELSE 0 END) AS OUT_O
+						 , (CASE WHEN A.INOUT_TYPE = '3' THEN SUM(A.INOUT_I) ELSE 0 END) AS RET_O						 
+					  FROM BIZ600T A WITH(NOLOCK)
+					       INNER JOIN BCM100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+					                                        AND B.CUSTOM_CODE = A.CUSTOM_CODE
+					       INNER JOIN BPR200T C WITH(NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+					                                        AND C.DIV_CODE  = A.DIV_CODE
+					                                        AND C.ITEM_CODE = A.ITEM_CODE
+					 WHERE SUBSTRING(A.INOUT_DATE,1,6) &gt;= #{ORDER_DATE_FR}
+					   AND SUBSTRING(A.INOUT_DATE,1,6) &lt;= #{ORDER_DATE_TO}
+					   AND A.COMP_CODE                  = #{S_COMP_CODE}
+					   AND A.DIV_CODE                   = #{DIV_CODE}
+						<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+							AND A.ITEM_CODE = #{ITEM_CODE}
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+							AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+						</if>
+						<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+							AND C.ITEM_NAME LIKE '%' + #{ITEM_NAME} + '%' 
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+							AND A.CUSTOM_CODE = #{CUSTOM_CODE}
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+							AND A.CUSTOM_CODE LIKE #{CUSTOM_CODE} + '%'
+						</if>
+						<if test="@foren.Ognl@isEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+							AND B.CUSTOM_NAME LIKE '%' + #{CUSTOM_NAME} + '%' 
+						</if>					   
+
+					 GROUP BY A.ITEM_CODE, A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE, A.INOUT_TYPE,  A.INOUT_DATE
+					UNION ALL 
+					SELECT A.ITEM_CODE
+						 , A.COMP_CODE
+						 , A.DIV_CODE
+						 , A.CUSTOM_CODE AS CUSTOM_CODE
+						 , (CASE WHEN ISNULL(A.BASIS_YYYYMM, '199001') &gt;= SUBSTRING(#{ORDER_DATE_FR}, 1, 6) THEN A.BASIS_YYYYMM
+								 WHEN ISNULL(YY.LAST_YYYYMM, '199001') &gt;= SUBSTRING(#{ORDER_DATE_FR}, 1, 6) THEN SUBSTRING(#{ORDER_DATE_FR}, 1, 6)
+								 ELSE SUBSTRING(#{ORDER_DATE_FR}, 1, 6) 
+							 END) AS INOUT_DATE
+						 , ISNULL(SUM(A.BASIS_Q), 0) AS BASIS_Q
+						 , 0 AS IN_Q
+						 , 0 AS OUT_Q
+						 , 0 AS RET_Q
+						  , ISNULL(SUM(A.BASIS_AMOUNT_I), 0) AS BASIS_O 
+						  , 0
+						  , 0
+						  , 0						 
+					  FROM BIZ200T A WITH(NOLOCK)
+					       INNER JOIN BCM100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+					                                        AND B.CUSTOM_CODE = A.CUSTOM_CODE
+					       INNER JOIN BPR200T C WITH(NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+					                                        AND C.DIV_CODE  = A.DIV_CODE
+					                                        AND C.ITEM_CODE = A.ITEM_CODE					  
+						 , (SELECT DISTINCT ZZ.ITEM_CODE
+								 , ZZ.COMP_CODE
+								 , ZZ.DIV_CODE
+								 , ZZ.CUSTOM_CODE AS CUSTOM_CODE
+								 , (CASE WHEN ISNULL(Y1.BASIS_YYYYMM, '199001') &gt;= SUBSTRING(#{ORDER_DATE_FR}, 1, 6) THEN Y1.BASIS_YYYYMM
+										 WHEN ISNULL(Y.LAST_YYYYMM  , '199001') &gt;= SUBSTRING(#{ORDER_DATE_FR}, 1, 6) THEN SUBSTRING(#{ORDER_DATE_FR}, 1, 6)
+										 ELSE CONVERT(VARCHAR(6), DATEADD(MONTH, 1, ISNULL(Y.LAST_YYYYMM,'199001') + '01'), 112)
+									 END) AS LAST_YYYYMM
+							  FROM (SELECT MIN(LAST_YYYYMM) AS LAST_YYYYMM
+										 , COMP_CODE
+										 , DIV_CODE
+									  FROM BIV900T WITH(NOLOCK)
+									 GROUP BY COMP_CODE, DIV_CODE) Y
+								 ,                 BIZ200T ZZ WITH(NOLOCK)
+								   LEFT OUTER JOIN BIZ400T Y1  WITH(NOLOCK) ON ZZ.COMP_CODE   = Y1.COMP_CODE
+																			 AND ZZ.DIV_CODE    = Y1.DIV_CODE
+																			 AND ZZ.CUSTOM_CODE = Y1.CUSTOM_CODE
+																			 AND ZZ.ITEM_CODE   = Y1.ITEM_CODE
+							 WHERE Y.COMP_CODE = ZZ.COMP_CODE
+							   AND Y.DIV_CODE  = ZZ.DIV_CODE) YY
+					 WHERE A.BASIS_YYYYMM = YY.LAST_YYYYMM
+					   AND A.COMP_CODE    = YY.COMP_CODE
+					   AND A.DIV_CODE     = YY.DIV_CODE
+					   AND A.CUSTOM_CODE  = YY.CUSTOM_CODE
+					   AND A.ITEM_CODE    = YY.ITEM_CODE
+					   AND A.COMP_CODE    = #{S_COMP_CODE}
+					   AND A.DIV_CODE     = #{DIV_CODE}
+						<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+							AND A.ITEM_CODE = #{ITEM_CODE}
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+							AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+						</if>
+						<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+							AND C.ITEM_NAME LIKE '%' + #{ITEM_NAME} + '%' 
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+							AND A.CUSTOM_CODE = #{CUSTOM_CODE}
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+							AND A.CUSTOM_CODE LIKE #{CUSTOM_CODE} + '%'
+						</if>
+						<if test="@foren.Ognl@isEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+							AND B.CUSTOM_NAME LIKE '%' + #{CUSTOM_NAME} + '%' 
+						</if>						
+					 GROUP BY A.ITEM_CODE, A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE, A.BASIS_YYYYMM, YY.LAST_YYYYMM
+					UNION ALL
+					SELECT A.ITEM_CODE
+						 , A.COMP_CODE
+						 , A.DIV_CODE
+						 , A.CUSTOM_CODE
+						 , #{ORDER_DATE_FR} AS INOUT_DATE
+						 , (CASE WHEN  A.INOUT_TYPE = '2' THEN  SUM(A.INOUT_Q * (-1))
+								 ELSE  SUM(A.INOUT_Q) 
+							 END) BASIS_Q
+						 , 0 AS IN_Q
+						 , 0 AS OUT_Q
+						 , 0 AS RET_Q
+
+						  , (CASE WHEN  A.INOUT_TYPE = '2' THEN SUM(A.INOUT_I * (-1))
+								  ELSE  SUM(A.INOUT_I) 
+							  END) BASIS_O
+						  , 0
+						  , 0
+						  , 0
+					  FROM                 BIZ600T A WITH(NOLOCK)
+					       INNER JOIN BCM100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+					                                        AND B.CUSTOM_CODE = A.CUSTOM_CODE
+					       INNER JOIN BPR200T C WITH(NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+					                                        AND C.DIV_CODE  = A.DIV_CODE
+					                                        AND C.ITEM_CODE = A.ITEM_CODE					  
+						   LEFT OUTER JOIN (SELECT DISTINCT ZZ.ITEM_CODE
+												 , ZZ.COMP_CODE
+												 , ZZ.DIV_CODE
+												 , ZZ.CUSTOM_CODE
+												 , (CASE WHEN ISNULL(Y1.BASIS_YYYYMM, '199001') &gt;= SUBSTRING(#{ORDER_DATE_FR}, 1, 6) THEN  Y1.BASIS_YYYYMM
+														 WHEN ISNULL(Y.LAST_YYYYMM,   '199001') &gt;= SUBSTRING(#{ORDER_DATE_FR}, 1, 6) THEN SUBSTRING(#{ORDER_DATE_FR}, 1, 6)
+														 ELSE CONVERT(VARCHAR(6), DATEADD(MONTH, 1, ISNULL(Y.LAST_YYYYMM,'199001') + '01'), 112)
+													 END) AS LAST_YYYYMM
+											  FROM (SELECT MIN(LAST_YYYYMM) AS LAST_YYYYMM
+														 , COMP_CODE
+														 , DIV_CODE
+													  FROM BIV900T WITH(NOLOCK)
+													 GROUP BY COMP_CODE, DIV_CODE) Y
+												 ,                 BIZ200T ZZ WITH(NOLOCK)
+												   LEFT OUTER JOIN BIZ400T Y1 WITH(NOLOCK) ON ZZ.COMP_CODE   = Y1.COMP_CODE
+																						 AND ZZ.DIV_CODE    = Y1.DIV_CODE
+																						 AND ZZ.CUSTOM_CODE = Y1.CUSTOM_CODE
+																						 AND ZZ.ITEM_CODE   = Y1.ITEM_CODE
+											 WHERE Y.COMP_CODE = ZZ.COMP_CODE
+											   AND Y.DIV_CODE  = ZZ.DIV_CODE) YY ON A.COMP_CODE   = YY.COMP_CODE
+																				AND A.DIV_CODE    = YY.DIV_CODE
+																				AND A.CUSTOM_CODE = YY.CUSTOM_CODE
+																				AND A.ITEM_CODE   = YY.ITEM_CODE
+					 WHERE SUBSTRING(A.INOUT_DATE,1,6) &lt; #{ORDER_DATE_FR}
+					   AND A.INOUT_DATE   &gt; ISNULL(YY.LAST_YYYYMM, '199001')
+					   AND A.COMP_CODE    = #{S_COMP_CODE}
+					   AND A.DIV_CODE     = #{DIV_CODE}
+						<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+							AND A.ITEM_CODE = #{ITEM_CODE}
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+							AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+						</if>
+						<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+							AND C.ITEM_NAME LIKE '%' + #{ITEM_NAME} + '%' 
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+							AND A.CUSTOM_CODE = #{CUSTOM_CODE}
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+							AND A.CUSTOM_CODE LIKE #{CUSTOM_CODE} + '%'
+						</if>
+						<if test="@foren.Ognl@isEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+							AND B.CUSTOM_NAME LIKE '%' + #{CUSTOM_NAME} + '%' 
+						</if>						   
+					 GROUP BY A.ITEM_CODE, A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE, A.INOUT_TYPE, A.INOUT_Q) A
+				 LEFT JOIN BPR200T B WITH(NOLOCK) ON  A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE = B.DIV_CODE AND A.ITEM_CODE = B.ITEM_CODE
+				 LEFT JOIN  (
+								SELECT COMP_CODE, DIV_CODE, ITEM_CODE, BASIS_YYYYMM, MAX(AVERAGE_P) AS AVERAGE_P
+								FROM BIZ200T WITH (NOLOCK)
+								GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, BASIS_YYYYMM
+		 
+							) C ON A.COMP_CODE = C.COMP_CODE AND A.DIV_CODE=C.DIV_CODE AND LEFT(A.INOUT_DATE, 7)=C.BASIS_YYYYMM  AND A.ITEM_CODE=C.ITEM_CODE
+			WHERE A.COMP_CODE       = #{S_COMP_CODE}
+			  AND B.ITEM_ACCOUNT LIKE #{ACCOUNT}+'%'
+			  AND A.DIV_CODE        = #{DIV_CODE}
+			GROUP BY B.ITEM_ACCOUNT, A.COMP_CODE, A.ITEM_CODE, B.ITEM_NAME, A.INOUT_DATE
+				   , CASE WHEN @QRY_TYPE = '2' THEN A.CUSTOM_CODE  ELSE '' END
+		 ) K
+		 LEFT JOIN  BPR100T M ON K.COMP_CODE = M.COMP_CODE AND K.ITEM_CODE = M.ITEM_CODE
+	 WHERE K.COMP_CODE = #{S_COMP_CODE}
+  
+	 ORDER BY CASE WHEN @QRY_TYPE = '1' THEN K.ITEM_ACCOUNT ELSE K.CUSTOM_CODE END, K.ITEM_CODE, K.INOUT_DATE, K.SEQ 
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+	END
+	</select>
+	
+</mapper>

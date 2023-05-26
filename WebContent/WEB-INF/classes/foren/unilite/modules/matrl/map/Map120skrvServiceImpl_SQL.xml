@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="map120skrvServiceImpl">
+	<select id="map120skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* map120ukrv.Cmap120ukrv, Public[fnmap120q] Query01 */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+		    DECLARE @START_TIME DATETIME
+		          , @END_TIME   DATETIME
+		          , @DIFF_TIME  NUMERIC(10, 0)
+
+		    SET @START_TIME = GETDATE()
+
+		    DECLARE @CompCode    NVARCHAR(08)    /* 법인코드 */
+		          , @Gubun       NVARCHAR(01)    /* 구분-계산서번호별('1'), 계산서유형별('2') */
+
+		    SET @CompCode   = #{S_COMP_CODE}
+		    SET @Gubun      = #{GUBUN}
+
+			<!--2021.08 표준화 작업 Start-->	
+			DECLARE @RefItem		NVARCHAR(01)
+		
+			/* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		    FROM BSA300T WITH (NOLOCK)
+		    WHERE USER_ID = #{S_USER_ID}
+		
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+		    <!--2021.08 표준화 작업 End-->
+		    
+		    /* 데이터 조회 */
+		    IF @Gubun = '1' 
+		        BEGIN
+		            SELECT A.CUSTOM_CODE
+		                 , B.CUSTOM_NAME
+		                 , LEFT(B.COMPANY_NUM, 3) + '-'
+		                 + SUBSTRING(B.COMPANY_NUM, 4, 2) + '-'
+		                 + RIGHT(B.COMPANY_NUM, 5)          AS COMPANY_NUM
+		                 , CASE WHEN D.SUB_CODE = '2' THEN A.BILL_NUM
+		                        ELSE A.CHANGE_BASIS_NUM
+		                   END                              AS BILL_NUM 
+		                 , A.BILL_DATE                      /* 입고일 */
+		                 , C.CODE_NAME                      AS BILL_TYPE
+		                 , SUM(A.AMOUNT_I)                  AS AMOUNT_I
+		                 , SUM(A.VAT_AMOUNT_O)              AS VAT_AMOUNT_O 
+		                 , SUM(A.AMOUNT_I + A.VAT_AMOUNT_O) AS TOTAL 
+		                 , ''                               AS CHANGE_BASIS_DATE   /* 매입전표일자 */
+		                 , A.EX_DATE                        /* 결의전표일자 */
+		                 , A.EX_NUM
+		                 , A.AC_DATE                        --20210524 추가 - 회계전표일자
+		                 , A.AC_NUM                         --20210524 추가 - 회전전표번호
+		                 , ISNULL(K.ORG_AMT_I, 0) AS ORG_AMT_I                     --20210524 추가 - 발생금액
+		                 , ISNULL(K.J_AMT_I, 0) AS J_AMT_I                        --20210524 추가 - 반제금액
+		                 , ISNULL(K.BLN_I, 0) AS BLN_I                          --20210524 추가 - 잔액
+		            FROM        MAP100T A WITH (NOLOCK)
+		            LEFT  JOIN  BCM100T B WITH (NOLOCK)  ON B.COMP_CODE   = A.COMP_CODE
+		                                                AND B.CUSTOM_CODE = A.CUSTOM_CODE
+		            LEFT  JOIN  BSA100T C WITH (NOLOCK)  ON C.COMP_CODE   = A.COMP_CODE
+		                                                AND C.MAIN_CODE   = N'A022'
+		                                                AND C.SUB_CODE    = A.BILL_TYPE
+		            LEFT  JOIN  BSA100T D WITH (NOLOCK)  ON D.COMP_CODE   = A.COMP_CODE
+		                                                AND D.MAIN_CODE   = N'M107'
+		                                                AND ISNULL(D.REF_CODE1, '') = 'Y'
+		            --20210524 추가 
+		            LEFT  JOIN  AGB300T K WITH (NOLOCK)  ON A.COMP_CODE   = K.COMP_CODE
+		                                                AND A.DIV_CODE    = K.DIV_CODE
+		                                                AND A.AC_DATE     = K.ORG_AC_DATE
+		                                                AND A.AC_NUM      = K.ORG_SLIP_NUM
+		            WHERE   A.COMP_CODE   = @CompCode
+		            /* 선택조건	Start */
+		            <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		              AND   A.DIV_CODE    = #{DIV_CODE}
+		            </if>
+		            <if test="@foren.Ognl@isNotEmpty(BILL_FR_DATE)">
+		              AND   A.BILL_DATE  &gt;= #{BILL_FR_DATE}
+		            </if>
+		            <if test="@foren.Ognl@isNotEmpty(BILL_TO_DATE)">
+		              AND   A.BILL_DATE  &lt;= #{BILL_TO_DATE}
+		            </if>
+					<!--2021.08 표준화 작업 Start-->
+			        /* 거래처코드		*/
+				    <if test="@foren.Ognl@isNotEmpty(CUST_CODE) and @foren.Ognl@isNotEmpty(CUST_NAME)">
+						AND A.CUSTOM_CODE = #{CUST_CODE}
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(CUST_CODE) and @foren.Ognl@isEmpty(CUST_NAME)">
+						AND A.CUSTOM_CODE LIKE #{CUST_CODE} + '%'
+					</if>
+					<if test="@foren.Ognl@isEmpty(CUST_CODE) and @foren.Ognl@isNotEmpty(CUST_NAME)">
+						AND		(@RefItem       = N'0' AND B.CUSTOM_NAME  LIKE N'%' + #{CUST_NAME} + N'%')
+							OR	(@RefItem       = N'1' AND B.CUSTOM_NAME1 LIKE N'%' + #{CUST_NAME} + N'%')
+							OR	(@RefItem       = N'2' AND B.CUSTOM_NAME2 LIKE N'%' + #{CUST_NAME} + N'%')
+					</if>
+					<!--2021.08 표준화 작업 End-->
+		            <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+		              AND   B.AGENT_TYPE  = #{AGENT_TYPE}
+		            </if>
+		            <if test="@foren.Ognl@isNotEmpty(BILL_TYPE)">
+		              AND   A.BILL_TYPE   = #{BILL_TYPE}
+		            </if>
+		            <if test="@foren.Ognl@isNotEmpty(EX_FR_DATE)">
+		              AND   ISNULL(A.EX_DATE,'') &gt;= #{EX_FR_DATE}
+		            </if>
+		            <if test="@foren.Ognl@isNotEmpty(EX_TO_DATE)">
+		              AND   ISNULL(A.EX_DATE,'') &lt;= #{EX_TO_DATE}
+		            </if>
+		            /* 자동기표여부 - 전체 :조건없음 */
+		            /* 자동기표여부 - 기표 : Y */
+		            <if test="rdoSelect == &quot;Y&quot;">
+		              AND   ISNULL(A.EX_DATE,'') != #{EX_FR_DATE} 
+		            </if>
+		            /* 자동기표여부 - 미기표 : N */
+		            <if test="rdoSelect == &quot;N&quot;">
+		              AND   ISNULL(A.EX_DATE,'') = #{EX_TO_DATE} 
+		            </if>
+<!-- 20210524 추가: 지급여부 조회조건 추가 -->
+		            <if test="PROV_YN == &quot;N&quot;">
+		              AND  ( ISNULL(K.BLN_I, 0) &gt; 0 OR ISNULL(A.AC_DATE, '') = '' )
+		            </if>
+		            <if test="PROV_YN == &quot;Y&quot;">
+		              AND  ( ISNULL(K.BLN_I, 0) &lt;= 0 AND ISNULL(A.AC_DATE, '') != '' )
+		            </if>
+		            /* 선택조건 End	*/
+		            GROUP BY A.CUSTOM_CODE, B.CUSTOM_NAME, B.COMPANY_NUM
+		                   , CASE WHEN D.SUB_CODE = '2' THEN A.BILL_NUM
+		                          ELSE A.CHANGE_BASIS_NUM
+		                     END
+		                   , A.BILL_DATE, C.CODE_NAME, A.EX_DATE, A.EX_NUM
+		                   --20210524 추가
+		                   , A.AC_DATE, A.AC_NUM, K.ORG_AMT_I, K.J_AMT_I, K.BLN_I
+		            ORDER BY A.CUSTOM_CODE, A.BILL_DATE
+		        END
+		    ELSE
+		        BEGIN
+		            SELECT A.CUSTOM_CODE
+		                 , MAX(B.CUSTOM_NAME) AS CUSTOM_NAME
+		                 , LEFT(B.COMPANY_NUM, 3) + '-'
+		                 + SUBSTRING(B.COMPANY_NUM, 4, 2) + '-'
+		                 + RIGHT(B.COMPANY_NUM, 5)                                  AS COMPANY_NUM
+		                 , ''                                                       AS BILL_NUM            /* 계산서번호 */
+		                 , ''                                                       AS BILL_DATE           /* 계산서일자 */
+		                 , C.CODE_NAME                                              AS BILL_TYPE
+		                 , SUM(A.AMOUNT_I)                                          AS AMOUNT_I
+		                 , SUM(A.VAT_AMOUNT_O)                                      AS VAT_AMOUNT_O
+		                 , SUM(A.AMOUNT_I + A.VAT_AMOUNT_O)                         AS TOTAL 
+		                 , ''                                                       AS CHANGE_BASIS_DATE   /* 매입전표일자 */
+		                 , ''                                                       AS EX_DATE             /* 결의전표일자 */
+		                 , 0                                                        AS EX_NUM
+		                 , ''                                                       AS AC_DATE             --20210524 추가: 회계전표일자
+		                 , 0                                                        AS AC_NUM              --20210524 추가: 회전전표번호
+		                 , 0                                                        AS ORG_AMT_I           --20210524 추가
+		                 , 0                                                        AS J_AMT_I             --20210524 추가
+		                 , 0                                                        AS BLN_I               --20210524 추가
+		            FROM        MAP100T A WITH (NOLOCK) 
+		            LEFT  JOIN  BCM100T B WITH (NOLOCK)  ON B.COMP_CODE   = A.COMP_CODE
+		                                                AND B.CUSTOM_CODE = A.CUSTOM_CODE
+		            LEFT  JOIN  BSA100T C WITH (NOLOCK)  ON C.COMP_CODE	  = A.COMP_CODE
+		                                                AND C.MAIN_CODE   = N'A022'
+		                                                AND C.SUB_CODE    = A.BILL_TYPE
+		            --20210524 추가 
+		            LEFT  JOIN  AGB300T K WITH (NOLOCK)  ON A.COMP_CODE   = K.COMP_CODE
+		                                                AND A.DIV_CODE    = K.DIV_CODE
+		                                                AND A.AC_DATE     = K.ORG_AC_DATE
+		                                                AND A.AC_NUM      = K.ORG_SLIP_NUM
+		            WHERE   A.COMP_CODE  = @CompCode
+		            /* 선택조건	Start */
+		        <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		              AND   A.DIV_CODE   = #{DIV_CODE}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(BILL_FR_DATE)">
+		              AND   A.BILL_DATE   &gt;= #{BILL_FR_DATE}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(BILL_TO_DATE)">
+		              AND   A.BILL_DATE   &lt;= #{BILL_TO_DATE}
+		        </if>
+				<!--2021.08 표준화 작업 Start-->
+				/* 거래처코드		*/
+				<if test="@foren.Ognl@isNotEmpty(CUST_CODE) and @foren.Ognl@isNotEmpty(CUST_NAME)">
+					AND A.CUSTOM_CODE = #{CUST_CODE}
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(CUST_CODE) and @foren.Ognl@isEmpty(CUST_NAME)">
+					AND A.CUSTOM_CODE LIKE #{CUST_CODE} + '%'
+				</if>
+				<if test="@foren.Ognl@isEmpty(CUST_CODE) and @foren.Ognl@isNotEmpty(CUST_NAME)">
+					AND		(@RefItem       = N'0' AND B.CUSTOM_NAME  LIKE N'%' + #{CUST_NAME} + N'%')
+						OR	(@RefItem       = N'1' AND B.CUSTOM_NAME1 LIKE N'%' + #{CUST_NAME} + N'%')
+						OR	(@RefItem       = N'2' AND B.CUSTOM_NAME2 LIKE N'%' + #{CUST_NAME} + N'%')
+				</if>
+				<!--2021.08 표준화 작업 End-->
+		        <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+		              AND   B.AGENT_TYPE  = #{AGENT_TYPE}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(BILL_TYPE)">
+		              AND   A.BILL_TYPE   = #{BILL_TYPE}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(EX_FR_DATE)">
+		              AND   ISNULL(A.EX_DATE,'') &gt;= #{EX_FR_DATE}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(EX_TO_DATE)">
+		              AND   ISNULL(A.EX_DATE,'') &lt;= #{EX_TO_DATE}
+		        </if>
+		        /* 자동기표여부 - 전체 :조건없음*/
+		        /* 자동기표여부 - 기표 : Y */
+		        <if test="rdoSelect == &quot;Y&quot;">
+		              AND   ISNULL(A.EX_DATE,'') != #{EX_FR_DATE} 
+		        </if>
+		        /* 자동기표여부 - 미기표 : N */
+		        <if test="rdoSelect == &quot;N&quot;">
+		              AND   ISNULL(A.EX_DATE,'') = #{EX_TO_DATE} 
+		        </if>
+<!-- 20210524 추가: 지급여부 조회조건 추가 -->
+		        <if test="PROV_YN == &quot;N&quot;">
+		              AND   ISNULL(K.BLN_I, 0) &gt; 0
+		        </if>
+		        <if test="PROV_YN == &quot;Y&quot;">
+		              AND   ISNULL(K.BLN_I, 0) &lt;= 0
+		        </if>
+		        /* 선택조건 End	*/
+		        GROUP BY A.CUSTOM_CODE, A.BILL_TYPE, C.CODE_NAME, B.COMPANY_NUM
+		        ORDER BY A.CUSTOM_CODE, A.BILL_TYPE
+		    END
+		    SET ARITHABORT OFF
+		    SET NOCOUNT OFF
+		END
+	</select>
+</mapper>

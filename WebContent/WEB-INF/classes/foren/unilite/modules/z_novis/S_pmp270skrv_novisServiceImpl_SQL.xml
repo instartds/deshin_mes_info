@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_pmp270skrv_novisServiceImpl">
+
+	<select id="s_pmp270skrv_novisServiceImpl.selectList" parameterType="Map" resultType="rMap">
+   --pmp170skrv.Cpmp170skrv [fnPmp170QStd] QUERY01
+    BEGIN
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+
+        DECLARE             @COMP_CODE              NVARCHAR(08)             --(필수) 법인코드
+                          , @DIV_CODE               NVARCHAR(08)             --(필수) 사업장
+                          , @WORK_SHOP_CODE         NVARCHAR(10)             --(필수) 작업장
+                          , @USER_ID                NVARCHAR(100)             --(필수) 사용자 ID
+
+        SET @COMP_CODE      = #{S_COMP_CODE}
+        SET @DIV_CODE       = #{DIV_CODE}
+        SET @WORK_SHOP_CODE = #{WORK_SHOP_CODE}
+
+        SET @USER_ID        = #{S_USER_ID}
+
+
+    -- 명칭 조회 유형 설정 ------------------------------------------------------------------------------------
+        DECLARE @RefItem            NVARCHAR(01)
+
+        SELECT TOP 1 @RefItem = REF_ITEM
+        FROM   BSA300T WITH (NOLOCK)
+        WHERE  USER_ID = @USER_ID
+
+        SET @RefItem = ISNULL(@RefItem, '0')
+
+    -- 날짜 포맷 유형 설정 ------------------------------------------------------------------------------------
+        DECLARE @DateFormat             NVARCHAR(10)
+
+        SELECT TOP 1 @DateFormat = CODE_NAME
+        FROM   BSA100T WITH (NOLOCK)
+        WHERE  COMP_CODE = @COMP_CODE
+        AND    MAIN_CODE = 'B044'
+        AND    REF_CODE1 = 'Y'
+
+        SET @DateFormat = ISNULL(@DateFormat, 'YYYY-MM-DD')
+    -------------------------------------------------------------------------------------------------------------
+
+        SELECT
+                A.WKORD_NUM                                              AS WKORD_NUM      -- 작업지시번호
+              , A.ITEM_CODE                                              AS ITEM_CODE      -- 품목코드
+              , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                     WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                     WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                     ELSE C1.ITEM_NAME
+                END                                                      AS ITEM_NAME      -- 품목명
+
+              , C1.SPEC                                                  AS SPEC           -- 규격
+              , C1.STOCK_UNIT                                            AS STOCK_UNIT     -- 단위
+			  , CASE WHEN A.WORK_END_YN != 'Y'
+                     THEN CASE WHEN D.CONTROL_STATUS = '9' THEN '9'
+                               ELSE '3'
+                          END
+                     ELSE '8'
+                END                                                      AS WORK_END_YN    -- 상태
+
+			  , A.LOT_NO	-- LOT
+
+              , ISNULL(A.WKORD_Q, 0.0)                                   AS WKORD_Q        -- 작업지시량
+              , ISNULL(A.PRODT_Q, 0.0)                                   AS PRODT_Q        -- 생산량
+			  , ISNULL(A.WKORD_Q, 0.0) - ISNULL(A.PRODT_Q, 0.0)			 AS JAN_PRODT_Q    -- 잔량
+              , 1                                                        AS BOX_QTY        -- 용기수량
+			  , D1.PROG_WORK_NAME                                                          -- 공정명
+              , CONVERT(date,GETDATE())                                  AS WORK_DATE      -- 작업일
+        FROM                PMP100T A  WITH (NOLOCK)
+                LEFT  JOIN  BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE      = A.COMP_CODE
+                                                    AND C1.ITEM_CODE      = A.ITEM_CODE
+				LEFT  JOIN  BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE      = A.COMP_CODE
+                                                    AND C2.DIV_CODE       = A.DIV_CODE
+                                                    AND C2.ITEM_CODE      = A.ITEM_CODE
+        	    LEFT  JOIN (
+        							SELECT COMP_CODE,DIV_CODE, PROG_WORK_CODE, WKORD_NUM, SUM(WORK_Q) AS WORK_Q, SUM(PASS_Q) AS PASS_Q, SUM(GOOD_WORK_Q) AS GOOD_WORK_Q, SUM(BAD_WORK_Q) AS BAD_WORK_Q
+        									, MAX(CONTROL_STATUS) AS CONTROL_STATUS
+        							FROM PMR100T
+        							GROUP BY COMP_CODE,DIV_CODE, PROG_WORK_CODE, WKORD_NUM
+                 			) D ON				D.COMP_CODE      = A.COMP_CODE
+                                            AND D.DIV_CODE       = A.DIV_CODE
+                                            AND D.WKORD_NUM      = A.WKORD_NUM
+                                            AND D.PROG_WORK_CODE = A.PROG_WORK_CODE
+                LEFT  JOIN  PBS200T D1 WITH (NOLOCK) ON D1.COMP_CODE      = A.COMP_CODE
+                                                    AND D1.DIV_CODE       = A.DIV_CODE
+                                                    AND D1.WORK_SHOP_CODE = A.WORK_SHOP_CODE
+                                                    AND D1.PROG_WORK_CODE = A.PROG_WORK_CODE
+
+        WHERE   A.COMP_CODE         = @COMP_CODE
+        AND     A.DIV_CODE          = @DIV_CODE
+        AND     A.WORK_SHOP_CODE    = @WORK_SHOP_CODE
+		AND     A.LINE_END_YN		= 'Y'
+         <if test="@foren.Ognl@isNotEmpty(PRODT_START_DATE_FR)">
+			AND A.PRODT_START_DATE &gt;= #{PRODT_START_DATE_FR}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(PRODT_START_DATE_TO)">
+			AND A.PRODT_START_DATE &lt;= #{PRODT_START_DATE_TO}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(WORK_END_YN)">
+			AND     A.WORK_END_YN    LIKE #{WORK_END_YN}+'%'
+			<if test="WORK_END_YN == &quot;N&quot;">
+				<if test="CONTROL_STATUS != '9'">
+					AND     ISNULL(D.CONTROL_STATUS, '3') != '9'
+				</if>
+				<if test="CONTROL_STATUS == '9'">
+					AND     ISNULL(D.CONTROL_STATUS, '3') LIKE #{CONTROL_STATUS}+'%'
+				</if>
+			</if>
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(WKORD_NUM_FR)">
+			AND      A.WKORD_NUM       &gt;= #{WKORD_NUM_FR}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(WKORD_NUM_TO)">
+			AND     A.WKORD_NUM        &lt;= #{WKORD_NUM_TO}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+			AND     A.ITEM_CODE        LIKE  #{ITEM_CODE}+'%'
+		</if>
+        <if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+            AND     C2.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+        </if>
+
+        ORDER BY A.WKORD_NUM, A.ITEM_CODE, A.PRODT_START_DATE
+
+        SET NOCOUNT OFF
+        SET ARITHABORT OFF
+    END
+
+	</select>
+
+	<!-- 출력조회 -->
+	<select id="s_pmp270skrv_novisServiceImpl.printList" parameterType="Map" resultType="rMap">
+	CREATE TABLE #TEMP_TABLE
+	(
+	      WKORD_NUM          NVARCHAR(100)  NOT NULL  -- 제조번호
+	    , PROG_WORK_NAME     NVARCHAR(100)  NULL      -- 공정명
+	    , BOX_QTY            NUMERIC(30) 	NOT NULL  -- 용기수량 
+	    , BOX_SEQ            NUMERIC(30) 	NOT NULL  -- 용기번호
+	    , WHOLE_WEIGHT       NUMERIC(30, 6) NULL      -- 전체무게
+	    , BOX_WEIGHT         NUMERIC(30, 6) NULL      -- 용기무게
+	    , REAL_WEIGHT        NUMERIC(30, 6) NULL      -- 실제무게
+	    , WORK_DATE          NVARCHAR(08)   NULL      -- 작업일자
+	    , REMARK             NVARCHAR(1000) NULL      -- 비고
+	)
+	
+	DECLARE
+	
+	@I INT,
+	@MAXNO INT
+	<foreach collection="WKORD_DATA" item="item" separator="" close="" open="">
+	
+	SET @I = 1
+	SET @MAXNO = ${item.BOX_QTY}
+	
+	WHILE @I &lt;= @MAXNO
+		BEGIN
+	
+		INSERT INTO #TEMP_TABLE (
+			   WKORD_NUM       -- 제조번호
+		     , PROG_WORK_NAME  -- 공정명
+		     , BOX_QTY         -- 용기수량 
+		     , BOX_SEQ         -- 용기번호
+		     , WHOLE_WEIGHT    -- 전체무게
+		     , BOX_WEIGHT      -- 용기무게
+		     , REAL_WEIGHT     -- 실제무게
+		     , WORK_DATE       -- 작업일자
+		     , REMARK
+		)VALUES(
+		       #{item.WKORD_NUM}      -- 제조번호
+		     , #{item.PROG_WORK_NAME} -- 공정명 
+		     , ${item.BOX_QTY}	      -- 용기수량
+		     , @I                     -- 용기번호
+		     , #{item.WHOLE_WEIGHT}   -- 전체무게
+		     , #{item.BOX_WEIGHT}     -- 용기무게
+		     , #{item.REAL_WEIGHT}    -- 실제무게
+		     , #{item.WORK_DATE}      -- 작업일자
+		     , #{item.REMARK}         -- 비고
+		)
+	
+				SET @I = @I + 1
+		END
+	</foreach>
+	
+	-- 명칭 조회 유형 설정 ------------------------------------------------------------------------------------
+        DECLARE @RefItem            NVARCHAR(01)
+
+        SELECT TOP 1 @RefItem = REF_ITEM
+        FROM   BSA300T WITH (NOLOCK)
+        WHERE  USER_ID = #{S_USER_ID}
+
+        SET @RefItem = ISNULL(@RefItem, '0')
+	
+	
+    SELECT A.WKORD_NUM                                              AS WKORD_NUM      -- 작업지시번호
+         , A.ITEM_CODE                                              AS ITEM_CODE      -- 품목코드
+         , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                ELSE C1.ITEM_NAME
+                 END                                                AS ITEM_NAME      -- 품목명
+
+         , C1.SPEC                                                  AS SPEC           -- 규격
+         , C1.STOCK_UNIT                                            AS STOCK_UNIT     -- 단위
+		 , CASE WHEN A.WORK_END_YN != 'Y'
+                THEN CASE WHEN D.CONTROL_STATUS = '9' THEN '9'
+                          ELSE '3'
+                           END
+                ELSE '8'
+                 END                                                AS WORK_END_YN    -- 상태
+
+		 , A.LOT_NO	-- LOT
+
+         , ISNULL(A.WKORD_Q, 0.0)                                   AS WKORD_Q        -- 작업지시량
+         , ISNULL(A.PRODT_Q, 0.0)                                   AS PRODT_Q        -- 생산량
+		 , ISNULL(A.WKORD_Q, 0.0) - ISNULL(A.PRODT_Q, 0.0)			AS JAN_PRODT_Q    -- 잔량
+		 
+		 
+		 , TP.PROG_WORK_NAME                                                          -- 공정명
+         , TP.BOX_QTY                                                                 -- 용기수량
+         , TP.BOX_SEQ                                                                 -- 용기번호
+         
+         , TP.WHOLE_WEIGHT                                                            -- 전체무게
+         , TP.BOX_WEIGHT                                                              -- 용기무게
+         , TP.REAL_WEIGHT                                                             -- 실제무게
+         , TP.WORK_DATE    	                                                          -- 작업일
+         , TP.REMARK      	                                                          -- 비고
+      FROM                PMP100T A  WITH (NOLOCK)
+              LEFT  JOIN  BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE      = A.COMP_CODE
+                                                  AND C1.ITEM_CODE      = A.ITEM_CODE
+			  LEFT  JOIN  BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE      = A.COMP_CODE
+                                                  AND C2.DIV_CODE       = A.DIV_CODE
+                                                  AND C2.ITEM_CODE      = A.ITEM_CODE
+        	  LEFT  JOIN (SELECT COMP_CODE,DIV_CODE, PROG_WORK_CODE, WKORD_NUM, SUM(WORK_Q) AS WORK_Q, SUM(PASS_Q) AS PASS_Q, SUM(GOOD_WORK_Q) AS GOOD_WORK_Q, SUM(BAD_WORK_Q) AS BAD_WORK_Q
+        					   , MAX(CONTROL_STATUS) AS CONTROL_STATUS
+        					FROM PMR100T
+        				   GROUP BY COMP_CODE,DIV_CODE, PROG_WORK_CODE, WKORD_NUM
+                 		  ) D ON D.COMP_CODE      = A.COMP_CODE
+                             AND D.DIV_CODE       = A.DIV_CODE
+                             AND D.WKORD_NUM      = A.WKORD_NUM
+                             AND D.PROG_WORK_CODE = A.PROG_WORK_CODE
+              LEFT  JOIN  PBS200T D1 WITH (NOLOCK) ON D1.COMP_CODE      = A.COMP_CODE
+                                                  AND D1.DIV_CODE       = A.DIV_CODE
+                                                  AND D1.WORK_SHOP_CODE = A.WORK_SHOP_CODE
+                                                  AND D1.PROG_WORK_CODE = A.PROG_WORK_CODE
+              INNER JOIN #TEMP_TABLE TP ON TP.WKORD_NUM = A.WKORD_NUM
+
+     WHERE A.COMP_CODE         = #{S_COMP_CODE}
+       AND A.DIV_CODE          = #{DIV_CODE}
+       AND A.WORK_SHOP_CODE    = #{WORK_SHOP_CODE}
+	   AND A.LINE_END_YN	   = 'Y'
+
+	DROP TABLE   #TEMP_TABLE
+    </select>
+</mapper>

@@ -1,0 +1,332 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_axt121ukr_kdService">
+
+	<select id="s_axt121ukr_kdService.selectList" parameterType="Map" resultType="rMap">
+		/* 8. 거래처별 월별 미지급명세서 조회(USP_ACCNT_AXT120SKR_fnQuery).SQL */
+		/* s_axt121ukr_kdService.selectList */
+		
+		BEGIN
+			------- 3. 임시테이블 선언(전표거래내역 및 소계,누계 계산용)
+			IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects   WHERE id=object_id('tempdb..#AGJ210T_AXT121UKR'))
+				DROP TABLE #AGJ210T_AXT121UKR
+
+			CREATE TABLE #AGJ210T_AXT121UKR ( COMP_CODE			NVARCHAR(08)
+											, DIV_CODE			NVARCHAR(08)
+											, AC_YYYYMM			NVARCHAR(07)
+											, PAY_YYYYMM		NVARCHAR(07)
+											, CUSTOM_CODE		NVARCHAR(20)
+											, CUSTOM_NAME		NVARCHAR(50)
+											, SET_METH			NVARCHAR(03)
+											, AMT_I				NUMERIC(30, 6)
+											, JAN_AMT_I			NUMERIC(30, 6)
+											, PAY_AMT_I			NUMERIC(30, 6)
+											, REMAIN_AMT_I		NUMERIC(30, 6)
+											, REMARK			NVARCHAR(100)
+											)
+			CREATE INDEX AGJ210T_AXT121UKR_IDX01 ON #AGJ210T_AXT121UKR (COMP_CODE, DIV_CODE, CUSTOM_CODE, AC_YYYYMM, PAY_YYYYMM)
+			
+			INSERT INTO #AGJ210T_AXT121UKR
+			SELECT A.COMP_CODE
+				 , A.DIV_CODE
+				 , unilite.fnGetUserDateComp(#{S_COMP_CODE}, SUBSTRING(A.AC_DATE, 1, 6))	AS AC_YYYYMM
+				 , unilite.fnGetUserDateComp(#{S_COMP_CODE}, D.PAY_YYYYMM)					AS PAY_YYYYMM
+				 , A.CUSTOM_CODE
+				 , C.CUSTOM_NAME
+				 , C.SET_METH
+				 , SUM(A.AMT_I)								AS AMT_I
+				 , 0										AS JAN_AMT_I
+				 , ISNULL(D.PAY_AMT_I, 0)					AS PAY_AMT_I
+				 , SUM(A.AMT_I) - ISNULL(D.PAY_AMT_I, 0)	AS REMAIN_AMT_I
+				 , D.REMARK
+			  FROM AGJ210T A
+					INNER JOIN		ABA400T B
+								 ON A.COMP_CODE		= B.COMP_CODE
+								AND A.ACCNT			= B.ACCNT
+								AND A.DR_CR			= B.JAN_DIVI
+					INNER JOIN		BCM100T C
+								 ON A.COMP_CODE		= C.COMP_CODE
+								AND A.CUSTOM_CODE	= C.CUSTOM_CODE
+					LEFT OUTER JOIN S_ATX120T_KD D
+								 ON A.COMP_CODE		= D.COMP_CODE
+								AND A.DIV_CODE		= D.DIV_CODE
+								AND D.AC_YYYYMM		= SUBSTRING(A.AC_DATE, 1, 6)
+								AND A.CUSTOM_CODE	= D.CUSTOM_CODE
+					INNER JOIN		BSA100T R1
+								 ON A.COMP_CODE		= R1.COMP_CODE
+								AND R1.MAIN_CODE	= 'AX02'
+								AND A.ACCNT			= R1.SUB_CODE
+								AND R1.USE_YN		= 'Y'
+					INNER JOIN		BSA100T R2
+								 ON C.COMP_CODE		= R2.COMP_CODE
+								AND R2.MAIN_CODE	= 'B038'
+								AND C.SET_METH		= R2.SUB_CODE
+								AND R2.USE_YN		= 'Y'
+			 WHERE A.COMP_CODE	= #{S_COMP_CODE}
+			   AND A.DIV_CODE	= #{DIV_CODE}
+			   AND ISNULL(A.MOD_DIVI, '') != 'D'
+			   AND A.AC_DATE BETWEEN #{AC_YYYYMM} + '01' AND #{AC_YYYYMM} + '31'
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_FR)">
+		<![CDATA[
+			   AND A.CUSTOM_CODE >= #{CUSTOM_CODE_FR}
+		]]>
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_TO)">
+		<![CDATA[
+			   AND A.CUSTOM_CODE <= #{CUSTOM_CODE_TO}
+		]]>
+		</if>
+			 GROUP BY A.COMP_CODE
+				 , A.DIV_CODE
+				 , SUBSTRING(A.AC_DATE, 1, 6)
+				 , D.PAY_YYYYMM
+				 , A.CUSTOM_CODE
+				 , C.CUSTOM_NAME
+				 , C.SET_METH
+				 , ISNULL(D.PAY_AMT_I, 0)
+				 , D.REMARK
+				 
+			DECLARE	@CUSTOM_SUM	NUMERIC(30, 6)
+				  , @CUST_CD_BF	NVARCHAR(20)
+			
+			SET @CUSTOM_SUM	= 0
+			UPDATE A
+			   SET JAN_AMT_I	= AMT_I - @CUSTOM_SUM + PAY_AMT_I
+				 , @CUSTOM_SUM	= PAY_AMT_I + CASE WHEN CUSTOM_CODE = @CUST_CD_BF THEN @CUSTOM_SUM ELSE 0 END
+				 , REMAIN_AMT_I	= AMT_I - @CUSTOM_SUM
+				 , @CUST_CD_BF	= CUSTOM_CODE
+			  FROM #AGJ210T_AXT121UKR A WITH (NOLOCK, INDEX(AGJ210T_AXT121UKR_IDX01))
+			
+			SELECT COMP_CODE
+				 , DIV_CODE
+				 , AC_YYYYMM
+				 , PAY_YYYYMM
+				 , CUSTOM_CODE
+				 , CUSTOM_NAME
+				 , SET_METH
+				 , AMT_I
+				 , JAN_AMT_I
+				 , PAY_AMT_I
+				 , REMAIN_AMT_I
+				 , REMARK
+			  FROM #AGJ210T_AXT121UKR
+			 ORDER BY DIV_CODE
+				 , CUSTOM_CODE
+				 , AC_YYYYMM
+				 , PAY_YYYYMM
+		END
+	</select>
+	
+	<select id="s_axt121ukr_kdService.selectList_BAK" parameterType="Map" resultType="rMap">
+		/* 8. 거래처별 월별 미지급명세서 조회(USP_ACCNT_AXT120SKR_fnQuery).SQL */
+		/* axt121ukrService.selectList */
+
+	        DECLARE @COMP_CODE        NVARCHAR(08)            -- 법인코드
+		              , @DIV_CODE         NVARCHAR(08)            -- 사업장
+		              , @CUSTOM_CODE_FR   NVARCHAR(10)            -- 거래처FR
+		              , @CUSTOM_CODE_TO   NVARCHAR(10)            -- 거래처TO
+		              , @AC_YYYYMM        NVARCHAR(6)            -- 전표년월
+					  , @SET_METH        NVARCHAR(5)            -- 결제방법
+
+			        SET @COMP_CODE    = #{S_COMP_CODE}
+			        SET @DIV_CODE     = #{DIV_CODE}
+			        SET @CUSTOM_CODE_FR     = #{CUSTOM_CODE_FR}
+			        SET @CUSTOM_CODE_TO     = #{CUSTOM_CODE_TO}
+			        SET @AC_YYYYMM    			=   #{AC_YYYYMM}            -- 전표년월
+					SET @SET_METH  =  #{SET_METH}           -- 결제방법
+
+			SELECT A.COMP_CODE
+					  ,unilite.fnGetUserDateComp('MASTER',  A.AC_YYYYMM) AS AC_YYYYMM
+					  ,unilite.fnGetUserDateComp('MASTER',  A.PAY_YYYYMM) AS PAY_YYYYMM
+					  ,A.CUSTOM_CODE
+					  ,A.CUSTOM_NAME
+					  ,A.SET_METH
+					  ,A.AMT_I
+					  ,A.PAY_AMT_I
+					  ,A.AMT_I - (A.PAY_AMT_I +
+					  				   ISNULL(LAG(A.PAY_AMT_I, 1, NULL)
+					  				   			OVER (PARTITION BY  A.AC_YYYYMM,A.CUSTOM_CODE
+												   	     ORDER BY  A.COMP_CODE, A.AC_YYYYMM, A.CUSTOM_CODE, A.PAY_YYYYMM
+										   	     )
+				 					   	 ,0)
+								     ) AS REMAIN_AMT_I
+					  ,A.REMARK
+			FROM
+					(SELECT   A.COMP_CODE
+								,LEFT(A.AC_DATE, 6) AS AC_YYYYMM
+								,'' AS PAY_YYYYMM
+								,A.CUSTOM_CODE
+								,MAX(B.CUSTOM_NAME) AS CUSTOM_NAME
+								,MAX(B.SET_METH) AS SET_METH
+								,SUM(A.AMT_I) AS AMT_I
+								,0 AS PAY_AMT_I
+								,'' AS REMARK
+					FROM AGJ210T A INNER JOIN BCM100T B
+					ON A.COMP_CODE = B.COMP_CODE
+					AND A.CUSTOM_CODE = B.CUSTOM_CODE
+					WHERE A.COMP_CODE = @COMP_CODE
+					AND LEFT(A.AC_DATE,6) = @AC_YYYYMM
+					AND A.DR_CR =    '2'
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_FR)">
+					AND A.CUSTOM_CODE >= @CUSTOM_CODE_FR
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_TO)">
+					AND A.CUSTOM_CODE <![CDATA[<=]]> @CUSTOM_CODE_TO
+					</if>
+					<if test="@foren.Ognl@isEmpty(SET_METH)">
+					AND B.SET_METH IN ('100','200','300','400')
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(SET_METH)">
+					AND B.SET_METH = @SET_METH
+					</if>
+					AND A.COMP_CODE +  LEFT(A.AC_DATE,6) + A.CUSTOM_CODE NOT IN (SELECT COMP_CODE + AC_YYYYMM + CUSTOM_CODE
+																				 FROM S_ATX120T_KD
+																				 WHERE COMP_CODE = A.COMP_CODE
+																				 AND   AC_YYYYMM = LEFT(A.AC_DATE,6)
+																				 AND   CUSTOM_CODE = A.CUSTOM_CODE )
+					GROUP BY A.COMP_CODE,LEFT(A.AC_DATE, 6),A.CUSTOM_CODE
+
+					UNION ALL
+
+					SELECT   A.COMP_CODE
+								,A.AC_YYYYMM
+								,A.PAY_YYYYMM
+								,A.CUSTOM_CODE
+								,B.CUSTOM_NAME
+								,B.SET_METH
+								,A.AMT_I
+								,A.PAY_AMT_I
+								,A.REMARK
+					FROM S_ATX120T_KD A INNER JOIN BCM100T B
+					ON A.COMP_CODE = B.COMP_CODE
+					AND A.CUSTOM_CODE = B.CUSTOM_CODE
+					WHERE A.COMP_CODE = @COMP_CODE
+					AND A.AC_YYYYMM = @AC_YYYYMM
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_FR)">
+						AND A.CUSTOM_CODE >= @CUSTOM_CODE_FR
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_TO)">
+						AND A.CUSTOM_CODE <![CDATA[<=]]> @CUSTOM_CODE_TO
+					</if>
+					<if test="@foren.Ognl@isEmpty(SET_METH)">
+						AND B.SET_METH IN ('100','200','300','400')
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(SET_METH)">
+						AND B.SET_METH = @SET_METH
+					</if>
+					) A
+
+			ORDER BY A.COMP_CODE, A.AC_YYYYMM, A.CUSTOM_CODE, A.PAY_YYYYMM
+
+	</select>
+	<select id="s_axt121ukr_kdService.selectAxt120tChK" parameterType="Map" resultType="Int">
+
+			 SELECT COUNT(1)
+			 FROM S_ATX120T_KD
+			 WHERE  COMP_CODE = #{COMP_CODE}
+			 AND 	  AC_YYYYMM = REPLACE(#{AC_YYYYMM},'.','')
+			 AND 	  CUSTOM_CODE = #{CUSTOM_CODE}
+			 AND 	  PAY_YYYYMM = REPLACE(#{PAY_YYYYMM},'.','')
+
+	</select>
+	<select id="s_axt121ukr_kdService.selectFnGetAmt" parameterType="Map" resultType="rMap">
+
+		SELECT A.COMP_CODE
+			 , A.DIV_CODE
+			 , unilite.fnGetUserDateComp(#{S_COMP_CODE}, SUBSTRING(A.AC_DATE, 1, 6))	AS AC_YYYYMM
+			 , unilite.fnGetUserDateComp(#{S_COMP_CODE}, D.PAY_YYYYMM)					AS PAY_YYYYMM
+			 , A.CUSTOM_CODE
+			 , C.CUSTOM_NAME
+			 , C.SET_METH
+			 , SUM(A.AMT_I)								AS AMT_I
+			 , 0										AS PAY_AMT_I
+			 , SUM(A.AMT_I)								AS REMAIN_AMT_I
+			 , D.REMARK
+		  FROM AGJ210T A
+				INNER JOIN		ABA400T B
+							 ON A.COMP_CODE		= B.COMP_CODE
+							AND A.ACCNT			= B.ACCNT
+							AND A.DR_CR			= B.JAN_DIVI
+				INNER JOIN		BCM100T C
+							 ON A.COMP_CODE		= C.COMP_CODE
+							AND A.CUSTOM_CODE	= C.CUSTOM_CODE
+				LEFT OUTER JOIN S_ATX120T_KD D
+							 ON A.COMP_CODE		= D.COMP_CODE
+							AND A.DIV_CODE		= D.DIV_CODE
+							AND D.AC_YYYYMM		= SUBSTRING(A.AC_DATE, 1, 6)
+							AND A.CUSTOM_CODE	= D.CUSTOM_CODE
+				INNER JOIN		BSA100T R1
+							 ON A.COMP_CODE		= R1.COMP_CODE
+							AND R1.MAIN_CODE	= 'AX02'
+							AND A.ACCNT			= R1.SUB_CODE
+							AND R1.USE_YN		= 'Y'
+				INNER JOIN		BSA100T R2
+							 ON C.COMP_CODE		= R2.COMP_CODE
+							AND R2.MAIN_CODE	= 'B038'
+							AND C.SET_METH		= R2.SUB_CODE
+							AND R2.USE_YN		= 'Y'
+		 WHERE A.COMP_CODE				  = #{S_COMP_CODE}
+		   AND A.DIV_CODE				  = #{DIV_CODE}
+		   AND ISNULL(A.MOD_DIVI, '')	 != 'D'
+		   AND A.AC_DATE			BETWEEN #{AC_YYYYMM} + '01' AND #{AC_YYYYMM} + '31'
+		   AND A.CUSTOM_CODE			  = #{CUSTOM_CODE}
+		 GROUP BY A.COMP_CODE
+			 , A.DIV_CODE
+			 , SUBSTRING(A.AC_DATE, 1, 6)
+			 , D.PAY_YYYYMM
+			 , A.CUSTOM_CODE
+			 , C.CUSTOM_NAME
+			 , C.SET_METH
+			 , D.REMARK
+	</select>
+	<insert id="s_axt121ukr_kdService.insertDetail" parameterType="Map">
+		IF EXISTS (	SELECT COMP_CODE
+					  FROM S_ATX120T_KD
+					 WHERE COMP_CODE	= #{COMP_CODE}
+					   AND DIV_CODE		= #{DIV_CODE}
+					   AND AC_YYYYMM	= REPLACE(#{AC_YYYYMM},'.','')
+					   AND CUSTOM_CODE	= #{CUSTOM_CODE}
+					   AND PAY_YYYYMM	= REPLACE(#{PAY_YYYYMM},'.','')	)
+		BEGIN
+			UPDATE S_ATX120T_KD
+			   SET PAY_AMT_I	= #{PAY_AMT_I}
+				 , REMARK		= #{REMARK}
+			 WHERE COMP_CODE	= #{COMP_CODE}
+			   AND DIV_CODE		= #{DIV_CODE}
+			   AND AC_YYYYMM	= REPLACE(#{AC_YYYYMM}, '.', '')
+			   AND CUSTOM_CODE	= #{CUSTOM_CODE}
+			   AND PAY_YYYYMM	= REPLACE(#{PAY_YYYYMM}, '.', '')
+		END
+		ELSE
+		BEGIN
+			INSERT INTO S_ATX120T_KD
+				 ( COMP_CODE		, DIV_CODE			, AC_YYYYMM			, PAY_YYYYMM
+				 , CUSTOM_CODE		, AMT_I				, PAY_AMT_I			, REMARK
+				 , INSERT_DB_USER	, INSERT_DB_TIME	, UPDATE_DB_USER	, UPDATE_DB_TIME )
+			VALUES
+				 ( #{COMP_CODE}		, #{DIV_CODE}		, REPLACE(#{AC_YYYYMM}, '.', '')	, REPLACE(#{PAY_YYYYMM}, '.', '')
+				 , #{CUSTOM_CODE}	, #{AMT_I}			, #{PAY_AMT_I}		, #{REMARK}
+				 , #{S_USER_ID}		, GETDATE()			, #{S_USER_ID}		, GETDATE() )
+		END
+	</insert>
+
+	<update id="s_axt121ukr_kdService.updateDetail" parameterType="Map" >
+		UPDATE S_ATX120T_KD
+		   SET PAY_AMT_I	= #{PAY_AMT_I}
+			 , REMARK		= #{REMARK}
+		 WHERE COMP_CODE	= #{COMP_CODE}
+		   AND DIV_CODE		= #{DIV_CODE}
+		   AND AC_YYYYMM	= REPLACE(#{AC_YYYYMM}, '.', '')
+		   AND CUSTOM_CODE	= #{CUSTOM_CODE}
+		   AND PAY_YYYYMM	= REPLACE(#{PAY_YYYYMM}, '.', '')
+	</update>
+
+	<delete id="s_axt121ukr_kdService.deleteDetail" parameterType="Map" >
+		DELETE S_ATX120T_KD
+		 WHERE COMP_CODE	= #{COMP_CODE}
+		   AND DIV_CODE		= #{DIV_CODE}
+		   AND AC_YYYYMM	= REPLACE(#{AC_YYYYMM}, '.', '')
+		   AND CUSTOM_CODE	= #{CUSTOM_CODE}
+		   AND PAY_YYYYMM	= REPLACE(#{PAY_YYYYMM}, '.', '')
+	</delete>
+</mapper>

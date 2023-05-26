@@ -1,0 +1,443 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="bpr305rkrvServiceImpl">
+
+	<select id="bpr305rkrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* bpr305rkrvServiceImpl.selectList */
+		           BEGIN
+				SET NOCOUNT ON
+				SET ARITHABORT ON
+
+				DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+					  , @UserId      NVARCHAR(100) /* 사용자ID    */
+					  , @LangType    NVARCHAR(2)  /* 언어구분    */
+					  , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+					  , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+
+		    SET @CompCode = #{S_COMP_CODE}
+		    SET @UserId   = #{S_USER_ID}
+		    SET @LangType = #{S_LANG_CODE}
+
+				/* 명칭 참조 유형 */
+				SELECT TOP 1 @RefItem = REF_ITEM
+				  FROM BSA300T WITH (NOLOCK)
+				 WHERE USER_ID = @UserId
+
+				SET @RefItem = ISNULL(@RefItem, N'0')
+
+				/* 날짜 포맷 유형 설정 */
+				SELECT TOP 1 @DateFormat = CODE_NAME
+				  FROM BSA100T WITH (NOLOCK)
+				 WHERE COMP_CODE = @CompCode
+				   AND MAIN_CODE = N'B044'
+				   AND REF_CODE1 = N'Y'
+
+				SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+				/* 데이터 조회 */
+				SELECT TOP 1 @RefItem = REF_ITEM
+                 FROM   BSA300T WITH (NOLOCK)
+                 WHERE  USER_ID = #{S_USER_ID}
+
+                 SET @RefItem = ISNULL(@RefItem, '0')
+
+
+                 DECLARE         @LotYN               NVARCHAR(01)
+
+                 SELECT TOP 1 @LotYN = REF_CODE1
+                 FROM   BSA100T WITH (NOLOCK)
+                 WHERE  COMP_CODE = @CompCode
+                 AND    MAIN_CODE = 'B084'                                   /* 재고합산 유형 */
+                 AND    SUB_CODE  = 'C'                                      /* Lot No. 합산 */
+
+                 SET @LotYN = ISNULL(@LotYN, 'N')
+
+
+                 IF @LotYN = 'N'
+                 BEGIN
+                     SELECT
+                            A.LOT_NO                                                                                       AS LOT_NO
+
+                          , D1.TREE_NAME                                                                                AS WH_NAME
+                          , A.ITEM_CODE                                                                                    AS ITEM_CODE
+                          , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                                 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                                 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                                 ELSE C1.ITEM_NAME
+                            END                                                                                            AS ITEM_NAME
+                          , ISNULL(C1.SPEC, '')                                                                            AS SPEC
+                          , C2.ITEM_ACCOUNT																				AS ITEM_ACCOUNT
+                          , ISNULL(C1.STOCK_UNIT, '')                                                                      AS STOCK_UNIT
+                          , SUM(ISNULL(A.IN_Q, 0) - ISNULL(A.OUT_Q, 0) + ISNULL(A.RTN_Q, 0))                               AS STOCK
+                          , SUM(CASE WHEN A.ITEM_STATUS = '1' THEN ISNULL(A.IN_Q, 0) - ISNULL(A.OUT_Q, 0) + ISNULL(A.RTN_Q, 0)
+                                     ELSE 0 END)                                                                           AS GOOD_STOCK
+                          , SUM(CASE WHEN A.ITEM_STATUS = '2' THEN ISNULL(A.IN_Q, 0) - ISNULL(A.OUT_Q, 0) + ISNULL(A.RTN_Q, 0)
+                                     ELSE 0 END)                                                                           AS BAD_STOCK
+                          --, A.REMARK
+                          , A.DIV_CODE                                                                                     AS DIV_CODE
+                          , A.WH_CODE                                                                                      AS WH_CODE
+						  , SUM(C2.PACK_QTY)   	AS      PACK_QTY
+
+                          ,CASE WHEN ISNULL(SUM(C2.PACK_QTY),0) = 0 THEN 0
+						        ELSE CEILING(SUM(ISNULL(A.IN_Q, 0) - ISNULL(A.OUT_Q, 0) + ISNULL(A.RTN_Q, 0)) / SUM(C2.PACK_QTY)) END   AS LABEL_QTY
+
+                          ,	CASE WHEN LEN(A.LOT_NO) = 12 THEN '20' + SUBSTRING(A.LOT_NO,2,6)
+								ELSE '' END AS DATE
+      					--  , CASE WHEN LEN(A.LOT_NO) = 12 THEN CONVERT(NVARCHAR, DATEADD(MM, 6, CONVERT(datetime,'20' +  SUBSTRING(A.LOT_NO,2,6))), 112)
+						--		ELSE '' END AS END_DATE -- 라벨출력시 사용
+						  , ''  AS END_DATE
+						  , 'N' AS EDIT_YN1
+						  , 'N' AS EDIT_YN2
+                     FROM              BTR100T  A  WITH (NOLOCK, INDEX(BTR100T_IDX07))
+                            INNER  JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE                                             /* 품목 */
+                                                                AND C1.ITEM_CODE  = A.ITEM_CODE
+                                                                AND ISNULL(C1.STOCK_CARE_YN,'N') = 'Y'                                      /* 2015.10.02 추가 */
+                            INNER  JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE                                             /* 사업장 품목 */
+                                                                AND C2.DIV_CODE   = A.DIV_CODE
+                                                                AND C2.ITEM_CODE  = A.ITEM_CODE
+                            LEFT  JOIN BSA220T  D1 WITH (NOLOCK) ON D1.COMP_CODE  = A.COMP_CODE                                             /* 창고 */
+                                                                AND D1.TYPE_LEVEL = A.DIV_CODE
+                                                                AND D1.TREE_CODE  = A.WH_CODE
+                     WHERE  A.COMP_CODE      = @CompCode
+                     <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                     AND    A.DIV_CODE       = #{DIV_CODE}
+                     </if>
+                     <if test="@foren.Ognl@isNotEmpty(LOT_NO)">
+                     AND    A.LOT_NO       = #{LOT_NO}
+				     </if>
+                     <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+                     AND    A.WH_CODE        = #{WH_CODE}             /* 창고 */
+                     </if>
+                     <if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+                     AND    C2.ITEM_ACCOUNT  = #{ITEM_ACCOUNT}        /* 계정 */
+                     </if>
+                     <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+                     AND    A.ITEM_CODE   LIKE #{ITEM_CODE} + '%'     /* 품목 */
+                     </if>
+                     <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+                     AND    CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                                 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                                 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                                 ELSE C1.ITEM_NAME
+                            END             LIKE #{ITEM_NAME} + '%'     /* 품목 명*/
+                     </if>
+
+                     GROUP BY A.COMP_CODE, A.DIV_CODE
+                            , A.ITEM_CODE
+                            , C1.ITEM_NAME, C1.ITEM_NAME1, C1.ITEM_NAME2, C1.SPEC, C1.STOCK_UNIT, C2.ITEM_ACCOUNT
+                            , A.LOT_NO, A.WH_CODE,  D1.TREE_NAME--, A.REMARK
+                     HAVING SUM(ISNULL(A.IN_Q, 0) - ISNULL(A.OUT_Q, 0) + ISNULL(A.RTN_Q, 0)) != 0
+                     ORDER BY A.LOT_NO, A.ITEM_CODE
+                 END
+
+                 IF @LotYN = 'Y'
+                 BEGIN
+                     SELECT
+                            A.LOT_NO                                                                                       AS LOT_NO
+                          , D1.TREE_NAME                                                                              	   AS WH_NAME
+                          , A.ITEM_CODE                                                                                    AS ITEM_CODE
+                          , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                                 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                                 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                                 ELSE C1.ITEM_NAME
+                            END                                                                                            AS ITEM_NAME
+                          , ISNULL(C1.SPEC, '')                                                                            AS SPEC
+                          , C2.ITEM_ACCOUNT																				   AS ITEM_ACCOUNT
+                          , ISNULL(C1.STOCK_UNIT, '')                                                                      AS STOCK_UNIT
+                          , SUM(A.STOCK_Q)																				   AS STOCK
+                          , SUM(A.GOOD_STOCK_Q)																			   AS GOOD_STOCK
+                          , SUM(A.BAD_STOCK_Q)																			   AS BAD_STOCK
+                          , A.DIV_CODE                                                                                     AS DIV_CODE
+                          , A.WH_CODE                                                                                      AS WH_CODE
+                          , CASE WHEN SUM(C2.PACK_QTY) = 0 OR SUM(C2.PACK_QTY) IS NULL  THEN SUM(A.GOOD_STOCK_Q)
+								 ELSE SUM(C2.PACK_QTY)
+							END AS PACK_QTY
+                          , CASE WHEN
+									  CASE WHEN SUM(C2.PACK_QTY) = 0 OR SUM(C2.PACK_QTY) IS NULL  THEN SUM(A.GOOD_STOCK_Q)
+										   ELSE SUM(C2.PACK_QTY)
+									  END = 0
+                          		 THEN 0
+                          		 ELSE CEILING(SUM(A.STOCK_Q) / CASE WHEN SUM(C2.PACK_QTY) = 0 OR SUM(C2.PACK_QTY) IS NULL THEN SUM(A.GOOD_STOCK_Q)
+																	ELSE SUM(C2.PACK_QTY)
+															   END)
+							END  AS LABEL_QTY
+                          ,	CONVERT(NVARCHAR(8),GETDATE(),112) AS  DATE
+                        --  , CASE WHEN LEN(A.LOT_NO) = 12 THEN CONVERT(NVARCHAR, DATEADD(MM, 6, CONVERT(datetime,'20' + SUBSTRING(A.LOT_NO,2,6))), 112)
+						--			ELSE '' END AS END_DATE -- 라벨출력시 사용
+						  , '' AS END_DATE
+						  , MAX(D2.GOOD_STOCK_Q) AS GOOD_STOCK_Q
+						  , A.WH_CODE + A.ITEM_CODE + A.LOT_NO AS GROUP_KEY
+						  , 'N' AS EDIT_YN1
+						  , 'N' AS EDIT_YN2
+                     FROM  (  SELECT A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE, A.LOT_NO
+	                                ,A.GOOD_STOCK_Q, A.BAD_STOCK_Q, A.STOCK_Q
+	                           FROM BIV150T  A  WITH (NOLOCK)
+
+	                           WHERE A.COMP_CODE = @CompCode
+		                       <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		                     		AND A.DIV_CODE = #{DIV_CODE}
+						       </if>
+			                     AND A.SUM_TYPE  = 'C'
+			                     AND A.STOCK_Q > 0
+
+
+						       UNION ALL
+
+	                           SELECT COMP_CODE, DIV_CODE, WH_CODE, ITEM_CODE, LOT_NO
+	                                  ,(CASE WHEN INOUT_TYPE IN ('1', '3') THEN INOUT_Q ELSE (-1) * INOUT_Q END) AS GOOD_STOCK_Q
+	                                  ,0 AS BAD_STOCK_Q
+	                                  ,(CASE WHEN INOUT_TYPE IN ('1', '3') THEN INOUT_Q ELSE (-1) * INOUT_Q END) AS STOCK_Q
+	                           FROM  BTR100T WITH (NOLOCK)
+	                           WHERE COMP_CODE = @CompCode
+		                       <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		                     		AND DIV_CODE = #{DIV_CODE}
+						       </if>
+							   AND INOUT_DATE &gt;= CONVERT(NVARCHAR(08), GETDATE(), 112)
+						       AND INOUT_DATE &lt;= CONVERT(NVARCHAR(08), DATEADD(D,-1,GETDATE()),112)
+
+                             ) A
+
+                            INNER  JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE                                             /* 품목 */
+                                                                AND C1.ITEM_CODE  = A.ITEM_CODE
+                                                                AND ISNULL(C1.STOCK_CARE_YN,'N') = 'Y'                                      /* 2015.10.02 추가 */
+                            INNER  JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE                                             /* 사업장 품목 */
+                                                                AND C2.DIV_CODE   = A.DIV_CODE
+                                                                AND C2.ITEM_CODE  = A.ITEM_CODE
+                            LEFT  JOIN BSA220T  D1 WITH (NOLOCK) ON D1.COMP_CODE  = A.COMP_CODE                                             /* 창고 */
+                                                                AND D1.TYPE_LEVEL = A.DIV_CODE
+                                                                AND D1.TREE_CODE  = A.WH_CODE
+							LEFT JOIN BIV100T   D2 WITH (NOLOCK) ON D2.COMP_CODE  = A.COMP_CODE
+																AND D2.DIV_CODE   = A.DIV_CODE
+																AND D2.WH_CODE	  = A.WH_CODE
+																AND D2.ITEM_CODE  = A.ITEM_CODE
+                     WHERE  A.COMP_CODE      = @CompCode
+
+                     <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                     AND    A.DIV_CODE       = #{DIV_CODE}
+				     </if>
+                     <if test="@foren.Ognl@isNotEmpty(LOT_NO)">
+                     AND    A.LOT_NO      LIKE #{LOT_NO} + '%'
+				     </if>
+                     <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+                     AND    A.WH_CODE        = #{WH_CODE}                /* 창고 */
+				     </if>
+                     <if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+                     AND    C2.ITEM_ACCOUNT  = #{ITEM_ACCOUNT}           /* 계정 */
+				     </if>
+                     <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+                     AND    A.ITEM_CODE   LIKE #{ITEM_CODE} + '%'        /* 품목 */
+				     </if>
+                     <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+                     AND    CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                                 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                                 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                                 ELSE C1.ITEM_NAME
+                            END             LIKE #{ITEM_NAME} + '%'     /* 품목 명*/
+                     </if>
+
+                     GROUP BY A.COMP_CODE, A.DIV_CODE
+                            , A.ITEM_CODE
+                            , C1.ITEM_NAME, C1.ITEM_NAME1, C1.ITEM_NAME2, C1.SPEC, C1.STOCK_UNIT, C2.ITEM_ACCOUNT
+                            , A.LOT_NO, A.WH_CODE, D1.TREE_NAME
+					 HAVING SUM(A.STOCK_Q) > 0
+
+			     ORDER BY  A.ITEM_CODE, A.LOT_NO
+	          END
+
+		    SET NOCOUNT OFF
+	        SET ARITHABORT OFF
+
+		  END
+	</select>
+
+
+ 	<select id="bpr305rkrvServiceImpl.selectClipPrintList" parameterType="Map" resultType="rMap">
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+
+			DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+				  , @UserId      NVARCHAR(100) /* 사용자ID    */
+				  , @LangType    NVARCHAR(2)  /* 언어구분    */
+				  , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+
+			/* 명칭 참조 유형 */
+				SELECT TOP 1 @RefItem = REF_ITEM
+				  FROM BSA300T WITH (NOLOCK)
+				 WHERE USER_ID = @UserId
+
+				SET @RefItem = ISNULL(@RefItem, N'0')
+
+		    SET @CompCode = #{S_COMP_CODE}
+		    SET @UserId   = #{S_USER_ID}
+		    SET @LangType = #{S_LANG_CODE}
+
+		CREATE TABLE #TEMP_TABLE
+		(
+		        GROUP_KEY           	NVARCHAR(100)     NOT NULL
+		    ,   PACK_QTY             	NUMERIC(30,6) 	  NOT NULL
+		    ,   LABEL_QTY             	NUMERIC(30,6) 	  NOT NULL
+		    ,   EDIT_YN1             	NVARCHAR(2) 	  NOT NULL
+		    ,   EDIT_YN2             	NVARCHAR(2) 	  NOT NULL
+		    ,   CNT             	    NUMERIC(10) 	  NOT NULL
+		)
+
+		DECLARE
+
+		@I INT,
+		@MAXNO INT
+		<foreach collection="GROUP_KEYS" item="item" separator="" close="" open="">
+
+		SET @I = 1
+		SET @MAXNO = ${item.LABEL_QTY}
+
+		WHILE @I &lt;= @MAXNO
+			BEGIN
+
+						INSERT INTO #TEMP_TABLE (
+							GROUP_KEY
+							,PACK_QTY
+							,LABEL_QTY
+							,EDIT_YN1
+							,EDIT_YN2
+							,CNT
+						)VALUES(
+							'${item.GROUP_KEY}'
+							,${item.PACK_QTY}
+							,${item.LABEL_QTY}
+							,'${item.EDIT_YN1}'
+							,'${item.EDIT_YN2}'
+							,@I
+						)
+
+					SET @I = @I + 1
+			END
+
+		</foreach>
+		SELECT  AA.LOT_NO
+			   ,AA.WH_NAME
+			   ,AA.ITEM_CODE
+			   ,AA.ITEM_NAME
+			   ,AA.SPEC
+			   ,AA.ITEM_ACCOUNT
+			   ,AA.STOCK_UNIT
+			   ,AA.STOCK
+			   ,AA.GOOD_STOCK
+			   ,AA.BAD_STOCK
+			   ,AA.DIV_CODE
+			   ,AA.WH_CODE
+			   ,AA.PACK_QTY
+			   ,AA.LABEL_QTY
+			   ,AA.DATE
+			   ,AA.GOOD_STOCK_Q
+			   ,AA.GROUP_KEY
+			   ,AA.PRINT_DATE
+			   ,CASE WHEN AA.STOCK % E.PACK_QTY = 0 OR (E.EDIT_YN1 = 'Y' AND E.EDIT_YN2 = 'Y') THEN E.PACK_QTY
+				     ELSE CASE WHEN E.CNT = E.LABEL_QTY THEN AA.STOCK % E.PACK_QTY
+							   ELSE E.PACK_QTY
+						  END
+				END		REAL_PRINT_QTY
+
+		FROM(  SELECT       A.LOT_NO                                                                                       AS LOT_NO
+                          , D1.TREE_NAME                                                                              		AS WH_NAME
+                          , A.ITEM_CODE                                                                                    AS ITEM_CODE
+                          , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                                 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                                 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                                 ELSE C1.ITEM_NAME
+                            END                                                                                            AS ITEM_NAME
+                          , ISNULL(C1.SPEC, '')                                                                            AS SPEC
+                          , C2.ITEM_ACCOUNT																				AS ITEM_ACCOUNT
+                          , ISNULL(C1.STOCK_UNIT, '')                                                                      AS STOCK_UNIT
+                          , SUM(A.STOCK_Q)																				   AS STOCK
+                          , SUM(A.GOOD_STOCK_Q)																			   AS GOOD_STOCK
+                          , SUM(A.BAD_STOCK_Q)																			   AS BAD_STOCK
+                          , A.DIV_CODE                                                                                     AS DIV_CODE
+                          , A.WH_CODE                                                                                      AS WH_CODE
+                          , CASE WHEN SUM(C2.PACK_QTY) = 0 OR SUM(C2.PACK_QTY) IS NULL  THEN SUM(A.GOOD_STOCK_Q)
+								 ELSE SUM(C2.PACK_QTY)
+							END AS PACK_QTY
+                          , CASE WHEN
+									  CASE WHEN SUM(C2.PACK_QTY) = 0 OR SUM(C2.PACK_QTY) IS NULL  THEN SUM(A.GOOD_STOCK_Q)
+										   ELSE SUM(C2.PACK_QTY)
+									  END = 0
+                          		 THEN 0
+                          		 ELSE CEILING(SUM(A.STOCK_Q) / CASE WHEN SUM(C2.PACK_QTY) = 0 OR SUM(C2.PACK_QTY) IS NULL  THEN SUM(A.GOOD_STOCK_Q)
+																	ELSE SUM(C2.PACK_QTY)
+															   END)
+							END  AS LABEL_QTY
+                          ,	CONVERT(NVARCHAR(8),GETDATE(),112) AS  DATE
+						  , MAX(D2.GOOD_STOCK_Q) AS GOOD_STOCK_Q
+						  , A.WH_CODE + A.ITEM_CODE + A.LOT_NO AS GROUP_KEY
+						  , GETDATE() AS PRINT_DATE
+
+                     FROM  (  SELECT A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE, A.LOT_NO
+	                                ,A.GOOD_STOCK_Q, A.BAD_STOCK_Q, A.STOCK_Q
+	                           FROM BIV150T  A  WITH (NOLOCK)
+
+	                           WHERE A.COMP_CODE = @CompCode
+		                       <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		                     		AND A.DIV_CODE = #{DIV_CODE}
+						       </if>
+			                     AND A.SUM_TYPE  = 'C'
+			                     AND A.STOCK_Q > 0
+
+
+						       UNION ALL
+
+	                           SELECT COMP_CODE, DIV_CODE, WH_CODE, ITEM_CODE, LOT_NO
+	                                  ,(CASE WHEN INOUT_TYPE IN ('1', '3') THEN INOUT_Q ELSE (-1) * INOUT_Q END) AS GOOD_STOCK_Q
+	                                  ,0 AS BAD_STOCK_Q
+	                                  ,(CASE WHEN INOUT_TYPE IN ('1', '3') THEN INOUT_Q ELSE (-1) * INOUT_Q END) AS STOCK_Q
+	                           FROM  BTR100T WITH (NOLOCK)
+	                           WHERE COMP_CODE = @CompCode
+		                       <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		                     		AND DIV_CODE = #{DIV_CODE}
+						       </if>
+							   AND INOUT_DATE &gt;= CONVERT(NVARCHAR(08), GETDATE(), 112)
+						       AND INOUT_DATE &lt;= CONVERT(NVARCHAR(08), DATEADD(D,-1,GETDATE()),112)
+
+                             ) A
+
+                            INNER  JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE                                             /* 품목 */
+                                                                AND C1.ITEM_CODE  = A.ITEM_CODE
+                                                                AND ISNULL(C1.STOCK_CARE_YN,'N') = 'Y'                                      /* 2015.10.02 추가 */
+                            INNER  JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE                                             /* 사업장 품목 */
+                                                                AND C2.DIV_CODE   = A.DIV_CODE
+                                                                AND C2.ITEM_CODE  = A.ITEM_CODE
+                            LEFT  JOIN BSA220T  D1 WITH (NOLOCK) ON D1.COMP_CODE  = A.COMP_CODE                                             /* 창고 */
+                                                                AND D1.TYPE_LEVEL = A.DIV_CODE
+                                                                AND D1.TREE_CODE  = A.WH_CODE
+							LEFT JOIN BIV100T   D2 WITH (NOLOCK) ON D2.COMP_CODE  = A.COMP_CODE
+																AND D2.DIV_CODE   = A.DIV_CODE
+																AND D2.WH_CODE	  = A.WH_CODE
+																AND D2.ITEM_CODE  = A.ITEM_CODE
+
+                     WHERE  A.COMP_CODE      = @CompCode
+
+                     <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                     AND    A.DIV_CODE       = #{DIV_CODE}
+				     </if>
+
+                     <if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+                     AND    C2.ITEM_ACCOUNT  = #{ITEM_ACCOUNT}           /* 계정 */
+				     </if>
+
+
+                     GROUP BY A.COMP_CODE, A.DIV_CODE
+                            , A.ITEM_CODE
+                            , C1.ITEM_NAME, C1.ITEM_NAME1, C1.ITEM_NAME2, C1.SPEC, C1.STOCK_UNIT, C2.ITEM_ACCOUNT
+                            , A.LOT_NO, A.WH_CODE, D1.TREE_NAME
+
+				) AA INNER JOIN #TEMP_TABLE E WITH (NOLOCK) ON  AA.GROUP_KEY = E.GROUP_KEY
+
+			    ORDER BY  AA.GROUP_KEY, E.CNT
+
+				DROP TABLE   #TEMP_TABLE
+			SET NOCOUNT OFF
+	        SET ARITHABORT OFF
+	  END
+    </select>
+
+
+</mapper>

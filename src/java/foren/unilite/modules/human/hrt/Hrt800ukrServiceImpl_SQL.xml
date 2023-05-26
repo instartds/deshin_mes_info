@@ -1,0 +1,467 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="hrt800ukrServiceImpl">
+	
+	<select id="hrt800ukrServiceImpl.getCompanyNum" parameterType="Map" resultType="String">
+	SELECT REPLACE(COMPANY_NUM, '-', '')	AS COMPANY_NUM
+	  FROM BOR120T WITH (NOLOCK) 
+	 WHERE COMP_CODE	= #{S_COMP_CODE}
+	   AND DIV_CODE		= #{DIV_CODE}
+	</select>
+	<select id="hrt800ukrServiceImpl.selectList2020" parameterType="Map" resultType="rMap">
+		DECLARE	  @COMP_CODE		NVARCHAR(08)	-- 법인코드
+				, @YEAR_YYYY		NVARCHAR(04)	-- 정산년도
+				, @DIV_CODE			NVARCHAR(08)	-- 신고사업장
+				, @SUBMIT_DATE		NVARCHAR(08)	-- 제출년월일
+				, @TAX_AGENT_NO		NVARCHAR(06)	-- 관리번호
+				, @HOME_TAX_ID		NVARCHAR(20)	-- 홈택스ID
+				, @USER_ID			NVARCHAR(100)	-- 로그인 사용자ID
+				, @ERROR_DESC		NVARCHAR(2000)	-- 오류메세지
+		
+		BEGIN
+			SET @COMP_CODE		= #{S_COMP_CODE}
+			SET @YEAR_YYYY		= #{CAL_YEAR}
+			SET @DIV_CODE		= #{DIV_CODE}
+			SET @SUBMIT_DATE	= #{SUBMIT_DATE}
+			SET @TAX_AGENT_NO	= #{TAX_AGENT_NO}
+			SET @HOME_TAX_ID	= #{HOME_TAX_ID}
+			SET @USER_ID		= #{S_USER_ID}
+			
+			EXEC uniLITE.USP_HUMAN_HRT800UKR	@COMP_CODE
+											,	@YEAR_YYYY
+											,	@DIV_CODE
+											,	@SUBMIT_DATE
+											,	@TAX_AGENT_NO
+											,	@HOME_TAX_ID
+											,	@USER_ID
+											,	@ERROR_DESC		OUTPUT
+			
+			SELECT @ERROR_DESC	AS ERROR_DESC
+		END
+	</select>
+	
+	<select id="hrt800ukrServiceImpl.selectDataA" parameterType="rMap" resultType="rMap">
+	 /*************************************************************************************************************
+       퇴직소득전산매체신고 (A 레코드) 조회
+    *************************************************************************************************************/
+    BEGIN
+        DECLARE     @COMP_CODE          NVARCHAR(08)                -- (필수) 법인코드
+                  , @CAL_YYYY           NVARCHAR(04)                -- (필수) 정산년도
+                  , @DIV_CODE           NVARCHAR(08)                -- (필수) 신고사업장
+    
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+    
+    --  1. 변수 값 할당 ----------------------------------------------------------------------------------------
+        SET @COMP_CODE          = #{S_COMP_CODE}
+        SET @CAL_YYYY           = #{CAL_YEAR}
+        SET @DIV_CODE           = #{DIV_CODE}
+    
+    --  2. 데이터 조회 -----------------------------------------------------------------------------------------
+        SELECT DISTINCT
+               SUBSTRING(LTRIM(RTRIM(ISNULL(D.SAFFER_TAX, ''))), 1, 3)                                                  AS SAFFER
+             , D.COMPANY_NUM
+             , CONVERT(CHAR(40) , CASE WHEN ISNULL(D.DIV_FULL_NAME, '') = '' THEN D.DIV_NAME ELSE D.DIV_FULL_NAME END)  AS DIV_NAME
+             , CONVERT(CHAR(13) , ISNULL(REPLACE(uniLITE.fnCipherDecrypt(D.REPRE_NO,''), '-', ''), ''))                 AS REPRE_NO
+             , CONVERT(CHAR(30) , ISNULL(D.REPRE_NAME, ''))                                                             AS REPRE_NAME
+             , CONVERT(CHAR(15) , ISNULL(D.TELEPHON  , ''))                                                             AS TELEPHON
+             , C.SECT_CNT                                                                                               AS SECT_CNT
+             , CONVERT(CHAR(912), '')                                                                                   AS A_SPACE
+        FROM              HUM100T A WITH (NOLOCK)
+               INNER JOIN HRT500T B WITH (NOLOCK) ON B.COMP_CODE        = A.COMP_CODE
+                                                 AND B.PERSON_NUMB      = A.PERSON_NUMB
+                                                 AND B.RETR_DATE     LIKE @CAL_YYYY + '%'
+                                                 AND B.RETR_TYPE   NOT IN ('S','T') 
+               INNER JOIN ( --사업장별 그룹갯수 조회, 사업장코드 중 최소값 조회
+                            SELECT T1.COMP_CODE
+                                 , COUNT(DISTINCT T1.SECT_CODE) AS SECT_CNT
+                                 , MIN(T1.SECT_CODE)            AS SECT_CODE
+                            FROM              HUM100T T1 WITH (NOLOCK)
+                                   INNER JOIN HRT500T T2 WITH (NOLOCK) ON T2.COMP_CODE        = T1.COMP_CODE
+                                                                      AND T2.PERSON_NUMB      = T1.PERSON_NUMB
+                                                                      AND T2.RETR_DATE     LIKE @CAL_YYYY + '%'
+                                                                      AND T2.RETR_TYPE   NOT IN ('S','T')
+                            WHERE  T1.COMP_CODE          = @COMP_CODE
+                            AND    ((T1.SECT_CODE        = @DIV_CODE        AND @DIV_CODE != '') OR (@DIV_CODE = ''))
+                            GROUP BY T1.COMP_CODE
+                          )       C               ON C.COMP_CODE = A.COMP_CODE
+               INNER JOIN BOR120T D WITH (NOLOCK) ON D.COMP_CODE   = C.COMP_CODE
+                                                 AND D.DIV_CODE    = C.SECT_CODE
+        WHERE  A.COMP_CODE           = @COMP_CODE
+        AND    ((A.SECT_CODE         = @DIV_CODE        AND @DIV_CODE != '') OR (@DIV_CODE = ''))
+    
+        SET NOCOUNT OFF
+        SET ARITHABORT OFF
+    END
+	</select>
+	<select id="hrt800ukrServiceImpl.selectDataB" parameterType="rMap" resultType="rMap">
+	--hrt800ukr.Chrt800ukr[fnHrt800Save] Query02
+    /*************************************************************************************************************
+     퇴직소득전산매체신고 (B 레코드) 조회
+    *************************************************************************************************************/
+    BEGIN
+        DECLARE     @COMP_CODE          NVARCHAR(08)                -- (필수) 법인코드
+                  , @CAL_YYYY           NVARCHAR(04)                -- (필수) 정산년도
+                  , @DIV_CODE           NVARCHAR(08)                -- (선택) 신고사업장
+                  , @SUBMIT_CODE        NVARCHAR(03)                -- (필수) 제출방법
+    
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+    
+    --  1. 변수 값 할당 ----------------------------------------------------------------------------------------
+        SET @COMP_CODE          = #{S_COMP_CODE}
+        SET @CAL_YYYY           = #{CAL_YEAR}
+        SET @DIV_CODE           = #{DIV_CODE}
+        SET @SUBMIT_CODE        = #{SUBMIT_CODE}
+    
+    --  2. 데이터 조회 -----------------------------------------------------------------------------------------
+        SELECT A.SECT_CODE
+             , SUBSTRING(LTRIM(RTRIM(ISNULL(B.SAFFER_TAX, ''))), 1, 3)                                  AS SAFFER           --3.세무서
+             , B.COMPANY_NUM                                                                            AS COMPANY_NUM      --5.사업자등록번호
+             , CASE WHEN ISNULL(B.DIV_FULL_NAME, '') = '' THEN B.DIV_NAME
+                    ELSE B.DIV_FULL_NAME 
+                END                                                                                     AS DIV_NAME         --6.법인명
+             , ISNULL(B.REPRE_NAME,'')                                                                  AS REPRE_NAME       --7.대표자
+             , ISNULL(REPLACE(E.COMP_OWN_NO, '-', ''), '')                                              AS REPRE_NO         --8.법인등록번호
+             , CONVERT(CHAR(7),'')                                                                      AS B_SPACE1         --11.공란
+             , SUM(ISNULL(C.M_TAX_TOTAL_I, 0) + ISNULL(C.R_TAX_TOTAL_I, 0))                             AS SUPP_TOTAL_I     --12.정산-고세대상퇴직급여합계
+             , CASE WHEN SUM(ISNULL(C.DEF_TAX_I, 0))  &gt;= 0 THEN 0
+                    ELSE 1
+                END                                                                                     AS IN_TAX_I_TYPE    --13.신고대상소득세부호
+             , SUM(ISNULL(C.DEF_TAX_I, 0))                                                              AS IN_TAX_I         --13.신고대상소득세합계
+             , SUM(ISNULL(D.DEFER_TAX_I,0))                                                             AS IN_TAX_I2        --14.이연퇴직소득세액합계
+             , CASE WHEN SUM(C.BAL_IN_TAX_I)  &lt;  0 THEN 1
+                    ELSE 0  
+                END                                                                                     AS IN_TAX_I3_TYPE   --15.차감원천징수-소득세액부호
+             , ABS(SUM(C.BAL_IN_TAX_I))                                                                 AS IN_TAX_I3        --15.차감원천징수-소득세액합계
+             , CASE WHEN SUM(C.BAL_LOCAL_TAX_I)  &lt;  0 THEN 1
+                    ELSE 0
+                END                                                                                     AS LOCAL_TAX_I3_TYPE--16.차감원천징수-지방소득세액부호
+             , ABS(SUM(C.BAL_LOCAL_TAX_I))                                                                 AS LOCAL_TAX_I3     --16.차감원천징수-지방소득세액합계
+             , CASE WHEN SUM(C.BAL_SP_TAX_I)  &lt;  0 THEN 1
+                    ELSE 0
+                END                                                                                     AS SP_TAX_I3_TYPE   --17.차감원천징수-농어촌특별세액부호
+             , ABS(SUM(C.BAL_SP_TAX_I))                                                                 AS SP_TAX_I3        --17.차감원천징수-농어촌특별세액합계
+             , CASE WHEN SUM(C.BAL_IN_TAX_I
+                           + C.BAL_LOCAL_TAX_I
+                           + C.BAL_SP_TAX_I)  &lt;  0 THEN 1
+                    ELSE 0
+                END                                                                                     AS SUM_TAX_I3_TYPE  --18.차감원천징수세액-계부호
+             , ABS(SUM(C.BAL_IN_TAX_I
+                     + C.BAL_LOCAL_TAX_I
+                     + C.BAL_SP_TAX_I))                                                                 AS SUM_TAX_I3       --18.차감원천징수세액-계합계
+             , @SUBMIT_CODE                                                                             AS SUBMIT_CODE
+             , CONVERT(CHAR(873),'')                                                                    AS B_SPACE2
+        FROM              HUM100T A WITH (NOLOCK)
+               INNER JOIN BOR120T B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                 AND B.DIV_CODE    = A.SECT_CODE
+               INNER JOIN HRT500T C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                 AND C.PERSON_NUMB = A.PERSON_NUMB
+                                                 AND C.RETR_TYPE NOT IN ('S','T')
+                LEFT JOIN HRT610T D WITH (NOLOCK) ON D.COMP_CODE         = C.COMP_CODE
+                                                 AND D.PERSON_NUMB       = C.PERSON_NUMB
+                                                 AND A.RETR_PENSION_KIND = 'DB'
+               INNER JOIN BOR100T E WITH (NOLOCK) ON E.COMP_CODE   = A.COMP_CODE
+        WHERE  A.COMP_CODE    = @COMP_CODE
+        AND    A.RETR_PENSION_KIND != 'DC'
+        AND    B.COMPANY_NUM IN (SELECT DISTINCT MAX(COMPANY_NUM)
+                                 FROM              HUM100T T1 WITH (NOLOCK)
+                                        INNER JOIN BOR120T T2 WITH (NOLOCK) ON T1.COMP_CODE   = T2.COMP_CODE
+                                                                           AND T1.SECT_CODE   = T2.DIV_CODE
+                                        INNER JOIN HRT500T T3 WITH (NOLOCK) ON T3.COMP_CODE   = T1.COMP_CODE
+                                                                           AND T3.PERSON_NUMB = T1.PERSON_NUMB
+                                                                           AND T3.RETR_DATE LIKE @CAL_YYYY + '%'
+                                                                           AND T3.RETR_TYPE NOT IN ('S','T')
+                                 WHERE  T1.COMP_CODE    = @COMP_CODE
+                                 GROUP  BY T2.DIV_CODE)
+        AND    C.PERSON_NUMB + C.RETR_DATE     IN (SELECT PERSON_NUMB + RETR_DATE
+                                                   FROM   HRT500T WITH (NOLOCK)
+                                                   WHERE  COMP_CODE      = @COMP_CODE
+                                                   AND    ((SUPP_DATE LIKE @CAL_YYYY + '%' AND RETR_TYPE = 'M') OR
+                                                           (RETR_DATE LIKE @CAL_YYYY + '%' AND RETR_TYPE = 'R'))
+                                                   GROUP BY PERSON_NUMB, RETR_DATE)
+        AND    ((B.DIV_CODE = @DIV_CODE AND @DIV_CODE != '') OR (@DIV_CODE = ''))
+        GROUP  BY A.SECT_CODE, B.SAFFER_TAX, B.COMPANY_NUM, B.DIV_FULL_NAME , B.DIV_NAME 
+                , B.REPRE_NAME, ISNULL(REPLACE(E.COMP_OWN_NO, '-', ''), ''), B.ZIP_CODE, B.ADDR
+        ORDER  BY A.SECT_CODE
+    
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+    END
+    
+	</select>
+	<select id="hrt800ukrServiceImpl.selectDataC" parameterType="rMap" resultType="rMap">
+	--hrt800ukr.Chrt800ukr[fnHrt800Save] Query03
+    /*************************************************************************************************************
+     퇴직소득전산매체신고 (C 레코드) 조회
+    *************************************************************************************************************/
+    BEGIN
+        DECLARE     @COMP_CODE          NVARCHAR(08)                -- (필수) 법인코드
+                  , @CAL_YYYY           NVARCHAR(04)                -- (필수) 정산년도
+                  , @DIV_CODE           NVARCHAR(08)                -- (필수) 신고사업장
+    
+        SET NOCOUNT ON
+        SET ARITHABORT OFF
+        SET ARITHIGNORE ON
+        SET ANSI_WARNINGS OFF
+    
+    --  1. 변수 값 할당 ----------------------------------------------------------------------------------------
+        SET @COMP_CODE          = #{S_COMP_CODE}
+        SET @CAL_YYYY           = #{CAL_YEAR}
+        SET @DIV_CODE           = #{DIV_CODE}
+    
+    --  2. 데이터 조회 -----------------------------------------------------------------------------------------
+        SELECT A.SECT_CODE                                                              AS SECT_CODE
+             , A.PERSON_NUMB                                                            AS PERSON_NUMB
+    
+             , B.RETR_TYPE
+             , SUBSTRING(LTRIM(RTRIM(ISNULL(D.SAFFER_TAX, ''))), 1, 3)                  AS SAFFER               --3.세무서
+             , D.COMPANY_NUM                                                            AS COMPANY_NUM          --5.사업자등록번호
+             -- [소득자] 
+             , CASE WHEN ISNULL(A.LIVE_GUBUN,'')= '' THEN '1'  ELSE A.LIVE_GUBUN END    AS LIVE_GUBUN           --7.거주구분
+             , CASE WHEN A.NATION_CODE = 'KR' THEN '1'  ELSE '9'END                     AS FORIGN               --8.내외국인구분
+             , CASE WHEN A.LIVE_GUBUN = '2' THEN A.NATION_CODE ELSE '' END              AS NATION_CODE          --9.거주지국코드
+             , A.NAME                                                                   AS NAME                 --10.성명                                                       
+             , uniLITE.fnCipherDecrypt(A.REPRE_NUM, '')                                 AS REPRE_NUM            --11.주민등록번호
+             , CASE WHEN A.RETR_OT_KIND = 'OF' THEN '1' ELSE '2'END                     AS IMWON_YN             --12.임원여부
+             , CASE WHEN A.RETR_PENSION_KIND = 'DB'THEN ISNULL(B.RETR_ANN_JOIN_DATE,0) 
+                    ELSE 0
+                END                                                                     AS RETR_ANN_JOIN_DATE   --13.확정급여형 퇴직연금 제도 가입일
+             , CASE WHEN A.RETR_OT_KIND = 'OF' THEN ISNULL(B.RETR_ANNU_I_20111231, 0) 
+                    ELSE 0
+                END                                                                     AS RETR_ANNU_I_20111231 --14.2011.12.31퇴직금
+             , CASE WHEN RETR_TYPE = 'M' THEN LEFT(B.SUPP_DATE,4) + '0101' 
+                                         ELSE LEFT(B.RETR_DATE,4) + '0101' 
+                END                                                                     AS RETR_DATE_FR         --15.귀속연도시작연월일
+             , CASE WHEN RETR_TYPE = 'M' THEN B.SUPP_DATE ELSE B.RETR_DATE END          AS RETR_DATE_TO         --16.귀속연도종료연월일
+             , B.RETR_RESN                                                              AS RETR_RESN            --17.(12)퇴직사유
+    
+             --[퇴직급여현황 - 중간지급]
+             , ISNULL(B.M_DIV_NAME        ,'')                                          AS M_DIV_NAME           --18.(13)근무처명_중간
+             , (CASE WHEN ISNULL(B.M_COMPANY_NUM,'') = ''
+                     THEN ''
+                     ELSE B.M_COMPANY_NUM
+                 END)                                                                   AS M_COMPANY_NUM        --19.(14)사업자등록번호_중간
+             , ISNULL(B.M_ANNU_TOTAL_I     , 0)                                         AS M_ANNU_TOTAL_I       --20.(15)퇴직급여_중간
+             , ISNULL(B.M_OUT_INCOME_I     , 0)                                         AS M_OUT_INCOME_I       --21.(16)비과세 퇴직급여_중간
+             , ISNULL(B.M_TAX_TOTAL_I      , 0)                                         AS M_TAX_TOTAL_I        --22.(17)과세대상 퇴직급여_중간
+    
+             --[퇴직급여현황 - 최종분]
+             , ISNULL(D.DIV_FULL_NAME      ,'')                                         AS R_DIV_NAME           --23.(13)근무처명_최종
+             , (CASE WHEN ISNULL(D.COMPANY_NUM,'') = ''
+                     THEN ''
+                     ELSE D.COMPANY_NUM
+                 END)                                                                   AS R_COMPANY_NUM        --24.(14)사업자등록번호_최종
+             , ISNULL(B.R_ANNU_TOTAL_I     , 0)                                         AS R_ANNU_TOTAL_I       --25.(15)퇴직급여_최종
+             , ISNULL(B.OUT_INCOME_I       , 0)                                         AS R_OUT_INCOME_I       --26.(16)비과세 퇴직급여_최종
+             , ISNULL(B.R_TAX_TOTAL_I      , 0)                                         AS R_TAX_TOTAL_I        --27.(17)과세대상 퇴직급여_최종
+    
+            --[퇴직급여현황 - 정산]
+             , ISNULL(B.M_ANNU_TOTAL_I     , 0) + ISNULL(B.R_ANNU_TOTAL_I    , 0)       AS S_ANNU_TOTAL_I       --28.(15)퇴직급여_정산
+             , ISNULL(B.M_OUT_INCOME_I     , 0) + ISNULL(B.OUT_INCOME_I      , 0)       AS S_OUT_INCOME_I       --29.(16)비과세퇴직급여_정산
+             , ISNULL(B.M_TAX_TOTAL_I      , 0) + ISNULL(B.R_TAX_TOTAL_I     , 0)       AS S_TAX_TOTAL_I        --30.(17)과세대상퇴직급여_정산
+    
+             --[근속연수 - 중간지급]
+             , ISNULL(B.M_JOIN_DATE        , 0)                                         AS M_JOIN_DATE          --31.(18)입사일_중간
+             , ISNULL(B.M_CALCU_END_DATE   , 0)                                         AS M_CALCU_END_DATE     --32.(19)기산일_중간
+             , ISNULL(B.M_RETR_DATE        , 0)                                         AS M_RETR_DATE          --33.(20)퇴사일_중간
+             , ISNULL(B.M_SUPP_DATE        , 0)                                         AS M_SUPP_DATE          --34.(21)지급일_중간
+             , ISNULL(B.M_LONG_MONTHS      , 0)                                         AS M_LONG_MONTHS        --35.(22)근속월수_중간
+             , ISNULL(B.M_EXEP_MONTHS      , 0)                                         AS M_EXEP_MONTHS        --36.(23)제외월수_중간
+             , ISNULL(B.M_ADD_MONTHS       , 0)                                         AS M_ADD_MONTHS         --37.(24)가산월수_중간
+             , 0                                                                        AS M_DUPLI_MONTHS       --38.(25)중복월수
+             , ISNULL(B.M_LONG_YEARS       , 0)                                         AS M_LONG_YEARS         --39.(26)근속연수_중간
+    
+             --[근속연수 - 최종]
+             , ISNULL(B.R_JOIN_DATE        , 0)                                         AS R_JOIN_DATE          --40.(18)입사일_최종
+             , ISNULL(B.R_CALCU_END_DATE   , 0)                                         AS R_CALCU_END_DATE     --41.(19)기산일_최종
+             , ISNULL(B.R_RETR_DATE        , 0)                                         AS R_RETR_DATE          --42.(20)퇴사일_최종
+             , ISNULL(B.R_SUPP_DATE        , 0)                                         AS R_SUPP_DATE          --43.(21)지급일_최종
+             , ISNULL(B.R_LONG_MONTHS      , 0)                                         AS R_LONG_MONTHS        --44.(22)근속월수_최종
+             , ISNULL(B.R_EXEP_MONTHS      , 0)                                         AS R_EXEP_MONTHS        --45.(23)제외월수_최종
+             , ISNULL(B.R_ADD_MONTHS       , 0)                                         AS R_ADD_MONTHS         --46.(24)가산월수_최종
+             , 0                                                                        AS R_DUPLI_MONTHS       --47.(25)중복월수
+             , ISNULL(B.R_LONG_YEARS       , 0)                                         AS R_LONG_YEARS         --48.(26)근속연수_최종
+    
+             --[근속연수 - 정산]
+             , 0                                                                        AS S_JOIN_DATE          --49.(18)입사일_정산
+             , ISNULL(B.S_CALCU_END_DATE   , 0)                                         AS S_CALCU_END_DATE     --50.(19)기산일_정산
+             , ISNULL(B.S_RETR_DATE        , 0)                                         AS S_RETR_DATE          --51.(20)퇴사일_정산
+             , 0                                                                        AS S_SUPP_DATE          --52.(21)지급일_최종        
+             , ISNULL(B.S_LONG_MONTHS      , 0)                                         AS S_LONG_MONTHS        --53.(22)근속월수_정산
+             , ISNULL(B.S_EXEP_MONTHS      , 0)                                         AS S_EXEP_MONTHS        --54.(23)제외월수_정산
+             , ISNULL(B.S_ADD_MONTHS       , 0)                                         AS S_ADD_MONTHS         --55.(24)가산월수_정산
+             , ISNULL(B.S_DUPLI_MONTHS     , 0)                                         AS S_DUPLI_MONTHS       --56.(25)중복월수_정산
+             , ISNULL(B.S_LONG_YEARS       , 0)                                         AS S_LONG_YEARS         --57.(26)근속연수_정산
+    
+             --[근속연수 - 안분_2012.12.31이전]
+             , 0                                                                        AS JOIN_DATE_BE13       --58.(18)입사일_이전
+             , ISNULL(B.CALCU_END_DATE_BE13, 0)                                         AS CALCU_END_DATE_BE13  --59.(19)기산일_이전
+             , CASE WHEN B.S_CALCU_END_DATE  &lt;  '20121231' THEN '20121231' ELSE 0 END     AS RETR_DATE_BE13       --60.(20)퇴사일_이전
+             , 0                                                                        AS SUPP_DATE_BE13       --61.(21)지급일_이전
+             , ISNULL(B.LONG_MONTHS_BE13   , 0)                                         AS LONG_MONTHS_BE13     --62.(22)근속월수_이전
+             , ISNULL(B.EXEP_MONTHS_BE13   , 0)                                         AS EXEP_MONTHS_BE13     --63.(23)제외월수_이전
+             , ISNULL(B.ADD_MONTHS_BE13    , 0)                                         AS ADD_MONTHS_BE13      --64.(24)가산월수_이전
+             , 0                                                                        AS DUPLI_MONTHS_BE13    --65.(25)중복월수_이전
+             , ISNULL(B.LONG_YEARS_BE13    , 0)                                         AS LONG_YEARS_BE13      --66.(26)근속연수_이전
+    
+             --[근속연수 - 안분_2013.01.01이후]
+             , 0                                                                        AS JOIN_DATE_AF13       --67.(18)입사일_이후
+             , ISNULL(B.CALCU_END_DATE_AF13, 0)                                         AS CALCU_END_DATE_AF13  --68.(19)기산일_이후
+             , ISNULL(B.RETR_DATE_AF13     , 0)                                         AS RETR_DATE_AF13       --69.(20)퇴사일_이후
+             , 0                                                                        AS SUPP_DATE_AE13       --70.(21)지급일_이후
+             , ISNULL(B.S_LONG_MONTHS      , 0) - ISNULL(B.LONG_MONTHS_BE13   , 0)      AS LONG_MONTHS_AF13     --71.(22)근속월수_이후
+             , ISNULL(B.EXEP_MONTHS_AF13   , 0)                                         AS EXEP_MONTHS_AF13     --72.(23)제외월수_이후
+             , ISNULL(B.ADD_MONTHS_AF13    , 0)                                         AS ADD_MONTHS_AF13      --73.(24)가산월수_이후
+             , 0                                                                        AS DUPLI_MONTHS_BE13    --74.(25)중복월수_이전
+             , ISNULL(B.S_LONG_YEARS       , 0) - ISNULL(B.LONG_YEARS_BE13    , 0)      AS LONG_YEARS_AF13      --75.(26)근속연수_이후
+    
+             --[개정규정에 따른 계산방법]
+               -- 과세표준계산
+                                                                                                                --76.(27)퇴직소득(17) = S_TAX_TOTAL_I 와 동일값
+             , ISNULL(B.INCOME_DED_I       , 0)                                         AS INCOME_DED_I_16      --77.(28)근속연수공제
+             , ISNULL(B.PAY_TOTAL_I_16     , 0)                                         AS PAY_TOTAL_I_16       --78.(29)환산급여 (27)-(28) * 12 / 정산근속연수
+             , ISNULL(B.PAY_TOTAL_DED_I_16 , 0)                                         AS PAY_TOTAL_DED_I_16   --79.(30)환산급여별공제
+             , ISNULL(B.TAX_STD_I_16 , 0)                                               AS TAX_STD_I_16         --80.(31)퇴직소득과세표준
+    
+               -- 세액계산
+             , ISNULL(B.CHANGE_COMP_TAX_I_16 , 0)                                       AS CHANGE_COMP_TAX_I_16 --81.(32)환산산출세액 (31) * 세율
+             , ISNULL(B.COMP_TAX_I_16 , 0)                                              AS COMP_TAX_I_16        --82.(33)환산산출세액 (32) * 정산근속연수/12
+    
+             --[종전규정에 따른 계산방법]
+               -- 과세표준계산
+                                                                                                                --83.(34)퇴직소득(17) = S_TAX_TOTAL_I 와 동일값
+             , ISNULL(B.SPEC_DED_I         , 0)                                         AS SPEC_DED_I           --84.(35)퇴직소득정률공제
+             , CASE WHEN ISNULL(B.M_TAX_TOTAL_I, 0) + ISNULL(B.R_TAX_TOTAL_I, 0) - ISNULL(B.SPEC_DED_I , 0)  &lt;  ISNULL(B.INCOME_DED_I , 0) 
+                    THEN CASE WHEN ISNULL(B.M_TAX_TOTAL_I, 0) + ISNULL(B.R_TAX_TOTAL_I, 0) - ISNULL(B.SPEC_DED_I , 0)  &lt;  0 
+                              THEN 0
+                              ELSE ISNULL(B.M_TAX_TOTAL_I, 0) + ISNULL(B.R_TAX_TOTAL_I, 0) - ISNULL(B.SPEC_DED_I , 0) 
+                         END
+                    ELSE ISNULL(B.INCOME_DED_I , 0) 
+               END                                                                      AS INCOME_DED_I         --85.(36)근속연수공제
+             , ISNULL(B.TAX_STD_I          , 0)                                         AS TAX_STD_I            --86.(37)퇴직소득과세표준
+    
+               -- 세액계산 (2012.12.31이전)
+             , ISNULL(B.DIVI_TAX_STD_BE13  , 0)                                         AS DIVI_TAX_STD_BE13    --87.(38)과세표준안분_이전
+             , ISNULL(B.AVG_TAX_STD_BE13   , 0)                                         AS AVG_TAX_STD_BE13     --88.(39)연평균과세표준_이전
+             , 0                                                                        AS EX_TAX_STD_BE13      --89.(40)환산과세표준_이전
+             , 0                                                                        AS EX_COMP_TAX_BE13     --90.(41)환산산출세액_이전
+             , ISNULL(B.AVR_COMP_TAX_BE13  , 0)                                         AS AVR_COMP_TAX_BE13    --91.(42)연평균산출세액_이전
+             , ISNULL(B.COMP_TAX_BE13      , 0)                                         AS COMP_TAX_BE13        --92.(43)산출세액_이전
+    
+               -- 세액계산 (2013.01.01 이후)
+             , ISNULL(B.DIVI_TAX_STD_AF13  , 0)                                         AS DIVI_TAX_STD_AF13    --93.(38)과세표준안분_이후
+             , ISNULL(B.AVG_TAX_STD_AF13   , 0)                                         AS AVG_TAX_STD_AF13     --94.(39)연평균과세표준_이후
+             , ISNULL(B.EX_TAX_STD_AF13    , 0)                                         AS EX_TAX_STD_AF13      --95.(40)환산과세표준_이후
+             , ISNULL(B.EX_COMP_TAX_AF13   , 0)                                         AS EX_COMP_TAX_AF13     --96.(41)환산산출세액_이후
+             , ISNULL(B.AVR_COMP_TAX_AF13  , 0)                                         AS AVR_COMP_TAX_AF13    --97.(42)연평균산출세액_이후
+             , ISNULL(B.COMP_TAX_AF13      , 0)                                         AS COMP_TAX_AF13        --98.(43)산출세액_이후
+    
+               -- 세액계산 (합계)
+             , ISNULL(B.DIVI_TAX_STD_BE13  , 0) + ISNULL(DIVI_TAX_STD_AF13  , 0)        AS DIVI_TAX_STD         --99 .(38)과세표준안분_합계 
+             , ISNULL(B.AVG_TAX_STD_I      , 0)                                         AS AVG_TAX_STD          --100.(39)연평균과세표준_합계 
+             , ISNULL(B.EX_TAX_STD_AF13    , 0)                                         AS EX_TAX_STD           --101.(40)환산과세표준_합계
+             , ISNULL(B.EX_COMP_TAX_AF13   , 0)                                         AS EX_COMP_TAX          --102.(41)환산산출세액_합계
+             , ISNULL(B.AVR_COMP_TAX_I     , 0)                                         AS AVR_COMP_TAX         --103.(42)연평균산출세액_합계
+             , ISNULL(B.COMP_TAX_I         , 0)                                         AS COMP_TAX             --104.(43)산출세액_합계
+    
+             --[퇴직소득세액계산]
+             , ISNULL(B.CHANGE_TAX_YEAR_16  , 0)                                        AS CHANGE_TAX_YEAR_16      --105.(44)퇴직일이속하는과세연도
+             , ISNULL(B.EXEMPTION_COMP_TAX_I_16  , 0)                                   AS EXEMPTION_COMP_TAX_I_16 --106.(45)퇴직소득세 산출세액
+             , ISNULL(B.PAY_END_TAX         , 0)                                        AS PAY_END_TAX             --107.(46)기납부(또는 기과세이연)세액
+             , CASE WHEN ISNULL(B.DEF_TAX_I, 0)  &lt;  0 THEN 1 ELSE 0 END                   AS DEF_TAX_I_TYPE          --108.(47)신고대상세액
+             , ABS(ISNULL(B.DEF_TAX_I          , 0))                                    AS DEF_TAX_I               --108.(47)신고대상세액
+    
+             --[이연퇴직소득세액계산]
+             , CASE WHEN ISNULL(B.DEF_TAX_I, 0)  &lt;  0 THEN 1 ELSE 0 END                   AS DEF_TAX_I_TYPE2      --109.(48)신고대상세액
+             , CASE WHEN A.RETR_PENSION_KIND = 'DB' THEN ISNULL(B.DEF_TAX_I, 0)
+                    ELSE 0
+                END                                                                     AS DEF_TAX_I2           --109.(48)신고대상세액
+             , ISNULL(E.COMP_NAME          ,'')                                         AS COMP_NAME            --D9.연금계좌취급자
+             , (CASE WHEN ISNULL(E.COMP_NUM,'') = ''
+                     THEN ''
+                     ELSE E.COMP_NUM
+                 END)                                                                   AS COMP_NUM             --D10.사업자등록번호
+             , REPLACE(unilite.fnCipherDecrypt(E.BANK_ACCOUNT,''),'-','')               AS BANK_ACCOUNT         --D11.계좌번호
+             , ISNULL(E.DEPOSIT_DATE       , 0)                                         AS DEPOSIT_DATE         --D12.입금일
+             , ISNULL(E.TRANS_RETR_PAY     , 0)                                         AS TRANS_RETR_PAY       --110(D13).(49)계좌입금금액
+             , CASE WHEN A.RETR_PENSION_KIND = 'DB' THEN ISNULL(B.R_TAX_TOTAL_I, 0) 
+                    ELSE 0
+                END                                                                     AS DEFER_TAX_TOTAL_I    --111.(50)이연퇴직급여
+             , CASE WHEN ISNULL(E.DEFER_TAX_I, 0)  &gt; 0 THEN ISNULL(E.DEFER_TAX_I, 0) 
+                    ELSE 0
+                END                                                                     AS DEFER_TAX_I          --112.(51)이연퇴직소득세
+    
+             --[납부명세_신고대상세액]
+             , CASE WHEN ISNULL(B.IN_TAX_I   , 0)  &lt;  0 THEN 1 ELSE 0 END                 AS IN_TAX_I_TYPE1       --113.(53)신고대상세액_소득세 
+             , ABS(ISNULL(B.IN_TAX_I         , 0))                                      AS IN_TAX_I1
+             , CASE WHEN ISNULL(B.LOCAL_TAX_I, 0)  &lt;  0 THEN 1 ELSE 0 END                 AS LOCAL_TAX_I_TYPE1    --114.(53)신고대상세액_지방소득  
+             , ABS(ISNULL(B.LOCAL_TAX_I      , 0))                                      AS LOCAL_TAX_I1
+             , CASE WHEN ISNULL(B.SP_TAX_I   , 0)  &lt;  0 THEN 1 ELSE 0 END                 AS SP_TAX_I_TYPE1       --115.(53)신고대상세액_농어촌 
+             , ABS(ISNULL(B.SP_TAX_I         , 0))                                      AS SP_TAX_I1
+                
+             , CASE WHEN (ISNULL(B.IN_TAX_I, 0) + ISNULL(B.LOCAL_TAX_I,0) 
+                        + ISNULL(B.SP_TAX_I,0))  &lt;  0 THEN 1 ELSE 0 END                   AS SUM_TAX_I_TYPE1      --116.(53)신고대상세액_계
+             , ABS(ISNULL(B.IN_TAX_I, 0) + ISNULL(B.LOCAL_TAX_I,0)
+                                         + ISNULL(B.SP_TAX_I,0))                        AS SUM_TAX_I1
+    
+             --[납부명세_이연퇴직소득세]   
+             , ISNULL(E.DEFER_TAX_I,0)                                                  AS IN_TAX_I2            --117.(54)이연퇴직소득세_소득세
+             , FLOOR(ISNULL(E.DEFER_TAX_I,0) / 10)                                      AS LOCAL_TAX_I2         --118.(54)이연퇴직소득세_지방소득
+             , ISNULL(E.DEFER_SP_TAX_I, 0)                                              AS SP_TAX_I2            --119.(54)이연퇴직소득세_농어촌
+             , ISNULL(E.DEFER_TAX_I,0)
+             + FLOOR(ISNULL(E.DEFER_TAX_I,0) / 10) 
+             + ISNULL(E.DEFER_SP_TAX_I, 0)                                              AS SUM_TAX_I2           --120.(54)이연퇴직소득세_계
+    
+             --[납부명세_차감원천징수세액] 
+             , CASE WHEN ISNULL(B.BAL_IN_TAX_I,0)  &lt;  0 THEN 1 ELSE 0 END                 AS IN_TAX_I_TYPE3       --121.(55)차감원천징수세액_소득세 
+             , ABS(ISNULL(B.BAL_IN_TAX_I,0))                                            AS IN_TAX_I3
+             , CASE WHEN ISNULL(B.BAL_LOCAL_TAX_I,0)  &lt;  0 THEN 1 ELSE 0 END              AS LOCAL_TAX_I_TYPE3    --122.(55)차감원천징수세액_지방소득세
+             , ABS(ISNULL(B.BAL_LOCAL_TAX_I,0))                                         AS LOCAL_TAX_I3
+             , CASE WHEN ISNULL(B.BAL_SP_TAX_I,0)  &lt;  0 THEN 1 ELSE 0 END                 AS SP_TAX_I_TYPE3       --123.(55)차감원천징수세액_농어촌
+             , ABS(ISNULL(B.BAL_SP_TAX_I,0))                                            AS SP_TAX_I3
+             , CASE WHEN ISNULL(B.BAL_IN_TAX_I,0) + ISNULL(B.BAL_LOCAL_TAX_I,0) 
+                                                  + ISNULL(B.BAL_SP_TAX_I,0)  &lt;  0 THEN 1 
+                    ELSE 0 END                                                          AS SUM_TAX_I_TYPE3      --124.(55)차감원천징수세액_계
+             , ABS(ISNULL(B.BAL_IN_TAX_I,0) + ISNULL(B.BAL_LOCAL_TAX_I,0) 
+                                            + ISNULL(B.BAL_SP_TAX_I,0))                 AS SUM_TAX_I3
+             , CONVERT(CHAR(2),'')                                                      AS C_SPACE  
+             , CONVERT(CHAR(50),'')                                                     AS D_SPACE1
+             , CONVERT(CHAR(944),'')                                                    AS D_SPACE2
+        FROM              HUM100T A WITH (NOLOCK)
+               INNER JOIN HRT500T B WITH (NOLOCK) ON B.COMP_CODE         = A.COMP_CODE
+                                                 AND B.PERSON_NUMB       = A.PERSON_NUMB
+                                                 AND B.RETR_TYPE NOT IN ('S','T')
+               INNER JOIN BOR100T C WITH (NOLOCK) ON C.COMP_CODE         = A.COMP_CODE
+               INNER JOIN BOR120T D WITH (NOLOCK) ON D.COMP_CODE         = A.COMP_CODE
+                                                 AND D.DIV_CODE          = A.SECT_CODE
+                LEFT JOIN HRT610T E WITH (NOLOCK) ON E.COMP_CODE         = B.COMP_CODE
+                                                 AND E.PERSON_NUMB       = B.PERSON_NUMB
+                                                 AND A.RETR_PENSION_KIND = 'DB'
+        WHERE  A.COMP_CODE          = @COMP_CODE
+        AND    A.RETR_PENSION_KIND != 'DC'
+        AND    D.COMPANY_NUM IN (SELECT DISTINCT MAX(COMPANY_NUM)
+                                 FROM              HUM100T T1 WITH (NOLOCK)
+                                        INNER JOIN BOR120T T2 WITH (NOLOCK) ON T2.COMP_CODE      = T1.COMP_CODE
+                                                                           AND T2.DIV_CODE       = T1.SECT_CODE
+                                        INNER JOIN HRT500T T3 WITH (NOLOCK) ON T3.COMP_CODE      = T1.COMP_CODE
+                                                                           AND T3.PERSON_NUMB    = T1.PERSON_NUMB
+                                                                           AND T3.RETR_DATE   LIKE @CAL_YYYY + '%'
+                                                                           AND T3.RETR_TYPE   NOT IN ('S','T')
+                                 WHERE  T1.COMP_CODE    = @COMP_CODE
+                                 GROUP  BY T2.DIV_CODE )
+        AND    B.PERSON_NUMB + B.RETR_DATE     IN (SELECT PERSON_NUMB + RETR_DATE
+                                                     FROM HRT500T WITH (NOLOCK)
+                                                    WHERE COMP_CODE = @COMP_CODE
+                                                      AND ((SUPP_DATE LIKE @CAL_YYYY + '%' AND RETR_TYPE = 'M') OR
+                                                           (RETR_DATE LIKE @CAL_YYYY + '%' AND RETR_TYPE = 'R'))
+                                                    GROUP BY PERSON_NUMB, RETR_DATE)
+        AND    ((A.SECT_CODE = @DIV_CODE AND @DIV_CODE != '') OR (@DIV_CODE = ''))
+        ORDER  BY  A.SECT_CODE, B.PERSON_NUMB, B.RETR_DATE
+    
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+        SET ARITHIGNORE OFF
+    END
+	</select>
+</mapper>

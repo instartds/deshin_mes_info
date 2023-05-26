@@ -1,0 +1,507 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sco150skrvServiceImpl">
+	<select id="sco150skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* sco150skrvServiceImpl.selectList */
+		-- S_UAgb250Skrv_dh.CAgb250Skrv.fnAgb250Std 거래처별잔액현황조회
+		SET NOCOUNT ON 
+		   DECLARE @COMP_CODE   NVARCHAR(20)
+		         , @DIV_CODE    NVARCHAR(10)
+		         , @FR_DATE     NVARCHAR(08)
+		         , @TO_DATE     NVARCHAR(08)
+		         , @BUSI_OFFICE NVARCHAR(10)
+		         , @CUSTOM_CODE NVARCHAR(20) 
+		         , @CUSTOM_NAME NVARCHAR(50)
+		         , @CUSTOM_TYPE NVARCHAR(10)
+
+		   SET @COMP_CODE   = #{S_COMP_CODE}
+		   SET @DIV_CODE    = #{DIV_CODE}
+		   SET @FR_DATE     = #{FR_DATE}
+		   SET @TO_DATE     = #{TO_DATE}
+		   SET @BUSI_OFFICE = N'' 
+		   SET @CUSTOM_CODE = #{CUSTOM_CODE}
+		   SET @CUSTOM_NAME = #{CUSTOM_NAME}
+		   SET @CUSTOM_TYPE = N''
+
+		   SELECT B.CODE_NAME AS BUSI_PRSN
+		        , CUSTOM_CODE
+		        , (SELECT CUSTOM_NAME
+		             FROM BCM100T WITH(NOLOCK)
+		            WHERE COMP_CODE   = @COMP_CODE
+		              AND CUSTOM_CODE = A.CUSTOM_CODE) AS CUSTOM_NAME
+		        , ISNULL(SUM(IWAL_OUT_AMT_I),0.0)      AS IWAL_OUT_AMT_I
+		        , SUM(OUTPUT_DR_AMT_I)                 AS OUT_DR_AMT_I
+		        , SUM(OUTPUT_CR_AMT_I)                 AS OUT_CR_AMT_I 
+		        , ISNULL(SUM(IWAL_OUT_AMT_I),0.0)
+		         + SUM(OUTPUT_DR_AMT_I)
+		         - SUM(OUTPUT_CR_AMT_I)                AS OUT_JAN_AMT_I
+		        , ISNULL(SUM(IWAL_IN_AMT_I),0.0)       AS IWAL_IN_AMT_I
+		        , SUM(INPUT_CR_AMT_I)                  AS IN_CR_AMT_I
+		        , SUM(INPUT_DR_AMT_I)                  AS IN_DR_AMT_I
+		        , ISNULL(SUM(IWAL_IN_AMT_I),0.0)
+		         + SUM(INPUT_CR_AMT_I)
+		         - SUM(INPUT_DR_AMT_I)                 AS IN_JAN_AMT_I
+		     FROM ( 
+		           SELECT  BUSI_PRSN, ACCNT, CUSTOM_CODE, CUSTOM_NAME, CUSTOM_TYPE, 
+		               0.0000 IWAL_OUT_AMT_I, 0.0000 IWAL_IN_AMT_I, 
+		               SUM(OUTPUT_DR_AMT_I) OUTPUT_DR_AMT_I, 
+		               SUM(OUTPUT_CR_AMT_I) OUTPUT_CR_AMT_I, 
+		               SUM(INPUT_CR_AMT_I) INPUT_CR_AMT_I, 
+		               SUM(INPUT_DR_AMT_I) INPUT_DR_AMT_I 
+		           FROM ( 
+		               SELECT ISNULL(B.BUSI_PRSN, '') AS BUSI_PRSN, A.ACCNT, B.CUSTOM_TYPE, B.CUSTOM_NAME, 
+		                      CASE BOOK_CODE1 
+		                          WHEN    'A4' THEN BOOK_DATA1 
+		                          ELSE BOOK_DATA2 
+		                      END CUSTOM_CODE, 
+		                      CASE WHEN ACCNT IN ('11300', '11301', '21310') THEN ISNULL(SUM(DR_AMT_I),0.0) 
+		                          ELSE    0.0 
+		                      END OUTPUT_DR_AMT_I, 
+		                      CASE WHEN ACCNT IN ('11300', '11301', '21310') THEN ISNULL(SUM(CR_AMT_I),0.0) 
+		                          ELSE    0.0 
+		                      END OUTPUT_CR_AMT_I, 
+		                      CASE ACCNT 
+		                          WHEN    '21110' THEN ISNULL(SUM(DR_AMT_I),0.0) 
+		                          ELSE    0.0 
+		                      END INPUT_DR_AMT_I, 
+		                      CASE ACCNT 
+		                          WHEN    '21110' THEN ISNULL(SUM(CR_AMT_I),0.0) 
+		                          ELSE    0.0 
+		                      END INPUT_CR_AMT_I 
+		                 FROM AGB200T A WITH(NOLOCK) 
+		                 LEFT JOIN BCM100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE 
+		                                                 AND (A.BOOK_DATA1 = B.CUSTOM_CODE OR A.BOOK_DATA2 = B.CUSTOM_CODE ) 
+		                WHERE A.COMP_CODE  = @COMP_CODE 
+		                  AND A.DIV_CODE   = @DIV_CODE 
+		                  AND ACCNT IN ('11300', '11301', '21110', '21310') 
+		                  AND AC_DATE &gt;= @FR_DATE 
+		                  AND AC_DATE &lt;= @TO_DATE 
+		                  AND ((B.CUSTOM_CODE LIKE @CUSTOM_CODE + '%' AND @CUSTOM_CODE != '') OR @CUSTOM_CODE = '') 
+		                  AND ((B.CUSTOM_NAME LIKE '%' + @CUSTOM_NAME + '%' AND @CUSTOM_NAME != '') OR @CUSTOM_NAME = '') 
+		                  AND LEN(AC_DATE) != 6 
+		                GROUP BY B.BUSI_PRSN, A.ACCNT, B.CUSTOM_TYPE, B.CUSTOM_NAME, A.BOOK_CODE1, A.BOOK_DATA1, A.BOOK_DATA2 
+		               ) A 
+		           GROUP BY A.BUSI_PRSN, A.ACCNT, A.CUSTOM_CODE, A.CUSTOM_NAME, A.CUSTOM_TYPE 
+
+		           UNION ALL 
+
+		           SELECT BUSI_PRSN, ACCNT, CUSTOM_CODE, CUSTOM_NAME, CUSTOM_TYPE, 
+		                  SUM(IWAL_OUTPUT_AMT_I) IWAL_OUTPUT_AMT_I, 
+		                  SUM(IWAL_INPUT_AMT_I) IWAL_INPUT_AMT_I, 
+		                  0.0000 OUTPUT_DR_AMT_I, 0.0000 OUTPUT_CR_AMT_I, 
+		                  0.0000 INPUT_CR_AMT_I, 0.0000 INPUT_DR_AMT_I 
+		             FROM ( 
+		                 SELECT ISNULL(B.BUSI_PRSN, '') AS BUSI_PRSN, A.ACCNT, B.CUSTOM_TYPE, B.CUSTOM_NAME, 
+		                        CASE BOOK_CODE1 
+		                            WHEN    'A4' THEN BOOK_DATA1 
+		                            ELSE BOOK_DATA2 
+		                        END CUSTOM_CODE, 
+		                        CASE WHEN ACCNT IN ('11300', '11301', '21310') THEN ISNULL(SUM(DR_AMT_I) - SUM(CR_AMT_I),0.0) 
+		                            ELSE    0.0 
+		                        END IWAL_OUTPUT_AMT_I, 
+		                        CASE ACCNT 
+		                            WHEN    '21110' THEN ISNULL(SUM(CR_AMT_I) - SUM(DR_AMT_I),0.0) 
+		                            ELSE    0.0 
+		                        END IWAL_INPUT_AMT_I 
+		                   FROM AGB200T A WITH(NOLOCK) 
+		                   LEFT JOIN BCM100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE  
+		                                                   AND (A.BOOK_DATA1 = B.CUSTOM_CODE OR A.BOOK_DATA2 = B.CUSTOM_CODE ) 
+		                  WHERE A.COMP_CODE  = @COMP_CODE 
+		                    AND A.DIV_CODE = @DIV_CODE 
+		                    AND ((B.CUSTOM_CODE LIKE @CUSTOM_CODE + '%' AND @CUSTOM_CODE != '') OR @CUSTOM_CODE = '') 
+		                    AND ((B.CUSTOM_NAME LIKE '%' + @CUSTOM_NAME + '%' AND @CUSTOM_NAME != '') OR @CUSTOM_NAME = '') 
+		                    AND ACCNT IN ('11300', '11301', '21110', '21310')
+		                    AND ( AC_DATE = LEFT(@FR_DATE,4) + '01' OR LEN(AC_DATE) != 6 ) 
+		                    --AND AC_DATE &gt;= LEFT(@FR_DATE,4) + '01' 
+		                    AND AC_DATE &lt; @FR_DATE 
+		                  GROUP BY B.BUSI_PRSN, A.ACCNT, B.CUSTOM_TYPE, B.CUSTOM_NAME, A.BOOK_CODE1, A.BOOK_DATA1, A.BOOK_DATA2 
+		             ) A 
+		     GROUP BY A.BUSI_PRSN, A.ACCNT, A.CUSTOM_CODE, A.CUSTOM_NAME, A.CUSTOM_TYPE 
+		     ) A 
+		     LEFT JOIN BSA100T B WITH(NOLOCK) ON B.COMP_CODE = @COMP_CODE 
+		                                     AND B.MAIN_CODE = N'S010' 
+		                                     AND B.SUB_CODE  = A.BUSI_PRSN 
+		    WHERE A.CUSTOM_CODE LIKE @CUSTOM_CODE + '%' 
+		      AND ((A.CUSTOM_TYPE = @CUSTOM_TYPE AND @CUSTOM_TYPE != '') OR @CUSTOM_TYPE = '')
+		      AND B.REF_CODE2 LIKE @BUSI_OFFICE + '%' 
+		    GROUP BY B.CODE_NAME, A.CUSTOM_CODE
+		    HAVING (ISNULL(SUM(IWAL_OUT_AMT_I), 0.0) + SUM(OUTPUT_DR_AMT_I) + SUM(OUTPUT_CR_AMT_I)) != 0 
+		            OR (ISNULL(SUM(IWAL_IN_AMT_I),0.0) + SUM(INPUT_DR_AMT_I) + SUM(INPUT_CR_AMT_I)) != 0 
+		    ORDER BY BUSI_PRSN, A.CUSTOM_CODE 
+		 SET NOCOUNT OFF 
+	</select>
+	<select id="sco150skrvServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+		/* sco150skrvServiceImpl.selectList2 */
+		 -- S_UAgb250Skrv_dh.CAgb250Skrv.fnAgb250Std2 거래처별잔액현황디테일조회
+		 SET NOCOUNT ON 
+		 DECLARE @COMP_CODE   NVARCHAR(20) 
+		       , @DIV_CODE    NVARCHAR(10) 
+		       , @FR_DATE     NVARCHAR(8) 
+		       , @TO_DATE     NVARCHAR(8) 
+		       , @CUSTOM_CODE NVARCHAR(20)  
+		       , @CUSTOM_NAME NVARCHAR(50) 
+		       , @ACCNT       NVARCHAR(20) 
+		  
+		   SET @COMP_CODE   = #{S_COMP_CODE}
+		   SET @DIV_CODE    = #{DIV_CODE}
+		   SET @FR_DATE     = #{FR_DATE}
+		   SET @TO_DATE     = #{TO_DATE}
+		   SET @CUSTOM_CODE = #{CUSTOM_CODE}
+		   SET @CUSTOM_NAME = #{CUSTOM_NAME}
+		   SET @ACCNT       = #{ACCNT_CODE}
+		  
+		 DECLARE @MIN_SEQ INT, @MAX_SEQ INT 
+		 DECLARE @TABLE TABLE 
+		 ( 
+		      SEQ        INT IDENTITY(1,1) 
+		    , GUBUN      NVARCHAR(20) 
+		    , GUBUN1     NVARCHAR(20) 
+		    , AC_DATE    NVARCHAR(20) 
+		    , SLIP_NUM   NUMERIC(18,0) 
+		    , SLIP_SEQ   NUMERIC(18,0) 
+		    , REMARK     NVARCHAR(2000) 
+		    , DR_AMT_I   NUMERIC(18,0) 
+		    , CR_AMT_I   NUMERIC(18,0) 
+		    , JAN_AMT_I  NUMERIC(18,0) 
+		    , EX_NUM     NUMERIC(10,0) 
+		    , JAN_DIVI   NVARCHAR(10) 
+		 ) 
+		<if test="ACCNT_CODE == &quot;11301&quot;">
+		BEGIN
+		   -- 외상매출금(11300) 일때 
+		   INSERT INTO @TABLE 
+		     SELECT  0 AS GUBUN,  
+		             NULL AS GUBUN1,  
+		             NULL AS AC_DATE, 
+		           NULL AS SLIP_NUM,  
+		           NULL AS SLIP_SEQ,  
+		         N'전기(월) 이월 금액' AS REMARK,  
+		         SUM(ISNULL(DR_AMT_I,0.0)) DR_AMT_I,  
+		         SUM(ISNULL(CR_AMT_I,0.0)) CR_AMT_I,  
+		         SUM(ISNULL(DR_AMT_I,0.0)) - SUM(ISNULL(CR_AMT_I,0.0)) JAN_AMT_I,  
+		           NULL AS EX_NUM, 
+		           NULL AS JAN_DIVI  
+		     FROM    (  
+		         SELECT  ACCNT,  
+		             CASE BOOK_CODE1  
+		                 WHEN    'A4' THEN BOOK_DATA1  
+		                 ELSE    BOOK_DATA2  
+		             END CUSTOM_CODE,  
+		             CASE ACCNT  
+		                 WHEN    '11300' THEN SUM(ISNULL(DR_AMT_I,0.0)) - SUM(ISNULL(CR_AMT_I,0.0))  
+		                 WHEN    '' THEN 0.0  
+		             END DR_AMT_I,  
+		             CASE ACCNT  
+		                 WHEN    '11300' THEN 0.0  
+		                 WHEN    '' THEN SUM(ISNULL(CR_AMT_I,0.0)) - SUM(ISNULL(DR_AMT_I,0.0))  
+		             END CR_AMT_I  
+		         FROM AGB200T WITH(NOLOCK)  
+		         WHERE COMP_CODE = @COMP_CODE  
+		           AND DIV_CODE  = @DIV_CODE  
+		           AND ACCNT = @ACCNT  
+		           AND ( AC_DATE = LEFT(@FR_DATE,4) + '01' OR LEN(AC_DATE) != 6 )  
+		           AND AC_DATE &gt;= LEFT(@FR_DATE,4) + '01'  
+		           AND AC_DATE &lt; @FR_DATE  
+		         GROUP BY ACCNT, BOOK_CODE1, BOOK_DATA1, BOOK_DATA2  
+		         ) A  
+		     WHERE   CUSTOM_CODE = @CUSTOM_CODE  
+		     UNION ALL  
+		    SELECT  '1' GUBUN,  
+		         SUBSTRING(AC_DATE,1,6) GUBUN1,  
+		         SUBSTRING(AC_DATE,1,4) + '-' + SUBSTRING(AC_DATE,5,2) + '-' + SUBSTRING(AC_DATE,7,2) AC_DATE,  
+		         SLIP_NUM,  
+		         SLIP_SEQ,  
+		         ISNULL(REMARK,'') REMARK,  
+		         SUM(ISNULL(DR_AMT_I,0.0)) DR_AMT_I,  
+		         SUM(ISNULL(CR_AMT_I,0.0)) CR_AMT_I,  
+		         SUM(ISNULL(JAN_AMT_I,0.0)) JAN_AMT_I,  
+		         EX_NUM,  
+		         JAN_DIVI  
+		     FROM    (  
+		         SELECT  AC_DATE,  
+		             SLIP_NUM,  
+		             SLIP_SEQ,  
+		             REMARK,  
+		             CASE BOOK_CODE1  
+		                 WHEN    'A4' THEN BOOK_DATA1  
+		                 ELSE BOOK_DATA2  
+		             END CUSTOM_CODE,  
+		             CASE DR_CR  
+		                 WHEN    '1' THEN AMT_I  
+		                 WHEN    '2' THEN 0.0  
+		             END DR_AMT_I,  
+		             CASE DR_CR  
+		                 WHEN    '1' THEN 0.0  
+		                 WHEN    '2' THEN AMT_I  
+		             END CR_AMT_I,  
+		             CASE JAN_DIVI  
+		                 WHEN    DR_CR THEN AMT_I  
+		                 ELSE    (AMT_I * -1)  
+		             END JAN_AMT_I,  
+		             EX_NUM,  
+		             JAN_DIVI  
+		         FROM AGJ210T WITH(NOLOCK)  
+		         WHERE COMP_CODE = @COMP_CODE  
+		           AND DIV_CODE  = @DIV_CODE  
+		           AND AC_DATE  &gt;= @FR_DATE  
+		           AND AC_DATE  &lt;= @TO_DATE  
+		           AND ACCNT = @ACCNT  
+		           AND ISNULL(MOD_DIVI,'') = ''  
+		         ) A  
+		     WHERE   CUSTOM_CODE = @CUSTOM_CODE  
+		     GROUP BY CUSTOM_CODE, AC_DATE, SLIP_NUM, SLIP_SEQ, REMARK, EX_NUM, JAN_DIVI  
+		         UNION  
+		       
+		     SELECT  '2' GUBUN,  
+		         SUBSTRING(AC_DATE,1,6) GUBUN1, '',  
+		         0, 0, N'소계(월)',  
+		         SUM(ISNULL(DR_AMT_I,0.0)) DR_AMT_I,  
+		         SUM(ISNULL(CR_AMT_I,0.0)) CR_AMT_I,  
+		         SUM(ISNULL(JAN_AMT_I,0.0)) JAN_AMT_I,  
+		         0, JAN_DIVI  
+		     FROM    (  
+		         SELECT  AC_DATE,  
+		             CASE BOOK_CODE1  
+		                 WHEN    'A4' THEN BOOK_DATA1  
+		                 ELSE BOOK_DATA2  
+		             END CUSTOM_CODE,  
+		             CASE DR_CR  
+		                 WHEN    '1' THEN AMT_I  
+		                 WHEN    '2' THEN 0.0  
+		             END DR_AMT_I,  
+		             CASE DR_CR  
+		                 WHEN    '1' THEN 0.0  
+		                 WHEN    '2' THEN AMT_I  
+		             END CR_AMT_I,  
+		             CASE JAN_DIVI  
+		                 WHEN    DR_CR THEN AMT_I  
+		                 ELSE    (AMT_I * -1)  
+		             END JAN_AMT_I,  
+		             JAN_DIVI  
+		         FROM AGJ210T WITH(NOLOCK)  
+		         WHERE COMP_CODE = @COMP_CODE  
+		           AND DIV_CODE  = @DIV_CODE     
+		           AND AC_DATE &gt;= @FR_DATE  
+		           AND AC_DATE &lt;= @TO_DATE  
+		           AND ACCNT = @ACCNT  
+		           AND ISNULL(MOD_DIVI,'') = ''  
+		         ) A  
+		     WHERE   CUSTOM_CODE = @CUSTOM_CODE   
+		     GROUP BY SUBSTRING(AC_DATE,1,6), JAN_DIVI  
+		     ORDER BY GUBUN1, GUBUN, AC_DATE, SLIP_NUM  
+		     SET @MAX_SEQ = @@ROWCOUNT 
+		     SET @MIN_SEQ = 2 
+		     DECLARE @nCnt INT 
+		   SET @nCnt = 0 
+		   WHILE @MIN_SEQ &lt;= @MAX_SEQ 
+		    BEGIN  
+		      UPDATE @TABLE  
+		       SET JAN_AMT_I = 
+		          (SELECT  ISNULL(JAN_AMT_I,0)   
+		                         FROM @TABLE  
+		                        WHERE SEQ = @MIN_SEQ -1)   
+		                     + ( SELECT ISNULL(DR_AMT_I,0) - ISNULL(CR_AMT_I,0) FROM @TABLE  
+		                         WHERE SEQ = @MIN_SEQ)  
+		       WHERE SEQ = @MIN_SEQ  
+		         AND GUBUN = '1' 
+		       SET @MIN_SEQ = @MIN_SEQ + 1  
+		       SET @nCnt = @nCnt + 1 
+		    END  
+		    IF @nCnt > 0    
+		    BEGIN    
+		    SELECT GUBUN,    GUBUN1, AC_DATE  
+		          ,SLIP_NUM, SLIP_SEQ, REMARK  
+		          ,DR_AMT_I, CR_AMT_I, JAN_AMT_I  
+		          ,EX_NUM,   JAN_DIVI  
+		      FROM @TABLE 
+		   UNION ALL  
+		      SELECT '3' GUBUN,   NULL GUBUN1, NULL AC_DATE  
+		            ,NULL SLIP_NUM, NULL SLIP_SEQ, N'총계' AS REMARK  
+		            ,SUM(CASE WHEN SEQ = 1 OR SEQ = @MAX_SEQ THEN DR_AMT_I END) AS DR_AMT_I 
+		            ,SUM(CASE WHEN SEQ = 1 OR SEQ = @MAX_SEQ THEN CR_AMT_I END) AS CR_AMT_I  
+		            ,SUM(CASE WHEN SEQ = 1 OR SEQ = @MAX_SEQ THEN JAN_AMT_I END) AS JAN_AMT_I    
+		            ,NULL AS EX_NUM, NULL AS JAN_DIVI  
+		        FROM @TABLE  
+		      END    
+		      ELSE    
+		      BEGIN    
+		       SELECT GUBUN,    GUBUN1, AC_DATE  
+		            ,SLIP_NUM, SLIP_SEQ, REMARK  
+		            ,DR_AMT_I, CR_AMT_I, JAN_AMT_I  
+		            ,EX_NUM,   JAN_DIVI  
+		        FROM @TABLE 
+		        WHERE 1=0 
+		      END 
+		</if>
+		<if test="ACCNT_CODE != &quot;11301&quot;">
+		BEGIN
+		      -- 21110 외상매입금일때 
+		     INSERT INTO @TABLE  
+		       SELECT  0 AS GUBUN,   
+		               NULL AS GUBUN1,   
+		               NULL AS AC_DATE,  
+		             NULL AS SLIP_NUM,   
+		             NULL AS SLIP_SEQ,   
+		           N'전기(월) 이월 금액' AS REMARK,   
+		           ISNULL(SUM(DR_AMT_I),0.0) DR_AMT_I,   
+		           ISNULL(SUM(CR_AMT_I),0.0) CR_AMT_I,   
+		         ISNULL(SUM(CR_AMT_I),0.0) - ISNULL(SUM(DR_AMT_I),0.0)   JAN_AMT_I,   
+		             NULL AS EX_NUM,  
+		             NULL AS JAN_DIVI   
+		       FROM    (   
+		           SELECT  ACCNT,   
+		               CASE BOOK_CODE1   
+		                   WHEN    'A4' THEN BOOK_DATA1   
+		                   ELSE    BOOK_DATA2   
+		               END CUSTOM_CODE,  
+		                 CASE ACCNT   
+		                   WHEN    @ACCNT THEN 0.0   
+		                   WHEN    '' THEN ISNULL(SUM(DR_AMT_I),0.0) - ISNULL(SUM(CR_AMT_I),0.0)  
+		                
+		               END DR_AMT_I,   
+		              CASE ACCNT   
+		                   WHEN    @ACCNT THEN  ISNULL(SUM(CR_AMT_I),0.0) - ISNULL(SUM(DR_AMT_I),0.0) 
+		                   WHEN    '' THEN 0.0   
+		               END CR_AMT_I   
+		           FROM AGB200T WITH(NOLOCK)   
+		           WHERE COMP_CODE = @COMP_CODE   
+		             AND DIV_CODE  = @DIV_CODE   
+		             AND ACCNT = @ACCNT   
+		             AND ( AC_DATE = LEFT(@FR_DATE,4) + '01' OR LEN(AC_DATE) != 6 )   
+		             AND AC_DATE &gt;= LEFT(@FR_DATE,4) + '01'   
+		             AND AC_DATE &lt; @FR_DATE   
+		           GROUP BY ACCNT, BOOK_CODE1, BOOK_DATA1, BOOK_DATA2   
+		           ) A   
+		       WHERE   CUSTOM_CODE = @CUSTOM_CODE   
+		       UNION ALL   
+		      SELECT  '1' GUBUN,   
+		           SUBSTRING(AC_DATE,1,6) GUBUN1,   
+		           SUBSTRING(AC_DATE,1,4) + '-' + SUBSTRING(AC_DATE,5,2) + '-' + SUBSTRING(AC_DATE,7,2) AC_DATE,   
+		           SLIP_NUM,   
+		           SLIP_SEQ,   
+		           ISNULL(REMARK,'') REMARK,   
+		           ISNULL(SUM(DR_AMT_I),0.0) DR_AMT_I,   
+		           ISNULL(SUM(CR_AMT_I),0.0) CR_AMT_I,   
+		           ISNULL(SUM(JAN_AMT_I),0.0) JAN_AMT_I,   
+		           EX_NUM,   
+		           JAN_DIVI   
+		       FROM    (   
+		           SELECT  AC_DATE,   
+		               SLIP_NUM,   
+		               SLIP_SEQ,   
+		               REMARK,   
+		               CASE BOOK_CODE1   
+		                   WHEN    'A4' THEN BOOK_DATA1   
+		                   ELSE BOOK_DATA2   
+		               END CUSTOM_CODE,   
+		               CASE DR_CR   
+		                   WHEN    '1' THEN AMT_I   
+		                   WHEN    '2' THEN 0.0   
+		               END DR_AMT_I,   
+		               CASE DR_CR   
+		                   WHEN    '1' THEN 0.0   
+		                   WHEN    '2' THEN AMT_I   
+		               END CR_AMT_I,   
+		               CASE JAN_DIVI   
+		                   WHEN    DR_CR THEN AMT_I   
+		                   ELSE    (AMT_I * -1)   
+		               END JAN_AMT_I,   
+		               EX_NUM,   
+		               JAN_DIVI   
+		           FROM AGJ210T WITH(NOLOCK)   
+		           WHERE COMP_CODE = @COMP_CODE   
+		             AND DIV_CODE  = @DIV_CODE   
+		             AND AC_DATE  &gt;= @FR_DATE   
+		             AND AC_DATE  &lt;= @TO_DATE   
+		             AND ACCNT = @ACCNT   
+		             AND ISNULL(MOD_DIVI,'') = ''   
+		           ) A   
+		       WHERE   CUSTOM_CODE = @CUSTOM_CODE   
+		       GROUP BY CUSTOM_CODE, AC_DATE, SLIP_NUM, SLIP_SEQ, REMARK, EX_NUM, JAN_DIVI   
+		           UNION   
+		          
+		       SELECT  '2' GUBUN,   
+		           SUBSTRING(AC_DATE,1,6) GUBUN1, '',   
+		           0, 0,  N'소계(월)',   
+		           ISNULL(SUM(DR_AMT_I),0.0) DR_AMT_I,   
+		           ISNULL(SUM(CR_AMT_I),0.0) CR_AMT_I,   
+		           ISNULL(SUM(JAN_AMT_I),0.0) JAN_AMT_I,   
+		           0, JAN_DIVI   
+		       FROM    (   
+		           SELECT  AC_DATE,   
+		               CASE BOOK_CODE1   
+		                   WHEN    'A4' THEN BOOK_DATA1   
+		                   ELSE BOOK_DATA2   
+		               END CUSTOM_CODE,   
+		               CASE DR_CR   
+		                   WHEN    '1' THEN AMT_I   
+		                   WHEN    '2' THEN 0.0   
+		               END DR_AMT_I,   
+		               CASE DR_CR   
+		                   WHEN    '1' THEN 0.0   
+		                   WHEN    '2' THEN AMT_I   
+		               END CR_AMT_I,   
+		               CASE JAN_DIVI   
+		                   WHEN    DR_CR THEN AMT_I   
+		                   ELSE    (AMT_I * -1)   
+		               END JAN_AMT_I,   
+		               JAN_DIVI   
+		           FROM AGJ210T WITH(NOLOCK)   
+		           WHERE COMP_CODE = @COMP_CODE   
+		             AND DIV_CODE  = @DIV_CODE      
+		             AND AC_DATE &gt;= @FR_DATE   
+		             AND AC_DATE &lt;= @TO_DATE   
+		             AND ACCNT = @ACCNT   
+		             AND ISNULL(MOD_DIVI,'') = ''   
+		           ) A   
+		       WHERE   CUSTOM_CODE = @CUSTOM_CODE    
+		       GROUP BY SUBSTRING(AC_DATE,1,6), JAN_DIVI   
+		       ORDER BY GUBUN1, GUBUN, AC_DATE, SLIP_NUM   
+		       SET @MAX_SEQ = @@ROWCOUNT  
+		       SET @MIN_SEQ = 2  
+		       DECLARE @nCnt INT  
+		     SET @nCnt = 0  
+		     WHILE @MIN_SEQ &lt;= @MAX_SEQ  
+		      BEGIN   
+		        UPDATE @TABLE   
+		         SET JAN_AMT_I =  
+		            (SELECT  ISNULL(JAN_AMT_I,0)    
+		                           FROM @TABLE   
+		                          WHERE SEQ = @MIN_SEQ -1)    
+		                       + ( SELECT ISNULL(CR_AMT_I,0) - ISNULL(DR_AMT_I,0)  FROM @TABLE   
+		                           WHERE SEQ = @MIN_SEQ)   
+		         WHERE SEQ = @MIN_SEQ   
+		           AND GUBUN = '1'  
+		         SET @MIN_SEQ = @MIN_SEQ + 1   
+		         SET @nCnt = @nCnt + 1  
+		      END   
+		      IF @nCnt > 0     
+		      BEGIN     
+		      SELECT GUBUN,    GUBUN1, AC_DATE   
+		            ,SLIP_NUM, SLIP_SEQ, REMARK   
+		            ,DR_AMT_I, CR_AMT_I, JAN_AMT_I   
+		            ,EX_NUM,   JAN_DIVI   
+		        FROM @TABLE  
+		     UNION ALL   
+		      SELECT '3' GUBUN,   NULL GUBUN1, NULL AC_DATE   
+		            ,NULL SLIP_NUM, NULL SLIP_SEQ, N'총계' AS REMARK   
+		            ,SUM(CASE WHEN SEQ = 1 OR SEQ = @MAX_SEQ THEN DR_AMT_I END) AS DR_AMT_I  
+		            ,SUM(CASE WHEN SEQ = 1 OR SEQ = @MAX_SEQ THEN CR_AMT_I END) AS CR_AMT_I   
+		            ,SUM(CASE WHEN SEQ = 1 OR SEQ = @MAX_SEQ THEN JAN_AMT_I END) AS JAN_AMT_I     
+		            ,NULL AS EX_NUM, NULL AS JAN_DIVI   
+		        FROM @TABLE   
+		      END     
+		      ELSE     
+		      BEGIN     
+		      SELECT GUBUN,    GUBUN1, AC_DATE   
+		            ,SLIP_NUM, SLIP_SEQ, REMARK   
+		            ,DR_AMT_I, CR_AMT_I, JAN_AMT_I   
+		            ,EX_NUM,   JAN_DIVI   
+		        FROM @TABLE  
+		        WHERE 1=0
+		      END
+		</if>
+		END
+		SET NOCOUNT OFF  
+	</select>
+</mapper>

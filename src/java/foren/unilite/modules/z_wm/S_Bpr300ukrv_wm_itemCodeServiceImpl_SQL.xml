@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?><!---->
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="S_Bpr300ukrv_wm_itemCodeService">
+	<select id="S_Bpr300ukrv_wm_itemCodeService.selectAutoItemCode" parameterType="Map" resultType="rMap">
+		/* S_Bpr300ukrv_wm_itemCodeService.selectAutoItemCode */
+		DECLARE @gubunValue   NVARCHAR(08)    -- 코드채번룰(구분값), 20200925 수정: 07 -> 08
+		      , @gubunValue2  NVARCHAR(07)    -- 20200928 수정: 채번규칙 수정으로 추가
+		      , @gubunLen     NUMERIC         -- 코드채번룰(자릿수)
+		      , @seqValue     NVARCHAR(10)    -- BAUTONOT에 저장되어있던 최종순번
+		      , @lastItemCode NVARCHAR(100)   -- BPR100T에 저장되어있던 최종품목코드
+		      , @lastItemSeq  NVARCHAR(03)    -- 20200928 수정: 채번규칙 수정으로 추가(BPR100T에 저장되어있던 최종품목코드 SEQ)
+
+		BEGIN
+		    BEGIN
+		        SET    @gubunValue  = #{AUTO_MAN1} + #{AUTO_MAN2} + #{AUTO_MAN3} + #{AUTO_MAN4}      --20200925 수정: AUTO_MAN4 추가, 20201113 수정: AUTO_MAN 제외 - 품목계정은 채번 시 사용하지 않음
+		        SET    @gubunValue2 = #{AUTO_MAN1} + #{AUTO_MAN2} + #{AUTO_MAN3}                     --20200928 수정: 채번규칙 수정으로 추가, 20201113 수정: AUTO_MAN 제외 - 품목계정은 채번 시 사용하지 않음
+		        SET    @gubunLen    = 10                                                                           -- 총자릿수, 20200925 수정: 자릿수 11로 변경, 20201113 수정: 자릿수 10로 변경
+
+		        SELECT @seqValue   = LAST_SEQ
+		          FROM (SELECT ROW_NUMBER()OVER(PARTITION BY COMP_CODE, DIV_CODE, TABLE_ID, AUTO_MAN ORDER BY BASIS_DATE DESC )  AS RN
+		                     , LAST_SEQ
+		                 FROM BAUTONOT WITH(NOLOCK)
+		                WHERE COMP_CODE = #{S_COMP_CODE}
+		                  AND DIV_CODE  = #{DIV_CODE}
+		                  AND TABLE_ID  = 'BPR100T' --고정
+		                  AND AUTO_MAN  = @gubunValue
+		               ) T
+		         WHERE T.RN = 1
+
+		        SELECT @lastItemCode = ITEM_CODE
+		             , @lastItemSeq  = ITEM_SEQ
+		          FROM (
+		                 SELECT ROW_NUMBER()OVER(PARTITION BY COMP_CODE ORDER BY RIGHT(LEFT(ITEM_CODE,@gubunLen),@gubunLen-LEN(@gubunValue)) DESC )  AS RN
+		                      --, RIGHT(LEFT(ITEM_CODE,@gubunLen),@gubunLen-LEN(@gubunValue)) AS ITEM_CODE
+		                      , ITEM_CODE --20200928 수정: 채번규칙 수정으로 수정
+		                      , RIGHT(LEFT(ITEM_CODE, @gubunLen - 1), @gubunLen - LEN(@gubunValue)) AS ITEM_SEQ-- 20200928 추가: 채번규칙 수정으로 추가(BPR100T에 저장되어있던 최종품목코드 SEQ)
+		                   FROM BPR100T WITH(NOLOCK)
+		                  WHERE COMP_CODE           = #{S_COMP_CODE}
+		                    AND ITEM_CODE           LIKE @gubunValue2 + '%'
+		                    AND RIGHT(ITEM_CODE, 1) = #{AUTO_MAN4}
+		                    AND LEN(ITEM_CODE)      = @gubunLen
+		                    --AND ISNUMERIC(RIGHT(LEFT(ITEM_CODE, @gubunLen), @gubunLen-LEN(@gubunValue))) = 1
+		          ) T
+		         WHERE T.RN = 1
+
+		        IF(ISNULL(@seqValue,'') != '')
+		            BEGIN -- 이미 해당데이터 채번이력이 채번테이블에 존재할시
+		                SELECT @gubunValue2 + REPLICATE('0', @gubunLen - LEN(@gubunValue) - LEN(CONVERT( NVARCHAR, @seqValue + 1 ))) + CONVERT( NVARCHAR, @seqValue + 1 ) + #{AUTO_MAN4} AS AUTO_ITEM_CODE --20200928 수정: 채번규칙 수정으로 수정
+		                     , @lastItemCode  AS LAST_ITEM_CODE
+		                     , @gubunValue    AS AUTO_MAN
+		                     , @seqValue + 1  AS LAST_SEQ
+		            END
+		        ELSE
+		            BEGIN     -- 해당데이터 채번이력이 채번테이블에 존재하지 않을시 BPR100T에서 최대값 읽고 + 1
+		                      -- BPR100T에도 해당조건으로 코드 존재 하지 않을시 해당조건으로 신규코드 생성시킴 예)@gubunValue = '21',@gubunLen = 7 이면 '21'+ '00001' =  '2100001'
+		                IF(ISNULL(@lastItemCode,'') != '')
+		                    BEGIN
+		                        SELECT @gubunValue2 + REPLICATE('0', @gubunLen - LEN(@gubunValue) - 1) + CONVERT(NVARCHAR, CONVERT(NUMERIC, @lastItemSeq)+1) + #{AUTO_MAN4} AS AUTO_ITEM_CODE --20200928 수정: 채번규칙 수정으로 수정
+		                             --, CONVERT(NVARCHAR, CONVERT(NUMERIC, @lastItemCode )+1) AS AUTO_ITEM_CODE                                                                      --20200928 주석: 기존로직 주석
+		                             , @lastItemCode  AS LAST_ITEM_CODE
+		                             , @gubunValue    AS AUTO_MAN
+		                             , LEFT(RIGHT(CONVERT(NVARCHAR, CONVERT(NUMERIC, @lastItemSeq )+1), @gubunLen - LEN(@gubunValue)), 3) AS LAST_SEQ                                 --20200928 수정: 채번규칙 수정으로 수정
+		                             --, RIGHT(CONVERT(NVARCHAR, CONVERT(NUMERIC, @lastItemCode )+1), @gubunLen - LEN(@gubunValue)) AS LAST_SEQ                                       --20200928 주석: 기존로직 주석
+		                    END
+		                ELSE
+		                    BEGIN
+		                        SELECT @gubunValue2 + REPLICATE('0', @gubunLen - LEN(@gubunValue) - 1) + CONVERT( NVARCHAR, 1 ) + #{AUTO_MAN4} AS AUTO_ITEM_CODE
+		                             , '' AS LAST_ITEM_CODE
+		                             , @gubunValue    AS AUTO_MAN
+		                             , 1 AS LAST_SEQ
+		                    END
+		            END
+		    END
+		END
+	</select>
+
+
+
+	<update id="S_Bpr300ukrv_wm_itemCodeService.saveAutoItemCode" parameterType="Map">
+		MERGE INTO BAUTONOT                              A
+		USING ( SELECT #{S_COMP_CODE}    AS COMP_CODE
+		             , #{DIV_CODE}       AS DIV_CODE
+		             , 'BPR100T'         AS TABLE_ID
+		             , #{AUTO_MAN1}
+		             + #{AUTO_MAN2}
+		             + #{AUTO_MAN3}
+		             + #{AUTO_MAN4}      AS AUTO_MAN       --20201113 수정: AUTO_MAN 제외 - 품목계정은 채번 시 사용하지 않음
+		       )                                         B  ON B.COMP_CODE  = A.COMP_CODE
+		                                                   AND B.DIV_CODE   = A.DIV_CODE
+		                                                   AND B.TABLE_ID   = A.TABLE_ID
+		                                                   AND B.AUTO_MAN   = A.AUTO_MAN
+		WHEN MATCHED THEN
+		UPDATE 
+		   SET LAST_SEQ       = ${LAST_SEQ}
+		     , UPDATE_DB_USER = #{S_USER_ID}
+		     , UPDATE_DB_TIME = GETDATE()
+
+		WHEN NOT MATCHED THEN
+		INSERT (
+		       COMP_CODE
+		     , DIV_CODE
+		     , TABLE_ID
+		     , BASIS_DATE
+		     , AUTO_MAN
+		     , LAST_SEQ
+		     , INSERT_DB_USER
+		     , INSERT_DB_TIME
+		     , UPDATE_DB_USER
+		     , UPDATE_DB_TIME
+		) VALUES (
+		       B.COMP_CODE
+		     , B.DIV_CODE
+		     , B.TABLE_ID
+		     , CONVERT(NVARCHAR(08), GETDATE(), 112)
+		     , B.AUTO_MAN
+		     , ${LAST_SEQ}
+		     , #{S_USER_ID}
+		     , GETDATE()
+		     , #{S_USER_ID}
+		     , GETDATE()
+		);
+	</update>
+</mapper>

@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mms100skrvServiceImpl">
+
+	<select id="mms100skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* mms100skrv.Cmms100skrv[fnQms100q]Query01	*/
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+			DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+			      , @UserId			NVARCHAR(100)	/* 사용자ID		*/
+			      , @LangType		NVARCHAR(2)		/* 언어구분		*/
+		          , @RefItem		NVARCHAR(01)
+		          , @DateFormat		NVARCHAR(10)
+
+		    SET @CompCode = #{S_COMP_CODE}
+		    SET @UserId   = #{S_USER_ID}
+		    SET @LangType = N'KR'
+
+			/* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		    FROM BSA300T WITH (NOLOCK)
+		    WHERE USER_ID = @UserId
+
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+
+			/* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		    FROM BSA100T WITH (NOLOCK)
+		    WHERE COMP_CODE = @CompCode
+				AND MAIN_CODE = N'B044'
+		        AND REF_CODE1 = N'Y'
+
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+			/* 데이터 조회 */
+			SELECT  A.DIV_CODE
+				  , A.CUSTOM_CODE
+		          , CASE WHEN @RefItem = '1' THEN F.CUSTOM_NAME1
+		                 WHEN @RefItem = '2' THEN F.CUSTOM_NAME2
+		                 ELSE F.CUSTOM_NAME
+		            END				AS CUSTOM_NAME									/* 거래처명	*/
+		 		  , A.ORDER_TYPE
+		          , CASE WHEN ISNULL(A.ORDER_DATE, '') = '' THEN ''
+		                 ELSE REPLACE(
+		                      REPLACE(
+		                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.ORDER_DATE, 1, 4))
+		                                         , 'MM',   SUBSTRING(A.ORDER_DATE, 5, 2))
+		                                         , 'DD',   SUBSTRING(A.ORDER_DATE, 7, 2))
+		            END				AS ORDER_DATE									/* 발주일	*/
+		 		  , B.ITEM_CODE
+		          , CASE WHEN @RefItem = '1' THEN E.ITEM_NAME1
+		                 WHEN @RefItem = '2' THEN E.ITEM_NAME2
+		                 ELSE E.ITEM_NAME
+		            END				AS ITEM_NAME									/* 품명		*/
+				  , E.SPEC AS SPEC
+		          , CASE WHEN ISNULL(B.DVRY_DATE, '') = '' THEN ''
+		                 ELSE REPLACE(
+		                      REPLACE(
+		                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.DVRY_DATE, 1, 4))
+		                                         , 'MM',   SUBSTRING(B.DVRY_DATE, 5, 2))
+		                                         , 'DD',   SUBSTRING(B.DVRY_DATE, 7, 2))
+		            END				AS DVRY_DATE									/* 납기일	*/
+				  , B.ORDER_UNIT
+				  , B.ORDER_Q
+		          , CASE WHEN ISNULL(C.RECEIPT_DATE, '') = '' THEN ''
+		                 ELSE REPLACE(
+		                      REPLACE(
+		                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(C.RECEIPT_DATE, 1, 4))
+		                                         , 'MM',   SUBSTRING(C.RECEIPT_DATE, 5, 2))
+		                                         , 'DD',   SUBSTRING(C.RECEIPT_DATE, 7, 2))
+		            END				AS RECEIPT_DATE									/* 접수일	*/
+				  , C.RECEIPT_PRSN
+				  , C.RECEIPT_Q
+				  , B.ORDER_UNIT_Q - ISNULL(D.TOT_RECEIPT_Q,0) AS NOTRECEIPT_Q
+				  , A.ORDER_NUM
+				  , B.ORDER_SEQ
+				  , C.RECEIPT_NUM
+				  , C.RECEIPT_SEQ
+				  , B.REMARK		AS ORDER_REMARK
+				  , B.PROJECT_NO	AS ORDER_PROJECT_NO
+				  , C.REMARK		AS RECEIPT_REMARK
+				  , C.PROJECT_NO	AS RECEIPT_PROJECT_NO
+				FROM  QMS100T C WITH (NOLOCK)
+				  INNER JOIN MPO200T B WITH (NOLOCK) ON B.COMP_CODE = C.COMP_CODE
+													 AND B.IN_DIV_CODE = C.DIV_CODE
+													 AND B.ORDER_NUM = C.ORDER_NUM
+													 AND B.ORDER_SEQ = C.ORDER_SEQ
+				 INNER JOIN	MPO100T A WITH (NOLOCK)  ON A.COMP_CODE = B.COMP_CODE
+													 AND A.DIV_CODE  = B.DIV_CODE
+													AND A.ORDER_NUM = B.ORDER_NUM
+				LEFT  JOIN (SELECT  ORDER_NUM
+								  , ORDER_SEQ
+								  , SUM(ISNULL(RECEIPT_Q,0)) AS TOT_RECEIPT_Q
+								  , COMP_CODE
+								  , DIV_CODE
+							FROM QMS100T WITH (NOLOCK)
+							WHERE COMP_CODE = @CompCode
+							GROUP BY ORDER_NUM,DIV_CODE, ORDER_SEQ, COMP_CODE) D
+					   ON D.COMP_CODE = B.COMP_CODE
+					  AND D.DIV_CODE   = B.IN_DIV_CODE
+					  AND D.ORDER_NUM = B.ORDER_NUM
+					  AND D.ORDER_SEQ = B.ORDER_SEQ
+				LEFT  JOIN BPR100T E WITH (NOLOCK) ON E.COMP_CODE   = B.COMP_CODE
+												  AND E.ITEM_CODE   = B.ITEM_CODE
+				LEFT  JOIN BCM100T F WITH (NOLOCK) ON F.COMP_CODE   = A.COMP_CODE
+												  AND F.CUSTOM_CODE = A.CUSTOM_CODE
+				 --20190618 조회조건 item_account 추가
+				INNER JOIN BPR200T I WITH (NOLOCK) ON I.COMP_CODE  = A.COMP_CODE
+												  AND I.DIV_CODE   = A.DIV_CODE
+												  AND I.ITEM_CODE  = B.ITEM_CODE
+			 WHERE  C.COMP_CODE = @CompCode
+				AND B.INSPEC_FLAG = N'Y'
+
+<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+				AND C.DIV_CODE    = #{DIV_CODE}
+				</if>
+<!--2021.08 표준화 작업 Start-->
+/* 거래처코드		*/
+<if test="@foren.Ognl@isNotEmpty(CUST_CODE) and @foren.Ognl@isNotEmpty(CUST_NAME)">
+	AND A.CUSTOM_CODE = #{CUST_CODE}
+</if>
+<if test="@foren.Ognl@isNotEmpty(CUST_CODE) and @foren.Ognl@isEmpty(CUST_NAME)">
+	AND A.CUSTOM_CODE LIKE #{CUST_CODE} + '%'
+</if>
+<if test="@foren.Ognl@isEmpty(CUST_CODE) and @foren.Ognl@isNotEmpty(CUST_NAME)">
+	AND		(@RefItem       = N'0' AND F.CUSTOM_NAME  LIKE N'%' + #{CUST_NAME} + N'%')
+		OR	(@RefItem       = N'1' AND F.CUSTOM_NAME1 LIKE N'%' + #{CUST_NAME} + N'%')
+		OR	(@RefItem       = N'2' AND F.CUSTOM_NAME2 LIKE N'%' + #{CUST_NAME} + N'%')
+</if>
+/* 품목코드			*/
+<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+	AND B.ITEM_CODE = #{ITEM_CODE}
+</if>
+<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+	AND B.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+</if>
+<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+	AND		(@RefItem       = N'0' AND E.ITEM_NAME  LIKE N'%' + #{ITEM_NAME} + N'%')
+		OR	(@RefItem       = N'1' AND E.ITEM_NAME1 LIKE N'%' + #{ITEM_NAME} + N'%')
+		OR	(@RefItem       = N'2' AND E.ITEM_NAME2 LIKE N'%' + #{ITEM_NAME} + N'%')
+</if>
+<!--2021.08 표준화 작업 End-->
+<if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+				/* 발주유형	*/
+				AND A.ORDER_TYPE  = #{ORDER_TYPE}
+				</if>
+<if test="@foren.Ognl@isNotEmpty(RECEIPT_DATE_FR)">
+				/* 접수일자 */
+				AND ISNULL(C.RECEIPT_DATE,'99999999') &gt;= #{RECEIPT_DATE_FR}
+				</if>
+<if test="@foren.Ognl@isNotEmpty(RECEIPT_DATE_TO)">
+				AND ISNULL(C.RECEIPT_DATE,'00000000') &lt;= #{RECEIPT_DATE_TO}
+				</if>
+<if test="@foren.Ognl@isNotEmpty(ORDER_DATE_FR)">
+				/* 발주일자 */
+				AND A.ORDER_DATE &gt;= #{ORDER_DATE_FR}
+				</if>
+<if test="@foren.Ognl@isNotEmpty(ORDER_DATE_TO)">
+				AND A.ORDER_DATE &lt;= #{ORDER_DATE_TO}
+				</if>
+				/* 조회구분 = 미지정, 조건없음 */
+		        /* 조회구분 = 미접수(N)	*/
+		        <if test="TOT_RECEIPT_Q == &quot;N&quot;">
+				AND B.ORDER_Q &gt; ISNULL(D.TOT_RECEIPT_Q,0)
+				</if>
+				/* 조회구분 = 접수(Y)	*/
+				<if test="TOT_RECEIPT_Q == &quot;Y&quot;">
+				AND ISNULL(D.TOT_RECEIPT_Q,0) &gt; 0
+				</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+				--20190618 조회조건 item_account 추가
+				AND I.ITEM_ACCOUNT   = #{ITEM_ACCOUNT}
+			</if>
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+    </select>
+
+
+
+</mapper>

@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_pmp113ukrv_mitServiceImpl">
+	<select id="s_pmp113ukrv_mitServiceImpl.selectMasterList" parameterType="Map" resultType="rMap">
+		/* s_pmp113ukrv_mitServiceImpl.selectMasterList */
+		SELECT A.PROD_ITEM_CODE
+		     , B.ITEM_NAME
+		     , B.SPEC
+		     , SUM(PL_QTY)        AS PL_QTY
+		  FROM       L_BPL120T A  WITH(NOLOCK)
+		  INNER JOIN BPR100T   B  WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                      AND B.ITEM_CODE = A.PROD_ITEM_CODE
+		 WHERE A.COMP_CODE       = #{S_COMP_CODE}
+		   AND A.MRP_CONTROL_NUM = #{MRP_CONTROL_NUM}      --'01S20200209003'
+		 GROUP BY A.PROD_ITEM_CODE, B.ITEM_NAME, B.SPEC 
+	</select>
+
+	<select id="s_pmp113ukrv_mitServiceImpl.selectDetailList" parameterType="Map" resultType="rMap">
+		/* s_pmp113ukrv_mitServiceImpl.selectDetailList */
+		SELECT A.CHILD_ITEM_CODE
+		     , B.ITEM_NAME
+		     , B.SPEC
+		     , SUM(PL_QTY)                     AS PL_QTY   --소요예상수량
+		     , ISNULL(C.STOCK_Q,0)             AS STOCK_Q  --현재고
+			 , ISNULL(C.MATR_STOCK_Q,0)			AS MATR_STOCK_Q		--자재창고
+			 , ISNULL(C.PRODT_STOCK_Q,0)		AS PRODT_STOCK_Q	--생산창고	 
+		     , ISNULL(C.STOCK_Q,0)-SUM(PL_QTY) AS OVER_Q   --과부족
+		     --20200212 추가
+		     , B.STOCK_UNIT
+		  FROM       BPL130T A  WITH(NOLOCK)
+		  INNER JOIN BPR100T B  WITH(NOLOCK) ON A.COMP_CODE=B.COMP_CODE AND A.CHILD_ITEM_CODE=B.ITEM_CODE
+		  LEFT  JOIN (
+		               SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE
+							, SUM(CASE WHEN B.GROUP_CD = '10' THEN A.GOOD_STOCK_Q ELSE 0 END) AS MATR_STOCK_Q
+							, SUM(CASE WHEN B.GROUP_CD != '10' THEN A.GOOD_STOCK_Q ELSE 0 END) AS PRODT_STOCK_Q
+							, SUM(A.GOOD_STOCK_Q) AS STOCK_Q
+		                 FROM PABSTOCK_V A WITH (NOLOCK) 
+							  INNER JOIN BSA220T B WITH (NOLOCK) ON A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE=B.TYPE_LEVEL AND A.WH_CODE=B.TREE_CODE
+		                GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE
+		                HAVING SUM(A.GOOD_STOCK_Q) &lt;&gt; 0
+		             ) C  ON C.COMP_CODE = A.COMP_CODE
+		                 AND C.DIV_CODE  = A.DIV_CODE
+		                 AND C.ITEM_CODE = A.CHILD_ITEM_CODE
+		 WHERE A.COMP_CODE       = #{S_COMP_CODE}
+		   AND A.DIV_CODE        = #{DIV_CODE}
+		   AND A.MRP_CONTROL_NUM = #{MRP_CONTROL_NUM}      --'01S20200209003'
+		 GROUP BY A.CHILD_ITEM_CODE, B.ITEM_NAME, B.SPEC, ISNULL(C.STOCK_Q,0), ISNULL(C.MATR_STOCK_Q,0), ISNULL(C.PRODT_STOCK_Q,0)
+		        --20200212 추가
+		        , B.STOCK_UNIT
+	</select>
+
+
+
+
+
+<!-- 소요량계산 / 엑셀 업로드 -->
+	<insert id="s_pmp113ukrv_mitServiceImpl.insertExcel" parameterType="Map">
+		/*sof100ukrvServiceImpl.insertExcelSof112t*/
+		INSERT INTO PMP100T_MIT_EXCEL (
+		      _EXCEL_JOBID
+		    , _EXCEL_ROWNUM
+		    , _EXCEL_HAS_ERROR
+		    , _EXCEL_ERROR_MSG
+		    , COMP_CODE
+		    , DIV_CODE
+		    , ITEM_CODE
+		    , WKORD_Q
+		) VALUES (
+		      #{_EXCEL_JOBID}
+		    , #{_EXCEL_ROWNUM}
+		    , #{_EXCEL_HAS_ERROR, jdbcType=VARCHAR}
+		    , #{_EXCEL_ERROR	, jdbcType=VARCHAR}
+		    , #{S_COMP_CODE}
+		    , #{DIV_CODE}
+		    , #{ITEM_CODE}
+		    , #{WKORD_Q}
+		)
+	</insert>
+	<select id="s_pmp113ukrv_mitServiceImpl.calcRequirement" parameterType="Map" resultType="rMap">
+		/* 생산오더 소요량계산 - s_pmp113ukrv_mitServiceImpl.calcRequirement */
+		DECLARE @KEY_VALUE  NVARCHAR(40)
+		      , @USER_ID    NVARCHAR(100)
+		      , @MRP_NUM    NVARCHAR(20)
+		      , @ERR_DESC   NVARCHAR(2000)
+
+		SET @USER_ID   = #{S_USER_ID}
+		SET @KEY_VALUE = REPLACE(REPLACE(REPLACE(REPLACE(CONVERT(VARCHAR(100), GETDATE(), 25), '-',''), ':',''), ' ', ''), '.', '')
+
+		INSERT INTO L_BPL120T (
+		            KEY_VALUE, OPR_FLAG
+		          , COMP_CODE, DIV_CODE, WORK_STEP, PROD_ITEM_CODE
+		          , PL_QTY   , PL_COST , PL_AMOUNT, PROJECT_NO
+		          , ORDER_NUM, SER_NO  , REMARK
+		          , INSERT_DB_USER
+		          , UPDATE_DB_USER
+		)
+		SELECT @KEY_VALUE    AS KEY_VALUE
+		     , 'N'           AS OPR_FLAG
+		     , COMP_CODE
+		     , DIV_CODE
+		     , 'S'           AS WORK_STEP
+		     , ITEM_CODE     AS PROD_ITEM_CODE
+		     , SUM(WKORD_Q)  AS PL_QTY
+		     , 0             AS PL_COST
+		     , 0             AS PL_AMOUNT
+		     , ''            AS PROJECT_NO
+		     , ''            AS ORDER_NUM
+		     , NULL          AS SER_NO
+		     , ''            AS REMARK
+		     , @USER_ID      AS INSERT_DB_USER
+		     , @USER_ID      AS UPDATE_DB_USER
+		<if test="WORK_GUBUN == &quot;1&quot;">
+		  FROM PMP100T A WITH(NOLOCK)
+		 WHERE COMP_CODE       = #{S_COMP_CODE}
+		   AND DIV_CODE        = #{DIV_CODE}
+		   AND PRODT_END_DATE &gt;= #{PRODT_END_DATE_FR}
+		   AND PRODT_END_DATE &lt;= #{PRODT_END_DATE_TO}
+		   AND WORK_SHOP_CODE  = #{WORK_SHOP_CODE}
+		   AND LINE_END_YN     = 'Y'
+		   AND WKORD_STATUS NOT IN ('8','9')
+		</if>
+		<if test="WORK_GUBUN == &quot;2&quot;">
+		  FROM PMP100T_MIT_EXCEL A WITH(NOLOCK)
+		 WHERE _EXCEL_JOBID  = #{_EXCEL_JOBID}
+		</if>
+		 GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE
+
+		EXEC UNILITE.USP_CALC_PLALL @KEY_VALUE, @MRP_NUM OUTPUT, @ERR_DESC OUTPUT
+
+		SELECT @KEY_VALUE AS KEY_VALUE
+		     , @MRP_NUM   AS MRP_CONTROL_NUM
+		     , @ERR_DESC  AS ERR_DESC
+
+		--SELECT * FROM BPL130T WHERE MRP_CONTROL_NUM=@MRP_NUM
+		--SELECT * FROM L_BPL120T WHERE MRP_CONTROL_NUM=@MRP_NUM
+	</select>
+</mapper>

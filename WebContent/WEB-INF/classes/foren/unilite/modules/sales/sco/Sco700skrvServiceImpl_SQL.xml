@@ -1,0 +1,382 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sco700skrvServiceImpl">
+	<select id="sco700skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		<![CDATA[
+		/* sco700skrvServiceImpl.selectList */
+		DECLARE @CompCode       NVARCHAR(10)
+		      , @DivCode        NVARCHAR(10)
+		      , @FrDate         NVARCHAR(08)
+		      , @ToDate         NVARCHAR(08)
+		      , @agentType      NVARCHAR(08)
+		      , @busiPrsn       NVARCHAR(02)
+		      , @CustomCode     NVARCHAR(10)
+		      , @CustomName     NVARCHAR(30)
+
+		SET @CompCode       = #{S_COMP_CODE}
+		SET @DivCode        = #{DIV_CODE}
+		SET @FrDate         = #{FrDate}
+		SET @ToDate         = #{ToDate}
+		SET @agentType      = #{AGENT_TYPE}
+		SET @busiPrsn       = #{BUSI_PRSN}
+		SET @CustomCode     = #{CUSTOM_CODE}
+		SET @CustomName     = #{CUSTOM_NAME}
+
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE ID=OBJECT_ID('tempdb..#TMP_SCO700'))
+		    DROP TABLE #TMP_SCO700
+
+		CREATE TABLE #TMP_SCO700 (
+		    SEQ                     INT IDENTITY (1, 1) NOT NULL,
+		    COMP_CODE               NVARCHAR(08),
+		    DIV_CODE                NVARCHAR(08),
+		    CUSTOM_CODE             NVARCHAR(08),
+		    MONEY_UNIT              NVARCHAR(03),
+		    CARRY_OVER_AMT          NUMERIC(30, 6),   --이월금액
+		    PERIOD_ISSUE_AMT        NUMERIC(30, 6),   --기간내 발행금액
+		    DEPOSIT_AMT             NUMERIC(30, 6),   --기간내 입금액
+		    CARD_AMT                NUMERIC(30, 6),   --기간내 입금액
+
+		    BALANCE_AMT             NUMERIC(30, 6),   --잔액(VAT포함)
+		    CARRYOVER_UNISSUED_AMT  NUMERIC(30, 6),   --이월미발행금액
+		    CARRYOVER_NONISSUED_VAT NUMERIC(30, 6),   --이월미발행VAT
+		    PERIOD_UNISSUED_AMT     NUMERIC(30, 6),   --기간미발행금액
+		    PERIOD_NOTISSUED_VAT    NUMERIC(30, 6),   --기간미발행VAT
+		    TOTAL_BALANCE           NUMERIC(30, 6)    --총잔액
+		)
+
+		--##1. 이월금액: 기초잔액 + 조회기간(FROM) 이전의 세금계산서 발행금액 - 조회기간(FROM) 이전의 수금금액
+		--1-1. 기초잔액
+		INSERT INTO #TMP_SCO700
+		SELECT COMP_CODE
+		     , DIV_CODE
+		     , CUSTOM_CODE
+		     , MONEY_UNIT
+		     , ISNULL(BASIS_AMT_O, 0)    AS CARRY_OVER_AMT            --이월금액(기초잔액)
+		     , 0                         AS PERIOD_ISSUE_AMT          --기간내 발행금액
+		     , 0                         AS DEPOSIT_AMT               --기간내 입금액
+			 , 0						 AS CARD_AMT				 -- 카드매출액
+		     , 0                         AS BALANCE_AMT               --잔액(VAT포함)
+		     , 0                         AS CARRYOVER_UNISSUED_AMT    --이월미발행금액
+		     , 0                         AS CARRYOVER_NONISSUED_VAT   --이월미발행VAT
+		     , 0                         AS PERIOD_UNISSUED_AMT       --기간미발행금액
+		     , 0                         AS PERIOD_NOTISSUED_VAT      --기간미발행VAT
+		     , 0                         AS TOTAL_BALANCE             --총잔액
+		  FROM SAR100T WITH(NOLOCK)
+		 WHERE COMP_CODE   = @CompCode
+		   AND DIV_CODE    = @DivCode
+		   AND CUSTOM_CODE LIKE @CustomCode + '%'
+
+		--1-2. 조회기간(FROM) 이전의 세금계산서 발행금액
+		INSERT INTO #TMP_SCO700
+		SELECT COMP_CODE
+		     , SALE_DIV_CODE             AS DIV_CODE
+		     , CUSTOM_CODE
+		     , MONEY_UNIT
+		     , SUM(ISNULL(SALE_AMT_O, 0) + ISNULL(TAX_AMT_O, 0))    AS CARRY_OVER_AMT            --이월금액(조회기간(FROM) 이전의 세금계산서 발행금액)
+		     , 0                         AS PERIOD_ISSUE_AMT          --기간내 발행금액
+		     , 0                         AS DEPOSIT_AMT               --기간내 입금액
+			 , 0						 AS CARD_AMT				 -- 카드매출액
+		     , 0                         AS BALANCE_AMT               --잔액(VAT포함)
+		     , 0                         AS CARRYOVER_UNISSUED_AMT    --이월미발행금액
+		     , 0                         AS CARRYOVER_NONISSUED_VAT   --이월미발행VAT
+		     , 0                         AS PERIOD_UNISSUED_AMT       --기간미발행금액
+		     , 0                         AS PERIOD_NOTISSUED_VAT      --기간미발행VAT
+		     , 0                         AS TOTAL_BALANCE             --총잔액
+		  FROM STB100T WITH(NOLOCK)
+		 WHERE COMP_CODE     = @CompCode
+		   AND SALE_DIV_CODE = @DivCode
+		   AND CUSTOM_CODE   LIKE @CustomCode + '%'
+		   AND BILL_DATE     < @FrDate
+		   AND PUB_NUM       > ''
+		 GROUP BY COMP_CODE, SALE_DIV_CODE, CUSTOM_CODE, MONEY_UNIT
+
+		 		--1-2-1. 조회기간(FROM) 이전의 매출(기타/현금)금액(VAT포함) : 기타매출(70), 현금영수증(20) ; -- 카드매출(40) : 
+		UNION ALL
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.SALE_CUSTOM_CODE           AS CUSTOM_CODE
+		     , A.MONEY_UNIT
+		     --, 0                            AS CARRY_OVER_AMT            --이월금액(기초잔액)
+			 , CASE WHEN A.BILL_TYPE IN ('20', '70' ) THEN SUM(ISNULL(A.SALE_AMT_O, 0) + ISNULL(A.TAX_AMT_O, 0) ) ELSE 0 END  AS CARRY_OVER_AMT  --이월금액(기초잔액)
+		     , 0                            AS PERIOD_ISSUE_AMT          --기간내 발행금액
+		     , 0                            AS DEPOSIT_AMT               --기간내 입금액
+			 , 0							AS CARD_AMT				 -- 카드매출액
+		     , 0                            AS BALANCE_AMT               --잔액(VAT포함)
+		     , 0                            AS CARRYOVER_UNISSUED_AMT    --이월미발행금액
+		     , 0                            AS CARRYOVER_NONISSUED_VAT   --이월미발행VAT
+ 		     , 0                           AS PERIOD_UNISSUED_AMT       --기간미발행금액
+		     , 0                           AS PERIOD_NOTISSUED_VAT      --기간미발행VAT
+		     , 0                           AS TOTAL_BALANCE             --총잔액
+
+		  FROM      SALES_V A WITH(NOLOCK)
+		 WHERE A.COMP_CODE        = @CompCode
+		   AND A.DIV_CODE         = @DivCode
+		   AND A.SALE_CUSTOM_CODE LIKE @CustomCode + '%'
+		   AND A.SALE_DATE       < @FrDate
+		   --AND B.COMP_CODE IS NULL
+		 --GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, A.MONEY_UNIT
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, A.MONEY_UNIT, A.BILL_TYPE --, B.SALE_AMT_O, B.TAX_AMT_O,
+
+		--1-3. 조회기간(FROM) 이전의 수금금액 계산
+		INSERT INTO #TMP_SCO700
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.CUSTOM_CODE
+		     , A.MONEY_UNIT
+		     --, (-1) * SUM(ISNULL(A.COLLECT_AMT, 0) + ISNULL(B.PRE_COLET_AMT, 0))   AS CARRY_OVER_AMT            --이월금액(조회기간(FROM) 이전의 수금금액 계산)
+		     , (-1) * ( SUM(ISNULL(A.COLLECT_AMT, 0)) -  ISNULL(B.PRE_RETN_AMT, 0) ) AS CARRY_OVER_AMT            --이월금액(조회기간(FROM) 이전의 수금금액 계산)
+		     , 0                         AS PERIOD_ISSUE_AMT          --기간내 발행금액
+		     , 0                         AS DEPOSIT_AMT               --기간내 입금액
+			 , 0						 AS CARD_AMT				 -- 카드매출액
+		     , 0                         AS BALANCE_AMT               --잔액(VAT포함)
+		     , 0                         AS CARRYOVER_UNISSUED_AMT    --이월미발행금액
+		     , 0                         AS CARRYOVER_NONISSUED_VAT   --이월미발행VAT
+		     , 0                         AS PERIOD_UNISSUED_AMT       --기간미발행금액
+		     , 0                         AS PERIOD_NOTISSUED_VAT      --기간미발행VAT
+		     , 0                         AS TOTAL_BALANCE             --총잔액
+		  FROM      SCO100T A WITH(NOLOCK)
+		  --LEFT JOIN SCO200T B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		  --                                AND B.DIV_CODE    = A.DIV_CODE
+		  --                                AND B.CUSTOM_CODE = A.CUSTOM_CODE
+		  --                                AND B.MONEY_UNIT  = A.MONEY_UNIT
+		  LEFT JOIN ( SELECT COMP_CODE, DIV_CODE, CUSTOM_CODE, MONEY_UNIT, SUM(ISNULL(PRE_COLET_AMT, 0)) AS PRE_COLET_AMT, SUM(ISNULL(PRE_RETN_AMT, 0)) AS PRE_RETN_AMT
+					 FROM SCO200T
+					 GROUP BY COMP_CODE, DIV_CODE, CUSTOM_CODE, MONEY_UNIT
+					  ) B ON B.COMP_CODE   = A.COMP_CODE
+		                                  AND B.DIV_CODE    = A.DIV_CODE
+		                                  AND B.CUSTOM_CODE = A.CUSTOM_CODE
+		                                  AND B.MONEY_UNIT  = A.MONEY_UNIT
+		 WHERE A.COMP_CODE   = @CompCode
+		   AND A.DIV_CODE    = @DivCode
+		   AND A.CUSTOM_CODE LIKE @CustomCode + '%'
+		   AND A.COLLECT_DATE < @FrDate
+		 --GROUP BY A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE, A.MONEY_UNIT
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE, A.MONEY_UNIT, B.PRE_RETN_AMT
+
+		--##2. 조회 기간내 금액 조회: 기간내 발행금액, 기간내 입금액(수금액)
+		INSERT INTO #TMP_SCO700
+		SELECT * FROM 
+		    (
+		     --2-1. 기간내 발행 금액: 조회기간 동안의 세금계산서 발행금액(VAT포함) : 세금계산서
+		     SELECT COMP_CODE
+		          , SALE_DIV_CODE               AS DIV_CODE
+		          , CUSTOM_CODE
+		          , MONEY_UNIT
+		          , 0                           AS CARRY_OVER_AMT            --이월금액
+		          , SUM(ISNULL(SALE_AMT_O, 0)
+		          + ISNULL(TAX_AMT_O, 0))       AS PERIOD_ISSUE_AMT          --기간내 발행금액(조회기간 동안의 세금계산서 발행금액(VAT포함))
+		          , 0                           AS DEPOSIT_AMT               --기간내 입금액
+				  , 0						    AS CARD_AMT				 -- 카드매출액
+		          , 0                           AS BALANCE_AMT               --잔액(VAT포함)
+		          , 0                           AS CARRYOVER_UNISSUED_AMT    --이월미발행금액
+		          , 0                           AS CARRYOVER_NONISSUED_VAT   --이월미발행VAT
+		          , 0                           AS PERIOD_UNISSUED_AMT       --기간미발행금액
+		          , 0                           AS PERIOD_NOTISSUED_VAT      --기간미발행VAT
+		          , 0                           AS TOTAL_BALANCE             --총잔액
+		       FROM STB100T WITH(NOLOCK)
+		      WHERE COMP_CODE     = @CompCode
+		        AND SALE_DIV_CODE = @DivCode
+		        AND CUSTOM_CODE   LIKE @CustomCode + '%'
+		        AND BILL_DATE    >= @FrDate
+		        AND BILL_DATE    <= @ToDate
+		      GROUP BY COMP_CODE, SALE_DIV_CODE, CUSTOM_CODE, MONEY_UNIT--, PUB_NUM, BILL_DATE
+		
+			UNION ALL
+
+		--2-1. 기간내 발행 금액: 조회기간 동안의 세금계산서 발행금액(VAT포함) : 기타매출(70), 카드매출(40), 현금영수증(20)
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.SALE_CUSTOM_CODE           AS CUSTOM_CODE
+		     , A.MONEY_UNIT
+		     , 0                            AS CARRY_OVER_AMT            --이월금액(기초잔액)
+		     --, 0                            AS PERIOD_ISSUE_AMT          --기간내 발행금액
+			 , CASE WHEN A.BILL_TYPE IN ('20', '40', '70' ) THEN SUM(ISNULL(A.SALE_AMT_O, 0) + ISNULL(A.TAX_AMT_O, 0) ) ELSE 0 END  AS PERIOD_ISSUE_AMT  
+		     , 0                            AS DEPOSIT_AMT               --기간내 입금액
+			 , 0						 AS CARD_AMT				 -- 카드매출액
+		     , 0                            AS BALANCE_AMT               --잔액(VAT포함)
+		     , 0                            AS CARRYOVER_UNISSUED_AMT    --이월미발행금액
+		     , 0                            AS CARRYOVER_NONISSUED_VAT   --이월미발행VAT
+ 		     , 0                           AS PERIOD_UNISSUED_AMT       --기간미발행금액
+		     , 0                           AS PERIOD_NOTISSUED_VAT      --기간미발행VAT
+		     , 0                           AS TOTAL_BALANCE             --총잔액
+
+		  FROM      SALES_V A WITH(NOLOCK)
+		 WHERE A.COMP_CODE        = @CompCode
+		   AND A.DIV_CODE         = @DivCode
+		   AND A.SALE_CUSTOM_CODE LIKE @CustomCode + '%'
+		   AND A.SALE_DATE       >= @FrDate
+		   AND A.SALE_DATE       <= @ToDate
+		   --AND B.COMP_CODE IS NULL
+		 --GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, A.MONEY_UNIT
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, A.MONEY_UNIT, A.BILL_TYPE --, B.SALE_AMT_O, B.TAX_AMT_O,
+
+
+
+		         
+		     UNION ALL
+		     
+		     --2-2. 입금액: 조회기간 동안 수금된 금액
+		     SELECT COMP_CODE
+		          , DIV_CODE
+		          , CUSTOM_CODE
+		          , MONEY_UNIT
+		          , 0                           AS CARRY_OVER_AMT            --이월금액
+		          , 0                           AS PERIOD_ISSUE_AMT          --기간내 발행금액
+		          , SUM(ISNULL(COLLECT_AMT, 0)) AS DEPOSIT_AMT               --기간내 입금액(수금액)
+				  , 0						 AS CARD_AMT				 -- 카드매출액
+		          , 0                           AS BALANCE_AMT               --잔액(VAT포함)
+		          , 0                           AS CARRYOVER_UNISSUED_AMT    --이월미발행금액
+		          , 0                           AS CARRYOVER_NONISSUED_VAT   --이월미발행VAT
+		          , 0                           AS PERIOD_UNISSUED_AMT       --기간미발행금액
+		          , 0                           AS PERIOD_NOTISSUED_VAT      --기간미발행VAT
+		          , 0                           AS TOTAL_BALANCE             --총잔액
+		       FROM SCO100T WITH(NOLOCK)
+		      WHERE COMP_CODE     = @CompCode
+		        AND DIV_CODE      = @DivCode
+		        AND CUSTOM_CODE   LIKE @CustomCode + '%'
+		        AND COLLECT_DATE >= @FrDate
+		        AND COLLECT_DATE <= @ToDate
+		      GROUP BY COMP_CODE, DIV_CODE, CUSTOM_CODE, MONEY_UNIT--, BILL_NUM, COLLECT_DATE
+		    ) X
+		    --ORDER BY SALE_DATE
+		     UNION ALL
+
+		--2-2. . 입금액: 조회기간 동안 카드매출
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.SALE_CUSTOM_CODE           AS CUSTOM_CODE
+		     , A.MONEY_UNIT
+		     , 0                            AS CARRY_OVER_AMT            --이월금액(기초잔액)
+		     , 0                            AS PERIOD_ISSUE_AMT          --기간내 발행금액
+		     , 0                            AS DEPOSIT_AMT               --기간내 입금액
+		     --,  CASE WHEN A.BILL_TYPE IN ('40') THEN SUM(ISNULL(A.SALE_AMT_O, 0) + ISNULL(A.TAX_AMT_O, 0) ) ELSE 0 END                            AS DEPOSIT_AMT               --기간내 입금액
+			 ,  CASE WHEN A.BILL_TYPE IN ('40') THEN SUM(ISNULL(A.SALE_AMT_O, 0) + ISNULL(A.TAX_AMT_O, 0) ) ELSE 0 END                        					 AS CARD_AMT				 -- 카드매출액
+		     , 0                            AS BALANCE_AMT               --잔액(VAT포함)
+		     , 0                            AS CARRYOVER_UNISSUED_AMT    --이월미발행금액
+		     , 0                            AS CARRYOVER_NONISSUED_VAT   --이월미발행VAT
+ 		     , 0                           AS PERIOD_UNISSUED_AMT       --기간미발행금액
+		     , 0                           AS PERIOD_NOTISSUED_VAT      --기간미발행VAT
+		     , 0                           AS TOTAL_BALANCE             --총잔액
+
+		  FROM      SALES_V A WITH(NOLOCK)
+		 WHERE A.COMP_CODE        = @CompCode
+		   AND A.DIV_CODE         = @DivCode
+		   AND A.SALE_CUSTOM_CODE LIKE @CustomCode + '%'
+		   AND A.SALE_DATE       >= @FrDate
+		   AND A.SALE_DATE       <= @ToDate
+		   --AND B.COMP_CODE IS NULL
+		 --GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, A.MONEY_UNIT
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, A.MONEY_UNIT, A.BILL_TYPE --, B.SALE_AMT_O, B.TAX_AMT_O,
+
+
+
+		--##3. 이월 미발행금액 조회: 이월 미발행금액, 이월 미발행VAT
+		INSERT INTO #TMP_SCO700
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.SALE_CUSTOM_CODE           AS CUSTOM_CODE
+		     , A.MONEY_UNIT
+		     , 0                            AS CARRY_OVER_AMT            --이월금액(기초잔액)
+		     , 0                            AS PERIOD_ISSUE_AMT          --기간내 발행금액
+		     , 0                            AS DEPOSIT_AMT               --기간내 입금액
+			 , 0						 AS CARD_AMT				 -- 카드매출액
+		     , 0                            AS BALANCE_AMT               --잔액(VAT포함)
+		     --, SUM(ISNULL(A.SALE_AMT_O, 0))
+		     --     AS CARRYOVER_UNISSUED_AMT    --이월미발행금액
+		     --, SUM(ISNULL(A.TAX_AMT_O, 0))
+		     --     AS CARRYOVER_NONISSUED_VAT   --이월미발행VAT
+		     , CASE WHEN A.BILL_TYPE IN ( '20', '40', '70') THEN 0 ELSE   SUM(ISNULL(A.SALE_AMT_O, 0)) END 
+		          AS CARRYOVER_UNISSUED_AMT    --이월미발행금액
+		     , CASE WHEN A.BILL_TYPE IN ( '20', '40', '70') THEN 0 ELSE   SUM(ISNULL(A.TAX_AMT_O, 0)) END
+		          AS CARRYOVER_NONISSUED_VAT   --이월미발행VAT
+		     , 0                            AS PERIOD_UNISSUED_AMT       --기간미발행금액
+		     , 0                            AS PERIOD_NOTISSUED_VAT      --기간미발행VAT
+		     , 0                            AS TOTAL_BALANCE             --총잔액
+		  FROM      SALES_V A WITH(NOLOCK)
+
+		 WHERE A.COMP_CODE        = @CompCode
+		   AND A.DIV_CODE         = @DivCode
+		   AND A.SALE_CUSTOM_CODE LIKE @CustomCode + '%'
+
+		   AND ISNULL(A.PUB_NUM, '') = ''	--@@
+		   AND A.SALE_DATE < @FrDate		--@@ 2020-07-07
+
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, A.MONEY_UNIT, A.BILL_TYPE--, B.SALE_AMT_O,B.TAX_AMT_O
+
+		--##4. 기간내 미발행금액 조회: 기간내 미발행금액, 기간내 미발행VAT
+		INSERT INTO #TMP_SCO700
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.SALE_CUSTOM_CODE           AS CUSTOM_CODE
+		     , A.MONEY_UNIT
+		     , 0                            AS CARRY_OVER_AMT            --이월금액(기초잔액)
+		     , 0                            AS PERIOD_ISSUE_AMT          --기간내 발행금액
+		     , 0                            AS DEPOSIT_AMT               --기간내 입금액
+			 , 0						    AS CARD_AMT				 -- 카드매출액
+		     , 0                            AS BALANCE_AMT               --잔액(VAT포함)
+		     , 0                            AS CARRYOVER_UNISSUED_AMT    --이월미발행금액
+		     , 0                            AS CARRYOVER_NONISSUED_VAT   --이월미발행VAT
+		     --, SUM(ISNULL(A.SALE_AMT_O, 0))
+		     --    - ISNULL(B.SALE_AMT_O, 0) AS PERIOD_UNISSUED_AMT       --기간미발행금액
+		     --, SUM(ISNULL(A.TAX_AMT_O, 0))
+		     --    - ISNULL(B.TAX_AMT_O, 0)  AS PERIOD_NOTISSUED_VAT      --기간미발행VAT
+		     , CASE WHEN A.BILL_TYPE IN ( '20', '40', '70') THEN 0 ELSE   SUM(ISNULL(A.SALE_AMT_O, 0)) END 
+		          AS PERIOD_UNISSUED_AMT    --이월미발행금액
+		     , CASE WHEN A.BILL_TYPE IN ( '20', '40', '70') THEN 0 ELSE   SUM(ISNULL(A.TAX_AMT_O, 0)) END
+		          AS PERIOD_NOTISSUED_VAT   --이월미발행VAT
+		     , 0                            AS TOTAL_BALANCE             --총잔액
+		  FROM      SALES_V A WITH(NOLOCK)
+		  LEFT JOIN( SELECT COMP_CODE, SALE_DIV_CODE, CUSTOM_CODE, SUM(SALE_AMT_O) AS SALE_AMT_O, SUM(TAX_AMT_O) AS TAX_AMT_O
+					 FROM STB100T WITH(NOLOCK) 
+					 WHERE BILL_DATE   >= @FrDate
+						AND BILL_DATE    <= @ToDate
+					 GROUP BY COMP_CODE, SALE_DIV_CODE, CUSTOM_CODE
+					 ) B  ON B.COMP_CODE     = A.COMP_CODE
+		                                    AND B.SALE_DIV_CODE = A.DIV_CODE
+		                                    AND B.CUSTOM_CODE       = A.SALE_CUSTOM_CODE
+		 WHERE A.COMP_CODE        = @CompCode
+		   AND A.DIV_CODE         = @DivCode
+		   AND A.SALE_CUSTOM_CODE LIKE @CustomCode + '%'
+		   AND A.SALE_DATE       >= @FrDate
+		   AND A.SALE_DATE       <= @ToDate
+		   AND ISNULL(A.PUB_NUM, '') = ''	--@@	20210525	
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, A.MONEY_UNIT, B.SALE_AMT_O, B.TAX_AMT_O, A.BILL_TYPE
+
+		--##5. 조건에 맞는 데이터 조회
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.CUSTOM_CODE
+		     , B.CUSTOM_NAME
+		     , A.MONEY_UNIT
+		     , SUM(A.CARRY_OVER_AMT)           AS CARRY_OVER_AMT            --이월금액
+		     , SUM(A.PERIOD_ISSUE_AMT)         AS PERIOD_ISSUE_AMT          --기간내 발행금액
+		     , SUM(A.DEPOSIT_AMT)              AS DEPOSIT_AMT               --기간내 입금액
+			 , SUM(A.CARD_AMT)                 AS CARD_AMT
+		     , SUM(A.CARRY_OVER_AMT)
+			 + SUM(A.PERIOD_ISSUE_AMT)
+			 - SUM(A.DEPOSIT_AMT) - SUM(A.CARD_AMT)          AS BALANCE_AMT               --잔액(VAT포함): 이월금액 + 기간내 발행금액 - 기간내 입금액
+
+		     , SUM(A.CARRYOVER_UNISSUED_AMT)   AS CARRYOVER_UNISSUED_AMT    --이월미발행금액
+		     , SUM(A.CARRYOVER_NONISSUED_VAT)  AS CARRYOVER_NONISSUED_VAT   --이월미발행VAT
+		     , SUM(A.PERIOD_UNISSUED_AMT)      AS PERIOD_UNISSUED_AMT       --기간미발행금액
+		     , SUM(A.PERIOD_NOTISSUED_VAT)     AS PERIOD_NOTISSUED_VAT      --기간미발행VAT
+		     , SUM(A.CARRY_OVER_AMT)
+		     + SUM(A.PERIOD_ISSUE_AMT)
+		     - SUM(A.DEPOSIT_AMT)  - SUM(A.CARD_AMT) 
+		     + SUM(A.CARRYOVER_UNISSUED_AMT) 
+		     + SUM(A.CARRYOVER_NONISSUED_VAT)
+		     + SUM(A.PERIOD_UNISSUED_AMT)    
+		     + SUM(A.PERIOD_NOTISSUED_VAT)     AS TOTAL_BALANCE             --총잔액
+		     , B.AGENT_TYPE
+		     , B.BUSI_PRSN
+		  FROM       #TMP_SCO700 A WITH(NOLOCK)
+		  INNER JOIN BCM100T     B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		                                       AND B.CUSTOM_CODE = A.CUSTOM_CODE
+		 WHERE B.CUSTOM_NAME LIKE @CustomName + '%'
+		   AND ((B.AGENT_TYPE = @agentType AND ISNULL(@agentType, '') != '') OR ISNULL(@agentType, '') = '')
+		   AND ((B.BUSI_PRSN  = @busiPrsn  AND ISNULL(@busiPrsn , '') != '') OR ISNULL(@busiPrsn , '') = '')
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE, B.CUSTOM_NAME, A.MONEY_UNIT, B.AGENT_TYPE, B.BUSI_PRSN 
+
+		]]>
+	</select>
+</mapper>

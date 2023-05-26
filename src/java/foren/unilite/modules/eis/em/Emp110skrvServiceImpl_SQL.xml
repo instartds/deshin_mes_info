@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="emp110skrvServiceImpl">
+	<select id="emp110skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* emp110skrvServiceImpl.selectList */
+		    DECLARE         @COMP_CODE          NVARCHAR(08)                -- (필수) 법인코드
+		                  , @DIV_CODE           NVARCHAR(08)                -- (필수) 사업장
+
+		    SET @COMP_CODE = 'MASTER'
+		    SET @DIV_CODE  = '01'
+	
+SELECT 
+	 *
+FROM (	
+			SELECT ROW_NUMBER() over (ORDER BY A.COMP_CODE, A.DIV_CODE,A.OUTSTOCK_NUM) AS ROW_NUMBER
+				 , COUNT(A.COMP_CODE) OVER () AS TOTAL
+				 , A.COMP_CODE
+				 , A.DIV_CODE
+				 , MIN(A.OUTSTOCK_REQ_DATE)		AS 	OUTSTOCK_REQ_DATE	--요청일자
+				 , MAX(R1.SPEC)					AS	SPEC				--품번	
+				 , MAX(B.LOT_NO)				AS  LOT_NO				--LOT NO		
+				 , A.OUTSTOCK_NUM										--출고요청서 NO
+				 , COUNT(*)								AS OUTSTOCK_REQ_Q	--요청품목수
+				 , COUNT(*) - SUM(ISNULL(C.NON_CNT,0))	AS OUTSTOCK_Q		--출고완료수
+				 , SUM(ISNULL(C.NON_CNT,0))				AS NON_CNT			--미출고건수
+				 , COUNT(D.ITEM_CODE)					AS TODAY_CNT		--당일출고건수 
+			 FROM  PMP300T A WITH(NOLOCK) 
+			INNER JOIN PMP100TV1 B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+											 AND A.DIV_CODE = B.DIV_CODE
+											 AND A.REF_WKORD_NUM = B.WKORD_NUM
+											 AND (B.WKORD_STATUS != '8' OR B.WKORD_STATUS != '9')
+			LEFT JOIN BPR100T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+									 AND R1.ITEM_CODE = B.ITEM_CODE
+			LEFT JOIN (SELECT COMP_CODE, DIV_CODE,OUTSTOCK_NUM, ITEM_CODE, COUNT(*) AS NON_CNT
+						 FROM  PMP300T  WITH (NOLOCK)
+						WHERE COMP_CODE			= @COMP_CODE
+						  AND DIV_CODE			= @DIV_CODE
+						  AND OUTSTOCK_REQ_DATE			&lt;= CONVERT(NVARCHAR, GETDATE(), 112)
+						  AND OUTSTOCK_REQ_Q - OUTSTOCK_Q &gt; 0
+						GROUP BY COMP_CODE, DIV_CODE,OUTSTOCK_NUM, ITEM_CODE) C ON A.COMP_CODE		= C.COMP_CODE
+																			   AND A.DIV_CODE		= C.DIV_CODE
+																			   AND A.OUTSTOCK_NUM	= C.OUTSTOCK_NUM
+																			   AND A.ITEM_CODE		= C.ITEM_CODE
+																	
+			LEFT JOIN (SELECT COMP_CODE, DIV_CODE, ORDER_NUM, ITEM_CODE, SUM(INOUT_Q) AS INOUT_Q   -- 같은작지에 두개의 요청번호인 경우 문제있음 (생산도 ISSUE_REQ_NUM 활용방안 생각)
+						  FROM BTR100T WITH (NOLOCK)
+						 WHERE COMP_CODE = @COMP_CODE
+						  AND DIV_CODE	 = @DIV_CODE
+						  AND INOUT_TYPE = '2'
+					      AND CREATE_LOC = '2'
+					      AND INOUT_CODE_TYPE = '2'
+					      AND INOUT_DATE = CONVERT(NVARCHAR, GETDATE(), 112)
+						GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, ITEM_CODE) D ON A.COMP_CODE		= D.COMP_CODE
+																			 AND A.DIV_CODE			= D.DIV_CODE
+																			 AND A.REF_WKORD_NUM	= D.ORDER_NUM
+																			 AND A.ITEM_CODE		= D.ITEM_CODE
+																			 AND A.OUTSTOCK_REQ_Q   - D.INOUT_Q = 0
+
+			WHERE A.COMP_CODE			= @COMP_CODE
+			  AND A.DIV_CODE			= @DIV_CODE
+			  AND A.OUTSTOCK_REQ_DATE			&lt;= CONVERT(NVARCHAR, GETDATE(), 112)
+			GROUP BY A.COMP_CODE,A.DIV_CODE, A.OUTSTOCK_NUM
+			HAVING SUM(C.NON_CNT) &gt; 0 OR  COUNT(D.ITEM_CODE) &gt; 0
+) T
+
+<if test="@foren.Ognl@isNotEmpty(page)"> 
+WHERE ROW_NUMBER BETWEEN ${start}+1 and ${limit} * ${page}
+</if>
+
+	</select>
+</mapper>

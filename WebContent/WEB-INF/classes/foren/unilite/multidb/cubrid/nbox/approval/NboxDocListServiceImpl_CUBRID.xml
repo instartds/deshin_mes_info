@@ -1,0 +1,443 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="nboxDocListService">
+    
+	<select id="nboxDocListService.select" parameterType="Map" resultType="rMap">
+    /* nboxDocListService.select */
+        SET @uLOGO_IMGE = ''
+        SET @uIMGE = ''
+        SET @RCVTYPE = ''
+    
+        DO (
+            SELECT @uLOGO_IMGE := LOGO_IMGE FROM BOR120T WHERE COMP_CODE = #{S_COMP_CODE} AND DIV_CODE = #{S_DIV_CODE}
+        )
+        
+        DO (
+            SELECT @uIMGE := IMGE FROM BOR120T WHERE COMP_CODE = #{S_COMP_CODE} AND DIV_CODE = #{S_DIV_CODE}
+        )
+        
+        DO(
+            SELECT @RCVTYPE := CASE WHEN #{BOX} = 'XA006' THEN 'R'
+                                    WHEN #{BOX} = 'XA007' THEN 'C'
+                                    ELSE 'TMP'
+                                    END
+        )
+        
+        
+        UPDATE tbApprovalDocRcvUser
+            SET    ReadDate = SYSDATETIME
+            WHERE  DocumentID = #{DocumentID}
+            AND    RcvType = @RCVTYPE
+            AND    RcvUserID = #{S_USER_ID}
+        
+        
+        SELECT 
+         T.DocumentID
+        ,T.CompanyID
+        ,T.DraftUserID
+        ,T.DraftUserName
+        ,T.DraftDeptName
+        ,T.DraftUserPos
+        ,T.Subject
+        ,nfnGetApprovalContents(T.CompanyID, T.DocumentID, T.Contents) AS ViewContents
+        ,T.Contents
+        ,T.DraftDate
+        ,T.MultiType
+        ,T.Status
+        ,T.DocumentNo
+        ,T.FormID
+        ,T.FormName          
+        ,nfnGetCommonCodeValue(#{S_COMP_CODE}, 'NXA0', 'X0002') as Slogan1
+        ,nfnGetCommonCodeValue(#{S_COMP_CODE}, 'NXA0', 'X0009') as Slogan2
+        ,CASE WHEN NVL(@uLOGO_IMGE, '') IS NULL THEN nfnGetCommonCodeValue(#{S_COMP_CODE}, 'NXA0', 'X0010') ELSE @uLOGO_IMGE END as Logo
+        ,NVL(@uIMGE,'') AS Imge
+        ,T.DraftFlag 
+        ,T.CurrentStatus
+        ,T.CurrentSignFlag
+        ,T.NextSignFlag
+        ,T.NextSignedFlag
+        ,T.DoubleLineFirstFlag
+        ,T.SecureGrade
+        ,T.CabinetID
+        ,T.InnerApprovalFlag
+        ,T.InputRcvUser
+        ,T.InputRcvFlag  
+        ,T.InputRefUser
+        ,T.InputRefFlag
+        ,T.OpenFlag
+        FROM (
+            SELECT 
+        		 Doc.DocumentID
+        		,Doc.CompanyID
+        		,Doc.DraftUserID
+        		,Doc.DraftUserName
+        		,Doc.DraftDeptName
+        		,Doc.DraftUserPos
+        		,Doc.Subject
+        		,Doc.Contents
+        		,Doc.DraftDate
+        		,Doc.MultiType
+        		,Doc.Status
+        		,Doc.DocumentNo
+        		,Doc.FormID
+        		,Doc.FormSubject as FormName		  
+        		,CASE WHEN Doc.DraftUserID = #{S_USER_ID} THEN 'Y' ELSE 'N' END AS DraftFlag 
+        		,cLine.Status AS CurrentStatus
+        		,cLine.SignFlag AS CurrentSignFlag
+        		,CASE WHEN cLine.Status in ( 'C', 'R' ) AND  nLine.SignFlag = 'Y' THEN 'Y' ELSE 'N' END AS NextSignFlag
+        		,CASE WHEN nLine.Status in ( 'C', 'R' ) THEN 'Y' ELSE 'N' END AS NextSignedFlag
+        		,CASE WHEN bLine.SignUserID = #{S_USER_ID} THEN 'Y' ELSE 'N' END AS DoubleLineFirstFlag
+        		,Doc.SecureGrade
+        		,Doc.CabinetID
+                ,Doc.InnerApprovalFlag
+                ,Doc.InputRcvUser
+                ,CASE WHEN NVL(Doc.InnerApprovalFlag, '') = '1' THEN '0' ELSE  CASE WHEN NVL(Doc.InputRcvUser, '') = '' THEN '0' ELSE '1' END END as InputRcvFlag  
+                ,Doc.InputRefUser
+                ,CASE WHEN NVL(Doc.InputRefUser, '') IS NULL THEN '0' ELSE '1' END InputRefFlag
+                ,Doc.OpenFlag
+    		FROM   tbApprovalDoc Doc
+    		LEFT OUTER JOIN tbApprovalDocLine cLine ON Doc.DocumentID = cLine.DocumentID AND cLine.SignUserID = #{S_USER_ID}
+    		LEFT OUTER JOIN tbApprovalDocLine nLine ON cLine.DocumentID = nLine.DocumentID AND cLine.Seq + 1 = nLine.Seq
+    		LEFT OUTER JOIN (
+    			SELECT l1.*
+    			FROM   tbApprovalDocLine l1
+    			WHERE  l1.DocumentID = #{DocumentID}
+    			AND    l1.LineType = 'B'
+    			AND    l1.Seq = ( SELECT Min(l2.Seq) 
+    							  FROM   tbApprovalDocLine l2 
+    							  WHERE  l1.DocumentID = l2.DocumentID 
+    							  AND    l1.LineType = l2.LineType )) bLine on Doc.DocumentID = bLine.DocumentID		
+    		WHERE  Doc.DocumentID = #{DocumentID}
+        ) T
+	</select>	
+	
+    <select id="nboxDocListService.createDocumentID" parameterType="Map" resultType="rMap">
+    /* nboxDocListService.createDocumentID */
+    
+        SET @sCompCode = #{S_COMP_CODE}
+    
+        SELECT nfnGetMaxIDByContents(@sCompCode, 'X0003') AS DocumentID FROM db_root;
+    </select>
+    
+    <insert id="nboxDocListService.insert" parameterType="foren.unilite.modules.nbox.approval.model.NboxDocModel">
+    /* nboxDocListService.insert */
+        
+        INSERT INTO tbApprovalDoc
+           ( DocumentID
+            ,CompanyID
+            ,DraftUserID
+            ,DraftUserName
+            ,DraftDeptName
+            ,DraftUserPos
+            ,Subject
+            ,Contents
+            ,DraftDate
+            ,StoreYear
+            ,SecureGrade
+            ,ApprovalType
+            ,[Status]
+            ,DocumentNo
+            ,CategoryID
+            ,CabinetID
+            ,UCabinetID
+            ,FormID
+            ,FormSubject
+            ,WorkCode
+            ,HolidayCode
+            ,InsertUserID
+            ,InsertDate
+            ,UpdateUserID
+            ,UpdateDate
+            ,InnerApprovalFlag
+            ,InputRcvUser
+            ,InputRefUser
+            ,OpenFlag)
+        SELECT 
+             #{DocumentID}
+            ,#{S_COMP_CODE}
+            ,#{S_USER_ID}
+            ,nfnGetUserName(#{S_COMP_CODE}, #{S_USER_ID})
+            ,nfnGetUserDeptName(#{S_COMP_CODE}, #{S_USER_ID})
+            ,nfnGetUserPosName(#{S_COMP_CODE}, #{S_USER_ID}, #{S_LANG_CODE})
+            ,#{Subject}
+            ,#{Contents}
+            ,null
+            ,StoreYear
+            ,#{SecureGrade}
+            ,'A'
+            ,'A'
+            ,nfnGetCommonCodeValue(#{S_COMP_CODE}, 'NXA0', 'X0001')
+            ,CategoryID
+            ,#{CabinetID}
+            ,Null
+            ,FormID
+            ,CASE WHEN NVL((CASE WHEN #{S_DIV_CODE} = '01' THEN NVL((SELECT REF_CODE1 FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'NXA0' AND SUB_CODE = 'X0011'), '')
+                                                        ELSE NVL((SELECT DIV_NAME FROM BOR120T WHERE COMP_CODE = #{S_COMP_CODE} AND DIV_CODE = #{S_DIV_CODE}), '')
+                                                            + NVL((SELECT REF_CODE2 FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'NXA0' AND SUB_CODE = 'X0011'), '') END), '') IS NULL  
+                  THEN Subject
+                  ELSE (CASE WHEN #{S_DIV_CODE} = '01' THEN NVL((SELECT REF_CODE1 FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'NXA0' AND SUB_CODE = 'X0011'), '')
+                                                        ELSE NVL((SELECT DIV_NAME FROM BOR120T WHERE COMP_CODE = #{S_COMP_CODE} AND DIV_CODE = #{S_DIV_CODE}), '')
+                                                            + NVL((SELECT REF_CODE2 FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'NXA0' AND SUB_CODE = 'X0011'), '') END) END
+            ,#{WorkCode}
+            ,#{HolidayCode}
+            ,#{S_USER_ID}
+            ,SYSDATETIME
+            ,#{S_USER_ID}
+            ,SYSDATETIME
+            ,#{InnerApprovalFlag}
+            ,#{InputRcvUser}
+            ,#{InputRefUser}
+            ,#{OpenFlag}
+        FROM  tbApprovalForm
+        WHERE FormID = #{FormID}
+    </insert>
+    
+    <update id="nboxDocListService.update" parameterType="foren.unilite.modules.nbox.approval.model.NboxDocModel">
+    /* nboxDocListService.update */
+    
+        UPDATE tbApprovalDoc
+           SET Subject = #{Subject}
+              ,Contents = #{Contents}
+              ,SecureGrade = #{SecureGrade}
+              ,CabinetID = #{CabinetID}
+              ,UPDATEUSERID = #{S_USER_ID}
+              ,UPDATEDATE = SYSTIMESTAMP
+              ,InnerApprovalFlag = #{InnerApprovalFlag}
+              ,InputRcvUser = #{InputRcvUser}
+              ,InputRefUser = #{InputRefUser}
+              ,OpenFlag = #{OpenFlag}
+         WHERE DocumentID = #{DocumentID}
+    </update>
+    
+    <delete id="nboxDocListService.delete" parameterType="Map">
+    /* nboxDocListService.delete */
+    
+        DELETE tbApprovalDoc
+         WHERE DocumentID = #{DocumentID}
+    </delete>
+    
+    <update id="nboxDocListService.exec" parameterType="Map">
+    /* nboxDocListService.exec */
+    
+        DO (
+            SELECT sp_nbox_approvalexecute (#{EXEC_TYPE}, #{S_COMP_CODE}, #{DocumentID}, #{S_USER_ID}, #{S_LANG_CODE}) FROM db_root 
+        )    
+    </update>
+
+    <select id="nboxDocListService.selects" parameterType="Map" resultType="rMap">
+    /* nboxDocListService.selects */
+    
+        SET @sUUID = ''
+        
+        DO (
+            SELECT @sUUID := nfnGetDocList(#{BOX}, #{S_COMP_CODE}, #{S_USER_ID}, #{S_LANG_CODE}, #{MENUID},
+                <if test="@foren.Ognl@isNotEmpty(SEARCHTEXT) != '' ">
+                    #{SEARCHTEXT}
+                </if>
+                <if test="@foren.Ognl@isNotEmpty(SEARCHTEXT) == '' ">
+                    ''
+                </if>,
+                <if test="@foren.Ognl@isNotEmpty(SEARCHDIVCODE) != '' ">
+                    #{SEARCHDIVCODE}
+                </if>
+                <if test="@foren.Ognl@isNotEmpty(SEARCHDIVCODE) == '' ">
+                    ''
+                </if>
+            ) FROM db_root
+        )
+        
+        SELECT 
+             T1.DocumentID
+            ,T1.FileAttachFlag
+            ,T1.DocumentNo
+            ,CAST(T1.ReadChk as VARCHAR) + T1.Subject AS Subject
+            ,T1.StatusName as Status
+            ,T1.ReadDate
+            ,T1.InsertDate
+            ,T1.EndDate
+            ,T1.DraftDate
+            ,T1.DraftUserID
+            ,T1.DraftUserName
+            ,T1.RcvTypeName
+            ,T1.RcvUserName
+            ,T1.ClosingFlag         
+            ,T1.TOTALCOUNT
+        FROM (
+            SELECT 
+                 *
+                ,ROW_NUMBER() OVER ( ORDER BY InsertDate DESC ) AS ROWNUMBER
+                ,COUNT(*) OVER () AS TOTALCOUNT
+            FROM t_nfnGetDocList
+            WHERE key_value = @sUUID
+        ) T1
+        WHERE T1.ROWNUMBER &gt; #{start} AND T1.ROWNUMBER &lt;= #{limit} * #{page}
+        ORDER BY T1.ROWNUMBER
+        
+        DO (
+            SELECT nfnDeleteTableByKeyValue('t_nfnGetDocList', @sUUID) FROM db_root
+        )
+    </select>   
+    
+    <select id="nboxDocListService.checkInterface" parameterType="Map" resultType="int">
+    /* nboxDocListService.checkInterface */
+    
+        SELECT
+            COUNT(*)
+        FROM tbInterfaceInfo 
+        WHERE DOCUMENTID = #{DOCUMENTID}  
+    </select> 
+    
+     <select id="nboxDocListService.isInterface" parameterType="Map" resultType="rMap">
+    /* nboxDocListService.isInterface */
+    
+        SELECT
+            COUNT(*) AS CNT
+            ,DOCUMENTID
+        FROM tbInterfaceInfo 
+        WHERE INTERFACEKEY = #{INTERFACEKEY}  
+        AND [STATUS] &lt;&gt; 'R'
+    </select> 
+    
+    <insert id="nboxDocListService.insertInterfaceInfo" parameterType="Map">
+    /* nboxDocListService.insertInterfaceInfo */
+    
+        INSERT INTO tbInterfaceInfo
+           ( DOCUMENTID
+            ,GUBUN
+            ,INTERFACEKEY
+            ,STATUS
+            ,InsertUserID
+            ,InsertDate
+            ,UpdateUserID
+            ,UpdateDate)
+        VALUES (
+             #{DOCUMENTID}
+            ,#{GUBUN}
+            ,#{INTERFACEKEY}
+            ,CASE   WHEN #{STATUS} = 'A' THEN '1'
+                    WHEN #{STATUS} = 'B' THEN '3'
+                    WHEN #{STATUS} = 'C' THEN '9'
+                    WHEN #{STATUS} = 'R' THEN '5'
+                    ELSE '0' END
+            ,#{S_USER_ID}
+            ,SYSTIMESTAMP
+            ,#{S_USER_ID}
+            ,SYSTIMESTAMP)
+    </insert>
+    
+    <insert id="nboxDocListService.insertInterfaceHistory" parameterType="Map">
+    /* nboxDocListService.insertInterfaceHistory */
+        INSERT INTO tbInterfaceHistory
+           ( DOCUMENTID
+            ,SEQ
+            ,GUBUN
+            ,INTERFACEKEY
+            ,STATUS
+            ,InsertUserID
+            ,InsertDate
+            ,UpdateUserID
+            ,UpdateDate)
+        SELECT
+             #{DOCUMENTID}
+            ,(SELECT NVL(MAX(SEQ),0) + 1 FROM tbInterfaceHistory WHERE DOCUMENTID = #{DOCUMENTID})            
+            ,GUBUN
+            ,INTERFACEKEY
+            ,CASE   WHEN #{STATUS} = 'A' THEN '1'
+                    WHEN #{STATUS} = 'B' THEN '3'
+                    WHEN #{STATUS} = 'C' THEN '9'
+                    WHEN #{STATUS} = 'R' THEN '5'
+                    ELSE '0' END
+            ,#{S_USER_ID}
+            ,SYSTIMESTAMP
+            ,#{S_USER_ID}
+            ,SYSTIMESTAMP
+        FROM 
+            tbInterfaceInfo 
+        WHERE DOCUMENTID = #{DOCUMENTID} 
+    </insert>
+    
+    <update id="nboxDocListService.updateInterfaceInfo" parameterType="rMap">
+    /* nboxDocListService.updateInterfaceInfo */
+    
+        UPDATE tbInterfaceInfo SET 
+            STATUS = CASE   WHEN #{STATUS} = 'A' THEN '1'
+                    WHEN #{STATUS} = 'B' THEN '3'
+                    WHEN #{STATUS} = 'C' THEN '9'
+                    WHEN #{STATUS} = 'R' THEN '5'
+                    ELSE '0' END   
+            ,UpdateUserID = #{S_USER_ID}
+            ,UpdateDate = SYSTIMESTAMP
+        WHERE  DOCUMENTID = #{DOCUMENTID}
+        
+    </update>
+    
+    
+    <delete id="nboxDocListService.deletesInterfaceInfo" parameterType="rMap">
+    /* nboxDocListService.deletesInterfaceInfo */
+    
+        DELETE FROM tbInterfaceInfo
+        WHERE  DocumentID = #{DocumentID}
+    </delete>
+    
+    <select id="nboxDocListService.getDocInfo" parameterType="Map" resultType="rMap">
+    /* nboxDocListService.getDocInfo */
+    
+        SELECT
+            A.DOCUMENTID
+            ,A.STATUS
+            ,B.GUBUN
+            ,B.INTERFACEKEY
+            ,NVL(A.DOCUMENTNO, '') AS DOCUMENTNO 
+        FROM tbApprovalDoc A
+        LEFT OUTER JOIN tbInterfaceInfo b ON A.DOCUMENTID = B.DOCUMENTID 
+        WHERE A.DocumentID = #{DOCUMENTID}  
+    </select> 
+    
+    <update id="nboxDocListService.setInterfaceERP" parameterType="Map" statementType="CALLABLE">
+    /* nboxDocListService.setInterfaceERP */
+    
+    </update>
+    
+    <select id="nboxDocListService.checkDoc" parameterType="Map" resultType="int">
+    /* nboxDocListService.checkDoc */
+    
+        SET @sUUID = ''
+        
+        DO (
+            SELECT @sUUID := nfnGetDocList(#{BOX}, #{S_COMP_CODE}, #{S_USER_ID}, #{S_LANG_CODE}, #{MENUID},'', '')
+        )
+        
+        SELECT 
+            COUNT(*) AS CNT
+        FROM   
+            t_nfnGetDocList
+        WHERE 
+            key_value = @sUUID
+            AND documentid = #{DOCUMENTID}
+            
+        DO (
+            SELECT nfnDeleteTableByKeyValue('t_nfngetdoclist', @sUUID)
+        )
+    </select>
+    <select id="nboxDocListService.xa003DocCnt" parameterType="Map" resultType="int">
+    /* nboxDocListService.xa003DocCnt */
+        
+        SET @sUUID = ''
+        
+        DO (
+            SELECT @sUUID := nfnGetDocList(#{BOX}, #{COMP_CODE}, #{USER_ID}, #{LANG_CODE}, #{MENUID},'', '')
+        )
+        
+        SELECT 
+            COUNT(*) AS CNT
+        FROM   
+            t_nfnGetDocList
+        WHERE 
+            key_value = @sUUID
+                     
+        DO (
+            SELECT nfnDeleteTableByKeyValue('t_nfngetdoclist', @sUUID)
+        )
+    </select>
+</mapper>

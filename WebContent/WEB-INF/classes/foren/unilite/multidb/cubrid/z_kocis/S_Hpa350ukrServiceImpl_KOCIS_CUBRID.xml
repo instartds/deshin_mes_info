@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_hpa350ukrServiceImpl_KOCIS">
+
+    <select id="s_hpa350ukrServiceImpl_KOCIS.selectColumns" parameterType="String" resultType="rMap">
+    	/* s_hpa350ukrServiceImpl_KOCIS.selectColumns */
+        SELECT  WAGES_NAME
+             ,  'WAGES_PAY' + WAGES_CODE AS WAGES_CODES
+             ,  WAGES_CODE
+             ,  SORT_SEQ
+        FROM    HBS300T
+        WHERE   COMP_CODE = #{S_COMP_CODE}
+        AND     USE_YN    = 'Y'
+            
+        UNION ALL
+        
+        SELECT  CODE_NAME    
+             ,  'WAGES_DED' + SUB_CODE AS WAGES_CODES    
+             ,  SUB_CODE 
+             ,  (40) +ROW_NUMBER() OVER(ORDER BY REF_CODE2)
+        FROM    BSA100T    
+        WHERE   COMP_CODE   = #{S_COMP_CODE}
+        AND     MAIN_CODE   = 'H034'    
+        AND     USE_YN      = 'Y'    
+        AND     SUB_CODE   != '$'            
+        ORDER   BY SORT_SEQ
+    </select>
+    
+    <select id="s_hpa350ukrServiceImpl_KOCIS.getKeyValue" parameterType="rMap" resultType="string">
+        SET @KEY_VALUE = LEFT(TO_CHAR(SYSDATETIME, 'yyyymmddhh24missff') + LEFT(TO_CHAR(TO_NUMBER(RAND()) * 10000), 3), 20);
+        SELECT @KEY_VALUE AS KEY_VALUE;
+    </select>    
+
+    <select id="s_hpa350ukrServiceImpl_KOCIS.selectList" parameterType="Map" resultType="rMap">
+        /* s_hpa350ukrServiceImpl_KOCIS.selectList */
+        /* 화면에서 KEY_VALUE 넘겨줘서 테이블에 붙여 써야합니다. ^^ */
+
+        DO(
+            SELECT fnGetHpa350ukrSelectList(#{KEY_VALUE}, #{S_COMP_CODE}, #{DIV_CODE}, #{PAY_YYYYMM}, #{SUPP_TYPE}, #{PERSON_NUMB}, #{PAY_CODE}, #{PAY_PROV_FLAG}, '', '', '')    
+          );
+            
+        SELECT  CASE WHEN D.CLOSE_DATE IS NOT NULL THEN 'Y'
+                     ELSE 'N'
+                END										AS CLOSE_YN
+             ,  #{SUPP_TYPE}							AS SUPP_TYPE
+             ,  A.DIV_CODE
+             ,  A.COMP_CODE
+             ,  A.DEPT_CODE
+             ,  A.DEPT_NAME
+             ,  A.POST_CODE
+             ,  A.NAME
+             ,  A.PERSON_NUMB
+             ,  A.JOIN_DATE
+             ,  A.PAY_YYYYMM
+             ,  A.SUPP_TOTAL_I
+             ,  A.DED_TOTAL_I
+             ,  A.REAL_AMOUNT_I
+	    <if test="@foren.Ognl@isNotEmpty(WAGES_CODE)">   
+	        <foreach collection="WAGES_CODE" item="wagesCode" index="index">
+             ,  A.${wagesCode}
+	        </foreach>                                  
+	    </if>
+        FROM              HPA_T_${KEY_VALUE} A
+                LEFT JOIN HBS910T D ON D.COMP_CODE   = A.COMP_CODE
+                                   AND D.PERSON_NUMB = A.PERSON_NUMB
+                                   AND D.CLOSE_TYPE  = '1'
+                                   AND D.CLOSE_DATE  = #{PAY_YYYYMM}
+                                   AND D.SUPP_TYPE   = 'Z'      
+        ORDER   BY A.DIV_CODE, A.DEPT_CODE,A.POST_CODE, A.JOIN_DATE, A.NAME;
+        
+        DROP TABLE HPA_T_${KEY_VALUE};
+    </select>
+
+
+
+
+
+
+    <!-- 수정 가능여부(마감 여부) 체크 -->
+    <select id="s_hpa350ukrServiceImpl_KOCIS.checkUpdateAvailable" parameterType="Map" resultType="String">
+        /* s_hpa350ukrServiceImpl_KOCIS.checkUpdateAvailable */
+	       SET @existYN		:= 0;
+	       SET @checkDesc	:= '';
+	        DO (
+				SELECT @existYN := COUNT(*) 
+				  FROM HBS900T
+				WHERE COMP_CODE			= #{S_COMP_CODE} 
+				   AND CLOSE_DATE	&gt;= #{PAY_YYYYMM}
+				   AND CLOSE_TYPE		= '1'
+			 )
+	       SET @checkDesc	= CASE WHEN @existYN > 0 THEN '이미 마감된 데이터 입니다.'
+	       						   ELSE 'Y'
+	       					  END
+		SELECT @checkDesc
+    </select>
+
+    <!-- 지급 / 공제내역 / 월급상여내역 DELETE -->
+    <delete id="s_hpa350ukrServiceImpl_KOCIS.deleteList"  parameterType="Map">
+        /* (지급내역 삭제) */
+        DELETE  HPA300T
+        WHERE   COMP_CODE   = #{S_COMP_CODE} 
+        AND     PAY_YYYYMM  = #{PAY_YYYYMM} 
+        AND     PERSON_NUMB = #{PERSON_NUMB} 
+        AND     SUPP_TYPE   = #{SUPP_TYPE}
+        
+        
+        /* (공제내역 삭제) */
+        DELETE  HPA400T
+        WHERE   COMP_CODE   = #{S_COMP_CODE} 
+        AND     PAY_YYYYMM  = #{PAY_YYYYMM} 
+        AND     PERSON_NUMB = #{PERSON_NUMB} 
+        AND     SUPP_TYPE   = #{SUPP_TYPE}
+        
+        
+        /* (월급상여내역 삭제) */
+        DELETE  HPA600T
+        WHERE   COMP_CODE   = #{S_COMP_CODE} 
+        AND     PAY_YYYYMM  = #{PAY_YYYYMM} 
+        AND     PERSON_NUMB = #{PERSON_NUMB} 
+        AND     SUPP_TYPE   = #{SUPP_TYPE}
+    </delete>
+
+    <!-- 월급상여내역 저장 --> 
+    <update id="s_hpa350ukrServiceImpl_KOCIS.updateList" parameterType="Map"> 
+    	/* 지급내역 저장 */ 
+		UPDATE HPA600T
+		   SET SUPP_TOTAL_I		= #{SUPP_TOTAL_I}
+			 , DED_TOTAL_I		= #{DED_TOTAL_I}
+			 , REAL_AMOUNT_I	= #{REAL_AMOUNT_I}	
+			 , UPDATE_DB_USER	= #{S_USER_ID}
+			 , UPDATE_DB_TIME	= SYSDATETIME
+	     WHERE COMP_CODE   = #{S_COMP_CODE}
+           AND PAY_YYYYMM  = #{PAY_YYYYMM}  
+           AND PERSON_NUMB = #{PERSON_NUMB} 
+           AND SUPP_TYPE   = #{SUPP_TYPE}
+     </update>
+
+	<!-- 지급내역 등록 -->
+    <update id="s_hpa350ukrServiceImpl_KOCIS.updateList1" parameterType="Map">
+		/* 지급내역 저장 */ 
+		UPDATE HPA300T
+		   SET AMOUNT_I			= #{AMOUNT_I}	
+			 , UPDATE_DB_USER	= #{S_USER_ID}
+			 , UPDATE_DB_TIME	= SYSDATETIME
+	     WHERE COMP_CODE	= #{S_COMP_CODE}
+           AND PAY_YYYYMM	= #{PAY_YYYYMM}  
+           AND PERSON_NUMB	= #{PERSON_NUMB} 
+           AND SUPP_TYPE	= #{SUPP_TYPE}
+           AND WAGES_CODE	= #{WAGES_CODE}
+	</update>
+
+	<!-- 공제내역 등록 -->
+    <update id="s_hpa350ukrServiceImpl_KOCIS.updateList2" parameterType="Map"> 
+    	/* 공제내역 저장 */
+		UPDATE HPA400T
+		   SET DED_AMOUNT_I		= #{DED_AMOUNT_I}	
+			 , UPDATE_DB_USER	= #{S_USER_ID}
+			 , UPDATE_DB_TIME	= SYSDATETIME
+	     WHERE COMP_CODE	= #{S_COMP_CODE}
+           AND PAY_YYYYMM	= #{PAY_YYYYMM}  
+           AND PERSON_NUMB	= #{PERSON_NUMB} 
+           AND SUPP_TYPE	= #{SUPP_TYPE}
+           AND DED_CODE		= #{DED_CODE}
+    </update>
+
+    <select id="s_hpa350ukrServiceImpl_KOCIS.checkCompCode" parameterType="Map" resultType="rMap">
+	    SELECT  A.COMP_CODE, A.COMP_NAME
+	    FROM               BOR100T   A  
+	            LEFT  JOIN BSA100T   M1  ON M1.COMP_CODE    = #{S_COMP_CODE}    
+	                                    AND M1.MAIN_CODE    = 'B107'
+	                                    AND M1.SUB_CODE     = '20'         
+	    WHERE  (A.COMP_CODE &gt; ''        		AND NVL(M1.REF_CODE1, 'N') = 'Y')
+	       OR  (A.COMP_CODE   = #{S_COMP_CODE}	AND NVL(M1.REF_CODE1, 'N') = 'N')
+    </select>
+</mapper>

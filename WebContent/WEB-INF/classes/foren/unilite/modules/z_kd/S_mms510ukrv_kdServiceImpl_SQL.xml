@@ -1,0 +1,1305 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_mms510ukrv_kdServiceImpl">
+    
+    <select id="s_mms510ukrv_kdServiceImpl.selectinoutNoMasterList" parameterType="Map" resultType="rMap">
+        /* mms510ukrv.Cmms510ukrv[fnMms510QPop] Query01 */
+        BEGIN
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+        
+            DECLARE @COMP_CODE  NVARCHAR(08) /* 법인코드    */
+                SET @COMP_CODE = #{S_COMP_CODE}
+        
+            /* 데이터 조회 */
+            SELECT CASE WHEN C2.REF_ITEM = '1' THEN C1.CUSTOM_NAME1
+                      WHEN C2.REF_ITEM = '2' THEN C1.CUSTOM_NAME2
+                      ELSE C1.CUSTOM_NAME
+                 END                                              AS INOUT_NAME
+               , CASE WHEN ISNULL(A.INOUT_DATE, '') = '' THEN ''
+                      ELSE REPLACE(
+                           REPLACE(
+                           REPLACE(M1.CODE_NAME, 'YYYY', SUBSTRING(A.INOUT_DATE, 1, 4))
+                                               , 'MM',   SUBSTRING(A.INOUT_DATE, 5, 2))
+                                               , 'DD',   SUBSTRING(A.INOUT_DATE, 7, 2))
+                 END                                              AS INOUT_DATE
+               , A.INOUT_CODE
+               , A.WH_CODE
+               , A.WH_CELL_CODE
+               , A.DIV_CODE
+               , A.INOUT_PRSN
+               , A.INOUT_NUM
+               , A.MONEY_UNIT
+               , A.EXCHG_RATE_O
+               , A.CREATE_LOC
+               --, CASE WHEN A.CREATE_LOC = '2' THEN '1' ELSE '2' END AS CREATE_LOC      
+            FROM   BTR100T A  WITH (NOLOCK)
+                   INNER JOIN BCM100T   C1 WITH (NOLOCK) ON C1.COMP_CODE    = A.COMP_CODE
+                                                        AND C1.CUSTOM_CODE  = A.INOUT_CODE
+                   INNER JOIN BSA300T   C2 WITH (NOLOCK) ON C2.USER_ID      = #{S_USER_ID}
+                   INNER JOIN BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE    = A.COMP_CODE
+                                                        AND M1.MAIN_CODE    = N'B044'
+                                                        AND M1.REF_CODE1    = N'Y'
+            WHERE  A.COMP_CODE        = @COMP_CODE
+            AND    A.INOUT_TYPE       = '1'
+            AND    A.INOUT_CODE_TYPE  = '4'
+            AND    A.CREATE_LOC      IN ('2','6')
+        <if test="@foren.Ognl@isNotEmpty(INOUT_CODE)">     
+            AND    A.INOUT_CODE    LIKE #{INOUT_CODE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(INOUT_DATE_FR)"> 
+            AND    A.INOUT_DATE      &gt;= #{INOUT_DATE_FR}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(INOUT_DATE_TO)">
+            AND    A.INOUT_DATE      &lt;= #{INOUT_DATE_TO}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+            AND    A.WH_CODE          = #{WH_CODE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(INOUT_PRSN)">
+            AND    A.INOUT_PRSN       = #{INOUT_PRSN}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+            AND    A.DIV_CODE         = #{DIV_CODE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(INOUT_METH)">
+            AND    A.INOUT_METH       = #{INOUT_METH}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(WH_CELL_CODE)">
+            AND    A.WH_CELL_CODE     = #{WH_CELL_CODE}
+        </if>
+            GROUP  BY C1.CUSTOM_NAME, C1.CUSTOM_NAME1, C1.CUSTOM_NAME2, C2.REF_ITEM   
+                    , A.INOUT_DATE, M1.CODE_NAME, A.INOUT_CODE, A.WH_CODE, A.WH_CELL_CODE
+                    , A.DIV_CODE, A.INOUT_PRSN, A.INOUT_NUM, A.MONEY_UNIT, A.EXCHG_RATE_O, A.CREATE_LOC
+            ORDER  BY INOUT_NAME, A.INOUT_DATE
+        
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END
+    </select>
+    
+    <!-- 입고내역 조회 -->
+    <select id="s_mms510ukrv_kdServiceImpl.selectList" parameterType="Map" resultType="rMap">
+         /* mms510ukrv.Cmms510ukrv[fnMms510QStd] Query01 */
+         BEGIN
+                DECLARE @COMP_CODE          NVARCHAR(08)                -- (필수) 법인코드
+                      , @DIV_CODE           NVARCHAR(08)                -- (필수) 사업장
+                      , @INOUT_NUM          NVARCHAR(20)                -- (필수) 입고번호
+                      , @USER_ID            NVARCHAR(100)                -- (필수) 사용자ID
+            
+                SET NOCOUNT ON
+                SET ARITHABORT ON
+            
+            --  1. 변수 값 할당 -----------------------------------------------------------------------------------------------
+                SET @COMP_CODE          = #{S_COMP_CODE}
+                SET @DIV_CODE           = #{DIV_CODE}
+                SET @INOUT_NUM          = #{INOUT_NUM}
+                SET @USER_ID            = #{S_USER_ID}
+            
+            --  2. 명칭 조회 유형 설정 ----------------------------------------------------------------------------------------
+                DECLARE @RefItem            NVARCHAR(01)
+            
+                SELECT TOP 1 @RefItem = REF_ITEM
+                FROM   BSA300T WITH (NOLOCK)
+                WHERE  USER_ID = @USER_ID
+            
+                SET @RefItem = ISNULL(@RefItem, '0')
+            
+            --  3. 날짜 포맷 유형 설정 ----------------------------------------------------------------------------------------
+                DECLARE @DateFormat             NVARCHAR(01)
+                
+                SELECT TOP 1 @DateFormat = SUBSTRING(CODE_NAME, 5, 1)
+                FROM   BSA100T WITH (NOLOCK)
+                WHERE  COMP_CODE = @COMP_CODE
+                AND    MAIN_CODE = 'B044'
+                AND    REF_CODE1 = 'Y'
+            
+                SET @DateFormat = ISNULL(@DateFormat, '.')
+            
+            --  4. 데이터 조회 ------------------------------------------------------------------------------------------------
+                SELECT A.INOUT_NUM
+                     , A.INOUT_SEQ
+                     , A.INOUT_METH
+                     , A.INOUT_TYPE_DETAIL
+                     , A.ITEM_CODE
+                     , CASE WHEN @RefItem = '1' THEN C2.ITEM_NAME1
+                            WHEN @RefItem = '2' THEN C2.ITEM_NAME2
+                            ELSE C2.ITEM_NAME
+                       END                                                      AS ITEM_NAME
+                     , C3.ITEM_ACCOUNT
+                     , C2.SPEC
+                     , ISNULL(A.ORDER_UNIT, C2.STOCK_UNIT)                      AS ORDER_UNIT
+                     , A.ORDER_UNIT_Q
+                     , A.ITEM_STATUS
+                     , A.INOUT_Q                                                AS ORIGINAL_Q
+                     , ISNULL(C.GOOD_STOCK_Q, 0)                                AS GOOD_STOCK_Q
+                     , ISNULL(C.BAD_STOCK_Q, 0)                                 AS BAD_STOCK_Q
+                     , CASE WHEN B.ORDER_NUM IS NULL THEN ISNULL(D.QTY,0) - ISNULL(D.RECEIPT_QTY,0) 
+                           ELSE ISNULL(B.ORDER_Q, 0) - ISNULL(B.INSTOCK_Q, 0)
+                       END AS NOINOUT_Q
+                     , A.PRICE_YN
+                     , A.MONEY_UNIT
+                     , A.INOUT_FOR_P
+                     , A.INOUT_FOR_O
+                     , A.ORDER_UNIT_FOR_P
+                     , A.INOUT_FOR_O                                            AS ORDER_UNIT_FOR_O
+                     , A.ACCOUNT_YNC
+                     , A.EXCHG_RATE_O
+                     , A.INOUT_P
+                     , A.INOUT_I
+                     , A.ORDER_UNIT_P
+                     , A.INOUT_I                                                AS ORDER_UNIT_I
+            
+                     , ISNULL(A.TRANS_COST,  0)                                 AS TRANS_COST
+                     , ISNULL(A.TARIFF_AMT, 0)                                  AS TARIFF_AMT
+            
+                     , C2.STOCK_UNIT
+                     , A.TRNS_RATE
+                     , A.INOUT_Q
+                     , A.ORDER_TYPE
+                     , A.LC_NUM
+                     , A.BL_NUM
+                     , A.ORDER_NUM
+                     , A.ORDER_SEQ
+                     , CASE WHEN B.ORDER_NUM IS NULL THEN ISNULL(D.QTY,0) 
+                            ELSE ISNULL(B.ORDER_Q, 0) 
+                       END AS ORDER_Q
+                     , A.INOUT_CODE_TYPE
+                     , A.WH_CODE
+                     , A.WH_CELL_CODE
+                     , CASE WHEN ISNULL(A.INOUT_DATE, '') = '' THEN ''
+                            ELSE SUBSTRING(A.INOUT_DATE, 1, 4) + @DateFormat + 
+                                 SUBSTRING(A.INOUT_DATE, 5, 2) + @DateFormat + 
+                                 SUBSTRING(A.INOUT_DATE, 7, 2)
+                       END                                                      AS INOUT_DATE
+                     , A.INOUT_PRSN
+                     , A.ACCOUNT_Q
+                     , A.CREATE_LOC
+                     , A.SALE_C_DATE
+                     , A.REMARK
+                     , A.PROJECT_NO
+                     , A.LOT_NO
+                     , C3.LOT_YN
+                     , A.INOUT_TYPE
+                     , A.INOUT_CODE
+                     , A.DIV_CODE
+                     , CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+                            WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+                            ELSE C1.CUSTOM_NAME
+                       END                                                      AS CUSTOM_NAME
+                     , C1.COMPANY_NUM
+                     , CASE WHEN B.ORDER_NUM IS NULL THEN ISNULL(D.RECEIPT_QTY,0) 
+                            ELSE ISNULL(B.INSTOCK_Q, 0)      
+                       END AS INSTOCK_Q
+                     , A.SALE_DIV_CODE
+                     , A.SALE_CUSTOM_CODE
+                     , A.BILL_TYPE
+                     , A.SALE_TYPE
+                     , A.UPDATE_DB_USER
+                     , A.UPDATE_DB_TIME
+                     , C3.EXCESS_RATE
+                     , A.INSPEC_NUM
+                     , A.INSPEC_SEQ
+                     , A.BASIS_NUM
+                     , A.BASIS_SEQ
+                     , ISNULL(A.SCM_FLAG_YN, 'N')                               AS SCM_FLAG_YN
+                     , A.TRADE_LOC 
+                     , ISNULL(C2.STOCK_CARE_YN, 'Y')                            AS STOCK_CARE_YN
+                     , A.COMP_CODE
+                     , A.INSERT_DB_USER
+                     , A.INSERT_DB_TIME
+                     , 'FLAG'                                                   AS FLAG
+                FROM              BTR100T   A  WITH (NOLOCK)
+                       LEFT  JOIN MPO200T   B  WITH (NOLOCK) ON B.COMP_CODE     = A.COMP_CODE
+                                                            AND B.DIV_CODE      = A.DIV_CODE
+                                                            AND B.CUSTOM_CODE   = A.INOUT_CODE
+                                                            AND B.ORDER_NUM     = A.ORDER_NUM
+                                                            AND B.ORDER_SEQ     = A.ORDER_SEQ
+                       LEFT  JOIN TIA110T   D  WITH (NOLOCK) ON D.COMP_CODE     = A.COMP_CODE
+                                                            AND D.DIV_CODE      = A.DIV_CODE
+                                                            AND D.SO_SER_NO     = A.ORDER_NUM
+                                                            AND D.SO_SER        = A.ORDER_SEQ
+                       LEFT  JOIN TIA100T   E  WITH (NOLOCK) ON E.COMP_CODE     = A.COMP_CODE
+                                                            AND E.DIV_CODE      = A.DIV_CODE
+                                                            AND E.EXPORTER      = A.INOUT_CODE
+                                                            AND E.SO_SER_NO     = A.ORDER_NUM
+                       LEFT  JOIN BIV100T   C  WITH (NOLOCK) ON C.COMP_CODE     = A.COMP_CODE
+                                                            AND C.DIV_CODE      = A.DIV_CODE
+                                                            AND C.WH_CODE       = A.WH_CODE
+                                                            AND C.ITEM_CODE     = A.ITEM_CODE
+                       INNER JOIN BCM100T   C1 WITH (NOLOCK) ON C1.COMP_CODE    = A.COMP_CODE
+                                                            AND C1.CUSTOM_CODE  = A.INOUT_CODE
+                       INNER JOIN BPR100T   C2 WITH (NOLOCK) ON C2.COMP_CODE    = A.COMP_CODE
+                                                            AND C2.ITEM_CODE    = A.ITEM_CODE
+                       INNER JOIN BPR200T   C3 WITH (NOLOCK) ON C3.COMP_CODE    = A.COMP_CODE
+                                                            AND C3.DIV_CODE     = A.DIV_CODE
+                                                            AND C3.ITEM_CODE    = A.ITEM_CODE
+                WHERE  A.COMP_CODE          = @COMP_CODE
+                AND    A.DIV_CODE           = @DIV_CODE
+                AND    A.INOUT_NUM          = @INOUT_NUM
+                AND    A.INOUT_TYPE         = N'1'
+                AND    A.CREATE_LOC         = #{CREATE_LOC}
+                AND    A.INOUT_CODE_TYPE    = N'4'
+                ORDER  BY
+                       A.INOUT_DATE DESC, A.INOUT_NUM DESC, A.INOUT_SEQ
+            
+                SET NOCOUNT OFF
+                SET ARITHABORT OFF
+            END
+    </select>
+    
+    <!-- 미입고 참조 -->
+    <select id="s_mms510ukrv_kdServiceImpl.selectnoReceiveList" parameterType="Map" resultType="rMap">
+        /* mms500ukrv.Cmms500ukrv[fnMms510QRef] Query01 */
+        BEGIN 
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+            
+            DECLARE @CompCode       NVARCHAR(08) /* 법인코드                */
+                  , @UserId         NVARCHAR(100) /* 사용자ID                */
+                  , @LangType       NVARCHAR(2)  /* 언어구분                */
+                  , @RefItem        NVARCHAR(01) /* 명칭 참조 유형            */
+                  , @DateFormat     NVARCHAR(10) /* 날짜 포맷 유형 설정     */
+                        
+            SET @CompCode = #{S_COMP_CODE}
+            SET @UserId   = #{S_USER_ID}
+            SET @LangType = #{S_LANG_CODE}   
+            
+            /* 명칭 참조 유형 */
+            SELECT TOP 1 @RefItem = REF_ITEM
+              FROM BSA300T WITH (NOLOCK)
+             WHERE USER_ID = @UserId
+            
+            SET @RefItem = ISNULL(@RefItem, N'0')
+            
+            /* 날짜 포맷 유형 설정 */
+            SELECT TOP 1 @DateFormat = CODE_NAME
+              FROM BSA100T WITH (NOLOCK)
+             WHERE COMP_CODE = @CompCode
+               AND MAIN_CODE = N'B044'
+               AND REF_CODE1 = N'Y'
+            
+            SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+        
+            /* 자재 외주검사 사용여부 */
+            DECLARE @InspecYN   NVARCHAR(10)
+                    
+            SELECT TOP 1 @InspecYN = SUB_CODE
+              FROM BSA100T  WITH (NOLOCK)
+             WHERE COMP_CODE    = @CompCode
+               AND MAIN_CODE    = N'Q003'
+               AND REF_CODE1 LIKE 'Y%'
+                
+            SET @InspecYN = ISNULL(@InspecYN, 'N')
+        
+            /* 파라메터값 설정 */
+            DECLARE @QueryFlag      NVARCHAR(01)        /*(필수) 자재/무역 업무구분   */
+        
+            SET @QueryFlag = #{CREATE_LOC}
+        
+            /* 데이터 조회 */
+            /* 자재 */
+            IF @QueryFlag = '2'
+            BEGIN
+                SELECT CAST('' AS BIT)                                                             AS GUBUN
+                     , B.ITEM_CODE                                                                 AS ITEM_CODE
+                     , (CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                             WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                                                 ELSE C1.ITEM_NAME
+                         END)                                                                      AS ITEM_NAME
+                     , C2.ITEM_ACCOUNT                                                             AS ITEM_ACCOUNT
+                     , C1.SPEC                                                                     AS SPEC
+                     , (CASE WHEN ISNULL(B.DVRY_DATE, '') = ''
+                             THEN ''
+                             ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.DVRY_DATE, 1, 4))
+                                                                     , 'MM'  , SUBSTRING(B.DVRY_DATE, 5, 2))
+                                                                     , 'DD'  , SUBSTRING(B.DVRY_DATE, 7, 2))
+                         END)                                                                      AS DVRY_DATE
+                     , A.DIV_CODE                                                                  AS DIV_CODE
+                     , B.ORDER_UNIT                                                                AS ORDER_UNIT
+                     , B.ORDER_UNIT_Q                                                              AS ORDER_UNIT_Q
+                     , ISNULL(B.ORDER_UNIT_Q - ISNULL(B.INSTOCK_Q,0) / ISNULL(B.TRNS_RATE,1), 0)   AS REMAIN_Q
+                     , C1.STOCK_UNIT                                                               AS STOCK_UNIT
+                     , ISNULL(B.ORDER_Q - ISNULL(B.INSTOCK_Q,0), 0)                                AS NOINOUT_Q
+                     , B.ORDER_Q                                                                   AS ORDER_Q
+                     , B.UNIT_PRICE_TYPE                                                           AS UNIT_PRICE_TYPE
+                     , B.MONEY_UNIT                                                                AS MONEY_UNIT
+                     , B.EXCHG_RATE_O                                                              AS EXCHG_RATE_O
+                     , B.ORDER_P                                                                   AS ORDER_P
+                     , B.ORDER_UNIT_P                                                              AS ORDER_UNIT_P
+                     , ISNULL(B.ORDER_UNIT_Q - ISNULL(B.INSTOCK_Q,0) / ISNULL(B.TRNS_RATE,1), 0) * B.ORDER_UNIT_P   AS ORDER_O
+                     , B.ORDER_LOC_P                                                               AS ORDER_LOC_P
+                     , B.ORDER_LOC_O                                                               AS ORDER_LOC_O
+                     , B.ORDER_NUM                                                                 AS ORDER_NUM
+                     , B.ORDER_SEQ                                                                 AS ORDER_SEQ
+                     , A.LC_NUM                                                                    AS LC_NUM
+                     , B.WH_CODE                                                                   AS WH_CODE
+                     , B.ORDER_REQ_NUM                                                             AS ORDER_REQ_NUM
+                     , A.ORDER_TYPE                                                                AS ORDER_TYPE
+                     , A.CUSTOM_CODE                                                               AS CUSTOM_CODE
+                     , ISNULL(B.TRNS_RATE,1)                                                       AS TRNS_RATE
+                     , ISNULL(B.INSTOCK_Q,0)                                                       AS INSTOCK_Q
+                     , B.REMARK                                                                    AS REMARK
+                     , B.PROJECT_NO                                                                AS PROJECT_NO
+                     , CASE WHEN ISNULL(C2.EXCESS_RATE, 0) = 0 THEN ISNULL(S.REF_CODE1, 0)
+                       ELSE C2.EXCESS_RATE END                                                     AS EXCESS_RATE
+                     , A.ORDER_PRSN                                                                AS ORDER_PRSN
+                     , ISNULL(R1.GOOD_STOCK_Q,0)                                                   AS GOOD_STOCK_Q
+                     , ISNULL(R1.BAD_STOCK_Q,0)                                                    AS BAD_STOCK_Q
+                     , CONVERT(NVARCHAR(20), '')                                                   AS LC_NO
+                     , CONVERT(NVARCHAR(20), '')                                                   AS BL_NO
+                     , CONVERT(NVARCHAR(20), '')                                                   AS BASIS_NUM
+                     , CONVERT(NUMERIC(3,0), 0)                                                    AS BASIS_SEQ
+                     , CONVERT(NVARCHAR(10), '')                                                   AS LC_DATE
+                     , CONVERT(NVARCHAR(10), '')                                                   AS INVOICE_DATE
+                     , CONVERT(NVARCHAR(6), '')                                                    AS TRADE_LOC
+                     , C2.LOT_YN
+                     , B.LOT_NO
+                  FROM              MPO100T A  WITH (NOLOCK)
+                        INNER JOIN  MPO200T B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                            AND B.DIV_CODE    = A.DIV_CODE
+                                                            AND B.CUSTOM_CODE = A.CUSTOM_CODE
+                                                            AND B.ORDER_NUM   = A.ORDER_NUM
+                        INNER JOIN  BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE  = B.COMP_CODE
+                                                            AND C1.ITEM_CODE  = B.ITEM_CODE
+                        INNER JOIN  BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE  = B.COMP_CODE
+                                                            AND C2.DIV_CODE   = B.DIV_CODE
+                                                            AND C2.ITEM_CODE  = B.ITEM_CODE
+                        LEFT  JOIN  BIV100T R1 WITH (NOLOCK) ON R1.COMP_CODE  = B.COMP_CODE
+                                                            AND R1.WH_CODE    = B.WH_CODE
+                                                            AND R1.ITEM_CODE  = B.ITEM_CODE
+                                                            AND R1.DIV_CODE   = B.DIV_CODE
+                        LEFT JOIN BSA100T S WITH(NOLOCK) ON S.COMP_CODE = A.COMP_CODE
+                                                        AND S.MAIN_CODE = 'M102'
+                                                        AND S.SUB_CODE  = '1'
+                 WHERE A.COMP_CODE    = @CompCode 
+        <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                   AND A.DIV_CODE     = #{DIV_CODE}
+        </if> 
+                   AND (A.ORDER_TYPE  != '4'           AND A.ORDER_TYPE IS NOT NULL)
+                   AND (A.AGREE_STATUS &gt; '1'        AND A.AGREE_STATUS IS NOT NULL)
+        <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+                   AND A.CUSTOM_CODE  = #{CUSTOM_CODE}
+        </if>  
+        <if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+                   AND A.ORDER_TYPE   = #{ORDER_TYPE}
+        </if>  
+        <if test="@foren.Ognl@isNotEmpty(ORDER_PRSN)">
+                   AND A.ORDER_PRSN   = #{ORDER_PRSN}
+        </if>  
+        <if test="@foren.Ognl@isNotEmpty(FR_ESTI_DATE)">
+                   AND B.DVRY_DATE   &gt;= #{FR_ESTI_DATE}
+        </if>  
+        <if test="@foren.Ognl@isNotEmpty(TO_ESTI_DATE)">
+                   AND B.DVRY_DATE   &lt;= #{TO_ESTI_DATE}
+        </if> 
+        <if test="@foren.Ognl@isNotEmpty(MONEY_UNIT)">
+                   AND B.MONEY_UNIT      = #{MONEY_UNIT}
+        </if> 
+        <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+                   AND B.WH_CODE         = #{WH_CODE}
+        </if> 
+                   AND B.ORDER_Q      &gt; ISNULL(B.INSTOCK_Q, 0)
+--                   AND B.CONTROL_STATUS NOT IN('8', '9')
+--20180305 M002.8 (수입참조중) 도 입고시 참조되도록 수정
+                   AND B.CONTROL_STATUS NOT IN('9')
+                   AND ((ISNULL(B.INSPEC_FLAG, ISNULL(C2.INSPEC_YN, 'N')) = 'N' AND @InspecYN = 'Y') OR (@InspecYN != 'Y'))
+                ORDER BY B.ORDER_NUM DESC, B.ORDER_SEQ
+            END
+        
+            /* 무역 */
+            IF @QueryFlag = '6'
+            BEGIN            
+                EXEC unilite.SP_MATRL_ImportNotInReference @CompCode
+                                                         , #{DIV_CODE}
+                                                         , #{FR_DVRY_DATE}
+                                                         , #{TO_DVRY_DATE}
+                                                         , #{CUSTOM_CODE}
+                                                         , #{ORDER_TYPE}
+                                                         , #{WH_CODE}
+                                                         , #{MONEY_UNIT}
+                                                         , #{ORDER_PRSN}
+                                                         , @UserId
+                                                         , 100  /* 내용을 파악한 후에 삭제해야 함*/
+            END
+                    
+            SET ARITHABORT OFF
+            SET NOCOUNT OFF
+        END
+    </select>
+    
+    <!-- 반품가능 참조 -->
+    <select id="s_mms510ukrv_kdServiceImpl.selectreturnPossibleList" parameterType="Map" resultType="rMap">
+             /* mms510ukrv.Cmms510ukrv[fnRtn100QRef] Query01 */
+        BEGIN
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+
+            DECLARE @CompCode       NVARCHAR(08) /* 법인코드                */
+                  , @UserId         NVARCHAR(100) /* 사용자ID                */
+                  , @LangType       NVARCHAR(2)  /* 언어구분                */
+                  , @RefItem        NVARCHAR(01) /* 명칭 참조 유형            */
+                  , @DateFormat     NVARCHAR(10) /* 날짜 포맷 유형 설정     */
+
+            SET @CompCode = #{S_COMP_CODE}
+            SET @UserId   = #{S_USER_ID}
+            SET @LangType = #{S_LANG_CODE}
+
+            /* 명칭 참조 유형 */
+            SELECT TOP 1 @RefItem = REF_ITEM
+              FROM BSA300T WITH (NOLOCK)
+             WHERE USER_ID = @UserId
+
+            SET @RefItem = ISNULL(@RefItem, N'0')
+
+            /* 날짜 포맷 유형 설정 */
+            SELECT TOP 1 @DateFormat = CODE_NAME
+              FROM BSA100T WITH (NOLOCK)
+             WHERE COMP_CODE = @CompCode
+               AND MAIN_CODE = N'B044'
+               AND REF_CODE1 = N'Y'
+
+            SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+            /* 파라메터값 설정 */
+            DECLARE @QueryFlag      NVARCHAR(01)        /*(필수) 자재/무역 업무구분   */
+
+            SET @QueryFlag = #{CREATE_LOC}
+
+            /* 데이터 조회 */
+            /* 자재 */
+            IF @QueryFlag = '2'
+            BEGIN
+                SELECT CAST('' AS BIT)                                                             AS GUBUN
+                     , B.ITEM_CODE                                                                 AS ITEM_CODE
+                     , CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                            WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                            ELSE C1.ITEM_NAME
+                       END                                                                         AS ITEM_NAME
+                     , C2.ITEM_ACCOUNT                                                             AS ITEM_ACCOUNT
+                     , C1.SPEC                                                                     AS SPEC
+                     , (CASE WHEN ISNULL(B.DVRY_DATE, '') = ''
+                             THEN ''
+                             ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.DVRY_DATE, 1, 4))
+                                                                     , 'MM'  , SUBSTRING(B.DVRY_DATE, 5, 2))
+                                                                     , 'DD'  , SUBSTRING(B.DVRY_DATE, 7, 2))
+                         END)                                                                      AS DVRY_DATE
+                     , A.DIV_CODE                                                                  AS DIV_CODE
+                     , B.ORDER_UNIT                                                                AS ORDER_UNIT
+                     , B.ORDER_UNIT_Q                                                              AS ORDER_UNIT_Q
+                     , ((ISNULL(B.INSTOCK_Q,0) / ISNULL(B.TRNS_RATE,1)) * -1)                      AS REMAIN_Q
+                     , C1.STOCK_UNIT                                                               AS STOCK_UNIT
+                     , (ISNULL(B.INSTOCK_Q,0) * -1 )                                               AS NOINOUT_Q
+                     , B.ORDER_Q                                                                   AS ORDER_Q
+                     , B.UNIT_PRICE_TYPE                                                           AS UNIT_PRICE_TYPE
+                     , B.MONEY_UNIT                                                                AS MONEY_UNIT
+                     , B.EXCHG_RATE_O                                                              AS EXCHG_RATE_O
+                     , B.ORDER_P                                                                   AS ORDER_P
+                     , B.ORDER_UNIT_P                                                              AS ORDER_UNIT_P
+                     , ((ISNULL(B.INSTOCK_Q,0)/ISNULL(B.TRNS_RATE,1)) * -1) * B.ORDER_UNIT_P       AS ORDER_O
+                     , B.ORDER_LOC_P                                                               AS ORDER_LOC_P
+                     , ((ISNULL(B.INSTOCK_Q,0)/ISNULL(B.TRNS_RATE,1)) * -1) * B.ORDER_LOC_P        AS ORDER_LOC_O
+                     , B.ORDER_NUM                                                                 AS ORDER_NUM
+                     , B.ORDER_SEQ                                                                 AS ORDER_SEQ
+                     , A.LC_NUM                                                                    AS LC_NUM
+                     , B.WH_CODE                                                                   AS WH_CODE
+                     , B.ORDER_REQ_NUM                                                             AS ORDER_REQ_NUM
+                     , A.ORDER_TYPE                                                                AS ORDER_TYPE
+                     , A.CUSTOM_CODE                                                               AS CUSTOM_CODE
+                     , ISNULL(B.TRNS_RATE,1)                                                       AS TRNS_RATE
+                     , ISNULL(B.INSTOCK_Q,0)                                                       AS INSTOCK_Q
+                     , B.REMARK                                                                    AS REMARK
+                     , B.PROJECT_NO                                                                AS PROJECT_NO
+                     , C2.EXCESS_RATE                                                              AS EXCESS_RATE
+                     , CONVERT(NVARCHAR(20), '')                                                   AS LC_NO
+                     , CONVERT(NVARCHAR(20), '')                                                   AS BL_NO
+                     , CONVERT(NVARCHAR(20), '')                                                   AS BASIS_NUM
+                     , CONVERT(NUMERIC(3,0), 0)                                                    AS BASIS_SEQ
+                     , CONVERT(NVARCHAR(10), '')                                                   AS LC_DATE
+                     , CONVERT(NVARCHAR(10), '')                                                   AS INVOICE_DATE
+                     , CONVERT(NVARCHAR(6), '')                                                    AS TRADE_LOC
+               FROM                MPO100T A  WITH (NOLOCK)
+                       INNER JOIN  MPO200T B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+                                                           AND  B.DIV_CODE    = A.DIV_CODE
+                                                           AND  B.CUSTOM_CODE = A.CUSTOM_CODE
+                                                           AND  B.ORDER_NUM   = A.ORDER_NUM
+                       INNER JOIN  BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE   = B.COMP_CODE
+                                                           AND C1.ITEM_CODE   = B.ITEM_CODE
+                       INNER JOIN  BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE   = B.COMP_CODE
+                                                           AND C2.DIV_CODE    = B.DIV_CODE
+                                                           AND C2.ITEM_CODE   = B.ITEM_CODE
+                       INNER JOIN (SELECT COMP_CODE, DIV_CODE, INOUT_CODE, ORDER_NUM, ORDER_SEQ
+                                        , SUM(INOUT_Q) AS INOUT_Q
+                                     FROM BTR100T  WITH (NOLOCK)
+                                    WHERE COMP_CODE  = @CompCode
+        						<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                      AND DIV_CODE   = #{DIV_CODE}
+                           		</if>
+                                      AND INOUT_TYPE = N'1'
+        						<if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+                                      AND WH_CODE    = #{WH_CODE}
+                                </if>
+                                    GROUP BY COMP_CODE, DIV_CODE, INOUT_CODE, ORDER_NUM, ORDER_SEQ) E ON E.COMP_CODE   = B.COMP_CODE
+                                                                                                     AND E.DIV_CODE    = B.IN_DIV_CODE
+                                                                                                     AND E.INOUT_CODE  = B.CUSTOM_CODE
+                                                                                                     AND E.ORDER_NUM   = B.ORDER_NUM
+                                                                                                     AND E.ORDER_SEQ   = B.ORDER_SEQ
+                WHERE   A.COMP_CODE    = @CompCode
+        <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                AND     B.IN_DIV_CODE     = #{DIV_CODE}
+        </if>
+                AND    (A.ORDER_TYPE  != N'4'           AND A.ORDER_TYPE   IS NOT NULL)
+                AND    (A.AGREE_STATUS &gt; N'1'        AND A.AGREE_STATUS IS NOT NULL)
+                AND    (B.INSTOCK_Q    &gt; 0           AND B.INSTOCK_Q    IS NOT NULL)
+                AND     B.CONTROL_STATUS NOT IN('8', '9')
+        <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+                AND     A.CUSTOM_CODE  = #{CUSTOM_CODE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(ORDER_DATE_FR)">
+                AND     A.ORDER_DATE  &gt;= #{ORDER_DATE_FR}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(ORDER_DATE_TO)">
+                AND     A.ORDER_DATE  &lt;= #{ORDER_DATE_TO}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+                AND     A.ORDER_TYPE      = #{ORDER_TYPE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+                AND     B.ITEM_CODE    LIKE #{ITEM_CODE} + '%'
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+                AND (CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                          WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                                              ELSE C1.ITEM_NAME
+                END)             LIKE REPLACE(#{ITEM_NAME},'[','[[]') + '%'
+       </if>
+                ORDER BY B.ORDER_NUM DESC, B.ORDER_SEQ
+            END
+
+            /* 무역 */
+            IF @QueryFlag = '6'
+            BEGIN
+                EXEC unilite.SP_MATRL_ImportReturnNotInReference @CompCode
+                                                               , #{DIV_CODE}
+                                                               , #{FR_ORDER_DATE}
+                                                               , #{TO_ORDER_DATE}
+                                                               , #{CUSTOM_CODE}
+                                                               , #{ORDER_TYPE}
+                                                               , #{MONEY_UNIT}
+                                                               , #{S_USER_ID}
+                                                               , 100  /* 내용을 파악한 후에 삭제해야 함*/
+            END
+
+            SET ARITHABORT OFF
+            SET NOCOUNT OFF
+        END
+    </select>
+    
+    <!-- 검사결과 참조 -->
+    <select id="s_mms510ukrv_kdServiceImpl.selectinspectResultList" parameterType="Map" resultType="rMap">
+        /* mms510ukrv.Cmms510ukrv[fnQms100QRef] Query01 */
+                BEGIN
+                    SET NOCOUNT ON
+                    SET ARITHABORT ON
+                        
+                    DECLARE @QueryFlag    NVARCHAR(01)        /*(필수) 자재/무역 업무구분   */
+                    SET @QueryFlag = #{CREATE_LOC}    
+                    
+                    IF @QueryFlag = '2'
+                    BEGIN
+                    
+                    DECLARE     @COMP_CODE          NVARCHAR(10)        -- (필수) 법인코드
+                              , @DIV_CODE           NVARCHAR(10)        -- (필수) 사업장코드
+                              , @CUSTOM_CODE        NVARCHAR(10)        -- (필수) 거래처코드
+                              , @SCM_CUSTOM_CODE    NVARCHAR(10)        -- (필수) SCM 외주 거래처코드
+                              , @FR_DVRY_DATE       NVARCHAr(10)        -- (선택) 시작 납기일
+                              , @TO_DVRY_DATE       NVARCHAr(10)        -- (선택) 종료 납기일
+                              , @ORDER_TYPE         NVARCHAr(10)        -- (선택) 발주형태
+                              , @WH_CODE            NVARCHAr(10)        -- (선택) 창고코드
+                              , @MONEY_UNIT         NVARCHAr(10)        -- (선택) 화폐
+                              , @USER_ID            NVARCHAr(100)        -- (필수) 사용자 ID
+                
+                    SET @COMP_CODE    = #{S_COMP_CODE}
+                    SET @DIV_CODE     = #{DIV_CODE}
+                    SET @CUSTOM_CODE  = #{CUSTOM_CODE}
+                    SET @FR_DVRY_DATE = #{FR_DVRY_DATE}
+                    SET @TO_DVRY_DATE = #{TO_DVRY_DATE}
+                    SET @ORDER_TYPE   = #{ORDER_TYPE}
+                    SET @WH_CODE      = #{WH_CODE}
+                    SET @MONEY_UNIT   = #{MONEY_UNIT}
+                    SET @USER_ID      = #{S_USER_ID}
+                    
+                -----------------------------------------------------------------------------------------------------------------------
+                    DECLARE     @DateFormat         NVARCHAR(10)
+                
+                    SELECT TOP 1 @DateFormat = M1.CODE_NAME
+                    FROM   BSA100T M1 WITH (NOLOCK)
+                    WHERE  M1.COMP_CODE = @COMP_CODE
+                    AND    M1.MAIN_CODE = N'B044'
+                    AND    M1.REF_CODE1 = N'Y'
+                    
+                    SET @DateFormat = ISNULL(@DateFormat, 'YYYY/MM/DD')
+                ---------------------------------------------------------------------
+                    DECLARE     @RefItem            NVARCHAR(01)
+                
+                    SELECT TOP 1 @RefItem = REF_ITEM    
+                    FROM   BSA300T WITH (NOLOCK)    
+                    WHERE  COMP_CODE = @COMP_CODE    
+                    AND    USER_ID   = @USER_ID    
+                    
+                    SET @RefItem = ISNULL(@RefItem, '0')    
+                -----------------------------------------------------------------------------------------------------------------------    
+                
+                    IF EXISTS   (
+                                SELECT  TOP 1 1
+                                FROM    BSA100T  WITH (NOLOCK)
+                                WHERE   COMP_CODE = @COMP_CODE
+                                AND     MAIN_CODE = N'M022'
+                                AND     SUB_CODE  = N'1'
+                                AND     REF_CODE1 = N'Y' )
+                        SELECT  CAST('' AS BIT)                                                             AS GUBUN                                                        
+                              , B.ITEM_CODE                                                                 AS ITEM_CODE
+                              , CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                                     WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                                     ELSE C1.ITEM_NAME
+                                END                                                                         AS ITEM_NAME          
+                              , C2.ITEM_ACCOUNT                                                             AS ITEM_ACCOUNT
+                              , C1.SPEC                                                                     AS SPEC
+                              , REPLACE(
+                                REPLACE(
+                                REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.DVRY_DATE, 1, 4))
+                                                   , 'MM',   SUBSTRING(B.DVRY_DATE, 5, 2))
+                                                   , 'DD',   SUBSTRING(B.DVRY_DATE, 7, 2))                  AS DVRY_DATE
+                              , REPLACE(
+                                REPLACE(
+                                REPLACE(@DateFormat, 'YYYY', SUBSTRING(E.INSPEC_DATE, 1, 4))
+                                                   , 'MM',   SUBSTRING(E.INSPEC_DATE, 5, 2))
+                                                   , 'DD',   SUBSTRING(E.INSPEC_DATE, 7, 2))                AS INSPEC_DATE
+                              , A.DIV_CODE                                                                  AS DIV_CODE
+                              , B.ORDER_UNIT                                                                AS ORDER_UNIT
+                              , B.ORDER_UNIT_Q                                                              AS ORDER_UNIT_Q
+                              , (ISNULL(E.GOOD_INSPEC_Q,0) - (ISNULL(F.INOUT_Q,0) / ISNULL(B.TRNS_RATE,1))) AS REMAIN_Q 
+                              , C1.STOCK_UNIT                                                               AS STOCK_UNIT
+                              , (ISNULL(E.GOOD_INSPEC_Q,0) - (ISNULL(F.INOUT_Q,0) / ISNULL(B.TRNS_RATE,1))) AS NOINOUT_Q
+                              , B.ORDER_Q                                                                   AS ORDER_Q
+                              , '1'                                                                         AS ITEM_STATUS
+                              , B.UNIT_PRICE_TYPE                                                           AS UNIT_PRICE_TYPE
+                              , B.MONEY_UNIT                                                                AS MONEY_UNIT
+                              , B.EXCHG_RATE_O                                                              AS EXCHG_RATE_O
+                              , B.ORDER_P                                                                   AS ORDER_P
+                              , B.ORDER_UNIT_P                                                              AS ORDER_UNIT_P
+                              , (ISNULL(E.GOOD_INSPEC_Q,0) * ISNULL(B.ORDER_UNIT_P,0))                      AS ORDER_O  
+                              , B.ORDER_LOC_P                                                               AS ORDER_LOC_P
+                              , B.ORDER_LOC_O                                                               AS ORDER_LOC_O
+                              , B.ORDER_NUM                                                                 AS ORDER_NUM
+                              , B.ORDER_SEQ                                                                 AS ORDER_SEQ
+                              , A.LC_NUM                                                                    AS LC_NUM
+                              , B.WH_CODE                                                                   AS WH_CODE
+                              , B.ORDER_REQ_NUM                                                             AS ORDER_REQ_NUM
+                              , A.ORDER_TYPE                                                                AS ORDER_TYPE
+                              , A.CUSTOM_CODE                                                               AS CUSTOM_CODE
+                              , CASE WHEN @RefItem = '1' THEN D1.CUSTOM_NAME1
+                                     WHEN @RefItem = '2' THEN D1.CUSTOM_NAME2
+                                     ELSE D1.CUSTOM_NAME
+                                END                                                                         AS CUSTOM_NAME
+                              , ISNULL(B.TRNS_RATE, 1)                                                      AS TRNS_RATE                                              
+                              , ISNULL(B.INSTOCK_Q, 0)                                                      AS INSTOCK_Q                                              
+                
+                             , CASE WHEN ISNULL(C2.EXCESS_RATE, 0) = 0 THEN ISNULL(S.REF_CODE1, 0) 
+                                    ELSE C2.EXCESS_RATE   
+                                     END                                                                    AS EXCESS_RATE
+                              , E.INSPEC_NUM                                                                AS INSPEC_NUM
+                              , E.INSPEC_SEQ                                                                AS INSPEC_SEQ
+                              , (B.ORDER_UNIT_Q - ISNULL(B.INSTOCK_Q, 0))                                   AS PORE_Q
+                              , E.REMARK                                                                    AS REMARK
+                              , E.LOT_NO                                                                    AS LOT_NO
+                              , E.PROJECT_NO                                                                AS PROJECT_NO
+                              , CONVERT(NVARCHAR(20), '')                                                   AS LC_NO
+                              , CONVERT(NVARCHAR(20), '')                                                   AS BL_NO
+                              , CONVERT(NVARCHAR(20), '')                                                   AS BASIS_NUM
+                              , CONVERT(NUMERIC(3,0), 0)                                                    AS BASIS_SEQ
+                              , CONVERT(NVARCHAR(10), '')                                                   AS LC_DATE
+                              , CONVERT(NVARCHAR(10), '')                                                   AS INVOICE_DATE
+                              , CONVERT(NVARCHAR(6), '')                                                    AS TRADE_LOC
+                              , C2.LOT_YN
+                        FROM                MPO100T A  WITH (NOLOCK)
+                                INNER JOIN  MPO200T B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+                                                                    AND  B.DIV_CODE    = A.DIV_CODE
+                                                                    AND  B.CUSTOM_CODE = A.CUSTOM_CODE
+                                                                    AND  B.ORDER_NUM   = A.ORDER_NUM
+                                INNER JOIN  BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE   = B.COMP_CODE
+                                                                    AND C1.ITEM_CODE   = B.ITEM_CODE
+                                INNER JOIN  BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE   = B.COMP_CODE
+                                                                    AND C2.DIV_CODE    = B.DIV_CODE
+                                                                    AND C2.ITEM_CODE   = B.ITEM_CODE
+                                INNER JOIN  BCM100T D1 WITH (NOLOCK) ON D1.COMP_CODE   = A.COMP_CODE
+                                                                    AND D1.CUSTOM_CODE = A.CUSTOM_CODE
+                                INNER JOIN  QMS200T E  WITH (NOLOCK) ON  E.COMP_CODE   = B.COMP_CODE
+                                                                    AND  E.DIV_CODE    = B.DIV_CODE
+                                                                    AND  E.CUSTOM_CODE = B.CUSTOM_CODE
+                                                                    AND  E.ORDER_NUM   = B.ORDER_NUM
+                                                                    AND  E.ORDER_SEQ   = B.ORDER_SEQ
+                                LEFT  JOIN  (
+                                            SELECT  COMP_CODE, DIV_CODE, ITEM_STATUS, INSPEC_NUM, INSPEC_SEQ
+                                                  , SUM(INOUT_Q) AS INOUT_Q
+                                            FROM    BTR100T  WITH (NOLOCK)
+                                            WHERE   COMP_CODE       = @COMP_CODE
+                                            AND     DIV_CODE        = @DIV_CODE
+                                            AND     INSPEC_NUM      &gt; ''
+                                            AND     ITEM_STATUS     = N'1'
+                                            AND     CREATE_LOC      = N'2'
+                                            AND     INOUT_CODE_TYPE = N'4'
+                                            AND     INOUT_Q         &gt; 0
+                                            GROUP BY COMP_CODE, DIV_CODE, ITEM_STATUS, INSPEC_NUM, INSPEC_SEQ
+                                            )       F                ON  F.COMP_CODE   = E.COMP_CODE
+                                                                    AND  F.DIV_CODE    = E.DIV_CODE
+                                                                    AND  F.INSPEC_NUM  = E.INSPEC_NUM
+                                                                    AND  F.INSPEC_SEQ  = E.INSPEC_SEQ
+        
+                                LEFT JOIN BSA100T S WITH(NOLOCK) ON S.COMP_CODE = A.COMP_CODE
+                                                                AND S.MAIN_CODE = 'M102'
+                                                                AND S.SUB_CODE  = '1'
+                
+                        WHERE   A.COMP_CODE     = @COMP_CODE
+                        AND     A.DIV_CODE      = @DIV_CODE
+                        AND     A.ORDER_TYPE   != '4'
+                        AND     A.AGREE_STATUS  &gt; '1'
+                        AND     E.GOOD_INSPEC_Q &gt; 0
+                        AND     E.END_DECISION != '03'
+                        AND     E.GOOD_INSPEC_Q &gt; ISNULL(F.INOUT_Q, 0)
+                        AND     B.CONTROL_STATUS NOT IN('8', '9')
+                        AND   ((B.INSPEC_FLAG   = 'Y' AND B.INSPEC_FLAG &gt; '') OR (C2.INSPEC_YN = 'Y' AND B.INSPEC_FLAG IS NULL))
+                        --
+                        AND   ((A.CUSTOM_CODE   = @CUSTOM_CODE  AND @CUSTOM_CODE  != '') OR (@CUSTOM_CODE  = ''))
+                        AND   ((A.ORDER_TYPE    = @ORDER_TYPE   AND @ORDER_TYPE   != '') OR (@ORDER_TYPE   = ''))
+                
+                --2013/04/30 YJY 화폐단위 구분없이 참조할 수 있도록 주석처리
+                        AND   ((B.MONEY_UNIT    = @MONEY_UNIT   AND @MONEY_UNIT   != '') OR (@MONEY_UNIT   = ''))
+                        AND   ((B.DVRY_DATE    &gt;= @FR_DVRY_DATE AND @FR_DVRY_DATE != '') OR (@FR_DVRY_DATE = ''))
+                        AND   ((B.DVRY_DATE    &lt;= @TO_DVRY_DATE AND @TO_DVRY_DATE != '') OR (@TO_DVRY_DATE = ''))
+                        AND   ((B.WH_CODE       = @WH_CODE      AND @WH_CODE      != '') OR (@WH_CODE      = ''))
+                
+                        UNION ALL
+                
+                        SELECT  CAST('' AS BIT)                                                             AS GUBUN                                                        
+                              , B.ITEM_CODE                                                                 AS ITEM_CODE
+                              , CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                                     WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                                     ELSE C1.ITEM_NAME
+                                END                                                                         AS ITEM_NAME          
+                              , C2.ITEM_ACCOUNT                                                             AS ITEM_ACCOUNT
+                              , C1.SPEC                                                                     AS SPEC
+                              , REPLACE(
+                                REPLACE(
+                                REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.DVRY_DATE, 1, 4))
+                                                   , 'MM',   SUBSTRING(B.DVRY_DATE, 5, 2))
+                                                   , 'DD',   SUBSTRING(B.DVRY_DATE, 7, 2))                  AS DVRY_DATE
+                              , REPLACE(
+                                REPLACE(
+                                REPLACE(@DateFormat, 'YYYY', SUBSTRING(E.INSPEC_DATE, 1, 4))
+                                                   , 'MM',   SUBSTRING(E.INSPEC_DATE, 5, 2))
+                                                   , 'DD',   SUBSTRING(E.INSPEC_DATE, 7, 2))                AS INSPEC_DATE
+                              , A.DIV_CODE                                                                  AS DIV_CODE
+                              , B.ORDER_UNIT                                                                AS ORDER_UNIT
+                              , B.ORDER_UNIT_Q                                                              AS ORDER_UNIT_Q
+                              , (ISNULL(E.BAD_INSPEC_Q,0) - (ISNULL(F.INOUT_Q,0) / ISNULL(B.TRNS_RATE,1)))  AS REMAIN_Q 
+                              , C1.STOCK_UNIT                                                               AS STOCK_UNIT
+                              , (ISNULL(E.BAD_INSPEC_Q,0) - (ISNULL(F.INOUT_Q,0) / ISNULL(B.TRNS_RATE,1)))  AS NOINOUT_Q
+                              , B.ORDER_Q                                                                   AS ORDER_Q
+                              , '2'                                                                         AS ITEM_STATUS
+                              , B.UNIT_PRICE_TYPE                                                           AS UNIT_PRICE_TYPE
+                              , B.MONEY_UNIT                                                                AS MONEY_UNIT
+                              , B.EXCHG_RATE_O                                                              AS EXCHG_RATE_O
+                              , B.ORDER_P                                                                   AS ORDER_P
+                              , B.ORDER_UNIT_P                                                              AS ORDER_UNIT_P
+                              , (ISNULL(E.BAD_INSPEC_Q,0) * ISNULL(B.ORDER_UNIT_P,0))                       AS ORDER_O  
+                              , B.ORDER_LOC_P                                                               AS ORDER_LOC_P
+                              , B.ORDER_LOC_O                                                               AS ORDER_LOC_O
+                              , B.ORDER_NUM                                                                 AS ORDER_NUM
+                              , B.ORDER_SEQ                                                                 AS ORDER_SEQ
+                              , A.LC_NUM                                                                    AS LC_NUM
+                              , B.WH_CODE                                                                   AS WH_CODE
+                              , B.ORDER_REQ_NUM                                                             AS ORDER_REQ_NUM
+                              , A.ORDER_TYPE                                                                AS ORDER_TYPE
+                              , A.CUSTOM_CODE                                                               AS CUSTOM_CODE
+                              , CASE WHEN @RefItem = '1' THEN D1.CUSTOM_NAME1
+                                     WHEN @RefItem = '2' THEN D1.CUSTOM_NAME2
+                                     ELSE D1.CUSTOM_NAME
+                                END                                                                         AS CUSTOM_NAME
+                              , ISNULL(B.TRNS_RATE, 1)                                                      AS TRNS_RATE                                              
+                              , ISNULL(B.INSTOCK_Q, 0)                                                      AS INSTOCK_Q                                              
+                              , C2.EXCESS_RATE                                                              AS EXCESS_RATE
+                              , E.INSPEC_NUM                                                                AS INSPEC_NUM
+                              , E.INSPEC_SEQ                                                                AS INSPEC_SEQ
+                              , (B.ORDER_UNIT_Q - ISNULL(B.INSTOCK_Q, 0))                                   AS PORE_Q
+                              , E.REMARK                                                                    AS REMARK
+                              , E.LOT_NO                                                                    AS LOT_NO
+                              , E.PROJECT_NO                                                                AS PROJECT_NO
+                              , CONVERT(NVARCHAR(20), '')                                                   AS LC_NO
+                              , CONVERT(NVARCHAR(20), '')                                                   AS BL_NO
+                              , CONVERT(NVARCHAR(20), '')                                                   AS BASIS_NUM
+                              , CONVERT(NUMERIC(3,0), 0)                                                    AS BASIS_SEQ
+                              , CONVERT(NVARCHAR(10), '')                                                   AS LC_DATE
+                              , CONVERT(NVARCHAR(10), '')                                                   AS INVOICE_DATE
+                              , CONVERT(NVARCHAR(6), '')                                                    AS TRADE_LOC
+                              , C2.LOT_YN
+                        FROM                MPO100T A  WITH (NOLOCK)
+                                INNER JOIN  MPO200T B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+                                                                    AND  B.DIV_CODE    = A.DIV_CODE
+                                                                    AND  B.CUSTOM_CODE = A.CUSTOM_CODE
+                                                                    AND  B.ORDER_NUM   = A.ORDER_NUM
+                                INNER JOIN  BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE   = B.COMP_CODE
+                                                                    AND C1.ITEM_CODE   = B.ITEM_CODE
+                                INNER JOIN  BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE   = B.COMP_CODE
+                                                                    AND C2.DIV_CODE    = B.DIV_CODE
+                                                                    AND C2.ITEM_CODE   = B.ITEM_CODE
+                                INNER JOIN  BCM100T D1 WITH (NOLOCK) ON D1.COMP_CODE   = A.COMP_CODE
+                                                                    AND D1.CUSTOM_CODE = A.CUSTOM_CODE
+                                INNER JOIN  QMS200T E  WITH (NOLOCK) ON  E.COMP_CODE   = B.COMP_CODE
+                                                                    AND  E.DIV_CODE    = B.DIV_CODE
+                                                                    AND  E.CUSTOM_CODE = B.CUSTOM_CODE
+                                                                    AND  E.ORDER_NUM   = B.ORDER_NUM
+                                                                    AND  E.ORDER_SEQ   = B.ORDER_SEQ
+                                LEFT  JOIN  (
+                                            SELECT  COMP_CODE, DIV_CODE, ITEM_STATUS, INSPEC_NUM, INSPEC_SEQ
+                                                  , SUM(INOUT_Q) AS INOUT_Q
+                                            FROM    BTR100T  WITH (NOLOCK)
+                                            WHERE   COMP_CODE       = @COMP_CODE
+                                            AND     DIV_CODE        = @DIV_CODE
+                                            AND     INSPEC_NUM      &gt; ''
+                                            AND     ITEM_STATUS     = N'2'
+                                            AND     CREATE_LOC      = N'2'
+                                            AND     INOUT_CODE_TYPE = N'4'
+                                            AND     INOUT_Q         &gt; 0
+                                            GROUP BY COMP_CODE, DIV_CODE, ITEM_STATUS, INSPEC_NUM, INSPEC_SEQ
+                                            )       F                ON  F.COMP_CODE   = E.COMP_CODE
+                                                                    AND  F.DIV_CODE    = E.DIV_CODE
+                                                                    AND  F.INSPEC_NUM  = E.INSPEC_NUM
+                                                                    AND  F.INSPEC_SEQ  = E.INSPEC_SEQ
+                        WHERE   A.COMP_CODE     = @COMP_CODE
+                        AND     A.DIV_CODE      = @DIV_CODE
+                        AND     A.ORDER_TYPE   != '4'
+                        AND     A.AGREE_STATUS  &gt; '1'
+                        AND     E.BAD_INSPEC_Q  &gt; 0
+                        AND     E.END_DECISION != '03'
+                        AND     E.BAD_INSPEC_Q  &gt; ISNULL(F.INOUT_Q, 0)
+                        AND     B.CONTROL_STATUS NOT IN('8', '9')
+                        AND   ((B.INSPEC_FLAG   = 'Y' AND B.INSPEC_FLAG &gt; '') OR (C2.INSPEC_YN = 'Y' AND B.INSPEC_FLAG IS NULL))
+                        AND   ((A.CUSTOM_CODE   = @CUSTOM_CODE  AND @CUSTOM_CODE  != '') OR (@CUSTOM_CODE  = ''))
+                        AND   ((A.ORDER_TYPE    = @ORDER_TYPE   AND @ORDER_TYPE   != '') OR (@ORDER_TYPE   = ''))
+                        AND   ((B.DVRY_DATE    &gt;= @FR_DVRY_DATE AND @FR_DVRY_DATE != '') OR (@FR_DVRY_DATE = ''))
+                        AND   ((B.DVRY_DATE    &lt;= @TO_DVRY_DATE AND @TO_DVRY_DATE != '') OR (@TO_DVRY_DATE = ''))
+                        AND   ((B.WH_CODE       = @WH_CODE      AND @WH_CODE      != '') OR (@WH_CODE      = ''))
+                 
+                     ELSE
+                        SELECT  CAST('' AS BIT)                                                             AS GUBUN                                                        
+                              , B.ITEM_CODE                                                                 AS ITEM_CODE
+                              , CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                                     WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                                     ELSE C1.ITEM_NAME
+                                END                                                                         AS ITEM_NAME          
+                              , C2.ITEM_ACCOUNT                                                             AS ITEM_ACCOUNT
+                              , C1.SPEC                                                                     AS SPEC
+                              , REPLACE(
+                                REPLACE(
+                                REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.DVRY_DATE, 1, 4))
+                                                   , 'MM',   SUBSTRING(B.DVRY_DATE, 5, 2))
+                                                   , 'DD',   SUBSTRING(B.DVRY_DATE, 7, 2))                  AS DVRY_DATE
+                              , REPLACE(
+                                REPLACE(
+                                REPLACE(@DateFormat, 'YYYY', SUBSTRING(E.INSPEC_DATE, 1, 4))
+                                                   , 'MM',   SUBSTRING(E.INSPEC_DATE, 5, 2))
+                                                   , 'DD',   SUBSTRING(E.INSPEC_DATE, 7, 2))                AS INSPEC_DATE
+                              , A.DIV_CODE                                                                  AS DIV_CODE
+                              , B.ORDER_UNIT                                                                AS ORDER_UNIT
+                              , B.ORDER_UNIT_Q                                                              AS ORDER_UNIT_Q
+                              , (ISNULL(E.GOOD_INSPEC_Q,0) - (ISNULL(F.INOUT_Q,0) / ISNULL(B.TRNS_RATE,1))) AS REMAIN_Q 
+                              , C1.STOCK_UNIT                                                               AS STOCK_UNIT
+                              , (ISNULL(E.GOOD_INSPEC_Q,0) - (ISNULL(F.INOUT_Q,0) / ISNULL(B.TRNS_RATE,1))) AS NOINOUT_Q
+                              , B.ORDER_Q                                                                   AS ORDER_Q
+                              , '1'                                                                         AS ITEM_STATUS
+                              , B.UNIT_PRICE_TYPE                                                           AS UNIT_PRICE_TYPE
+                              , B.MONEY_UNIT                                                                AS MONEY_UNIT
+                              , B.EXCHG_RATE_O                                                              AS EXCHG_RATE_O
+                              , B.ORDER_P                                                                   AS ORDER_P
+                              , B.ORDER_UNIT_P                                                              AS ORDER_UNIT_P
+                              , (ISNULL(E.GOOD_INSPEC_Q,0) * ISNULL(B.ORDER_UNIT_P,0))                      AS ORDER_O  
+                              , B.ORDER_LOC_P                                                               AS ORDER_LOC_P
+                              , B.ORDER_LOC_O                                                               AS ORDER_LOC_O
+                              , B.ORDER_NUM                                                                 AS ORDER_NUM
+                              , B.ORDER_SEQ                                                                 AS ORDER_SEQ
+                              , A.LC_NUM                                                                    AS LC_NUM
+                              , B.WH_CODE                                                                   AS WH_CODE
+                              , B.ORDER_REQ_NUM                                                             AS ORDER_REQ_NUM
+                              , A.ORDER_TYPE                                                                AS ORDER_TYPE
+                              , A.CUSTOM_CODE                                                               AS CUSTOM_CODE
+                              , CASE WHEN @RefItem = '1' THEN D1.CUSTOM_NAME1
+                                     WHEN @RefItem = '2' THEN D1.CUSTOM_NAME2
+                                     ELSE D1.CUSTOM_NAME
+                                END                                                                         AS CUSTOM_NAME
+                              , ISNULL(B.TRNS_RATE, 1)                                                      AS TRNS_RATE                                              
+                              , ISNULL(B.INSTOCK_Q, 0)                                                      AS INSTOCK_Q                                              
+                              , C2.EXCESS_RATE                                                              AS EXCESS_RATE
+                              , E.INSPEC_NUM                                                                AS INSPEC_NUM
+                              , E.INSPEC_SEQ                                                                AS INSPEC_SEQ
+                              , (B.ORDER_UNIT_Q - ISNULL(B.INSTOCK_Q, 0))                                   AS PORE_Q
+                              , E.REMARK                                                                    AS REMARK
+                              , E.LOT_NO                                                                    AS LOT_NO
+                              , E.PROJECT_NO                                                                AS PROJECT_NO
+                              , CONVERT(NVARCHAR(20), '')                                                   AS LC_NO
+                              , CONVERT(NVARCHAR(20), '')                                                   AS BL_NO
+                              , CONVERT(NVARCHAR(20), '')                                                   AS BASIS_NUM
+                              , CONVERT(NUMERIC(3,0), 0)                                                    AS BASIS_SEQ
+                              , CONVERT(NVARCHAR(10), '')                                                   AS LC_DATE
+                              , CONVERT(NVARCHAR(10), '')                                                   AS INVOICE_DATE
+                              , CONVERT(NVARCHAR(6), '')                                                    AS TRADE_LOC
+                              , C2.LOT_YN
+                        FROM                MPO100T A  WITH (NOLOCK)
+                                INNER JOIN  MPO200T B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+                                                                    AND  B.DIV_CODE    = A.DIV_CODE
+                                                                    AND  B.CUSTOM_CODE = A.CUSTOM_CODE
+                                                                    AND  B.ORDER_NUM   = A.ORDER_NUM
+                                INNER JOIN  BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE   = B.COMP_CODE
+                                                                    AND C1.ITEM_CODE   = B.ITEM_CODE
+                                INNER JOIN  BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE   = B.COMP_CODE
+                                                                    AND C2.DIV_CODE    = B.DIV_CODE
+                                                                    AND C2.ITEM_CODE   = B.ITEM_CODE
+                                INNER JOIN  BCM100T D1 WITH (NOLOCK) ON D1.COMP_CODE   = A.COMP_CODE
+                                                                    AND D1.CUSTOM_CODE = A.CUSTOM_CODE
+                                INNER JOIN  QMS200T E  WITH (NOLOCK) ON  E.COMP_CODE   = B.COMP_CODE
+                                                                    AND  E.DIV_CODE    = B.DIV_CODE
+                                                                    AND  E.CUSTOM_CODE = B.CUSTOM_CODE
+                                                                    AND  E.ORDER_NUM   = B.ORDER_NUM
+                                                                    AND  E.ORDER_SEQ   = B.ORDER_SEQ
+                                LEFT  JOIN  (
+                                            SELECT  COMP_CODE, DIV_CODE, ITEM_STATUS, INSPEC_NUM, INSPEC_SEQ
+                                                  , SUM(INOUT_Q) AS INOUT_Q
+                                            FROM    BTR100T  WITH (NOLOCK)
+                                            WHERE   COMP_CODE       = @COMP_CODE
+                                            AND     DIV_CODE        = @DIV_CODE
+                                            AND     INSPEC_NUM      &gt; ''
+                                            AND     ITEM_STATUS     = N'1'
+                                            AND     CREATE_LOC      = N'2'
+                                            AND     INOUT_CODE_TYPE = N'4'
+                                            AND     INOUT_Q         &gt; 0
+                                            GROUP BY COMP_CODE, DIV_CODE, ITEM_STATUS, INSPEC_NUM, INSPEC_SEQ
+                                            )       F                ON  F.COMP_CODE   = E.COMP_CODE
+                                                                    AND  F.DIV_CODE    = E.DIV_CODE
+                                                                    AND  F.INSPEC_NUM  = E.INSPEC_NUM
+                                                                    AND  F.INSPEC_SEQ  = E.INSPEC_SEQ
+                        WHERE   A.COMP_CODE     = @COMP_CODE
+                        AND     A.DIV_CODE      = @DIV_CODE
+                        AND     A.ORDER_TYPE   != '4'
+                        AND     A.AGREE_STATUS  &gt; '1'
+                        AND     E.GOOD_INSPEC_Q &gt; 0
+                        AND     E.END_DECISION != '03'
+                        AND     E.GOOD_INSPEC_Q &gt; ISNULL(F.INOUT_Q, 0)
+                        AND     B.CONTROL_STATUS NOT IN('8', '9')
+                        AND   ((B.INSPEC_FLAG   = 'Y' AND B.INSPEC_FLAG &gt; '') OR (C2.INSPEC_YN = 'Y' AND B.INSPEC_FLAG IS NULL))
+                        --
+                        AND   ((A.CUSTOM_CODE   = @CUSTOM_CODE  AND @CUSTOM_CODE  != '') OR (@CUSTOM_CODE  = ''))
+                        AND   ((A.ORDER_TYPE    = @ORDER_TYPE   AND @ORDER_TYPE   != '') OR (@ORDER_TYPE   = ''))
+                
+                --2013/04/30 YJY 화폐단위 구분없이 참조할 수 있도록 주석처리
+                        AND   ((B.MONEY_UNIT    = @MONEY_UNIT   AND @MONEY_UNIT   != '') OR (@MONEY_UNIT   = ''))
+                        AND   ((B.DVRY_DATE    &gt;= @FR_DVRY_DATE AND @FR_DVRY_DATE != '') OR (@FR_DVRY_DATE = ''))
+                        AND   ((B.DVRY_DATE    &lt;= @TO_DVRY_DATE AND @TO_DVRY_DATE != '') OR (@TO_DVRY_DATE = ''))
+                        AND   ((B.WH_CODE       = @WH_CODE      AND @WH_CODE      != '') OR (@WH_CODE      = ''))
+                                          
+                     ORDER BY B.ORDER_NUM DESC, B.ORDER_SEQ
+                     
+                     SET ARITHABORT OFF
+                     SET NOCOUNT OFF
+                END
+                
+                IF @QueryFlag = '6'
+                BEGIN
+                    EXEC unilite.SP_MATRL_ImportQualityResultNotReceiptReference
+                                                               #{S_COMP_CODE}
+                                                             , #{DIV_CODE}
+                                                             , #{FR_DVRY_DATE}
+                                                             , #{TO_DVRY_DATE}
+                                                             , #{CUSTOM_CODE}
+                                                             , #{ORDER_TYPE}
+                                                             , #{WH_CODE}
+                                                             , #{MONEY_UNIT}
+                                                             , #{S_USER_ID}
+                                                             , 100  /* 내용을 파악한 후에 삭제해야 함*/
+                END
+                    
+            SET ARITHABORT OFF
+            SET NOCOUNT OFF
+        END
+    </select>
+    
+    <!-- 업체출고 참조(SCM) -->
+    <select id="s_mms510ukrv_kdServiceImpl.selectScmRefList" parameterType="Map" resultType="rMap">
+       /*mms510ukrv.Cmms510ukrv[fnScm100QRef] Query01*/
+        BEGIN 
+              DECLARE  @COMP_CODE     NVARCHAR(08)  -- (필) 법인코드
+                     , @CP_CODE       NVARCHAR(08)  -- (필) 업체법인코드
+                     , @DIV_CODE      NVARCHAR(08)  -- (필) 사업장코드
+                     , @DV_CODE       NVARCHAR(10)  -- (필) 업체사업장코드
+                     , @CUSTOM_CODE   NVARCHAR(08)  -- (필) 거래처코드
+                     , @CUST_CD       NVARCHAR(08)
+                     , @FR_INOUT_DATE NVARCHAR(08)  -- (선) 출고일(FR)
+                     , @TO_INOUT_DATE NVARCHAR(08)  -- (선) 출고일(TO)
+                     , @USER_ID       NVARCHAR(100)  -- (필) USER ID
+                     , @LangType      NVARCHAR(2)   -- 언어구분
+        
+              SET NOCOUNT ON
+              SET ARITHABORT ON
+        
+              SET @COMP_CODE     = #{S_COMP_CODE}
+              SET @DIV_CODE      = #{DIV_CODE}
+              SET @CUSTOM_CODE   = #{CUSTOM_CODE}
+              SET @FR_INOUT_DATE = #{FR_INOUT_DATE}
+              SET @TO_INOUT_DATE = #{TO_INOUT_DATE}
+              SET @USER_ID       = #{S_USER_ID}
+              SET @LangType      = #{S_LANG_CODE}   
+        
+        -- SCM연계정보 조회
+        SELECT @CP_CODE     = REF_CODE4 --거래처의 법인코드
+             , @DV_CODE     = REF_CODE5 --거래처의 사업장코드
+             , @CUST_CD     = REF_CODE2 --거래처에 등록되어있는 자사코드
+          FROM BSA100T  WITH (NOLOCK)
+         WHERE COMP_CODE = @COMP_CODE
+           AND MAIN_CODE = N'B605'
+           AND REF_CODE1 = @CUSTOM_CODE
+        
+        SELECT  CAST(0 AS BIT) AS CHOICE
+                , (CASE WHEN @LangType = 'ko' THEN M2.CODE_NAME
+                        WHEN @LangType = 'en' THEN M2.CODE_NAME_EN
+                        WHEN @LangType = 'zh' THEN M2.CODE_NAME_CN
+                        WHEN @LangType = 'ja' THEN M2.CODE_NAME_JP
+                                              ELSE M2.CODE_NAME
+                  END)  AS GUBUN 
+                , uniLITE.fnCustNameComp(@CP_CODE, @DV_CODE, @CUSTOM_CODE) AS CUSTOM_NAME
+                , A.INOUT_NUM
+                , A.INOUT_SEQ
+                , unilite.fnGetUserDateComp(@CP_CODE,A.INOUT_DATE) AS INOUT_DATE
+                , A.ITEM_CODE    AS CUSTOM_ITEM_CODE
+                , F.ITEM_CODE    AS ITEM_CODE
+                , G.ITEM_NAME    AS ITEM_NAME
+                , G.SPEC         AS SPEC
+                , A.MONEY_UNIT
+                , A.EXCHG_RATE_O
+                , A.ORDER_UNIT
+                , A.TRNS_RATE
+                , A.INOUT_Q
+                , A.INOUT_P
+                , A.INOUT_I
+                , (CASE WHEN @LangType = 'ko' THEN M1.CODE_NAME
+                        WHEN @LangType = 'en' THEN M1.CODE_NAME_EN
+                        WHEN @LangType = 'zh' THEN M1.CODE_NAME_CN
+                        WHEN @LangType = 'ja' THEN M1.CODE_NAME_JP
+                                              ELSE M1.CODE_NAME
+                  END)                                                              AS INOUT_PRSN 
+                , A.BASIS_NUM AS ORDER_NUM
+                , A.BASIS_SEQ AS ORDER_SEQ
+                , A.REMARK 
+                , H.ITEM_ACCOUNT
+                , ISNULL(G.STOCK_CARE_YN, 'Y') AS STOCK_CARE_YN 
+                , H.WH_CODE
+                , G.STOCK_UNIT
+                , A.INOUT_FOR_P
+                , A.INOUT_FOR_O
+                , ISNULL(I.ORDER_TYPE, '1') AS ORDER_TYPE
+         FROM             ${sDbName}BTR100T A  WITH (NOLOCK)
+             LEFT  JOIN   ${sDbName}BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE      = A.COMP_CODE
+                                                                AND M1.MAIN_CODE  = 'B024'
+                                                                AND M1.SUB_CODE   = A.INOUT_PRSN
+             LEFT  JOIN   ${sDbName}BSA100T M2 WITH (NOLOCK) ON M2.COMP_CODE      = A.COMP_CODE
+                                                                AND M2.MAIN_CODE  = 'B031'
+                                                                AND M2.SUB_CODE   = A.CREATE_LOC
+             LEFT  JOIN BPR300T  F               WITH (NOLOCK) ON F.COMP_CODE   = @COMP_CODE
+                                                              AND F.TYPE        = '1'
+                                                              AND F.DIV_CODE    = @DIV_CODE
+                                                              AND F.CUSTOM_CODE = @CUSTOM_CODE
+                                                              AND F.CUSTOM_ITEM_CODE  = A.ITEM_CODE
+             LEFT  JOIN BPR100T  G               WITH (NOLOCK) ON G.COMP_CODE   = F.COMP_CODE
+                                                              AND G.ITEM_CODE   = F.ITEM_CODE
+             LEFT  JOIN BPR200T  H               WITH (NOLOCK) ON H.COMP_CODE   = G.COMP_CODE
+                                                              AND H.DIV_CODE    = @DIV_CODE
+                                                              AND H.ITEM_CODE   = G.ITEM_CODE
+             LEFT  JOIN MPO100T  I               WITH (NOLOCK) ON I.COMP_CODE   = @COMP_CODE
+                                                              AND I.DIV_CODE    = @DIV_CODE
+                                                              AND I.CUSTOM_CODE = A.INOUT_CODE
+                                                              AND I.ORDER_NUM   = A.BASIS_NUM
+             LEFT  JOIN MPO200T  J               WITH (NOLOCK) ON J.COMP_CODE   = I.COMP_CODE
+                                                              AND J.DIV_CODE    = I.DIV_CODE
+                                                              AND J.CUSTOM_CODE = I.CUSTOM_CODE
+                                                              AND J.ORDER_NUM   = A.BASIS_NUM
+                                                              AND J.ORDER_SEQ   = A.BASIS_SEQ
+        
+         WHERE
+               A.COMP_CODE      = @CP_CODE
+           AND A.DIV_CODE       = @DV_CODE
+           AND A.CREATE_LOC IN ('1', '2')
+           AND A.INOUT_TYPE = '2'
+           AND A.INOUT_CODE = @CUST_CD
+           AND ISNULL(A.SCM_FLAG_YN, 'N') != 'Y'
+           AND ISNULL(J.INSPEC_FLAG, 'N') = 'N'
+           AND ((A.INOUT_DATE  &gt;= @FR_INOUT_DATE AND @FR_INOUT_DATE != '') OR (@FR_INOUT_DATE = ''))
+           AND ((A.INOUT_DATE  &lt;= @TO_INOUT_DATE AND @TO_INOUT_DATE != '') OR (@TO_INOUT_DATE = ''))
+         
+         ORDER BY 2,3,4,5,6,7
+        
+          SET NOCOUNT OFF
+          SET ARITHABORT OFF
+        END
+    </select>
+    
+    <select id="s_mms510ukrv_kdServiceImpl.fnOrderPrice" parameterType="Map" resultType="rMap">
+        SELECT A.COMP_CODE, 
+                A.TYPE, 
+                A.DIV_CODE, 
+                A.ITEM_CODE, 
+                A.CUSTOM_CODE, 
+                A.MONEY_UNIT,
+                A.ORDER_UNIT, 
+                --A.PURCHASE_TYPE, 
+                --A.SALES_TYPE,
+                A.ORDER_RATE,
+                --A.PURCHASE_RATE,
+                ISNULL(A.ITEM_P, '0') AS ORDER_P,
+                A.APLY_START_DATE
+         FROM uniLITE.BPR400T A
+         INNER JOIN
+           (SELECT COMP_CODE, TYPE, DIV_CODE, ITEM_CODE, CUSTOM_CODE, MONEY_UNIT, ORDER_UNIT, MAX(APLY_START_DATE) AS APLY_START_DATE
+            FROM uniLITE.BPR400T
+            WHERE APLY_START_DATE &lt;= CONVERT(NVARCHAR(8), GETDATE(), 112)
+            GROUP BY COMP_CODE, TYPE, DIV_CODE, ITEM_CODE, CUSTOM_CODE, MONEY_UNIT, ORDER_UNIT
+            ) B ON A.COMP_CODE = B.COMP_CODE
+               AND A.TYPE                 = B.TYPE
+               AND A.DIV_CODE             = B.DIV_CODE                          
+               AND A.CUSTOM_CODE          = B.CUSTOM_CODE
+               AND A.ITEM_CODE            = B.ITEM_CODE 
+               AND A.MONEY_UNIT           = B.MONEY_UNIT
+               AND A.ORDER_UNIT           = B.ORDER_UNIT
+               AND A.APLY_START_DATE      = B.APLY_START_DATE                          
+         INNER JOIN unilite.BPR200T C ON A.COMP_CODE = C.COMP_CODE
+                                     AND A.DIV_CODE  = C.DIV_CODE
+                                     AND A.ITEM_CODE = C.ITEM_CODE
+        WHERE A.ITEM_CODE   = #{ITEM_CODE}
+            AND A.CUSTOM_CODE       = #{CUSTOM_CODE}
+            AND A.COMP_CODE         = #{S_COMP_CODE}
+            AND A.DIV_CODE          = #{DIV_CODE}
+            AND A.TYPE              = N'1'          
+            AND A.MONEY_UNIT        = #{MONEY_UNIT}
+            AND A.ORDER_UNIT        = #{ORDER_UNIT}
+    </select>
+    
+    <select id="s_mms510ukrv_kdServiceImpl.userWhcode" parameterType="Map" resultType="rMap">
+        SELECT
+            A.WH_CODE
+        FROM BSA210T A WITH(NOLOCK)
+            LEFT JOIN BSA300T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                            AND B.DEPT_CODE = A.TREE_CODE
+        WHERE A.COMP_CODE = #{S_COMP_CODE}
+        AND B.USER_ID = #{S_USER_ID}
+    </select>
+    
+    <select id="s_mms510ukrv_kdServiceImpl.taxType" parameterType="Map" resultType="rMap">
+        SELECT TAX_TYPE
+          FROM BPR100T WITH(NOLOCK)
+         WHERE COMP_CODE = #{S_COMP_CODE}
+           AND ITEM_CODE = #{ITEM_CODE}
+    </select>
+    <select id="s_mms510ukrv_kdServiceImpl.fnGetCalcTaxAmt" parameterType="Map" resultType="rMap">
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+        SELECT INOUT_I,
+               INOUT_TAX_AMT,
+               INOUT_TOTAL_I 
+          FROM uniLITE.fnGetCalcTaxAmt(
+                                        #{COMP_CODE}
+                                      , #{CUSTOM_CODE}
+                                      , #{ITEM_CODE}
+                                      , #{ORDER_UNIT_Q} 
+                                      , #{ORDER_UNIT_P} )
+    </select>
+    
+    <insert id="s_mms510ukrv_kdServiceImpl.insertLogDetail" parameterType="Map"> 
+        INSERT INTO L_BTR100T
+             ( KEY_VALUE, OPR_FLAG
+             , COMP_CODE, INOUT_NUM, INOUT_SEQ, INOUT_TYPE, DIV_CODE, INOUT_METH, CREATE_LOC, INOUT_TYPE_DETAIL
+             , INOUT_CODE_TYPE, INOUT_CODE, INOUT_DATE, ITEM_CODE, ITEM_STATUS, WH_CODE, WH_CELL_CODE, INOUT_PRSN
+             , INOUT_Q, INOUT_P, INOUT_I, INOUT_FOR_P, INOUT_FOR_O, EXCHG_RATE_O, MONEY_UNIT
+             , TRANS_COST, TARIFF_AMT, BASIS_NUM, BASIS_SEQ, PROJECT_NO, LOT_NO, REMARK
+             , ORDER_TYPE, ORDER_NUM, ORDER_SEQ, ORDER_UNIT, TRNS_RATE, ORDER_UNIT_Q, ORDER_UNIT_P, ORDER_UNIT_O, ORDER_UNIT_FOR_P
+             , BILL_TYPE, SALE_TYPE
+             , PRICE_YN, SALE_DIV_CODE, SALE_CUSTOM_CODE, SALE_C_DATE
+             , LC_NUM, BL_NUM, TRADE_LOC, ACCOUNT_YNC, ACCOUNT_Q
+             , INSPEC_NUM, INSPEC_SEQ, SCM_FLAG_YN
+             , INSERT_DB_USER, INSERT_DB_TIME, UPDATE_DB_USER, UPDATE_DB_TIME
+             )
+        VALUES
+             ( #{KEY_VALUE}, #{OPR_FLAG}            
+             , #{S_COMP_CODE}, #{INOUT_NUM}, #{INOUT_SEQ}, #{INOUT_TYPE}, #{DIV_CODE}, #{INOUT_METH}, #{CREATE_LOC}, #{INOUT_TYPE_DETAIL}
+             , #{INOUT_CODE_TYPE}, #{INOUT_CODE}, #{INOUT_DATE}, #{ITEM_CODE}, #{ITEM_STATUS}, #{WH_CODE}, #{WH_CELL_CODE}, #{INOUT_PRSN}
+             , #{INOUT_Q}, #{INOUT_P}, #{INOUT_I}, #{INOUT_FOR_P}, #{INOUT_FOR_O}, #{EXCHG_RATE_O}, #{MONEY_UNIT}
+             , #{TRANS_COST}, #{TARIFF_AMT}, #{BASIS_NUM}, #{BASIS_SEQ}, #{PROJECT_NO}, #{LOT_NO}, #{REMARK}
+             , #{ORDER_TYPE}, #{ORDER_NUM}, #{ORDER_SEQ}, #{ORDER_UNIT}, #{TRNS_RATE}, #{ORDER_UNIT_Q}, #{ORDER_UNIT_P},#{ORDER_UNIT_I},#{ORDER_UNIT_FOR_P}
+             , #{BILL_TYPE}, #{SALE_TYPE}
+             , #{PRICE_YN},#{SALE_DIV_CODE},#{SALE_CUSTOM_CODE}, #{SALE_C_DATE}
+             , #{LC_NUM}, #{BL_NUM}, #{TRADE_LOC}, #{ACCOUNT_YNC}, #{ACCOUNT_Q}
+             , #{INSPEC_NUM}, #{INSPEC_SEQ}, #{SCM_FLAG_YN}
+             , #{S_USER_ID}, GETDATE(), #{S_USER_ID}, GETDATE()
+             )
+    </insert>
+    
+    <insert id="s_mms510ukrv_kdServiceImpl.updateLogDetail" parameterType="Map">  
+        INSERT INTO L_BTR100T(          
+                KEY_VALUE, OPR_FLAG
+              , COMP_CODE, INOUT_NUM, INOUT_SEQ, INOUT_TYPE, DIV_CODE, INOUT_METH, CREATE_LOC, INOUT_TYPE_DETAIL
+                    , INOUT_CODE_TYPE, INOUT_CODE, INOUT_CODE_DETAIL, INOUT_DATE, ITEM_CODE, ITEM_STATUS, WH_CODE, WH_CELL_CODE, INOUT_PRSN
+                    , INOUT_Q, INOUT_P, INOUT_I, INOUT_FOR_P, INOUT_FOR_O, EXCHG_RATE_O, MONEY_UNIT, EXPENSE_I, RETURN_QTY
+                    , TRANS_COST, TARIFF_AMT, BASIS_NUM, BASIS_SEQ, TO_DIV_CODE, PROJECT_NO, PJT_CODE, LOT_NO, REMARK
+                    , ORDER_TYPE, ORDER_NUM, ORDER_SEQ, ORDER_UNIT, TRNS_RATE, ORDER_UNIT_Q, ORDER_UNIT_P, ORDER_UNIT_O, INOUT_TAX_AMT, ORDER_UNIT_FOR_P
+                    , IN_ITEM_STATUS, ISSUE_REQ_NUM, ISSUE_REQ_SEQ, DELIVERY_DATE, DELIVERY_TIME, DVRY_CUST_CD, DISCOUNT_RATE, BILL_TYPE, SALE_TYPE, TAX_TYPE
+                    , PRICE_YN, SALE_PRSN, SALE_DIV_CODE, SALE_CUSTOM_CODE, SALE_C_YN, SALE_C_DATE, SALE_C_REMARK, AGENT_TYPE, DEPT_CODE
+                    , LC_NUM, BL_NUM, TRADE_LOC, LC_AMEND_SEQ, EXPENSE_FLAG, ACCOUNT_YNC, ACCOUNT_Q, FR_ACCOUNT, TO_ACCOUNT
+                    , EX_DATE, EX_NUM, AGREE_YN, AC_DATE, AC_NUM
+                    , INOUT_CAL_P, INOUT_CAL_I, BASIS_P, BASIS_I, INOUT_NET_P, INOUT_NET_I, INSPEC_NUM, INSPEC_SEQ, SCM_FLAG_YN, DELIVERY_NO
+                    , MAKE_DATE, DEFECT_CODE, DEFECT_TYPE, DEFECT_REMARK, PERSONS_NUM, WORK_TIME, GONG_SU, MAKER_TYPE, SET_TYPE, WORK_SHOP_CODE
+                    , INSERT_DB_USER, INSERT_DB_TIME, UPDATE_DB_USER, UPDATE_DB_TIME, TEMPC_01, TEMPC_02, TEMPC_03, TEMPN_01, TEMPN_02, TEMPN_03)
+              SELECT  #{KEY_VALUE}, #{OPR_FLAG}
+                    , #{S_COMP_CODE}, #{INOUT_NUM}, #{INOUT_SEQ}, #{INOUT_TYPE}, #{DIV_CODE}, #{INOUT_METH}, #{CREATE_LOC}, #{INOUT_TYPE_DETAIL}
+                    , #{INOUT_CODE_TYPE}, #{INOUT_CODE}, INOUT_CODE_DETAIL, #{INOUT_DATE}, #{ITEM_CODE}, #{ITEM_STATUS}, #{WH_CODE}, #{WH_CELL_CODE}, #{INOUT_PRSN}
+                    , #{INOUT_Q}, #{INOUT_P}, #{INOUT_I}, #{INOUT_FOR_P}, #{INOUT_FOR_O}, #{EXCHG_RATE_O}, #{MONEY_UNIT}, EXPENSE_I, RETURN_QTY
+                    , #{TRANS_COST}, #{TARIFF_AMT}, #{BASIS_NUM}, #{BASIS_SEQ}, TO_DIV_CODE, #{PROJECT_NO}, PJT_CODE, #{LOT_NO}, #{REMARK}
+                    , #{ORDER_TYPE}, #{ORDER_NUM}, #{ORDER_SEQ}, #{ORDER_UNIT}, #{TRNS_RATE}, #{ORDER_UNIT_Q}, #{ORDER_UNIT_P}, #{ORDER_UNIT_I}, INOUT_TAX_AMT, #{ORDER_UNIT_FOR_P}
+                    , IN_ITEM_STATUS, ISSUE_REQ_NUM, ISSUE_REQ_SEQ, DELIVERY_DATE, DELIVERY_TIME, DVRY_CUST_CD, DISCOUNT_RATE, #{BILL_TYPE}, #{SALE_TYPE}, TAX_TYPE
+                    , #{PRICE_YN}, SALE_PRSN, #{SALE_DIV_CODE}, #{SALE_CUSTOM_CODE}, SALE_C_YN, #{SALE_C_DATE}, SALE_C_REMARK, AGENT_TYPE, DEPT_CODE
+                    , #{LC_NUM}, #{BL_NUM}, #{TRADE_LOC}, LC_AMEND_SEQ, EXPENSE_FLAG, #{ACCOUNT_YNC}, #{ACCOUNT_Q}, FR_ACCOUNT, TO_ACCOUNT
+                    , EX_DATE, EX_NUM, AGREE_YN, AC_DATE, AC_NUM
+                    , INOUT_CAL_P, INOUT_CAL_I, BASIS_P, BASIS_I, INOUT_NET_P, INOUT_NET_I, #{INSPEC_NUM}, #{INSPEC_SEQ}, #{SCM_FLAG_YN}, DELIVERY_NO
+                    , MAKE_DATE, DEFECT_CODE, DEFECT_TYPE, DEFECT_REMARK, PERSONS_NUM, WORK_TIME, GONG_SU, MAKER_TYPE, SET_TYPE, WORK_SHOP_CODE
+                    , INSERT_DB_USER, INSERT_DB_TIME, #{S_USER_ID}, GETDATE(), TEMPC_01, TEMPC_02, TEMPC_03, TEMPN_01, TEMPN_02, TEMPN_03
+              FROM   BTR100T   A  WITH (NOLOCK) 
+              WHERE A.COMP_CODE     = #{S_COMP_CODE}
+                AND A.DIV_CODE      = #{DIV_CODE}
+                AND A.INOUT_NUM     = #{INOUT_NUM}
+                AND A.INOUT_SEQ     = #{INOUT_SEQ}
+                AND A.INOUT_TYPE    = #{INOUT_TYPE}
+    </insert>
+
+    <update id="s_mms510ukrv_kdServiceImpl.spReceiving" parameterType="Map" statementType="CALLABLE">
+        {call SP_MATRL_Receiving_KD (
+            #{CreateType,  mode=IN,    jdbcType=VARCHAR, javaType=java.lang.String},
+            #{KeyValue,    mode=IN,    jdbcType=VARCHAR, javaType=java.lang.String},
+            #{LangCode,    mode=IN,    jdbcType=VARCHAR, javaType=java.lang.String},
+            #{InOutNum,    mode=OUT,   jdbcType=VARCHAR, javaType=java.lang.String},
+            #{ErrorDesc,   mode=OUT,   jdbcType=VARCHAR, javaType=java.lang.String}
+        )}
+    </update>    
+    
+    <select id="s_mms510ukrv_kdServiceImpl.selectInoutTypeRefCode" parameterType="Map" resultType="rMap">
+    	SELECT REF_CODE4                                 
+		  FROM BSA100T WITH (NOLOCK)
+		 WHERE COMP_CODE    = #{S_COMP_CODE}
+		   AND MAIN_CODE = 'M103' 
+		   AND SUB_CODE = #{SUB_CODE}
+    </select>
+         
+</mapper>

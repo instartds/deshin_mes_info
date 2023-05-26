@@ -1,0 +1,291 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cam350ukrvServiceImpl">
+	<select id="cam350ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	    --cam350ukrvServiceImpl.selectList
+	    DECLARE @GUBUN NVARCHAR(02)
+			
+		SELECT TOP 1 @GUBUN = ISNULL(SUB_CODE,'02')
+		  FROM BSA100T WITH (NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND MAIN_CODE = N'A093'
+		   AND SUB_CODE != N'$'
+		   AND REF_CODE1 = N'Y'
+		 ORDER BY SUB_CODE DESC
+		
+		IF @@ROWCOUNT = 0 SET @GUBUN = '02'
+			
+		SELECT 	 DIV_CODE
+				, WORK_MONTH
+				, ACCNT
+				, ACCNT_NAME
+				<foreach collection="COST_POOL_LIST" item="item"  >
+					  , [${item}] AS COST_POOL_${item}
+				</foreach> 
+				<foreach collection="COST_POOL_LIST" item="item"  separator="+" close=")" open=",(">
+					   [${item}] 
+				</foreach> 
+				 AS SUM_AMT
+		FROM (
+		     SELECT J1.COMP_CODE
+			      , #{DIV_CODE} AS DIV_CODE 
+				  , #{WORK_MONTH} AS WORK_MONTH
+				  , J2.REF_CODE1 AS ACCNT
+				  , J2.REF_CODE2 AS ACCNT_NAME
+				  , J3.COST_POOL_CODE
+				  , J3.AMT
+				  , ISNULL(J3.UPDATE_DB_USER,'')   UPDATE_DB_USER
+				  , J3.UPDATE_DB_TIME
+			   FROM BSA100T J1
+			        LEFT OUTER JOIN BSA100T J2 ON J2.COMP_CODE  = J1.COMP_CODE 
+					                          AND J2.MAIN_CODE  = 'C007'
+											  AND J2.SUB_CODE   = '01'
+			        LEFT OUTER JOIN CAM350T J3 ON J3.COMP_CODE  = J1.COMP_CODE 
+					                          AND J3.DIV_CODE   = #{DIV_CODE}
+											  AND J3.WORK_MONTH = #{WORK_MONTH}
+											  AND J3.ACCNT      = J2.REF_CODE1
+              WHERE J1.COMP_CODE = #{S_COMP_CODE}
+			    AND J1.MAIN_CODE = 'CA06'
+				AND ISNULL(J1.REF_CODE2,'N') = 'Y'
+
+             UNION ALL		
+		
+			 SELECT ISNULL(B.COMP_CODE,  #{S_COMP_CODE}) AS COMP_CODE 
+				     , ISNULL(B.DIV_CODE,   #{DIV_CODE})	AS DIV_CODE 
+				     , ISNULL(B.WORK_MONTH, #{WORK_MONTH})	AS WORK_MONTH
+				     
+				     , ISNULL(A.ACCNT         , '')   ACCNT
+				     , ISNULL(A.ACCNT_NAME    , '')   ACCNT_NAME
+				     , B.COST_POOL_CODE
+				     , B.AMT
+		             , ISNULL(B.UPDATE_DB_USER,'')   UPDATE_DB_USER
+		             , B.UPDATE_DB_TIME
+				  FROM ABA400T A WITH (NOLOCK)
+				       LEFT JOIN CAM350T B WITH (NOLOCK) ON B.COMP_CODE        = A.COMP_CODE
+				                                        AND B.ACCNT            = A.ACCNT
+				                                        AND B.COMP_CODE        = #{S_COMP_CODE}
+				                                        AND B.DIV_CODE         = #{DIV_CODE}
+				                                        AND B.WORK_MONTH       = #{WORK_MONTH}
+				 WHERE A.COMP_CODE = #{S_COMP_CODE}
+				   AND (A.ACCNT BETWEEN (SELECT START_ACCNT 
+				                           FROM ABA120T 
+				                          WHERE COMP_CODE = #{S_COMP_CODE}
+				                            AND GUBUN     = @GUBUN
+				                            AND DIVI      = N'50'
+				                            AND ACCNT_CD  = N'5200')
+				                    AND (SELECT END_ACCNT
+				                           FROM ABA120T
+				                          WHERE COMP_CODE = #{S_COMP_CODE}
+				                            AND GUBUN     = @GUBUN
+				                            AND DIVI      = N'50'
+				                            AND ACCNT_CD  = N'5200')
+				    OR  A.ACCNT BETWEEN (SELECT START_ACCNT
+				                           FROM ABA120T
+				                          WHERE COMP_CODE = #{S_COMP_CODE}
+				                            AND GUBUN     = @GUBUN
+				                            AND DIVI      = N'50'
+				                            AND ACCNT_CD  = N'5300')
+				                    AND (SELECT END_ACCNT
+				                           FROM ABA120T
+				                          WHERE COMP_CODE = #{S_COMP_CODE}
+				                            AND GUBUN     = @GUBUN
+				                            AND DIVI      = N'50'
+				                            AND ACCNT_CD  = N'5300')
+				   )
+				   AND A.GROUP_YN  = 'N'     
+		) AS T
+		 PIVOT (
+			SUM(AMT) 
+		 FOR COST_POOL_CODE IN 
+		 	<foreach collection="COST_POOL_LIST" item="item"  separator="," close=")" open="(">
+				   [${item}] 
+			</foreach> 
+		 ) as TP
+	</select>
+	<update id="cam350ukrvServiceImpl.update" parameterType="Map">
+		IF EXISTS (SELECT ACCNT 
+					 FROM CAM350T WITH (NOLOCK) 
+					WHERE COMP_CODE = #{S_COMP_CODE} 
+					  AND DIV_CODE  = #{DIV_CODE} 
+					  AND WORK_MONTH  = #{WORK_MONTH} 
+					  AND ACCNT  = #{ACCNT} 
+					  AND COST_POOL_CODE  = #{COST_POOL_CODE} )
+		BEGIN
+			UPDATE CAM350T
+			   SET AMT = #{AMT}
+			   	  ,UPDATE_DB_USER = #{S_USER_ID}
+			   	  ,UPDATE_DB_TIME = GETDATE()
+			 WHERE COMP_CODE = #{S_COMP_CODE} 
+					  AND DIV_CODE  = #{DIV_CODE} 
+					  AND WORK_MONTH  = #{WORK_MONTH} 
+					  AND ACCNT  = #{ACCNT} 
+					  AND COST_POOL_CODE  = #{COST_POOL_CODE}
+		END
+		ELSE
+		BEGIN
+			INSERT INTO CAM350T (
+				 COMP_CODE
+				,DIV_CODE
+				,WORK_MONTH
+				,ACCNT
+				,COST_POOL_CODE
+				,AMT
+				,INSERT_DB_USER
+				,INSERT_DB_TIME
+				,UPDATE_DB_USER
+				,UPDATE_DB_TIME	
+			) VALUES (
+				 #{S_COMP_CODE}
+				,#{DIV_CODE}
+				,#{WORK_MONTH}
+				,#{ACCNT}
+				,#{COST_POOL_CODE}
+				,#{AMT}
+				,#{S_USER_ID}
+				,GETDATE()
+				,#{S_USER_ID}
+				,GETDATE()	
+			
+			)
+		END  	
+	</update>
+	
+	
+	
+	
+	
+	
+	<select id="cam350ukrvServiceImpl.selectCompare" parameterType="Map" resultType="rMap">
+	    --cam350ukrvServiceImpl.selectCompare
+		BEGIN
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+                
+        DECLARE @CompCode     NVARCHAR(08)				/* 법인코드 */
+              , @DivCode      NVARCHAR(08)				/* 사업장    */
+              , @WorkMonth    NVARCHAR(06)				/* 작업년월 */
+			  , @FLAG_YN	  NVARCHAR(02)				/* 구분값 */
+
+        SET @CompCode    = #{S_COMP_CODE}
+        SET @DivCode     = #{DIV_CODE} 
+        SET @WorkMonth   = #{WORK_MONTH} 
+
+
+		SELECT @FLAG_YN = ISNULL(YEAR_EVALUATION_YN,'N')
+		  FROM BOR120T 
+		 WHERE COMP_CODE = @CompCode 
+		   AND DIV_CODE  = @DivCode
+
+		IF @FLAG_YN = 'N'
+		BEGIN 
+			--'N'일때
+			SELECT C.ACCNT
+				 , D.ACCNT_NAME
+				 , SUM(C.COST_AMT) AS COST_AMT
+				 , SUM(C.SLIP_AMT) AS SLIP_AMT
+				 , SUM(C.COST_AMT) - SUM(C.SLIP_AMT)	AS DIFF_AMT
+			  FROM (SELECT A.COMP_CODE
+				         , A.ACCNT
+						 , A.AMT AS COST_AMT
+						 , 0     AS SLIP_AMT
+					 FROM      CAM350T A
+					INNER JOIN CBM130T B ON B.COMP_CODE  = A.COMP_CODE 
+										AND	B.DIV_CODE   = A.DIV_CODE 
+										AND B.WORK_MONTH = A.WORK_MONTH
+										AND B.ACCNT      = A.ACCNT 
+										AND B.COST_GB IN ('02','03')
+					WHERE A.COMP_CODE  = @CompCode
+					  AND A.DIV_CODE   = @DivCode
+					  AND A.WORK_MONTH = @WorkMonth
+		
+					UNION ALL
+		
+					SELECT A.COMP_CODE
+				         , A.ACCNT
+						 , 0 AS COST_AMT
+						 , (A.DR_AMT_I - A.CR_AMT_I) AS SLIP_AMT
+					  FROM       AGB100T A
+					  INNER JOIN CBM130T B ON B.COMP_CODE  = A.COMP_CODE 
+										  AND B.DIV_CODE   = A.DIV_CODE 
+										  AND B.ACCNT      = A.ACCNT 
+										  AND B.WORK_MONTH = @WorkMonth
+										  AND B.COST_GB IN ('02','03')
+					 WHERE A.COMP_CODE    = @CompCode
+					   AND A.DIV_CODE     = @DivCode
+					   AND LEN(A.AC_DATE) = 8 
+					   AND A.AC_DATE LIKE @WorkMonth + '%'
+				   ) C 
+			INNER JOIN ABA400T D ON D.COMP_CODE = C.COMP_CODE
+			                    AND D.ACCNT     = C.ACCNT
+			GROUP BY C.ACCNT, D.ACCNT_NAME
+			ORDER BY C.ACCNT
+		END
+		ELSE
+		BEGIN
+ 
+			--'Y'일때
+			SELECT C.ACCNT, D.ACCNT_NAME
+				 , SUM(C.COST_AMT) AS COST_AMT
+				 , SUM(C.SLIP_AMT) AS SLIP_AMT
+				 , SUM(C.COST_AMT) - SUM(C.SLIP_AMT)	AS DIFF_AMT
+			  FROM (SELECT A.COMP_CODE
+				         , A.ACCNT
+						 , A.AMT AS COST_AMT
+						 , 0     AS SLIP_AMT
+					  FROM      CAM350T A
+					 INNER JOIN CBM130T B ON B.COMP_CODE  = A.COMP_CODE 
+										 AND B.DIV_CODE   = A.DIV_CODE 
+										 AND B.WORK_MONTH = A.WORK_MONTH 
+										 AND B.ACCNT      = A.ACCNT 
+										 AND B.COST_GB IN ('02','03')
+					 WHERE A.COMP_CODE = @CompCode
+					   AND A.DIV_CODE = @DivCode
+					   AND A.WORK_MONTH = @WorkMonth
+		        
+					UNION ALL
+
+				   SELECT A.COMP_CODE
+				        , A.ACCNT
+						, 0 AS COST_AMT
+						, (A.DR_AMT_I - A.CR_AMT_I) AS SLIP_AMT
+					 FROM AGB100T A
+					INNER JOIN CBM130T B ON B.COMP_CODE = A.COMP_CODE 
+										AND B.DIV_CODE  = A.DIV_CODE 
+										AND B.ACCNT     = A.ACCNT 
+										AND B.WORK_MONTH = @WorkMonth
+										AND B.COST_GB IN ('02','03')
+					WHERE A.COMP_CODE = @CompCode
+					  AND A.DIV_CODE = @DivCode
+					  AND LEN(A.AC_DATE) = 8
+					  AND A.AC_DATE &gt;= LEFT(@WorkMonth, 4) + '0101' 
+					  AND A.AC_DATE &lt;= @WorkMonth + '31'
+				   ) C
+			INNER JOIN ABA400T D ON D.COMP_CODE = C.COMP_CODE
+			                    AND D.ACCNT     = C.ACCNT
+			GROUP BY C.ACCNT, D.ACCNT_NAME
+			ORDER BY C.ACCNT
+		END
+
+
+
+
+
+         SET NOCOUNT OFF
+        SET ARITHABORT OFF
+    END
+	</select>
+	
+	<update id="cam350ukrvServiceImpl.processAccntSum" parameterType="Map" statementType="CALLABLE">
+	{call uniLITE.USP_CAM350UKRV_ACCNTSUM (
+		#{S_COMP_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+		#{DIV_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+		#{WORK_MONTH, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},	
+		#{S_USER_ID, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+		#{ERROR_DESC, 		mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String}
+	)}
+	</update> 
+	
+	
+	
+	
+</mapper>

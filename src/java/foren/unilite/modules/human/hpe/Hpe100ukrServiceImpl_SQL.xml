@@ -1,0 +1,545 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="hpe100ukrServiceImpl">
+	
+	<select id="hpe100ukrServiceImpl.selectList_BAK" parameterType="Map" resultType="rMap">
+		DECLARE	@COMP_CODE		NVARCHAR(08),	/*	법인코드							*/
+				@YEAR_YYYY		NVARCHAR(04),	/*	귀속년도							*/
+				@HALF_YEAR		NVARCHAR(01),	/*	근무시기구분[1:상반기, 2:하반기]	*/
+				@DIV_CODE		NVARCHAR(08),	/*	사업장								*/
+				@DEPT_CODE		NVARCHAR(20),	/*	부서								*/
+				@PERSON_NUMB	NVARCHAR(10),	/*	사번								*/
+				@RETR_YN		NVARCHAR(01)	/*	재직구분['':전체, Y:퇴직, N:재직]	*/
+				
+		SET @COMP_CODE		= #{S_COMP_CODE}
+		SET @YEAR_YYYY		= #{YEAR_YYYY}
+		SET @HALF_YEAR		= #{HALF_YEAR}
+		SET @DIV_CODE		= #{DIV_CODE}
+		SET @DEPT_CODE		= #{DEPT_CODE}
+		SET @PERSON_NUMB	= #{PERSON_NUMB}
+		SET @RETR_YN		= #{RETR_YN}
+		
+		SELECT B.COMP_CODE																							/*	(HIDDEN)법인코드									*/
+			 , A.YEAR_YYYY																							/*	(HIDDEN)정산년도									*/
+			 , A.HALF_YEAR																							/*	(HIDDEN)근무시기구분[1:상반기, 2:하반기]			*/
+			 , B.PERSON_NUMB																						/*	사번												*/
+			 , B.NAME																								/*	성명												*/
+			 --, B.FOREIGN_YN																						/*	(HIDDEN)내외국인여부코드 : FOREIGN_YN 사용 여부 확인*/
+			 , CASE WHEN B.NATION_CODE = 'KR' THEN '1' ELSE '9' END							AS FORI_YN				/*	(HIDDEN)내외국인여부코드[1:내국인, 9:외국인]		*/
+			 , C1.CODE_NAME																	AS FORI_NAME			/*	내외국인여부										*/
+			 , uniLITE.fnCipherDecrypt(B.REPRE_NUM, 'R')									AS REPRE_NUM			/*	주민등록번호[R:암호화, A:비암호화]					*/
+			 , A.TAXABLE_INCOME_AMT																					/*	과세소득											*/
+			 , A.NONTAXABLE_INCOME_AMT																				/*	비과세소득											*/
+			 , A.TAXABLE_INCOME_AMT + A.NONTAXABLE_INCOME_AMT								AS TOTAL_INCOME_AMT		/*	소득 합계											*/
+			 , CASE WHEN ISNULL(B.PHONE_NO, '') = '' THEN B.TELEPHON ELSE B.PHONE_NO END	AS TELEPHON																	/*	전화번호											*/
+			 , uniLITE.fnGetUserdateComp(A.COMP_CODE, A.WORKDATE_FR)						AS WORKDATE_FR			/*	근무시작일											*/
+			 , uniLITE.fnGetUserdateComp(A.COMP_CODE, A.WORKDATE_TO)						AS WORKDATE_TO			/*	근무종료일											*/
+			 --, B.LIVE_GUBUN																						/*	(HIDDEN)거주구분코드 : LIVE_GUBUN 사용 여부 확인	*/
+			 , CASE WHEN ISNULL(A.LIVE_GUBUN, '') = ''	THEN '1' ELSE A.LIVE_GUBUN END		AS LIVE_GUBUN			/*	(HIDDEN)거주구분코드[1:거주자, 2:비거주자]			*/
+			 , C2.CODE_NAME																	AS LIVE_GUBUN_NAME		/*	거주구분명											*/
+			 , B.LIVE_CODE																							/*	거주국가코드										*/
+			 , C3.CODE_NAME																	AS LIVE_NATION_NAME		/*	거주국가명											*/
+		  FROM HUM100T B
+				LEFT OUTER JOIN	HPE100T A
+							 ON A.COMP_CODE		= B.COMP_CODE
+							AND A.PERSON_NUMB	= B.PERSON_NUMB
+				LEFT OUTER JOIN	HBS910T D
+							 ON B.COMP_CODE		= D.COMP_CODE
+							AND B.DIV_CODE		= D.DIV_CODE
+							AND B.PERSON_NUMB	= D.PERSON_NUMB
+							AND D.CLOSE_DATE	= A.YEAR_YYYY + CASE WHEN A.HALF_YEAR = '1' THEN '06' ELSE '12' END
+							AND D.SUPP_TYPE		= '근로소득간이지급명세서'	--	구분자 필요
+				LEFT OUTER JOIN BSA100T C1
+							 ON B.COMP_CODE = C1.COMP_CODE
+							AND C1.MAIN_CODE = 'H118'
+							AND C1.SUB_CODE = (CASE WHEN B.NATION_CODE = 'KR' THEN '1' ELSE '9' END)
+				LEFT OUTER JOIN BSA100T C2
+							 ON B.COMP_CODE = C2.COMP_CODE
+							AND C2.MAIN_CODE = 'H007'
+							AND C2.SUB_CODE = (CASE WHEN B.LIVE_CODE = 'KR' THEN '1' ELSE '2' END)
+				LEFT OUTER JOIN BSA100T C3
+							 ON B.COMP_CODE = C3.COMP_CODE
+							AND C3.MAIN_CODE = 'B012'
+							AND C3.SUB_CODE = B.LIVE_CODE
+		 WHERE B.COMP_CODE	= @COMP_CODE
+		   --AND A.YEAR_YYYY	= @YEAR_YYYY
+		   --AND A.HALF_YEAR	= @HALF_YEAR
+		   AND B.DIV_CODE	= @DIV_CODE
+		   AND ((@DEPT_CODE	  = '' AND 1 = 1) OR (B.DEPT_CODE   LIKE @DEPT_CODE))
+		   AND ((@PERSON_NUMB = '' AND 1 = 1) OR (B.PERSON_NUMB LIKE @PERSON_NUMB))
+		   AND ((@RETR_YN = ''  AND 1 = 1)						OR
+				(@RETR_YN = 'Y' AND B.RETR_DATE != '00000000')	OR
+				(@RETR_YN = 'N' AND B.RETR_DATE  = '00000000'))
+	</select>
+
+	<select id="hpe100ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		DECLARE	@COMP_CODE		NVARCHAR(08),	/*	법인코드							*/
+				@YEAR_YYYY		NVARCHAR(04),	/*	귀속년도							*/
+				@HALF_YEAR		NVARCHAR(01),	/*	근무시기구분[1:상반기, 2:하반기]	*/
+				@DIV_CODE		NVARCHAR(08),	/*	사업장								*/
+				@DEPT_CODE		NVARCHAR(20),	/*	부서								*/
+				@PERSON_NUMB	NVARCHAR(10),	/*	사번								*/
+				@RETR_YN		NVARCHAR(01)	/*	재직구분['':전체, Y:퇴직, N:재직]	*/
+				
+		SET @COMP_CODE		= #{S_COMP_CODE}
+		SET @YEAR_YYYY		= #{YEAR_YYYY}
+		SET @HALF_YEAR		= #{HALF_YEAR}
+		SET @DIV_CODE		= #{DIV_CODE}
+		SET @DEPT_CODE		= #{DEPT_CODE}
+		SET @PERSON_NUMB	= #{PERSON_NUMB}
+		SET @RETR_YN		= #{RETR_YN}
+		
+		SET @DIV_CODE		= ISNULL(NULLIF(@DIV_CODE, ''), '%')
+		
+		SELECT A.COMP_CODE																							/*	(HIDDEN)법인코드									*/
+			 , A.YEAR_YYYY																							/*	(HIDDEN)정산년도									*/
+			 , A.HALF_YEAR																							/*	(HIDDEN)근무시기구분[1:상반기, 2:하반기]			*/
+			 , A.PERSON_NUMB																						/*	사번												*/
+			 , B.NAME																								/*	성명												*/
+			 --, B.FOREIGN_YN																						/*	(HIDDEN)내외국인여부코드 : FOREIGN_YN 사용 여부 확인*/
+			 , CASE WHEN B.NATION_CODE = 'KR' THEN '1' ELSE '9' END	AS FORI_YN										/*	(HIDDEN)내외국인여부코드[1:내국인, 9:외국인]		*/
+			 , C1.CODE_NAME																	AS FORI_NAME			/*	내외국인여부										*/
+			 , uniLITE.fnCipherDecrypt(B.REPRE_NUM, 'R')									AS REPRE_NUM			/*	주민등록번호[R:암호화, A:비암호화]					*/
+			 , A.TAXABLE_INCOME_AMT																					/*	과세소득											*/
+			 , A.NONTAXABLE_INCOME_AMT																				/*	비과세소득											*/
+			 , A.ETC_INCOME_AMT                                                              						/*  인정상여                                            				*/
+    		 , A.TAXABLE_INCOME_AMT + A.NONTAXABLE_INCOME_AMT + A.ETC_INCOME_AMT        	AS TOTAL_INCOME_AMT     /*  소득 합계                                           				*/
+			 , CASE WHEN ISNULL(B.PHONE_NO, '') = '' THEN B.TELEPHON ELSE B.PHONE_NO END	AS TELEPHON
+			 , uniLITE.fnGetUserdateComp(A.COMP_CODE, A.WORKDATE_FR)						AS WORKDATE_FR			/*	근무시작일											*/
+			 , uniLITE.fnGetUserdateComp(A.COMP_CODE, A.WORKDATE_TO)						AS WORKDATE_TO			/*	근무종료일											*/
+			 --, B.LIVE_GUBUN																						/*	(HIDDEN)거주구분코드 : LIVE_GUBUN 사용 여부 확인	*/
+			 , CASE WHEN ISNULL(B.LIVE_GUBUN, '') = ''	THEN '1' ELSE B.LIVE_GUBUN END		AS LIVE_GUBUN			/*	(HIDDEN)거주구분코드[1:거주자, 2:비거주자]			*/
+			 , C2.CODE_NAME																	AS LIVE_GUBUN_NAME		/*	거주구분명											*/
+			 , B.LIVE_CODE																							/*	거주국가코드										*/
+			 , C3.CODE_NAME																	AS LIVE_NATION_NAME		/*	거주국가명											*/
+			 , CASE WHEN ISNULL(D.SUPP_TYPE, '') = '' THEN '0' ELSE '1' END					AS CLOSE_TYPE
+		  FROM HPE100T A
+				INNER JOIN		HUM100T B
+							 ON A.COMP_CODE		= B.COMP_CODE
+							AND A.PERSON_NUMB	= B.PERSON_NUMB
+				LEFT OUTER JOIN	HBS910T D
+							 ON B.COMP_CODE		= D.COMP_CODE
+							AND B.DIV_CODE		= D.DIV_CODE
+							AND B.PERSON_NUMB	= D.PERSON_NUMB
+							AND D.CLOSE_DATE	= A.YEAR_YYYY + CASE WHEN A.HALF_YEAR = '1' THEN '06' ELSE '12' END
+							AND D.CLOSE_TYPE	= 'E'
+				LEFT OUTER JOIN BSA100T C1
+							 ON B.COMP_CODE		= C1.COMP_CODE
+							AND C1.MAIN_CODE	= 'H118'
+							AND C1.SUB_CODE		= (CASE WHEN B.NATION_CODE = 'KR' THEN '1' ELSE '9' END)
+				LEFT OUTER JOIN BSA100T C2
+							 ON B.COMP_CODE		= C2.COMP_CODE
+							AND C2.MAIN_CODE	= 'H007'
+							AND C2.SUB_CODE		= (CASE WHEN ISNULL(B.LIVE_GUBUN, '') = ''	THEN '1' ELSE B.LIVE_GUBUN END)
+				LEFT OUTER JOIN BSA100T C3
+							 ON B.COMP_CODE		= C3.COMP_CODE
+							AND C3.MAIN_CODE	= 'B012'
+							AND C3.SUB_CODE		= B.LIVE_CODE
+		 WHERE A.COMP_CODE	  = @COMP_CODE
+		   AND A.YEAR_YYYY	  = @YEAR_YYYY
+		   AND A.HALF_YEAR	  = @HALF_YEAR
+		   AND B.SECT_CODE LIKE @DIV_CODE
+		   AND ((@DEPT_CODE	  = '' AND 1 = 1) OR (B.DEPT_CODE   LIKE @DEPT_CODE))
+		   AND ((@PERSON_NUMB = '' AND 1 = 1) OR (B.PERSON_NUMB LIKE @PERSON_NUMB))
+		   AND ((@RETR_YN = ''  AND 1 = 1)						OR
+				(@RETR_YN = 'Y' AND B.RETR_DATE != '00000000')	OR
+				(@RETR_YN = 'N' AND B.RETR_DATE  = '00000000'))
+	</select>
+
+	<select id="hpe100ukrServiceImpl.selectDetail" parameterType="Map" resultType="rMap">
+		DECLARE	@COMP_CODE		NVARCHAR(08),
+				@YEAR_YYYY		NVARCHAR(04),
+				@HALF_YEAR		NVARCHAR(01),
+				@PERSON_NUMB	NVARCHAR(10)
+		
+		SET @COMP_CODE		= #{COMP_CODE}
+		SET @YEAR_YYYY		= #{YEAR_YYYY}
+		SET @HALF_YEAR		= #{HALF_YEAR}
+		SET @PERSON_NUMB	= #{PERSON_NUMB}
+		
+		SELECT M.COMP_CODE
+			 , M.YEAR_YYYY
+			 , M.HALF_YEAR
+			 , M.PERSON_NUMB
+			 , M.SUMMARY_TYPE
+			 , M.INCOME_TYPE
+			 , CASE WHEN M.SUMMARY_TYPE = '1' THEN B.CODE_NAME
+					ELSE C.PRINT_LOCATION
+						 + CASE WHEN ISNULL(C.PRINT_LOCATION, '') = '' THEN '' ELSE '.' END
+						 + CASE WHEN ISNULL(C.NONTAX_SHORT_NAME, '') = '' THEN C.NONTAX_CODE_NAME ELSE C.NONTAX_SHORT_NAME END
+			   END	AS INCOME_NAME
+			 , M.INCOME_AMT_01_07
+			 + M.INCOME_AMT_02_08
+			 + M.INCOME_AMT_03_09
+			 + M.INCOME_AMT_04_10
+			 + M.INCOME_AMT_05_11
+			 + M.INCOME_AMT_06_12
+			 + M.ADJUST_AMT						AS TOTAL_AMT
+			 , M.INCOME_AMT_01_07
+			 , M.INCOME_AMT_02_08
+			 , M.INCOME_AMT_03_09
+			 , M.INCOME_AMT_04_10
+			 , M.INCOME_AMT_05_11
+			 , M.INCOME_AMT_06_12
+			 , M.ADJUST_AMT
+		  FROM HPE110T M
+				LEFT OUTER JOIN BSA100T B
+							 ON M.COMP_CODE		= B.COMP_CODE
+							AND B.MAIN_CODE		= 'H223'
+							AND M.INCOME_TYPE	= B.SUB_CODE
+				LEFT OUTER JOIN HBS120T C
+							 ON M.COMP_CODE		= C.COMP_CODE
+							AND M.INCOME_TYPE	= C.NONTAX_CODE
+							AND C.TAX_YYYY		= M.YEAR_YYYY
+		 WHERE M.COMP_CODE	 = @COMP_CODE
+		   AND M.YEAR_YYYY	 = @YEAR_YYYY
+		   AND M.HALF_YEAR	 = @HALF_YEAR
+		   AND M.PERSON_NUMB = @PERSON_NUMB
+
+		UNION ALL
+		
+		SELECT M.COMP_CODE
+			 , M.YEAR_YYYY
+			 , M.HALF_YEAR
+			 , M.PERSON_NUMB
+			 , M.SUMMARY_TYPE
+			 , CASE WHEN M.SUMMARY_TYPE = '1' THEN 'ZZZ2'
+					ELSE 'ZZZ1'
+			   END									AS INCOME_TYPE
+			 , CASE WHEN M.SUMMARY_TYPE = '1' THEN '급여 계(과세소득)'
+					WHEN M.SUMMARY_TYPE = '2' THEN '제출비과세 계'
+					WHEN M.SUMMARY_TYPE = '3' THEN '미제출비과세 계'
+					ELSE ''
+			   END									AS INCOME_NAME
+			 , SUM(ISNULL(M.INCOME_AMT_01_07, 0))
+			 + SUM(ISNULL(M.INCOME_AMT_02_08, 0))
+			 + SUM(ISNULL(M.INCOME_AMT_03_09, 0))
+			 + SUM(ISNULL(M.INCOME_AMT_04_10, 0))
+			 + SUM(ISNULL(M.INCOME_AMT_05_11, 0))
+			 + SUM(ISNULL(M.INCOME_AMT_06_12, 0))
+			 + SUM(ISNULL(M.ADJUST_AMT		, 0))	AS TOTAL_AMT
+			 , SUM(ISNULL(M.INCOME_AMT_01_07, 0))	AS INCOME_AMT_01_07
+			 , SUM(ISNULL(M.INCOME_AMT_02_08, 0))	AS INCOME_AMT_02_08
+			 , SUM(ISNULL(M.INCOME_AMT_03_09, 0))	AS INCOME_AMT_03_09
+			 , SUM(ISNULL(M.INCOME_AMT_04_10, 0))	AS INCOME_AMT_04_10
+			 , SUM(ISNULL(M.INCOME_AMT_05_11, 0))	AS INCOME_AMT_05_11
+			 , SUM(ISNULL(M.INCOME_AMT_06_12, 0))	AS INCOME_AMT_06_12
+			 , SUM(ISNULL(M.ADJUST_AMT		, 0))	AS ADJUST_AMT
+		  FROM HPE110T M
+				LEFT OUTER JOIN BSA100T B
+							 ON M.COMP_CODE		= B.COMP_CODE
+							AND B.MAIN_CODE		= 'H223'
+							AND M.INCOME_TYPE	= B.SUB_CODE
+				LEFT OUTER JOIN HBS120T C
+							 ON M.COMP_CODE		= C.COMP_CODE
+							AND M.INCOME_TYPE	= C.NONTAX_CODE
+							AND C.TAX_YYYY		= M.YEAR_YYYY
+		 WHERE M.COMP_CODE	 = @COMP_CODE
+		   AND M.YEAR_YYYY	 = @YEAR_YYYY
+		   AND M.HALF_YEAR	 = @HALF_YEAR
+		   AND M.PERSON_NUMB = @PERSON_NUMB
+		 GROUP BY M.COMP_CODE
+			 , M.YEAR_YYYY
+			 , M.HALF_YEAR
+			 , M.PERSON_NUMB
+			 , M.SUMMARY_TYPE
+		   
+		UNION ALL
+		
+		SELECT M.COMP_CODE
+			 , M.YEAR_YYYY
+			 , M.HALF_YEAR
+			 , M.PERSON_NUMB
+			 , '4'									AS SUMMARY_TYPE
+			 , 'ZZZ2'								AS INCOME_TYPE
+			 , '비과세소득 계(제출 + 미제출)'		AS INCOME_NAME
+			 , SUM(ISNULL(M.INCOME_AMT_01_07, 0))
+			 + SUM(ISNULL(M.INCOME_AMT_02_08, 0))
+			 + SUM(ISNULL(M.INCOME_AMT_03_09, 0))
+			 + SUM(ISNULL(M.INCOME_AMT_04_10, 0))
+			 + SUM(ISNULL(M.INCOME_AMT_05_11, 0))
+			 + SUM(ISNULL(M.INCOME_AMT_06_12, 0))
+			 + SUM(ISNULL(M.ADJUST_AMT		, 0))	AS TOTAL_AMT
+			 , SUM(ISNULL(M.INCOME_AMT_01_07, 0))	AS INCOME_AMT_01_07
+			 , SUM(ISNULL(M.INCOME_AMT_02_08, 0))	AS INCOME_AMT_02_08
+			 , SUM(ISNULL(M.INCOME_AMT_03_09, 0))	AS INCOME_AMT_03_09
+			 , SUM(ISNULL(M.INCOME_AMT_04_10, 0))	AS INCOME_AMT_04_10
+			 , SUM(ISNULL(M.INCOME_AMT_05_11, 0))	AS INCOME_AMT_05_11
+			 , SUM(ISNULL(M.INCOME_AMT_06_12, 0))	AS INCOME_AMT_06_12
+			 , SUM(ISNULL(M.ADJUST_AMT		, 0))	AS ADJUST_AMT
+		  FROM HPE110T M
+				LEFT OUTER JOIN BSA100T B
+							 ON M.COMP_CODE		= B.COMP_CODE
+							AND B.MAIN_CODE		= 'H223'
+							AND M.INCOME_TYPE	= B.SUB_CODE
+				LEFT OUTER JOIN HBS120T C
+							 ON M.COMP_CODE		= C.COMP_CODE
+							AND M.INCOME_TYPE	= C.NONTAX_CODE
+							AND C.TAX_YYYY		= M.YEAR_YYYY
+		 WHERE M.COMP_CODE	 = @COMP_CODE
+		   AND M.YEAR_YYYY	 = @YEAR_YYYY
+		   AND M.HALF_YEAR	 = @HALF_YEAR
+		   AND M.PERSON_NUMB = @PERSON_NUMB
+		   AND M.SUMMARY_TYPE IN ('2', '3')
+		 GROUP BY M.COMP_CODE
+			 , M.YEAR_YYYY
+			 , M.HALF_YEAR
+			 , M.PERSON_NUMB
+
+		 ORDER BY SUMMARY_TYPE, INCOME_TYPE
+	</select>
+
+	<update id="hpe100ukrServiceImpl.updateMaster" parameterType="Map">
+		BEGIN
+			UPDATE HPE100T
+			   SET WORKDATE_FR		= #{WORKDATE_FR}
+				 , WORKDATE_TO		= #{WORKDATE_TO}
+				 , UPDATE_DB_USER	= #{S_USER_ID}
+				 , UPDATE_DB_TIME	= GETDATE()
+			
+			 WHERE COMP_CODE		= #{S_COMP_CODE}
+			   AND YEAR_YYYY		= #{YEAR_YYYY}
+			   AND HALF_YEAR		= #{HALF_YEAR}
+			   AND PERSON_NUMB		= #{PERSON_NUMB}
+			
+			IF #{CLOSE_TYPE} = '1' AND NOT EXISTS (	SELECT *
+													  FROM HBS910T
+													 WHERE COMP_CODE	= #{S_COMP_CODE}
+													   AND PERSON_NUMB	= #{PERSON_NUMB}
+													   AND CLOSE_TYPE	= 'E'
+													   AND CLOSE_DATE	= #{YEAR_YYYY} + CASE WHEN #{HALF_YEAR} = '1' THEN '06' ELSE '12' END
+													   AND SUPP_TYPE	= 'Z'	)
+			BEGIN
+				INSERT INTO HBS910T
+					 ( COMP_CODE	, DIV_CODE		, PERSON_NUMB	, CLOSE_TYPE	, CLOSE_DATE
+					 , SUPP_TYPE	, INSERT_DB_USER, INSERT_DB_TIME, UPDATE_DB_USER, UPDATE_DB_TIME	)
+				SELECT COMP_CODE
+					 , DIV_CODE
+					 , PERSON_NUMB
+					 , 'E'														AS CLOSE_TYPE
+					 , #{YEAR_YYYY} + CASE WHEN #{HALF_YEAR} = '1' THEN '06' ELSE '12' END		AS CLOSE_DATE
+					 , 'Z'														AS SUPP_TYPE
+					 , #{S_USER_ID}												AS INSERT_DB_USER
+					 , GETDATE()												AS INSERT_DB_TIME
+					 , #{S_USER_ID}												AS UPDATE_DB_USER
+					 , GETDATE()												AS UPDATE_DB_TIME
+				  FROM HUM100T
+				 WHERE COMP_CODE	= #{S_COMP_CODE}
+				   AND PERSON_NUMB	= #{PERSON_NUMB}
+			END
+			
+			IF #{CLOSE_TYPE} = '0' AND 	   EXISTS (	SELECT *
+													  FROM HBS910T
+													 WHERE COMP_CODE	= #{S_COMP_CODE}
+													   AND PERSON_NUMB	= #{PERSON_NUMB}
+													   AND CLOSE_TYPE	= 'E'
+													   AND CLOSE_DATE	= #{YEAR_YYYY} + CASE WHEN #{HALF_YEAR} = '1' THEN '06' ELSE '12' END
+													   AND SUPP_TYPE	= 'Z'	)
+			BEGIN
+				DELETE
+				  FROM HBS910T
+				 WHERE COMP_CODE	= #{S_COMP_CODE}
+				   AND PERSON_NUMB	= #{PERSON_NUMB}
+				   AND CLOSE_TYPE	= 'E'
+				   AND CLOSE_DATE	= #{YEAR_YYYY} + CASE WHEN #{HALF_YEAR} = '1' THEN '06' ELSE '12' END
+				   AND SUPP_TYPE	= 'Z'
+			END
+		END
+	</update>
+	<update id="hpe100ukrServiceImpl.deleteMaster" parameterType="Map">
+		BEGIN
+			DELETE
+			  FROM HPE110T
+			 WHERE COMP_CODE		= #{S_COMP_CODE}
+			   AND YEAR_YYYY		= #{YEAR_YYYY}
+			   AND HALF_YEAR		= #{HALF_YEAR}
+			   AND PERSON_NUMB		= #{PERSON_NUMB}
+			
+			DELETE
+			  FROM HPE100T
+			 WHERE COMP_CODE		= #{S_COMP_CODE}
+			   AND YEAR_YYYY		= #{YEAR_YYYY}
+			   AND HALF_YEAR		= #{HALF_YEAR}
+			   AND PERSON_NUMB		= #{PERSON_NUMB}
+		END
+	</update>
+	
+	<update id="hpe100ukrServiceImpl.updateDetail" parameterType="Map">
+		BEGIN
+			UPDATE HPE110T
+			   SET ADJUST_AMT		= ${ADJUST_AMT}
+				 , UPDATE_DB_USER	= #{S_USER_ID}
+				 , UPDATE_DB_TIME	= GETDATE()
+			
+			 WHERE COMP_CODE		= #{S_COMP_CODE}
+			   AND YEAR_YYYY		= #{YEAR_YYYY}
+			   AND HALF_YEAR		= #{HALF_YEAR}
+			   AND PERSON_NUMB		= #{PERSON_NUMB}
+			   AND INCOME_TYPE		= #{INCOME_TYPE}
+			
+			UPDATE A
+			   SET A.TAXABLE_INCOME_AMT		= B.TAXABLE_INCOME_AMT
+				 , A.NONTAXABLE_INCOME_AMT	= B.NONTAXABLE_INCOME_AMT
+				 , A.UPDATE_DB_USER			= #{S_USER_ID}
+				 , A.UPDATE_DB_TIME			= GETDATE()
+			  FROM HPE100T A
+			  		INNER JOIN	(	SELECT COMP_CODE
+			  							 , YEAR_YYYY
+			  							 , HALF_YEAR
+			  							 , PERSON_NUMB
+			  							 , SUM(CASE WHEN SUMMARY_TYPE = '1' THEN  INCOME_AMT_01_07
+			  							 										+ INCOME_AMT_02_08
+			  							 										+ INCOME_AMT_03_09
+			  							 										+ INCOME_AMT_04_10
+			  							 										+ INCOME_AMT_05_11
+			  							 										+ INCOME_AMT_06_12
+			  							 										+ ADJUST_AMT
+			  							 									ELSE 0 END)	AS TAXABLE_INCOME_AMT
+			  							 , SUM(CASE WHEN SUMMARY_TYPE = '2' THEN  INCOME_AMT_01_07
+			  							 										+ INCOME_AMT_02_08
+			  							 										+ INCOME_AMT_03_09
+			  							 										+ INCOME_AMT_04_10
+			  							 										+ INCOME_AMT_05_11
+			  							 										+ INCOME_AMT_06_12
+			  							 										+ ADJUST_AMT
+			  							 									ELSE 0 END)	AS NONTAXABLE_INCOME_AMT
+			  						  FROM HPE110T
+			  						 WHERE COMP_CODE		= #{S_COMP_CODE}
+									   AND YEAR_YYYY		= #{YEAR_YYYY}
+									   AND HALF_YEAR		= #{HALF_YEAR}
+									   AND PERSON_NUMB		= #{PERSON_NUMB}
+									 GROUP BY COMP_CODE
+			  							 , YEAR_YYYY
+			  							 , HALF_YEAR
+			  							 , PERSON_NUMB
+			  					) B
+			  					 ON A.COMP_CODE		= B.COMP_CODE
+			  					AND A.YEAR_YYYY		= B.YEAR_YYYY
+			  					AND A.HALF_YEAR		= B.HALF_YEAR
+			  					AND A.PERSON_NUMB	= B.PERSON_NUMB
+			 WHERE A.COMP_CODE		= #{S_COMP_CODE}
+			   AND A.YEAR_YYYY		= #{YEAR_YYYY}
+			   AND A.HALF_YEAR		= #{HALF_YEAR}
+			   AND A.PERSON_NUMB	= #{PERSON_NUMB}
+		END
+	</update>
+	
+	<select id="hpe100ukrServiceImpl.fnGetPayAmt" parameterType="Map" resultType="rMap">
+		DECLARE	@COMP_CODE		NVARCHAR(08),
+				@YEAR_YYYY		NVARCHAR(04),
+				@HALF_YEAR		NVARCHAR(01),
+				@USER_ID		NVARCHAR(100),
+				@ERR_DESC		NVARCHAR(2000)
+				
+		SET @COMP_CODE		= #{S_COMP_CODE}
+		SET @YEAR_YYYY		= #{YEAR_YYYY}
+		SET @HALF_YEAR		= #{HALF_YEAR}
+		SET @USER_ID		= #{S_USER_ID}
+		
+		EXEC USP_HUMAN_HPE100UKR_GetPayAmt @COMP_CODE
+										 , @YEAR_YYYY
+										 , @HALF_YEAR
+										 , @USER_ID
+										 , @ERR_DESC	OUTPUT
+		
+		SELECT @ERR_DESC	AS ERROR_DESC
+			 , @USER_ID		AS USER_ID
+	</select>
+
+	<select id="hpe100ukrServiceImpl.fnGetCloseAll" parameterType="Map" resultType="rMap">
+		DECLARE	@COMP_CODE	NVARCHAR(08),
+				@YEAR_YYYY	NVARCHAR(04),
+				@HALF_YEAR	NVARCHAR(01)
+				
+		SET @COMP_CODE	= #{S_COMP_CODE}
+		SET @YEAR_YYYY	= #{YEAR_YYYY}
+		SET @HALF_YEAR	= #{HALF_YEAR}
+		
+		SELECT CASE WHEN COUNT(*) = 0 THEN 'N' ELSE 'Y' END	AS CLOSE_TYPE
+		  FROM HBS900T
+		 WHERE COMP_CODE	= @COMP_CODE
+		   AND CLOSE_TYPE	= 'E'
+		   AND CLOSE_DATE	= @YEAR_YYYY + CASE WHEN @HALF_YEAR = '1' THEN '06' ELSE '12' END
+		   AND SUPP_TYPE	= 'Z'
+	</select>
+
+	<update id="hpe100ukrServiceImpl.fnSetCloseAll" parameterType="Map">
+		BEGIN
+			DECLARE	@COMP_CODE	NVARCHAR(08),
+					@YEAR_YYYY	NVARCHAR(04),
+					@HALF_YEAR	NVARCHAR(01),
+					@CLOSE_TYPE	NVARCHAR(01),
+					@CLOSE_DATE	NVARCHAR(06)
+					
+			SET @COMP_CODE	= #{S_COMP_CODE}
+			SET @YEAR_YYYY	= #{YEAR_YYYY}
+			SET @HALF_YEAR	= #{HALF_YEAR}
+			SET @CLOSE_TYPE	= #{CLOSE_TYPE}
+			
+			IF @CLOSE_TYPE = 'Y'
+			BEGIN
+				IF EXISTS (	SELECT *
+							  FROM HBS900T
+							 WHERE COMP_CODE	= @COMP_CODE
+							   AND CLOSE_TYPE	= 'E'
+							   --AND CLOSE_DATE	= @YEAR_YYYY + CASE WHEN @HALF_YEAR = '1' THEN '06' ELSE '12' END
+							   AND SUPP_TYPE	= 'Z'	)
+				BEGIN
+					UPDATE HBS900T
+					   SET CLOSE_DATE	= @YEAR_YYYY + CASE WHEN @HALF_YEAR = '1' THEN '06' ELSE '12' END
+					 WHERE COMP_CODE	= @COMP_CODE
+					   AND CLOSE_TYPE	= 'E'
+					   AND SUPP_TYPE	= 'Z'
+				END
+				ELSE
+				BEGIN
+					INSERT INTO HBS900T
+						 ( COMP_CODE		, CLOSE_TYPE		, CLOSE_DATE		, SUPP_TYPE			, DIV_CODE
+						 , INSERT_DB_USER	, INSERT_DB_TIME	, UPDATE_DB_USER	, UPDATE_DB_TIME	)
+					SELECT @COMP_CODE														AS COMP_CODE
+						 , 'E'																AS CLOSE_TYPE
+						 , @YEAR_YYYY + CASE WHEN @HALF_YEAR = '1' THEN '06' ELSE '12' END	AS CLOSE_DATE
+						 , 'Z'																AS SUPP_TYPE
+						 , 'NOT CODE'														AS DIV_CODE
+						 , #{S_USER_ID}														AS INSERT_DB_USER
+						 , GETDATE()														AS INSERT_DB_TIME
+						 , #{S_USER_ID}														AS UPDATE_DB_USER
+						 , GETDATE()														AS UPDATE_DB_TIME
+				END
+			END
+		
+			IF @CLOSE_TYPE = 'N' AND	 EXISTS (	SELECT *
+													  FROM HBS900T
+													 WHERE COMP_CODE	= @COMP_CODE
+													   AND CLOSE_TYPE	= 'E'
+													   --AND CLOSE_DATE	= @YEAR_YYYY + CASE WHEN @HALF_YEAR = '1' THEN '06' ELSE '12' END
+													   AND SUPP_TYPE	= 'Z'	)
+			BEGIN
+				SELECT @CLOSE_DATE	= ISNULL(MAX(YEAR_YYYY + CASE WHEN HALF_YEAR = '1' THEN '06' ELSE '12' END), '')
+				  FROM HPE100T
+				 WHERE COMP_CODE				= @COMP_CODE
+				   AND YEAR_YYYY + HALF_YEAR	&lt; @YEAR_YYYY + @HALF_YEAR
+				
+				IF ISNULL(@CLOSE_DATE, '') = ''
+				BEGIN
+					DELETE
+					  FROM HBS900T
+					 WHERE COMP_CODE	= @COMP_CODE
+					   AND CLOSE_TYPE	= 'E'
+					   --AND CLOSE_DATE	= @YEAR_YYYY + CASE WHEN @HALF_YEAR = '1' THEN '06' ELSE '12' END
+					   AND SUPP_TYPE	= 'Z'
+				END
+				ELSE
+				BEGIN
+					UPDATE HBS900T
+					   SET CLOSE_DATE	= @CLOSE_DATE
+					 WHERE COMP_CODE	= @COMP_CODE
+					   AND CLOSE_TYPE	= 'E'
+					   --AND CLOSE_DATE	= @YEAR_YYYY + CASE WHEN @HALF_YEAR = '1' THEN '06' ELSE '12' END
+					   AND SUPP_TYPE	= 'Z'
+				END
+			END
+		END
+	</update>
+
+</mapper>

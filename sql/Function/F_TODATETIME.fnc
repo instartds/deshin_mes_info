@@ -1,0 +1,10 @@
+CREATE OR REPLACE FUNCTION TRA_CM.F_TODATETIME (dateStr in varchar2)
+RETURN date IS
+
+
+BEGIN
+   
+   RETURN to_date(dateStr,'DD/MM/YYYY/HH24:MI');
+   
+END F_TODATETIME;
+/

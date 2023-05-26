@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="man200skrvServiceImpl">
+	<select id="man200skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* man200skrvServiceImpl.selectList */
+		DECLARE @CompCode       NVARCHAR(08)   /* 법인코드                 */
+		      , @DivCode        NVARCHAR(02)   /* 사업장                   */
+		      , @BasisYYYY      NVARCHAR(04)   /* 기준년도                 */
+		      , @LastYYYY       NVARCHAR(04)   /* 전년도                   */
+		      , @AmtUnit        NVARCHAR(01)   /* 금액단위(B042)           */
+		      , @AmtUnitN       NUMERIC        /* 금액단위(B042.REF_CODE1) */
+		      , @AvgVar         NUMERIC        /* 평균값 구할 변수) */
+			  , @RoundPT            INTEGER
+			  , @MoneyUnit          NVARCHAR(10)
+			  , @CurYM				NVARCHAR(6)
+						  
+		    SET @CompCode  = #{S_COMP_CODE}
+		    SET @DivCode   = #{DIV_CODE}
+		    SET @BasisYYYY = #{BASIS_YYYY}
+		    SET @LastYYYY  = #{BASIS_YYYY} - 1
+		    SET @AmtUnit   = #{AMOUNT_UNIT}
+		    SET @AvgVar    = 12
+			SET @CurYM     = CONVERT(VARCHAR(6), GETDATE(), 112)
+
+/*		    SET @CompCode  = 'MASTER'
+		    SET @DivCode   = '01'
+		    SET @BasisYYYY = '2020'
+		    SET @LastYYYY  = @BasisYYYY - 1
+		    SET @AmtUnit   = '1'
+		    SET @AvgVar    = 12
+*/
+		/* 표시화폐 단위 */
+		SELECT @AmtUnitN = REF_CODE1
+		  FROM BSA100T WITH(NOLOCK)
+		 WHERE COMP_CODE = @CompCode
+		   AND MAIN_CODE = 'B042'
+		   AND SUB_CODE  = @AmtUnit
+
+		   SET @AmtUnitN = ISNULL(@AmtUnitN, 1000)
+
+		SELECT TOP 1
+				@MoneyUnit = SUB_CODE
+				, @RoundPT   = CASE WHEN ISNUMERIC(REF_CODE2) = 1 THEN CONVERT(INTEGER, REF_CODE2) ELSE 0 END    
+		FROM   BSA100T  WITH (NOLOCK)
+		WHERE  COMP_CODE = @CompCode
+		AND    MAIN_CODE = 'B004'
+		AND    REF_CODE1 = 'Y'
+		
+		IF(@BasisYYYY = SUBSTRING(CONVERT(NVARCHAR(08), GETDATE(), 112), 1, 4))
+		BEGIN
+		    SET @AvgVar = SUBSTRING(CONVERT(NVARCHAR(08), GETDATE(), 112), 5, 2)
+		END
+
+
+		SELECT Z.COMP_CODE
+		     , Z.DIV_CODE
+		     , Z.ITEM_ACCOUNT
+		     , SUM(Z.PRE_AVERAGE)                                               AS PRE_AVERAGE
+		     , SUM(Z.PRE_MONTH)                                                 AS PRE_MONTH
+		     , (SUM(Z.AMOUNT_I1) + SUM(Z.AMOUNT_I2) + SUM(Z.AMOUNT_I3) 
+		      + SUM(Z.AMOUNT_I4) + SUM(Z.AMOUNT_I5) + SUM(Z.AMOUNT_I6)
+		      + SUM(Z.AMOUNT_I7) + SUM(Z.AMOUNT_I8) + SUM(Z.AMOUNT_I9)
+		      + SUM(Z.AMOUNT_I10) + SUM(Z.AMOUNT_I11) + SUM(Z.AMOUNT_I12))      AS TOTAL_AMOUNT
+		     , (SUM(Z.AMOUNT_I1) + SUM(Z.AMOUNT_I2) + SUM(Z.AMOUNT_I3)
+		      + SUM(Z.AMOUNT_I4) + SUM(Z.AMOUNT_I5) + SUM(Z.AMOUNT_I6)
+		      + SUM(Z.AMOUNT_I7) + SUM(Z.AMOUNT_I8) + SUM(Z.AMOUNT_I9)
+		      + SUM(Z.AMOUNT_I10) + SUM(Z.AMOUNT_I11) + SUM(Z.AMOUNT_I12))/ @AvgVar  AS AVG_AMOUNT
+		     , SUM(Z.AMOUNT_I1)                                                 AS AMOUNT_I1
+		     , SUM(Z.AMOUNT_I2)                                                 AS AMOUNT_I2
+		     , SUM(Z.AMOUNT_I3)                                                 AS AMOUNT_I3
+		     , SUM(Z.AMOUNT_I4)                                                 AS AMOUNT_I4
+		     , SUM(Z.AMOUNT_I5)                                                 AS AMOUNT_I5
+		     , SUM(Z.AMOUNT_I6)                                                 AS AMOUNT_I6
+		     , SUM(Z.AMOUNT_I7)                                                 AS AMOUNT_I7
+		     , SUM(Z.AMOUNT_I8)                                                 AS AMOUNT_I8
+		     , SUM(Z.AMOUNT_I9)                                                 AS AMOUNT_I9
+		     , SUM(Z.AMOUNT_I10)                                                AS AMOUNT_I10
+		     , SUM(Z.AMOUNT_I11)                                                AS AMOUNT_I11
+		     , SUM(Z.AMOUNT_I12)                                                AS AMOUNT_I12
+		  FROM (
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , C3.ITEM_ACCOUNT
+		              , A.BASIS_YYYYMM
+		              , CASE WHEN SUBSTRING(A.BASIS_YYYYMM, 1, 4) = @LastYYYY THEN SUM(A.STOCK_I) / @AmtUnitN / 12
+		                     ELSE 0
+		                END                                                 AS PRE_AVERAGE
+		              , (CASE WHEN A.BASIS_YYYYMM = @LastYYYY + '12' THEN SUM(ROUND(A.STOCK_I, @RoundPT)) / @AmtUnitN
+		                     ELSE 0
+		                END)                                                 AS PRE_MONTH
+		              , (CASE WHEN A.BASIS_YYYYMM = @BasisYYYY + '01' AND @BasisYYYY + '01' &lt;= @CurYM THEN SUM(ROUND(A.STOCK_I, @RoundPT)) / @AmtUnitN
+		                     ELSE 0
+		                END)                                                AS AMOUNT_I1
+		              , (CASE WHEN A.BASIS_YYYYMM = @BasisYYYY + '02' AND @BasisYYYY + '02' &lt;= @CurYM THEN SUM(ROUND(A.STOCK_I, @RoundPT)) / @AmtUnitN
+		                     ELSE 0
+		                END)                                                 AS AMOUNT_I2
+		              , (CASE WHEN A.BASIS_YYYYMM = @BasisYYYY + '03' AND @BasisYYYY + '03' &lt;= @CurYM THEN SUM(ROUND(A.STOCK_I, @RoundPT)) / @AmtUnitN
+		                     ELSE 0
+		                END)                                                 AS AMOUNT_I3
+		              , (CASE WHEN A.BASIS_YYYYMM = @BasisYYYY + '04' AND @BasisYYYY + '04' &lt;= @CurYM THEN SUM(ROUND(A.STOCK_I, @RoundPT)) / @AmtUnitN
+		                     ELSE 0
+		                END)                                                 AS AMOUNT_I4
+		              , (CASE WHEN A.BASIS_YYYYMM = @BasisYYYY + '05' AND @BasisYYYY + '05' &lt;= @CurYM THEN SUM(ROUND(A.STOCK_I, @RoundPT)) / @AmtUnitN
+		                     ELSE 0
+		                END)                                                 AS AMOUNT_I5
+		              , (CASE WHEN A.BASIS_YYYYMM = @BasisYYYY + '06' AND @BasisYYYY + '06' &lt;= @CurYM THEN SUM(ROUND(A.STOCK_I, @RoundPT)) / @AmtUnitN
+		                     ELSE 0
+		                END)                                                 AS AMOUNT_I6
+		              , (CASE WHEN A.BASIS_YYYYMM = @BasisYYYY + '07' AND @BasisYYYY + '07' &lt;= @CurYM THEN SUM(ROUND(A.STOCK_I, @RoundPT)) / @AmtUnitN
+		                     ELSE 0
+		                END)                                                 AS AMOUNT_I7
+		              , (CASE WHEN A.BASIS_YYYYMM = @BasisYYYY + '08' AND @BasisYYYY + '08' &lt;= @CurYM THEN SUM(ROUND(A.STOCK_I, @RoundPT)) / @AmtUnitN
+		                     ELSE 0
+		                END)                                                 AS AMOUNT_I8
+		              , (CASE WHEN A.BASIS_YYYYMM = @BasisYYYY + '09' AND @BasisYYYY + '09' &lt;= @CurYM THEN SUM(ROUND(A.STOCK_I, @RoundPT)) / @AmtUnitN
+		                     ELSE 0
+		                END)                                                 AS AMOUNT_I9
+		              , (CASE WHEN A.BASIS_YYYYMM = @BasisYYYY + '10' AND @BasisYYYY + '10' &lt;= @CurYM THEN SUM(ROUND(A.STOCK_I, @RoundPT)) / @AmtUnitN
+		                     ELSE 0
+		                END)                                                 AS AMOUNT_I10
+		              , (CASE WHEN A.BASIS_YYYYMM = @BasisYYYY + '11' AND @BasisYYYY + '11' &lt;= @CurYM THEN SUM(ROUND(A.STOCK_I, @RoundPT)) / @AmtUnitN
+		                     ELSE 0
+		                END)                                                 AS AMOUNT_I11
+		              , (CASE WHEN A.BASIS_YYYYMM = @BasisYYYY + '12' AND @BasisYYYY + '12' &lt;= @CurYM THEN SUM(ROUND(A.STOCK_I, @RoundPT)) / @AmtUnitN
+		                     ELSE 0
+		                END)                                                 AS AMOUNT_I12
+		           FROM       BIV200T A  WITH(NOLOCK)
+		           INNER JOIN BPR200T C3 WITH(NOLOCK) ON C3.COMP_CODE  = A.COMP_CODE
+		                                             AND C3.DIV_CODE   = A.DIV_CODE
+		                                             AND C3.ITEM_CODE  = A.ITEM_CODE
+		           LEFT  JOIN BSA220T C4 WITH(NOLOCK) ON C4.COMP_CODE  = A.COMP_CODE
+		                                             AND C4.TREE_CODE  = A.WH_CODE
+		          WHERE A.COMP_CODE = @CompCode
+		            AND A.DIV_CODE  = @DivCode
+		            AND SUBSTRING(A.BASIS_YYYYMM, 1, 4) IN (@BasisYYYY, @LastYYYY)
+		            --AND C4.GROUP_CD = '10'
+<!-- 20200410 추가: 조회조건 "창고(멀티)" 추가 -->
+			<if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+		            AND  A.WH_CODE IN
+				<foreach collection="WH_CODE" item="item" separator="," close=")" open="(">
+		                  #{item}
+				</foreach>
+			</if>
+		          GROUP BY A.COMP_CODE, A.DIV_CODE, C3.ITEM_ACCOUNT, A.BASIS_YYYYMM
+		) Z
+		 GROUP BY Z.COMP_CODE
+		        , Z.DIV_CODE
+		        , Z.ITEM_ACCOUNT
+		 ORDER BY Z.COMP_CODE, Z.DIV_CODE, Z.ITEM_ACCOUNT
+	</select>
+</mapper>

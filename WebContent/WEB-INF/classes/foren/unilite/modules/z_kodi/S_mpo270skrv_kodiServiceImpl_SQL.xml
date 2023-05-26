@@ -1,0 +1,1141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_mpo270skrv_kodiServiceImpl">
+	<!-- 불량뷴석현황 데이터 조회 -->
+		<select id="s_mpo270skrv_kodiServiceImpl.selectListC" parameterType="Map" resultType="rMap">
+		
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+			
+            DECLARE @COMP_CODE      NVARCHAR(08)    --법인코드
+                  , @USER_ID        NVARCHAR(100)    --사용자ID
+                  , @LANG_TYPE      NVARCHAR(02)    --언어구분
+                  , @RefItem        NVARCHAR(01)
+                  , @DateFormat     NVARCHAR(10)
+
+            SET @COMP_CODE  = #{S_COMP_CODE}
+            SET @USER_ID    = #{S_USER_ID}
+
+            /* 명칭 참조 유형 */
+            SELECT  TOP 1 @RefItem = REF_ITEM
+            FROM    BSA300T WITH (NOLOCK)
+            WHERE   USER_ID = @USER_ID
+
+            SET @RefItem = ISNULL(@RefItem, N'0')
+
+            /* 날짜 포맷 유형 설정 */
+            SELECT  TOP 1 @DateFormat = CODE_NAME
+            FROM    BSA100T WITH (NOLOCK)
+            WHERE   COMP_CODE = @COMP_CODE
+            AND     MAIN_CODE = N'B044'
+            AND     REF_CODE1 = N'Y'
+
+            SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')	
+            
+	<if test="ITEM_ACCOUNT == &quot;10&quot;">            
+			
+			SELECT A.OUT_DIV_CODE AS DIV_CODE
+				 , B.CUSTOM_CODE -- 거래처 
+				 , MAX(R2.CUSTOM_NAME) AS CUSTOM_NAME
+				 , COUNT (DISTINCT B.ORDER_NUM)  AS ORDER_COUNT --발주건수
+				 , SUM(A.ORDER_UNIT_Q) AS ORDER_UNIT_Q_SUM  -- 발주수량
+				 , COUNT(A.ITEM_CODE)  AS ITEM_COUNT -- 품목건수
+				 , COUNT(CASE WHEN A.ORDER_Q - ISNULL(C.INOUT_Q, 0) <![CDATA[<=]]> 0 OR A.ORDER_STATUS = 'Y' THEN 1 END) AS INSTOCK_Q_SUM -- 품목대응건수	
+				 , CONVERT(NUMERIC(30,6), COUNT(CASE WHEN A.ORDER_Q - ISNULL(C.INOUT_Q, 0) <![CDATA[<=]]> 0 OR A.ORDER_STATUS = 'Y' THEN 1 END)) / CONVERT(NUMERIC(30,6), COUNT(A.ITEM_CODE)) * 100.00 AS C_RESP_RATE-- 품목대응률
+				 , SUM(ISNULL(C.INOUT_Q, 0)) / SUM(A.ORDER_Q) *  100  AS Q_RESP_RATE-- 수량 대응률
+				 
+			 FROM SOF110T A WITH(NOLOCK)
+					INNER JOIN SOF100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+											     AND A.DIV_CODE  = B.DIV_CODE
+												 AND A.ORDER_NUM = B.ORDER_NUM
+					LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+									  , SUM(ISNULL(INOUT_Q, 0)) AS INOUT_Q 
+									  , MAX(INOUT_DATE) AS INOUT_DATE
+					               FROM BTR100T WITH (NOLOCK)
+								  WHERE COMP_CODE = @COMP_CODE
+								    AND DIV_CODE  = #{DIV_CODE}
+									AND INOUT_TYPE = '2'
+									AND CREATE_LOC = '1'
+								   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ) AS C ON  C.COMP_CODE   = A.COMP_CODE
+																					                  AND  C.DIV_CODE    = A.OUT_DIV_CODE
+																					                  AND  C.ITEM_CODE   = A.ITEM_CODE
+																					                  AND  C.ORDER_NUM   = A.ORDER_NUM
+																					                  AND  C.ORDER_SEQ	  = A.SER_NO
+																					                  
+																									  <if test="DVRY_GUBUN == &quot;D&quot;">
+																									  AND  C.INOUT_DATE <![CDATA[<=]]> A.DVRY_DATE	
+																									  </if>		
+																									  
+																									  <if test="DVRY_GUBUN == &quot;I&quot;">
+																									  AND  C.INOUT_DATE <![CDATA[<=]]> A.INIT_DVRY_DATE	
+																									  </if>	
+																					                  											 
+				    LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+					                             AND R1.DIV_CODE  = B.DIV_CODE
+											     AND R1.ITEM_CODE = A.ITEM_CODE
+				    LEFT JOIN BCM100T R2 WITH(NOLOCK) ON R2.COMP_CODE = B.COMP_CODE
+					                             AND R2.CUSTOM_CODE  = B.CUSTOM_CODE
+
+			WHERE A.COMP_CODE = @COMP_CODE
+			  AND A.OUT_DIV_CODE = #{DIV_CODE}
+			  AND B.ORDER_DATE <![CDATA[>=]]> #{DATE_FR}
+			  AND B.ORDER_DATE <![CDATA[<=]]> #{DATE_TO}		
+			  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+			
+			GROUP BY A.COMP_CODE, A.OUT_DIV_CODE, B.CUSTOM_CODE	
+	</if>
+	<if test="ITEM_ACCOUNT != &quot;10&quot;"> 
+			SELECT A.IN_DIV_CODE AS DIV_CODE
+				 , B.CUSTOM_CODE -- 거래처 
+				 , MAX(R2.CUSTOM_NAME) AS CUSTOM_NAME
+				 , COUNT (DISTINCT B.ORDER_NUM)  AS ORDER_COUNT --발주건수
+				 , SUM(A.ORDER_UNIT_Q) AS ORDER_UNIT_Q_SUM  -- 발주수량
+				 , COUNT(A.ITEM_CODE)  AS ITEM_COUNT -- 품목건수
+				 , COUNT(CASE WHEN A.ORDER_Q - ISNULL(C.INOUT_Q, 0) <![CDATA[<=]]> 0 OR A.CONTROL_STATUS = '9' THEN 1 END) AS INSTOCK_Q_SUM -- 품목대응건수	
+				 , CONVERT(NUMERIC(30,6), COUNT(CASE WHEN A.ORDER_Q - ISNULL(C.INOUT_Q, 0) <![CDATA[<=]]> 0 OR A.CONTROL_STATUS = '9' THEN 1 END)) / CONVERT(NUMERIC(30,6), COUNT(A.ITEM_CODE)) * 100.00 AS C_RESP_RATE-- 품목대응률
+				 , SUM(ISNULL(C.INOUT_Q, 0)) / SUM(A.ORDER_Q) *  100  AS Q_RESP_RATE-- 수량 대응률
+				 
+			 FROM MPO200T A WITH(NOLOCK)
+					INNER JOIN MPO100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+											     AND A.DIV_CODE  = B.DIV_CODE
+												 AND A.ORDER_NUM = B.ORDER_NUM
+					LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+									  , SUM(ISNULL(INOUT_Q, 0)) AS INOUT_Q 
+									  , MAX(INOUT_DATE) AS INOUT_DATE
+					               FROM BTR100T WITH (NOLOCK)
+								  WHERE COMP_CODE = @COMP_CODE
+								    AND DIV_CODE  = #{DIV_CODE}
+									AND INOUT_TYPE = '1'
+									AND CREATE_LOC = '2'
+								   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ) AS C ON  C.COMP_CODE   = A.COMP_CODE
+																					                  AND  C.DIV_CODE    = A.IN_DIV_CODE
+																					                  AND  C.ITEM_CODE   = A.ITEM_CODE
+																					                  AND  C.ORDER_NUM   = A.ORDER_NUM
+																					                  AND  C.ORDER_SEQ	  = A.ORDER_SEQ
+																					                  
+																									  <if test="DVRY_GUBUN == &quot;D&quot;">
+																									  AND  C.INOUT_DATE <![CDATA[<=]]> A.DVRY_DATE	
+																									  </if>		
+																									  
+																									  <if test="DVRY_GUBUN == &quot;I&quot;">
+																									  AND  C.INOUT_DATE <![CDATA[<=]]> A.INIT_DVRY_DATE	
+																									  </if>	
+																					                  											 
+				    LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+					                             AND R1.DIV_CODE  = B.DIV_CODE
+											     AND R1.ITEM_CODE = A.ITEM_CODE
+				    LEFT JOIN BCM100T R2 WITH(NOLOCK) ON R2.COMP_CODE = B.COMP_CODE
+					                             AND R2.CUSTOM_CODE  = B.CUSTOM_CODE
+
+			WHERE A.COMP_CODE = @COMP_CODE
+			  AND A.IN_DIV_CODE = #{DIV_CODE}
+			  AND B.ORDER_DATE <![CDATA[>=]]> #{DATE_FR}
+			  AND B.ORDER_DATE <![CDATA[<=]]> #{DATE_TO}		
+			  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+			
+			GROUP BY A.COMP_CODE, A.IN_DIV_CODE, B.CUSTOM_CODE			
+
+	</if>
+            
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF            
+
+		END			
+		
+
+	</select>
+	
+	<select id="s_mpo270skrv_kodiServiceImpl.selectListL" parameterType="Map" resultType="rMap">
+		
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+			
+            DECLARE @COMP_CODE      NVARCHAR(08)    --법인코드
+                  , @USER_ID        NVARCHAR(100)    --사용자ID
+                  , @LANG_TYPE      NVARCHAR(02)    --언어구분
+                  , @RefItem        NVARCHAR(01)
+                  , @DateFormat     NVARCHAR(10)
+
+            SET @COMP_CODE  = #{S_COMP_CODE}
+            SET @USER_ID    = #{S_USER_ID}
+
+            /* 명칭 참조 유형 */
+            SELECT  TOP 1 @RefItem = REF_ITEM
+            FROM    BSA300T WITH (NOLOCK)
+            WHERE   USER_ID = @USER_ID
+
+            SET @RefItem = ISNULL(@RefItem, N'0')
+
+            /* 날짜 포맷 유형 설정 */
+            SELECT  TOP 1 @DateFormat = CODE_NAME
+            FROM    BSA100T WITH (NOLOCK)
+            WHERE   COMP_CODE = @COMP_CODE
+            AND     MAIN_CODE = N'B044'
+            AND     REF_CODE1 = N'Y'
+
+            SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')	
+            
+			<if test="ITEM_ACCOUNT == &quot;10&quot;"> 
+			SELECT A.OUT_DIV_CODE AS DIV_CODE
+				 , R3.ITEM_LEVEL1
+				 , MAX(R4.LEVEL_NAME) AS LEVEL_NAME
+				 , COUNT (DISTINCT B.ORDER_NUM)  AS ORDER_COUNT --발주건수
+				 , SUM(A.ORDER_UNIT_Q) AS ORDER_UNIT_Q_SUM  -- 발주수량
+				 , COUNT(A.ITEM_CODE)  AS ITEM_COUNT -- 품목건수
+				 , COUNT(CASE WHEN A.ORDER_Q - ISNULL(C.INOUT_Q, 0) <![CDATA[<=]]> 0 OR A.ORDER_STATUS = 'Y' THEN 1 END) AS INSTOCK_Q_SUM -- 품목대응건수	
+				 , CONVERT(NUMERIC(30,6), COUNT(CASE WHEN A.ORDER_Q - ISNULL(C.INOUT_Q, 0) <![CDATA[<=]]> 0 OR A.ORDER_STATUS = 'Y' THEN 1 END)) / CONVERT(NUMERIC(30,6), COUNT(A.ITEM_CODE)) * 100.00 AS C_RESP_RATE-- 품목대응률
+				 , SUM(ISNULL(C.INOUT_Q, 0)) / SUM(A.ORDER_Q) *  100  AS Q_RESP_RATE-- 수량 대응률
+				 
+			 FROM SOF110T A WITH(NOLOCK)
+					INNER JOIN SOF100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+											     AND A.DIV_CODE  = B.DIV_CODE
+												 AND A.ORDER_NUM = B.ORDER_NUM
+					LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+									  , SUM(ISNULL(INOUT_Q, 0)) AS INOUT_Q 
+									  , MAX(INOUT_DATE) AS INOUT_DATE
+					               FROM BTR100T WITH (NOLOCK)
+								  WHERE COMP_CODE = @COMP_CODE
+								    AND DIV_CODE  = #{DIV_CODE}
+									AND INOUT_TYPE = '2'
+									AND CREATE_LOC = '1'
+								   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ) AS C ON  C.COMP_CODE   = A.COMP_CODE
+																					                  AND  C.DIV_CODE    = A.OUT_DIV_CODE
+																					                  AND  C.ITEM_CODE   = A.ITEM_CODE
+																					                  AND  C.ORDER_NUM   = A.ORDER_NUM
+																					                  AND  C.ORDER_SEQ	 = A.SER_NO
+																									  <if test="DVRY_GUBUN == &quot;D&quot;">
+																									  AND  C.INOUT_DATE <![CDATA[<=]]> A.DVRY_DATE	
+																									  </if>		
+																									  <if test="DVRY_GUBUN == &quot;I&quot;">
+																									  AND  C.INOUT_DATE <![CDATA[<=]]> A.INIT_DVRY_DATE	
+																									  </if>														 
+				    LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+					                             AND R1.DIV_CODE  = B.DIV_CODE
+											     AND R1.ITEM_CODE = A.ITEM_CODE
+				    LEFT JOIN BPR100T R3 WITH(NOLOCK) ON R3.COMP_CODE = R1.COMP_CODE
+					                                 AND R3.ITEM_CODE = R1.ITEM_CODE
+				    LEFT JOIN BPR000T R4 WITH(NOLOCK) ON R4.COMP_CODE = R3.COMP_CODE
+					                                 AND R4.LEVEL1    = R3.ITEM_LEVEL1 
+													 AND R4.LEVEL2 = '*'
+													 AND R4.LEVEL3 = '*'     
+
+			WHERE A.COMP_CODE = @COMP_CODE
+			  AND A.OUT_DIV_CODE = #{DIV_CODE}
+			  AND B.ORDER_DATE <![CDATA[>=]]> #{DATE_FR}
+			  AND B.ORDER_DATE <![CDATA[<=]]> #{DATE_TO}		
+			  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+			
+			GROUP BY A.COMP_CODE, A.OUT_DIV_CODE, R3.ITEM_LEVEL1 
+			HAVING ISNULL(R3.ITEM_LEVEL1, '') <![CDATA[<>]]> ''
+			</if>
+			
+			<if test="ITEM_ACCOUNT != &quot;10&quot;"> 
+			SELECT A.IN_DIV_CODE AS DIV_CODE
+				 , R3.ITEM_LEVEL1
+				 , MAX(R4.LEVEL_NAME) AS LEVEL_NAME
+				 , COUNT (DISTINCT B.ORDER_NUM)  AS ORDER_COUNT --발주건수
+				 , SUM(A.ORDER_UNIT_Q) AS ORDER_UNIT_Q_SUM  -- 발주수량
+				 , COUNT(A.ITEM_CODE)  AS ITEM_COUNT -- 품목건수
+				 , COUNT(CASE WHEN A.ORDER_Q - ISNULL(C.INOUT_Q, 0) <![CDATA[<=]]> 0 OR A.CONTROL_STATUS = '9' THEN 1 END) AS INSTOCK_Q_SUM -- 품목대응건수	
+				 , CONVERT(NUMERIC(30,6), COUNT(CASE WHEN A.ORDER_Q - ISNULL(C.INOUT_Q, 0) <![CDATA[<=]]> 0 OR A.CONTROL_STATUS = '9' THEN 1 END)) / CONVERT(NUMERIC(30,6), COUNT(A.ITEM_CODE)) * 100.00 AS C_RESP_RATE-- 품목대응률
+				 , SUM(ISNULL(C.INOUT_Q, 0)) / SUM(A.ORDER_Q) *  100  AS Q_RESP_RATE-- 수량 대응률
+				 
+			 FROM MPO200T A WITH(NOLOCK)
+					INNER JOIN MPO100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+											     AND A.DIV_CODE  = B.DIV_CODE
+												 AND A.ORDER_NUM = B.ORDER_NUM
+					LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+									  , SUM(ISNULL(INOUT_Q, 0)) AS INOUT_Q 
+									  , MAX(INOUT_DATE) AS INOUT_DATE
+					               FROM BTR100T WITH (NOLOCK)
+								  WHERE COMP_CODE = @COMP_CODE
+								    AND DIV_CODE  = #{DIV_CODE}
+									AND INOUT_TYPE = '1'
+									AND CREATE_LOC = '2'
+								   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ) AS C ON  C.COMP_CODE   = A.COMP_CODE
+																					                  AND  C.DIV_CODE    = A.IN_DIV_CODE
+																					                  AND  C.ITEM_CODE   = A.ITEM_CODE
+																					                  AND  C.ORDER_NUM   = A.ORDER_NUM
+																					                  AND  C.ORDER_SEQ	  = A.ORDER_SEQ
+																									  <if test="DVRY_GUBUN == &quot;D&quot;">
+																									  AND  C.INOUT_DATE <![CDATA[<=]]> A.DVRY_DATE	
+																									  </if>		
+																									  <if test="DVRY_GUBUN == &quot;I&quot;">
+																									  AND  C.INOUT_DATE <![CDATA[<=]]> A.INIT_DVRY_DATE	
+																									  </if>														 
+				    LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+					                             AND R1.DIV_CODE  = B.DIV_CODE
+											     AND R1.ITEM_CODE = A.ITEM_CODE
+				    LEFT JOIN BPR100T R3 WITH(NOLOCK) ON R3.COMP_CODE = R1.COMP_CODE
+					                                 AND R3.ITEM_CODE = R1.ITEM_CODE
+				    LEFT JOIN BPR000T R4 WITH(NOLOCK) ON R4.COMP_CODE = R3.COMP_CODE
+					                                 AND R4.LEVEL1    = R3.ITEM_LEVEL1 
+													 AND R4.LEVEL2 = '*'
+													 AND R4.LEVEL3 = '*'     
+
+			WHERE A.COMP_CODE = @COMP_CODE
+			  AND A.IN_DIV_CODE = #{DIV_CODE}
+			  AND B.ORDER_DATE <![CDATA[>=]]> #{DATE_FR}
+			  AND B.ORDER_DATE <![CDATA[<=]]> #{DATE_TO}		
+			  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+			
+			GROUP BY A.COMP_CODE, A.IN_DIV_CODE, R3.ITEM_LEVEL1 
+			HAVING ISNULL(R3.ITEM_LEVEL1, '') <![CDATA[<>]]> ''
+			</if>
+            
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF            
+
+		END			
+		
+
+	</select>
+		
+	<select id="s_mpo270skrv_kodiServiceImpl.selectList1" parameterType="Map" resultType="rMap">
+		
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+			
+            DECLARE @COMP_CODE      NVARCHAR(08)    --법인코드
+                  , @USER_ID        NVARCHAR(100)    --사용자ID
+                  , @LANG_TYPE      NVARCHAR(02)    --언어구분
+                  , @RefItem        NVARCHAR(01)
+                  , @DateFormat     NVARCHAR(10)
+
+            SET @COMP_CODE  = #{S_COMP_CODE}
+            SET @USER_ID    = #{S_USER_ID}
+
+            /* 명칭 참조 유형 */
+            SELECT  TOP 1 @RefItem = REF_ITEM
+            FROM    BSA300T WITH (NOLOCK)
+            WHERE   USER_ID = @USER_ID
+
+            SET @RefItem = ISNULL(@RefItem, N'0')
+
+            /* 날짜 포맷 유형 설정 */
+            SELECT  TOP 1 @DateFormat = CODE_NAME
+            FROM    BSA100T WITH (NOLOCK)
+            WHERE   COMP_CODE = @COMP_CODE
+            AND     MAIN_CODE = N'B044'
+            AND     REF_CODE1 = N'Y'
+
+            SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')	
+            
+            <if test="ITEM_ACCOUNT == &quot;10&quot;"> 
+	            <if test="SELECT_GUBUN == &quot;C&quot;">
+				
+				SELECT A.OUT_DIV_CODE AS DIV_CODE
+					 , B.CUSTOM_CODE 
+					 , B.ORDER_DATE
+					 , A.ORDER_NUM
+					 , A.SER_NO
+					 , A.ITEM_CODE
+	                 ,  CASE WHEN @RefItem = '1' THEN R2.ITEM_NAME1
+	                         WHEN @RefItem = '2' THEN R2.ITEM_NAME2
+	                         ELSE R2.ITEM_NAME
+	                    END AS ITEM_NAME
+					 , R2.SPEC
+					 , R1.ORDER_UNIT
+					 , R1.ITEM_ACCOUNT
+					 , ISNULL(R3.LEVEL_NAME, '') AS LEVEL_NAME
+					 , A.ORDER_UNIT_Q
+					 , ISNULL(C.INOUT_Q, 0) AS INSTOCK_Q
+					 , A.ORDER_UNIT_Q - ISNULL(C.INOUT_Q, 0) AS UNDVRY_Q
+					 , A.INIT_DVRY_DATE
+					 , A.DVRY_DATE
+					 , '발주' AS GUBUN
+					 , D.MIN_DATE
+					 , D.MAX_DATE			
+				 FROM SOF110T A WITH(NOLOCK)
+						INNER JOIN SOF100T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+												         AND A.DIV_CODE   = B.DIV_CODE
+													     AND A.ORDER_NUM  = B.ORDER_NUM
+						LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+										  , SUM(ISNULL(INOUT_Q, 0)) AS INOUT_Q 
+										  , MAX(INOUT_DATE) AS INOUT_DATE
+						               FROM BTR100T WITH (NOLOCK)
+									  WHERE COMP_CODE = @COMP_CODE
+									    AND DIV_CODE  = #{DIV_CODE}
+										AND INOUT_TYPE = '2'
+										AND CREATE_LOC = '1'
+									   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ) AS C ON  C.COMP_CODE   = A.COMP_CODE
+																						                  AND  C.DIV_CODE    = A.OUT_DIV_CODE
+																						                  AND  C.ITEM_CODE   = A.ITEM_CODE
+																						                  AND  C.ORDER_NUM   = A.ORDER_NUM
+																						                  AND  C.ORDER_SEQ	 = A.SER_NO
+																										  <if test="DVRY_GUBUN == &quot;D&quot;">
+																										  AND  C.INOUT_DATE <![CDATA[<=]]> A.DVRY_DATE	
+																										  </if>		
+																										  <if test="DVRY_GUBUN == &quot;I&quot;">
+																										  AND  C.INOUT_DATE <![CDATA[<=]]> A.INIT_DVRY_DATE	
+																										  </if>	
+	
+					    LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+						                                 AND R1.DIV_CODE  = B.DIV_CODE
+												         AND R1.ITEM_CODE = A.ITEM_CODE
+					    LEFT JOIN BPR100T R2 WITH(NOLOCK) ON R2.COMP_CODE = R1.COMP_CODE
+												         AND R2.ITEM_CODE = R1.ITEM_CODE
+					    LEFT JOIN BPR000T R3 WITH(NOLOCK) ON R3.COMP_CODE = R2.COMP_CODE
+												         AND R3.LEVEL1    = R2.ITEM_LEVEL1
+													     AND R3.LEVEL2    = '*'
+													     AND R3.LEVEL3    = '*'
+					  <if test="DVRY_GUBUN == &quot;D&quot;">
+	                    LEFT JOIN (SELECT MIN(A.DVRY_DATE) AS MIN_DATE
+									    , MAX(A.DVRY_DATE) AS MAX_DATE
+									    , A.COMP_CODE
+					  </if>		
+					  <if test="DVRY_GUBUN == &quot;I&quot;">
+	                    LEFT JOIN (SELECT MIN(A.INIT_DVRY_DATE) AS MIN_DATE
+									    , MAX(A.INIT_DVRY_DATE) AS MAX_DATE
+									    , A.COMP_CODE
+					  </if>
+									 FROM SOF110T A WITH(NOLOCK)
+											INNER JOIN SOF100T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+																	         AND A.DIV_CODE   = B.DIV_CODE
+																		     AND A.ORDER_NUM  = B.ORDER_NUM													 
+										    LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+											                                 AND R1.DIV_CODE  = B.DIV_CODE
+																	         AND R1.ITEM_CODE = A.ITEM_CODE
+						
+									WHERE A.COMP_CODE = #{S_COMP_CODE}
+									  AND A.OUT_DIV_CODE = #{DIV_CODE}
+									  AND B.ORDER_DATE  <![CDATA[>=]]> #{DATE_FR}
+									  AND B.ORDER_DATE  <![CDATA[<=]]> #{DATE_TO}
+									  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}	 
+									  AND B.CUSTOM_CODE = #{CUSTOM_CODE}
+									GROUP BY A.COMP_CODE
+									  ) AS D ON D.COMP_CODE = A.COMP_CODE												     
+				WHERE A.COMP_CODE = @COMP_CODE
+				  AND A.OUT_DIV_CODE = #{DIV_CODE}
+				  AND B.ORDER_DATE  <![CDATA[>=]]> #{DATE_FR}
+				  AND B.ORDER_DATE  <![CDATA[<=]]> #{DATE_TO}
+				  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}	 
+				  AND B.CUSTOM_CODE = #{CUSTOM_CODE}	   
+	            </if>
+	            
+	            <if test="SELECT_GUBUN == &quot;L&quot;">
+	            				
+				SELECT A.OUT_DIV_CODE AS DIV_CODE
+					 , R2.ITEM_LEVEL1 AS CUSTOM_CODE 
+					 , B.ORDER_DATE
+					 , A.ORDER_NUM
+					 , A.SER_NO
+					 , A.ITEM_CODE
+	                 ,  CASE WHEN @RefItem = '1' THEN R2.ITEM_NAME1
+	                         WHEN @RefItem = '2' THEN R2.ITEM_NAME2
+	                         ELSE R2.ITEM_NAME
+	                    END AS ITEM_NAME
+					 , R2.SPEC
+					 , R1.ORDER_UNIT
+					 , R1.ITEM_ACCOUNT
+					 , ISNULL(R3.LEVEL_NAME, '') AS LEVEL_NAME
+					 , A.ORDER_UNIT_Q
+					 , ISNULL(C.INOUT_Q, 0) AS INSTOCK_Q
+					 , A.ORDER_UNIT_Q - ISNULL(C.INOUT_Q, 0) AS UNDVRY_Q
+					 , A.INIT_DVRY_DATE
+					 , A.DVRY_DATE
+					 , '발주' AS GUBUN
+					 , D.MIN_DATE
+					 , D.MAX_DATE			
+				 FROM SOF110T A WITH(NOLOCK)
+						INNER JOIN SOF100T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+												         AND A.DIV_CODE   = B.DIV_CODE
+													     AND A.ORDER_NUM  = B.ORDER_NUM
+						LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+										  , SUM(ISNULL(INOUT_Q, 0)) AS INOUT_Q 
+										  , MAX(INOUT_DATE) AS INOUT_DATE
+						               FROM BTR100T WITH (NOLOCK)
+									  WHERE COMP_CODE = @COMP_CODE
+									    AND DIV_CODE  = #{DIV_CODE}
+										AND INOUT_TYPE = '2'
+										AND CREATE_LOC = '1'
+									   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ) AS C ON  C.COMP_CODE   = A.COMP_CODE
+																						                  AND  C.DIV_CODE    = A.OUT_DIV_CODE
+																						                  AND  C.ITEM_CODE   = A.ITEM_CODE
+																						                  AND  C.ORDER_NUM   = A.ORDER_NUM
+																						                  AND  C.ORDER_SEQ	 = A.SER_NO
+																										  <if test="DVRY_GUBUN == &quot;D&quot;">
+																										  AND  C.INOUT_DATE <![CDATA[<=]]> A.DVRY_DATE	
+																										  </if>		
+																										  <if test="DVRY_GUBUN == &quot;I&quot;">
+																										  AND  C.INOUT_DATE <![CDATA[<=]]> A.INIT_DVRY_DATE	
+																										  </if>	
+	
+					    LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+						                                 AND R1.DIV_CODE  = B.DIV_CODE
+												         AND R1.ITEM_CODE = A.ITEM_CODE
+					    LEFT JOIN BPR100T R2 WITH(NOLOCK) ON R2.COMP_CODE = R1.COMP_CODE
+												         AND R2.ITEM_CODE = R1.ITEM_CODE
+					    LEFT JOIN BPR000T R3 WITH(NOLOCK) ON R3.COMP_CODE = R2.COMP_CODE
+												         AND R3.LEVEL1    = R2.ITEM_LEVEL1
+													     AND R3.LEVEL2    = '*'
+													     AND R3.LEVEL3    = '*'
+					  <if test="DVRY_GUBUN == &quot;D&quot;">
+	                    LEFT JOIN (SELECT MIN(A.DVRY_DATE) AS MIN_DATE
+									    , MAX(A.DVRY_DATE) AS MAX_DATE
+									    , A.COMP_CODE
+					  </if>		
+					  <if test="DVRY_GUBUN == &quot;I&quot;">
+	                    LEFT JOIN (SELECT MIN(A.INIT_DVRY_DATE) AS MIN_DATE
+									    , MAX(A.INIT_DVRY_DATE) AS MAX_DATE
+									    , A.COMP_CODE
+					  </if>	
+									 FROM SOF110T A WITH(NOLOCK)
+											INNER JOIN SOF100T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+																	         AND A.DIV_CODE   = B.DIV_CODE
+																		     AND A.ORDER_NUM  = B.ORDER_NUM													 
+										    LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+											                                 AND R1.DIV_CODE  = B.DIV_CODE
+																	         AND R1.ITEM_CODE = A.ITEM_CODE
+											LEFT JOIN BPR100T R2 WITH(NOLOCK) ON R2.COMP_CODE = R1.COMP_CODE
+																			 AND R2.ITEM_CODE = R1.ITEM_CODE																         
+						
+									WHERE A.COMP_CODE = #{S_COMP_CODE}
+									  AND A.OUT_DIV_CODE = #{DIV_CODE}
+									  AND B.ORDER_DATE  <![CDATA[>=]]> #{DATE_FR}
+									  AND B.ORDER_DATE  <![CDATA[<=]]> #{DATE_TO}
+									  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}	 
+									  AND R2.ITEM_LEVEL1 = #{ITEM_LEVEL1}
+									GROUP BY A.COMP_CODE
+									  ) AS D ON D.COMP_CODE = A.COMP_CODE												     
+				WHERE A.COMP_CODE = @COMP_CODE
+				  AND A.OUT_DIV_CODE = #{DIV_CODE}
+				  AND B.ORDER_DATE  <![CDATA[>=]]> #{DATE_FR}
+				  AND B.ORDER_DATE  <![CDATA[<=]]> #{DATE_TO}
+				  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}	 
+				  AND R2.ITEM_LEVEL1 = #{ITEM_LEVEL1}	
+				     
+	            </if>   
+            </if>              
+            
+            <if test="ITEM_ACCOUNT != &quot;10&quot;"> 
+	            <if test="SELECT_GUBUN == &quot;C&quot;">
+				
+				SELECT A.IN_DIV_CODE AS DIV_CODE
+					 , B.CUSTOM_CODE 
+					 , B.ORDER_DATE
+					 , A.ORDER_NUM
+					 , A.ORDER_SEQ
+					 , A.ITEM_CODE
+	                 ,  CASE WHEN @RefItem = '1' THEN R2.ITEM_NAME1
+	                         WHEN @RefItem = '2' THEN R2.ITEM_NAME2
+	                         ELSE R2.ITEM_NAME
+	                    END AS ITEM_NAME
+					 , R2.SPEC
+					 , R1.ORDER_UNIT
+					 , R1.ITEM_ACCOUNT
+					 , ISNULL(R3.LEVEL_NAME, '') AS LEVEL_NAME
+					 , A.ORDER_UNIT_Q
+					 , ISNULL(C.INOUT_Q, 0) AS INSTOCK_Q
+					 , A.ORDER_UNIT_Q - ISNULL(C.INOUT_Q, 0) AS UNDVRY_Q
+					 , A.INIT_DVRY_DATE
+					 , A.DVRY_DATE
+					 , '발주' AS GUBUN
+					 , D.MIN_DATE
+					 , D.MAX_DATE			
+				 FROM MPO200T A WITH(NOLOCK)
+						INNER JOIN MPO100T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+												         AND A.DIV_CODE   = B.DIV_CODE
+													     AND A.ORDER_NUM  = B.ORDER_NUM
+						LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+										  , SUM(ISNULL(INOUT_Q, 0)) AS INOUT_Q 
+										  , MAX(INOUT_DATE) AS INOUT_DATE
+						               FROM BTR100T WITH (NOLOCK)
+									  WHERE COMP_CODE = @COMP_CODE
+									    AND DIV_CODE  = #{DIV_CODE}
+										AND INOUT_TYPE = '1'
+										AND CREATE_LOC = '2'
+									   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ) AS C ON  C.COMP_CODE   = A.COMP_CODE
+																						                  AND  C.DIV_CODE    = A.IN_DIV_CODE
+																						                  AND  C.ITEM_CODE   = A.ITEM_CODE
+																						                  AND  C.ORDER_NUM   = A.ORDER_NUM
+																						                  AND  C.ORDER_SEQ	 = A.ORDER_SEQ
+																										  <if test="DVRY_GUBUN == &quot;D&quot;">
+																										  AND  C.INOUT_DATE <![CDATA[<=]]> A.DVRY_DATE	
+																										  </if>		
+																										  <if test="DVRY_GUBUN == &quot;I&quot;">
+																										  AND  C.INOUT_DATE <![CDATA[<=]]> A.INIT_DVRY_DATE	
+																										  </if>	
+	
+					    LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+						                                 AND R1.DIV_CODE  = B.DIV_CODE
+												         AND R1.ITEM_CODE = A.ITEM_CODE
+					    LEFT JOIN BPR100T R2 WITH(NOLOCK) ON R2.COMP_CODE = R1.COMP_CODE
+												         AND R2.ITEM_CODE = R1.ITEM_CODE
+					    LEFT JOIN BPR000T R3 WITH(NOLOCK) ON R3.COMP_CODE = R2.COMP_CODE
+												         AND R3.LEVEL1    = R2.ITEM_LEVEL1
+													     AND R3.LEVEL2    = '*'
+													     AND R3.LEVEL3    = '*'
+					  <if test="DVRY_GUBUN == &quot;D&quot;">
+	                    LEFT JOIN (SELECT MIN(A.DVRY_DATE) AS MIN_DATE
+									    , MAX(A.DVRY_DATE) AS MAX_DATE
+									    , A.COMP_CODE
+					  </if>		
+					  <if test="DVRY_GUBUN == &quot;I&quot;">
+	                    LEFT JOIN (SELECT MIN(A.INIT_DVRY_DATE) AS MIN_DATE
+									    , MAX(A.INIT_DVRY_DATE) AS MAX_DATE
+									    , A.COMP_CODE
+					  </if>	
+									 FROM MPO200T A WITH(NOLOCK)
+											INNER JOIN MPO100T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+																	         AND A.DIV_CODE   = B.DIV_CODE
+																		     AND A.ORDER_NUM  = B.ORDER_NUM													 
+										    LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+											                                 AND R1.DIV_CODE  = B.DIV_CODE
+																	         AND R1.ITEM_CODE = A.ITEM_CODE
+						
+									WHERE A.COMP_CODE = #{S_COMP_CODE}
+									  AND A.IN_DIV_CODE = #{DIV_CODE}
+									  AND B.ORDER_DATE  <![CDATA[>=]]> #{DATE_FR}
+									  AND B.ORDER_DATE  <![CDATA[<=]]> #{DATE_TO}
+									  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}	 
+									  AND B.CUSTOM_CODE = #{CUSTOM_CODE}
+									GROUP BY A.COMP_CODE
+									  ) AS D ON D.COMP_CODE = A.COMP_CODE												     
+				WHERE A.COMP_CODE = @COMP_CODE
+				  AND A.IN_DIV_CODE = #{DIV_CODE}
+				  AND B.ORDER_DATE  <![CDATA[>=]]> #{DATE_FR}
+				  AND B.ORDER_DATE  <![CDATA[<=]]> #{DATE_TO}
+				  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}	 
+				  AND B.CUSTOM_CODE = #{CUSTOM_CODE}	   
+	            </if>
+	            
+	            <if test="SELECT_GUBUN == &quot;L&quot;">
+	            				
+				SELECT A.IN_DIV_CODE AS DIV_CODE
+					 , R2.ITEM_LEVEL1 AS CUSTOM_CODE 
+					 , B.ORDER_DATE
+					 , A.ORDER_NUM
+					 , A.ORDER_SEQ
+					 , A.ITEM_CODE
+	                 ,  CASE WHEN @RefItem = '1' THEN R2.ITEM_NAME1
+	                         WHEN @RefItem = '2' THEN R2.ITEM_NAME2
+	                         ELSE R2.ITEM_NAME
+	                    END AS ITEM_NAME
+					 , R2.SPEC
+					 , R1.ORDER_UNIT
+					 , R1.ITEM_ACCOUNT
+					 , ISNULL(R3.LEVEL_NAME, '') AS LEVEL_NAME
+					 , A.ORDER_UNIT_Q
+					 , ISNULL(C.INOUT_Q, 0) AS INSTOCK_Q
+					 , A.ORDER_UNIT_Q - ISNULL(C.INOUT_Q, 0) AS UNDVRY_Q
+					 , A.INIT_DVRY_DATE
+					 , A.DVRY_DATE
+					 , '발주' AS GUBUN
+					 , D.MIN_DATE
+					 , D.MAX_DATE			
+				 FROM MPO200T A WITH(NOLOCK)
+						INNER JOIN MPO100T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+												         AND A.DIV_CODE   = B.DIV_CODE
+													     AND A.ORDER_NUM  = B.ORDER_NUM
+						LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+										  , SUM(ISNULL(INOUT_Q, 0)) AS INOUT_Q 
+										  , MAX(INOUT_DATE) AS INOUT_DATE
+						               FROM BTR100T WITH (NOLOCK)
+									  WHERE COMP_CODE = @COMP_CODE
+									    AND DIV_CODE  = #{DIV_CODE}
+										AND INOUT_TYPE = '1'
+										AND CREATE_LOC = '2'
+									   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ) AS C ON  C.COMP_CODE   = A.COMP_CODE
+																						                  AND  C.DIV_CODE    = A.IN_DIV_CODE
+																						                  AND  C.ITEM_CODE   = A.ITEM_CODE
+																						                  AND  C.ORDER_NUM   = A.ORDER_NUM
+																						                  AND  C.ORDER_SEQ	 = A.ORDER_SEQ
+																										  <if test="DVRY_GUBUN == &quot;D&quot;">
+																										  AND  C.INOUT_DATE <![CDATA[<=]]> A.DVRY_DATE	
+																										  </if>		
+																										  <if test="DVRY_GUBUN == &quot;I&quot;">
+																										  AND  C.INOUT_DATE <![CDATA[<=]]> A.INIT_DVRY_DATE	
+																										  </if>	
+	
+					    LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+						                                 AND R1.DIV_CODE  = B.DIV_CODE
+												         AND R1.ITEM_CODE = A.ITEM_CODE
+					    LEFT JOIN BPR100T R2 WITH(NOLOCK) ON R2.COMP_CODE = R1.COMP_CODE
+												         AND R2.ITEM_CODE = R1.ITEM_CODE
+					    LEFT JOIN BPR000T R3 WITH(NOLOCK) ON R3.COMP_CODE = R2.COMP_CODE
+												         AND R3.LEVEL1    = R2.ITEM_LEVEL1
+													     AND R3.LEVEL2    = '*'
+													     AND R3.LEVEL3    = '*'
+					  <if test="DVRY_GUBUN == &quot;D&quot;">
+	                    LEFT JOIN (SELECT MIN(A.DVRY_DATE) AS MIN_DATE
+									    , MAX(A.DVRY_DATE) AS MAX_DATE
+									    , A.COMP_CODE
+					  </if>		
+					  <if test="DVRY_GUBUN == &quot;I&quot;">
+	                    LEFT JOIN (SELECT MIN(A.INIT_DVRY_DATE) AS MIN_DATE
+									    , MAX(A.INIT_DVRY_DATE) AS MAX_DATE
+									    , A.COMP_CODE
+					  </if>	
+									 FROM MPO200T A WITH(NOLOCK)
+											INNER JOIN MPO100T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+																	         AND A.DIV_CODE   = B.DIV_CODE
+																		     AND A.ORDER_NUM  = B.ORDER_NUM													 
+										    LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+											                                 AND R1.DIV_CODE  = B.DIV_CODE
+																	         AND R1.ITEM_CODE = A.ITEM_CODE
+											LEFT JOIN BPR100T R2 WITH(NOLOCK) ON R2.COMP_CODE = R1.COMP_CODE
+																			 AND R2.ITEM_CODE = R1.ITEM_CODE																         
+						
+									WHERE A.COMP_CODE = #{S_COMP_CODE}
+									  AND A.IN_DIV_CODE = #{DIV_CODE}
+									  AND B.ORDER_DATE  <![CDATA[>=]]> #{DATE_FR}
+									  AND B.ORDER_DATE  <![CDATA[<=]]> #{DATE_TO}
+									  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}	 
+									  AND R2.ITEM_LEVEL1 = #{ITEM_LEVEL1}
+									GROUP BY A.COMP_CODE
+									  ) AS D ON D.COMP_CODE = A.COMP_CODE												     
+				WHERE A.COMP_CODE = @COMP_CODE
+				  AND A.IN_DIV_CODE = #{DIV_CODE}
+				  AND B.ORDER_DATE  <![CDATA[>=]]> #{DATE_FR}
+				  AND B.ORDER_DATE  <![CDATA[<=]]> #{DATE_TO}
+				  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}	 
+				  AND R2.ITEM_LEVEL1 = #{ITEM_LEVEL1}	
+				     
+	            </if>   
+            </if>          
+			
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END				
+		
+
+	</select>
+	
+	<select id="s_mpo270skrv_kodiServiceImpl.selectCalList" parameterType="Map" resultType="rMap">
+		
+			DECLARE @DVRY_DATE_MIN NVARCHAR(08)
+			      , @DVRY_DATE_MAX NVARCHAR(08)
+			      
+			      
+			IF OBJECT_ID('tempdb..#DVRYDATE_TMP') IS NOT NULL
+
+			BEGIN
+				DROP TABLE #DVRYDATE_TMP
+			END
+
+			CREATE TABLE #DVRYDATE_TMP(DVRY_DATE NVARCHAR(10))
+			
+		<if test="ITEM_ACCOUNT == &quot;10&quot;">  
+		
+		  <if test="DVRY_GUBUN == &quot;D&quot;">
+			SELECT @DVRY_DATE_MIN = MIN(A.DVRY_DATE)
+			     , @DVRY_DATE_MAX = MAX(A.DVRY_DATE)
+		  </if>		
+		  <if test="DVRY_GUBUN == &quot;I&quot;">
+			SELECT @DVRY_DATE_MIN = MIN(A.INIT_DVRY_DATE)
+			     , @DVRY_DATE_MAX = MAX(A.INIT_DVRY_DATE)
+		  </if>
+
+			 FROM SOF110T A WITH(NOLOCK)
+					INNER JOIN SOF100T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+											         AND A.DIV_CODE   = B.DIV_CODE
+												     AND A.ORDER_NUM  = B.ORDER_NUM													 
+				    LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+					                                 AND R1.DIV_CODE  = B.DIV_CODE
+											         AND R1.ITEM_CODE = A.ITEM_CODE
+					LEFT JOIN BPR100T R2 WITH(NOLOCK) ON R2.COMP_CODE = R1.COMP_CODE
+												     AND R2.ITEM_CODE = R1.ITEM_CODE											         
+
+			WHERE A.COMP_CODE = #{S_COMP_CODE}
+			  AND A.OUT_DIV_CODE = #{DIV_CODE}
+			  AND B.ORDER_DATE <![CDATA[>=]]> #{DATE_FR}
+			  AND B.ORDER_DATE <![CDATA[<=]]> #{DATE_TO}
+			  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}	 
+			  
+			  <if test="SELECT_GUBUN == &quot;C&quot;">
+			  AND B.CUSTOM_CODE = #{CUSTOM_CODE}	
+			  </if>
+			  
+			  <if test="SELECT_GUBUN == &quot;L&quot;">
+			  AND R2.ITEM_LEVEL1 = #{ITEM_LEVEL1}	
+			  </if>			  	
+			
+			
+			  <if test="CHART_GUBUN == &quot;1&quot;">
+				
+	            INSERT INTO #DVRYDATE_TMP(DVRY_DATE)           	
+	            	
+			     SELECT DISTINCT SUBSTRING(CAL_DATE, 1, 4) + '-' + RIGHT('0' + CONVERT(NVARCHAR(02), CAL_NO), 2)  AS DVRY_DATE
+			       FROM BCM400T WITH(NOLOCK)
+			         WHERE COMP_CODE  = #{S_COMP_CODE}
+			           AND CAL_TYPE   = '3'
+			           AND HOLY_TYPE != '0'
+					   AND CAL_DATE <![CDATA[>=]]>  @DVRY_DATE_MIN
+					   AND CAL_DATE <![CDATA[<=]]>  @DVRY_DATE_MAX
+				   
+		
+				SELECT X.DVRY_DATE AS MONTH
+				     , ISNULL(Y.C_RESP_RATE, 0) AS YEAR1
+					 , ISNULL(Y.Q_RESP_RATE, 0) AS YEAR2
+				FROM #DVRYDATE_TMP AS X
+				     LEFT JOIN (
+								SELECT D.CAL_NO  AS DVRY_DATE
+								     , CONVERT(NUMERIC(30,6), COUNT(CASE WHEN A.ORDER_Q - ISNULL(C.INOUT_Q, 0) <![CDATA[<=]]> 0 OR A.ORDER_STATUS = 'Y' THEN 1 END)) / CONVERT(NUMERIC(30,6), COUNT(A.ITEM_CODE)) * 100.00 AS C_RESP_RATE-- 품목대응률
+									 , SUM(ISNULL(C.INOUT_Q, 0)) / SUM(A.ORDER_Q) *  100  AS Q_RESP_RATE-- 수량 대응률		
+								 FROM SOF110T A WITH(NOLOCK)
+										INNER JOIN SOF100T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+																		 AND A.DIV_CODE   = B.DIV_CODE
+																		 AND A.ORDER_NUM  = B.ORDER_NUM
+										LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+														  , SUM(ISNULL(INOUT_Q, 0)) AS INOUT_Q 
+														  , MAX(INOUT_DATE) AS INOUT_DATE
+													   FROM BTR100T WITH (NOLOCK)
+													  WHERE COMP_CODE = #{S_COMP_CODE}
+														AND DIV_CODE  = #{DIV_CODE}
+														AND INOUT_TYPE = '2'
+														AND CREATE_LOC = '1'
+													   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ) AS C ON  C.COMP_CODE   = A.COMP_CODE
+																														  AND  C.DIV_CODE    = A.OUT_DIV_CODE
+																														  AND  C.ITEM_CODE   = A.ITEM_CODE
+																														  AND  C.ORDER_NUM   = A.ORDER_NUM
+																														  AND  C.ORDER_SEQ	 = A.SER_NO
+																														  
+																														  <if test="DVRY_GUBUN == &quot;D&quot;">
+																														  AND  C.INOUT_DATE <![CDATA[<=]]> A.DVRY_DATE	
+																														  </if>		
+																														  <if test="DVRY_GUBUN == &quot;I&quot;">
+																														  AND  C.INOUT_DATE <![CDATA[<=]]> A.INIT_DVRY_DATE	
+																														  </if>	
+																										  
+						                LEFT JOIN ( SELECT COMP_CODE, CAL_DATE, SUBSTRING(CAL_DATE, 1, 4)  + RIGHT('0' + CONVERT(NVARCHAR(02), CAL_NO), 2) AS CAL_NO
+										              FROM BCM400T WITH(NOLOCK)
+													 WHERE COMP_CODE  = #{S_COMP_CODE}
+													   AND CAL_TYPE   = '3'
+													   AND HOLY_TYPE != '0') AS D ON D.COMP_CODE = A.COMP_CODE
+													  <if test="DVRY_GUBUN == &quot;D&quot;">
+													  AND D.CAL_DATE  = A.DVRY_DATE		
+													  </if>		
+													  <if test="DVRY_GUBUN == &quot;I&quot;">
+													  AND D.CAL_DATE  = A.INIT_DVRY_DATE	
+													  </if>													   
+																				 																												  
+	
+										LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+																		 AND R1.DIV_CODE  = B.DIV_CODE
+																		 AND R1.ITEM_CODE = A.ITEM_CODE
+										LEFT JOIN BPR100T R2 WITH(NOLOCK) ON R2.COMP_CODE = R1.COMP_CODE
+																		 AND R2.ITEM_CODE = R1.ITEM_CODE
+										LEFT JOIN BPR000T R3 WITH(NOLOCK) ON R3.COMP_CODE = R2.COMP_CODE
+																		 AND R3.LEVEL1    = R2.ITEM_LEVEL1
+																		 AND R3.LEVEL2    = '*'
+																		 AND R3.LEVEL3    = '*'
+								WHERE A.COMP_CODE = #{S_COMP_CODE}
+								  AND A.OUT_DIV_CODE = #{DIV_CODE}
+								  AND B.ORDER_DATE  <![CDATA[>=]]> #{DATE_FR}
+								  AND B.ORDER_DATE  <![CDATA[<=]]> #{DATE_TO}
+								  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}	 
+								  
+								  <if test="SELECT_GUBUN == &quot;C&quot;">
+								  AND B.CUSTOM_CODE = #{CUSTOM_CODE}	
+								  </if>
+								  
+								  <if test="SELECT_GUBUN == &quot;L&quot;">
+								  AND R2.ITEM_LEVEL1 = #{ITEM_LEVEL1}	
+								  </if>								 
+	
+								  GROUP BY D.CAL_NO 
+								  
+								  ) AS Y ON REPLACE(X.DVRY_DATE, '-', '') = Y.DVRY_DATE
+	
+	    	</if>  
+	    	
+	
+			<if test="CHART_GUBUN == &quot;2&quot;">
+				
+	            INSERT INTO #DVRYDATE_TMP(DVRY_DATE)           	
+	            	
+				SELECT DISTINCT LEFT(CONVERT(CHAR(10),DATEADD(D,NUMBER,@DVRY_DATE_MIN),120), 7) AS DVRY_DATE
+				  FROM MASTER..SPT_VALUES
+				 WHERE TYPE = 'P'
+				   AND NUMBER <![CDATA[<=]]> DATEDIFF(D, @DVRY_DATE_MIN, @DVRY_DATE_MAX)
+				   
+		
+				SELECT X.DVRY_DATE AS MONTH
+				     , ISNULL(Y.C_RESP_RATE, 0) AS YEAR1
+					 , ISNULL(Y.Q_RESP_RATE, 0) AS YEAR2
+				FROM #DVRYDATE_TMP AS X
+				     LEFT JOIN (
+							  <if test="DVRY_GUBUN == &quot;D&quot;">
+							  SELECT SUBSTRING(A.DVRY_DATE, 1, 6) AS DVRY_DATE
+							  </if>	
+							  	
+							  <if test="DVRY_GUBUN == &quot;I&quot;">
+							  SELECT SUBSTRING(A.INIT_DVRY_DATE, 1, 6) AS DVRY_DATE
+							  </if>		
+								     , CONVERT(NUMERIC(30,6), COUNT(CASE WHEN A.ORDER_Q - ISNULL(C.INOUT_Q, 0) <![CDATA[<=]]> 0 OR A.ORDER_STATUS = 'Y' THEN 1 END)) / CONVERT(NUMERIC(30,6), COUNT(A.ITEM_CODE)) * 100.00 AS C_RESP_RATE-- 품목대응률
+									 , SUM(ISNULL(C.INOUT_Q, 0)) / SUM(A.ORDER_Q) *  100  AS Q_RESP_RATE-- 수량 대응률		
+								 FROM SOF110T A WITH(NOLOCK)
+										INNER JOIN SOF100T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+																		 AND A.DIV_CODE   = B.DIV_CODE
+																		 AND A.ORDER_NUM  = B.ORDER_NUM
+										LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+														  , SUM(ISNULL(INOUT_Q, 0)) AS INOUT_Q 
+														  , MAX(INOUT_DATE) AS INOUT_DATE
+													   FROM BTR100T WITH (NOLOCK)
+													  WHERE COMP_CODE = #{S_COMP_CODE}
+														AND DIV_CODE  = #{DIV_CODE}
+														AND INOUT_TYPE = '2'
+														AND CREATE_LOC = '1'
+													   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ) AS C ON  C.COMP_CODE   = A.COMP_CODE
+																														  AND  C.DIV_CODE    = A.OUT_DIV_CODE
+																														  AND  C.ITEM_CODE   = A.ITEM_CODE
+																														  AND  C.ORDER_NUM   = A.ORDER_NUM
+																														  AND  C.ORDER_SEQ	 = A.SER_NO
+																														  <if test="DVRY_GUBUN == &quot;D&quot;">
+																														  AND  C.INOUT_DATE <![CDATA[<=]]> A.DVRY_DATE	
+																														  </if>		
+																														  <if test="DVRY_GUBUN == &quot;I&quot;">	
+																														  AND  C.INOUT_DATE <![CDATA[<=]]> A.INIT_DVRY_DATE	
+																														  </if>	
+	
+										LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+																		 AND R1.DIV_CODE  = B.DIV_CODE
+																		 AND R1.ITEM_CODE = A.ITEM_CODE
+										LEFT JOIN BPR100T R2 WITH(NOLOCK) ON R2.COMP_CODE = R1.COMP_CODE
+																		 AND R2.ITEM_CODE = R1.ITEM_CODE
+										LEFT JOIN BPR000T R3 WITH(NOLOCK) ON R3.COMP_CODE = R2.COMP_CODE
+																		 AND R3.LEVEL1    = R2.ITEM_LEVEL1
+																		 AND R3.LEVEL2    = '*'
+																		 AND R3.LEVEL3    = '*'
+								WHERE A.COMP_CODE = #{S_COMP_CODE}
+								  AND A.OUT_DIV_CODE = #{DIV_CODE}
+								  AND B.ORDER_DATE  <![CDATA[>=]]> #{DATE_FR}
+								  AND B.ORDER_DATE  <![CDATA[<=]]> #{DATE_TO}
+								  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}	 
+								  <if test="SELECT_GUBUN == &quot;C&quot;">
+								  AND B.CUSTOM_CODE = #{CUSTOM_CODE}	
+								  </if>
+								  
+								  <if test="SELECT_GUBUN == &quot;L&quot;">
+								  AND R2.ITEM_LEVEL1 = #{ITEM_LEVEL1}	
+								  </if>	
+								  
+								  <if test="DVRY_GUBUN == &quot;D&quot;">
+								  GROUP BY SUBSTRING(A.DVRY_DATE, 1, 6)
+								  </if>	
+								  	
+								  <if test="DVRY_GUBUN == &quot;I&quot;">
+								  GROUP BY SUBSTRING(A.INIT_DVRY_DATE, 1, 6)
+								  </if>								  
+								  
+								  ) AS Y ON REPLACE(X.DVRY_DATE, '-', '') = Y.DVRY_DATE
+	              WHERE REPLACE(X.DVRY_DATE, '-', '') <![CDATA[<=]]> SUBSTRING(@DVRY_DATE_MAX, 1, 6) 
+
+    		</if> 
+    	</if>
+    	
+  		<if test="ITEM_ACCOUNT != &quot;10&quot;">   			
+		  <if test="DVRY_GUBUN == &quot;D&quot;">
+			SELECT @DVRY_DATE_MIN = MIN(A.DVRY_DATE)
+			     , @DVRY_DATE_MAX = MAX(A.DVRY_DATE)
+		  </if>		
+		  <if test="DVRY_GUBUN == &quot;I&quot;">
+			SELECT @DVRY_DATE_MIN = MIN(A.INIT_DVRY_DATE)
+			     , @DVRY_DATE_MAX = MAX(A.INIT_DVRY_DATE)
+		  </if>
+			 FROM MPO200T A WITH(NOLOCK)
+					INNER JOIN MPO100T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+											         AND A.DIV_CODE   = B.DIV_CODE
+												     AND A.ORDER_NUM  = B.ORDER_NUM													 
+				    LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+					                                 AND R1.DIV_CODE  = B.DIV_CODE
+											         AND R1.ITEM_CODE = A.ITEM_CODE
+					LEFT JOIN BPR100T R2 WITH(NOLOCK) ON R2.COMP_CODE = R1.COMP_CODE
+												     AND R2.ITEM_CODE = R1.ITEM_CODE											         
+
+			WHERE A.COMP_CODE = #{S_COMP_CODE}
+			  AND A.IN_DIV_CODE = #{DIV_CODE}
+			  AND B.ORDER_DATE <![CDATA[>=]]> #{DATE_FR}
+			  AND B.ORDER_DATE <![CDATA[<=]]> #{DATE_TO}
+			  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}	 
+			  
+			  <if test="SELECT_GUBUN == &quot;C&quot;">
+			  AND B.CUSTOM_CODE = #{CUSTOM_CODE}	
+			  </if>
+			  
+			  <if test="SELECT_GUBUN == &quot;L&quot;">
+			  AND R2.ITEM_LEVEL1 = #{ITEM_LEVEL1}	
+			  </if>			  	
+			
+			
+	  		  <if test="CHART_GUBUN == &quot;1&quot;">
+				
+	            INSERT INTO #DVRYDATE_TMP(DVRY_DATE)           	
+	            	
+			     SELECT DISTINCT SUBSTRING(CAL_DATE, 1, 4) + '-' + RIGHT('0' + CONVERT(NVARCHAR(02), CAL_NO), 2)  AS DVRY_DATE
+			       FROM BCM400T WITH(NOLOCK)
+			         WHERE COMP_CODE  = #{S_COMP_CODE}
+			           AND CAL_TYPE   = '3'
+			           AND HOLY_TYPE != '0'
+					   AND CAL_DATE <![CDATA[>=]]>  @DVRY_DATE_MIN
+					   AND CAL_DATE <![CDATA[<=]]>  @DVRY_DATE_MAX
+				   
+		
+				SELECT X.DVRY_DATE AS MONTH
+				     , ISNULL(Y.C_RESP_RATE, 0) AS YEAR1
+					 , ISNULL(Y.Q_RESP_RATE, 0) AS YEAR2
+				FROM #DVRYDATE_TMP AS X
+				     LEFT JOIN (
+								SELECT D.CAL_NO  AS DVRY_DATE
+								     , CONVERT(NUMERIC(30,6), COUNT(CASE WHEN A.ORDER_Q - ISNULL(C.INOUT_Q, 0) <![CDATA[<=]]> 0 OR A.CONTROL_STATUS = '9' THEN 1 END)) / CONVERT(NUMERIC(30,6), COUNT(A.ITEM_CODE)) * 100.00 AS C_RESP_RATE-- 품목대응률
+									 , SUM(ISNULL(C.INOUT_Q, 0)) / SUM(A.ORDER_Q) *  100  AS Q_RESP_RATE-- 수량 대응률		
+								 FROM MPO200T A WITH(NOLOCK)
+										INNER JOIN MPO100T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+																		 AND A.DIV_CODE   = B.DIV_CODE
+																		 AND A.ORDER_NUM  = B.ORDER_NUM
+										LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+														  , SUM(ISNULL(INOUT_Q, 0)) AS INOUT_Q 
+														  , MAX(INOUT_DATE) AS INOUT_DATE
+													   FROM BTR100T WITH (NOLOCK)
+													  WHERE COMP_CODE = #{S_COMP_CODE}
+														AND DIV_CODE  = #{DIV_CODE}
+														AND INOUT_TYPE = '1'
+														AND CREATE_LOC = '2'
+													   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ) AS C ON  C.COMP_CODE   = A.COMP_CODE
+																														  AND  C.DIV_CODE    = A.IN_DIV_CODE
+																														  AND  C.ITEM_CODE   = A.ITEM_CODE
+																														  AND  C.ORDER_NUM   = A.ORDER_NUM
+																														  AND  C.ORDER_SEQ	 = A.ORDER_SEQ
+																														  
+																														  <if test="DVRY_GUBUN == &quot;D&quot;">
+																														  AND  C.INOUT_DATE <![CDATA[<=]]> A.DVRY_DATE	
+																														  </if>		
+																														  <if test="DVRY_GUBUN == &quot;I&quot;">
+																														  AND  C.INOUT_DATE <![CDATA[<=]]> A.INIT_DVRY_DATE	
+																														  </if>	
+																										  
+						                LEFT JOIN ( SELECT COMP_CODE, CAL_DATE, SUBSTRING(CAL_DATE, 1, 4)  + RIGHT('0' + CONVERT(NVARCHAR(02), CAL_NO), 2) AS CAL_NO
+										              FROM BCM400T WITH(NOLOCK)
+													 WHERE COMP_CODE  = #{S_COMP_CODE}
+													   AND CAL_TYPE   = '3'
+													   AND HOLY_TYPE != '0') AS D ON D.COMP_CODE = A.COMP_CODE
+													  <if test="DVRY_GUBUN == &quot;D&quot;">
+													  AND D.CAL_DATE  = A.DVRY_DATE		
+													  </if>		
+													  <if test="DVRY_GUBUN == &quot;I&quot;">
+													  AND D.CAL_DATE  = A.INIT_DVRY_DATE	
+													  </if>		
+													  
+										LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+																		 AND R1.DIV_CODE  = B.DIV_CODE
+																		 AND R1.ITEM_CODE = A.ITEM_CODE
+										LEFT JOIN BPR100T R2 WITH(NOLOCK) ON R2.COMP_CODE = R1.COMP_CODE
+																		 AND R2.ITEM_CODE = R1.ITEM_CODE
+										LEFT JOIN BPR000T R3 WITH(NOLOCK) ON R3.COMP_CODE = R2.COMP_CODE
+																		 AND R3.LEVEL1    = R2.ITEM_LEVEL1
+																		 AND R3.LEVEL2    = '*'
+																		 AND R3.LEVEL3    = '*'
+								WHERE A.COMP_CODE = #{S_COMP_CODE}
+								  AND A.IN_DIV_CODE = #{DIV_CODE}
+								  AND B.ORDER_DATE  <![CDATA[>=]]> #{DATE_FR}
+								  AND B.ORDER_DATE  <![CDATA[<=]]> #{DATE_TO}
+								  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}	 
+								  
+								  <if test="SELECT_GUBUN == &quot;C&quot;">
+								  AND B.CUSTOM_CODE = #{CUSTOM_CODE}	
+								  </if>
+								  
+								  <if test="SELECT_GUBUN == &quot;L&quot;">
+								  AND R2.ITEM_LEVEL1 = #{ITEM_LEVEL1}	
+								  </if>								 
+	
+								  GROUP BY D.CAL_NO 
+								  
+								  ) AS Y ON REPLACE(X.DVRY_DATE, '-', '') = Y.DVRY_DATE
+	
+	    	</if>  
+	    	
+	
+			<if test="CHART_GUBUN == &quot;2&quot;">
+				
+	            INSERT INTO #DVRYDATE_TMP(DVRY_DATE)           	
+	            	
+				SELECT DISTINCT LEFT(CONVERT(CHAR(10),DATEADD(D,NUMBER,@DVRY_DATE_MIN),120), 7) AS DVRY_DATE
+				  FROM MASTER..SPT_VALUES
+				 WHERE TYPE = 'P'
+				   AND NUMBER <![CDATA[<=]]> DATEDIFF(D, @DVRY_DATE_MIN, @DVRY_DATE_MAX)
+				   
+		
+				SELECT X.DVRY_DATE AS MONTH
+				     , ISNULL(Y.C_RESP_RATE, 0) AS YEAR1
+					 , ISNULL(Y.Q_RESP_RATE, 0) AS YEAR2
+				FROM #DVRYDATE_TMP AS X
+				     LEFT JOIN (
+							  <if test="DVRY_GUBUN == &quot;D&quot;">
+							  SELECT SUBSTRING(A.DVRY_DATE, 1, 6) AS DVRY_DATE
+							  </if>	
+							  	
+							  <if test="DVRY_GUBUN == &quot;I&quot;">
+							  SELECT SUBSTRING(A.INIT_DVRY_DATE, 1, 6) AS DVRY_DATE
+							  </if>					     
+								
+								     , CONVERT(NUMERIC(30,6), COUNT(CASE WHEN A.ORDER_Q - ISNULL(C.INOUT_Q, 0) <![CDATA[<=]]> 0 OR A.CONTROL_STATUS = '9' THEN 1 END)) / CONVERT(NUMERIC(30,6), COUNT(A.ITEM_CODE)) * 100.00 AS C_RESP_RATE-- 품목대응률
+									 , SUM(ISNULL(C.INOUT_Q, 0)) / SUM(A.ORDER_Q) *  100  AS Q_RESP_RATE-- 수량 대응률		
+								 FROM MPO200T A WITH(NOLOCK)
+										INNER JOIN MPO100T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+																		 AND A.DIV_CODE   = B.DIV_CODE
+																		 AND A.ORDER_NUM  = B.ORDER_NUM
+										LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+														  , SUM(ISNULL(INOUT_Q, 0)) AS INOUT_Q 
+														  , MAX(INOUT_DATE) AS INOUT_DATE
+													   FROM BTR100T WITH (NOLOCK)
+													  WHERE COMP_CODE = #{S_COMP_CODE}
+														AND DIV_CODE  = #{DIV_CODE}
+														AND INOUT_TYPE = '1'
+														AND CREATE_LOC = '2'
+													   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ) AS C ON  C.COMP_CODE   = A.COMP_CODE
+																														  AND  C.DIV_CODE    = A.IN_DIV_CODE
+																														  AND  C.ITEM_CODE   = A.ITEM_CODE
+																														  AND  C.ORDER_NUM   = A.ORDER_NUM
+																														  AND  C.ORDER_SEQ	 = A.ORDER_SEQ
+																														  <if test="DVRY_GUBUN == &quot;D&quot;">
+																														  AND  C.INOUT_DATE <![CDATA[<=]]> A.DVRY_DATE	
+																														  </if>		
+																														  <if test="DVRY_GUBUN == &quot;I&quot;">	
+																														  AND  C.INOUT_DATE <![CDATA[<=]]> A.INIT_DVRY_DATE	
+																														  </if>	
+	
+										LEFT JOIN BPR200T R1 WITH(NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+																		 AND R1.DIV_CODE  = B.DIV_CODE
+																		 AND R1.ITEM_CODE = A.ITEM_CODE
+										LEFT JOIN BPR100T R2 WITH(NOLOCK) ON R2.COMP_CODE = R1.COMP_CODE
+																		 AND R2.ITEM_CODE = R1.ITEM_CODE
+										LEFT JOIN BPR000T R3 WITH(NOLOCK) ON R3.COMP_CODE = R2.COMP_CODE
+																		 AND R3.LEVEL1    = R2.ITEM_LEVEL1
+																		 AND R3.LEVEL2    = '*'
+																		 AND R3.LEVEL3    = '*'
+								WHERE A.COMP_CODE = #{S_COMP_CODE}
+								  AND A.IN_DIV_CODE = #{DIV_CODE}
+								  AND B.ORDER_DATE  <![CDATA[>=]]> #{DATE_FR}
+								  AND B.ORDER_DATE  <![CDATA[<=]]> #{DATE_TO}
+								  AND R1.ITEM_ACCOUNT = #{ITEM_ACCOUNT}	 
+								  <if test="SELECT_GUBUN == &quot;C&quot;">
+								  AND B.CUSTOM_CODE = #{CUSTOM_CODE}	
+								  </if>
+								  
+								  <if test="SELECT_GUBUN == &quot;L&quot;">
+								  AND R2.ITEM_LEVEL1 = #{ITEM_LEVEL1}	
+								  </if>	
+								  
+								  <if test="DVRY_GUBUN == &quot;D&quot;">
+								  GROUP BY SUBSTRING(A.DVRY_DATE, 1, 6)	
+								  </if>	
+								  	
+								  <if test="DVRY_GUBUN == &quot;I&quot;">
+								  GROUP BY SUBSTRING(A.INIT_DVRY_DATE, 1, 6)
+								  </if>	
+							) AS Y ON REPLACE(X.DVRY_DATE, '-', '') = Y.DVRY_DATE		
+
+	              WHERE REPLACE(X.DVRY_DATE, '-', '') <![CDATA[<=]]> SUBSTRING(@DVRY_DATE_MAX, 1, 6) 
+
+    		</if> 
+    	</if>
+    	
+	</select>
+	
+
+</mapper>

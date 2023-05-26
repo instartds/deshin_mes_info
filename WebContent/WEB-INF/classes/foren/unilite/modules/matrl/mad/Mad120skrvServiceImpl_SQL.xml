@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mad120skrvServiceImpl">
+					
+	<select id="mad120skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+
+
+    DECLARE @CompCode       NVARCHAR(08) /* 법인코드    */
+          , @UserId         NVARCHAR(100) /* 사용자ID    */
+          , @LangType       NVARCHAR(2)  /* 언어구분    */
+          , @RefItem        NVARCHAR(01) /* 명칭 참조 유형  */
+          , @DateFormat     NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+
+	SET @CompCode = #{S_COMP_CODE}
+    SET @UserId   = #{S_USER_ID}
+    SET @LangType = #{S_LANG_CODE}   
+
+    /* 명칭 참조 유형 */
+    SELECT TOP 1 @RefItem = REF_ITEM
+      FROM BSA300T WITH (NOLOCK)
+     WHERE USER_ID = @UserId
+
+    SET @RefItem = ISNULL(@RefItem, N'0')
+
+    /* 날짜 포맷 유형 설정 */
+    SELECT TOP 1 @DateFormat = CODE_NAME
+      FROM BSA100T WITH (NOLOCK)
+     WHERE COMP_CODE = @CompCode
+       AND MAIN_CODE = N'B044'
+       AND REF_CODE1 = N'Y'
+
+    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+    		
+	SELECT 
+		A.COMP_CODE,
+		A.DIV_CODE,
+		A.INOUT_CODE AS CUSTOM_CODE, 
+		A.CUSTOM_NAME,
+		SUM(A.SUM_INOUT_Q)        AS SUM_INOUT_Q,
+		SUM(A.SUM_INOUT_I)        AS SUM_INOUT_I,
+		SUM(A.SUM_INOUT_TAX_AMT)  AS SUM_INOUT_TAX_AMT,
+		SUM(A.TOTAL_SUM_INOUT_I)  AS TOTAL_SUM_INOUT_I,
+		SUM(A.SUM_RETURN_Q)       AS SUM_RETURN_Q,
+		SUM(A.SUM_RETURN_I)       AS SUM_RETURN_I,
+		SUM(A.SUM_RETURN_TAX_AMT) AS SUM_RETURN_TAX_AMT,
+		SUM(A.TOTAL_SUM_RETURN_I) AS TOTAL_SUM_RETURN_I,
+		SUM(A.SUM_STOCK_Q)	      AS SUM_STOCK_Q,
+		SUM(A.SUM_STOCK_I)	      AS SUM_STOCK_I,
+		SUM(A.SUM_STOCK_TAX_AMT)  AS SUM_STOCK_TAX_AMT,
+		SUM(A.TOTAL_SUM_STOCK_I)  AS TOTAL_SUM_STOCK_I
+
+	 FROM 
+		(
+		SELECT 
+				A.COMP_CODE,
+				A.DIV_CODE,
+				A.INOUT_CODE,
+				B.CUSTOM_NAME, 
+				A.INOUT_DATE,
+				A.WH_CODE,
+				ISNULL(A.INOUT_Q,0) AS SUM_INOUT_Q,	/*입고수량*/
+				ISNULL(A.INOUT_I,0) AS SUM_INOUT_I, /*입고금액*/
+				ISNULL(A.INOUT_TAX_AMT,0) AS SUM_INOUT_TAX_AMT,	 /*입고부가세*/
+				ISNULL(A.INOUT_I,0) + ISNULL(A.INOUT_TAX_AMT,0) AS TOTAL_SUM_INOUT_I,	/*입고합계*/
+				0	AS	SUM_RETURN_Q,
+				0	AS	SUM_RETURN_I,
+				0	AS	SUM_RETURN_TAX_AMT,
+				0	AS	TOTAL_SUM_RETURN_I,
+				0	AS	SUM_STOCK_Q,
+				0	AS	SUM_STOCK_I,
+				0	AS	SUM_STOCK_TAX_AMT,
+				0	AS	TOTAL_SUM_STOCK_I
+			FROM BTR100T A WITH (NOLOCK)
+			INNER JOIN BCM100T B WITH (NOLOCK) ON B.COMP_CODE	=	A.COMP_CODE
+											AND B.CUSTOM_CODE	=	A.INOUT_CODE
+			INNER JOIN BPR100T C WITH (NOLOCK) ON C.COMP_CODE	=	A.COMP_CODE
+											AND C.ITEM_CODE		=	A.ITEM_CODE
+			INNER JOIN BSA210T F WITH (NOLOCK) ON F.COMP_CODE = A.COMP_CODE
+              									AND F.TYPE_LEVEL = A.DIV_CODE
+              									AND F.TREE_CODE = A.DEPT_CODE      	  
+
+			WHERE	A.COMP_CODE = @CompCode
+			
+			<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+					AND A.DIV_CODE = #{DIV_CODE}
+					</if>
+			<if test="@foren.Ognl@isNotEmpty(INOUT_DATE_FR)">
+					AND A.INOUT_DATE &gt;= #{INOUT_DATE_FR}
+					</if>
+			<if test="@foren.Ognl@isNotEmpty(INOUT_DATE_TO)">
+					AND A.INOUT_DATE &lt;= #{INOUT_DATE_TO}
+					</if>
+			<if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+					AND A.WH_CODE = #{WH_CODE}
+					</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+					AND A.INOUT_CODE &gt;= #{CUSTOM_CODE}
+					</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE2)">
+					AND A.INOUT_CODE &lt;= #{CUSTOM_CODE2}
+					</if>
+	    	<if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">		/*부서*/
+		    	AND    F.TREE_LEVEL          LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =F.COMP_CODE AND TYPE_LEVEL=F.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+			</if>
+					AND	A.INOUT_TYPE		= '1'
+					AND A.CREATE_LOC		= '2'
+					AND A.INOUT_CODE_TYPE = '4'
+
+		UNION ALL
+
+		SELECT 
+				A.COMP_CODE,
+				A.DIV_CODE,
+				A.INOUT_CODE, 
+				B.CUSTOM_NAME, 
+				A.INOUT_DATE,
+				A.WH_CODE,
+				0	AS	SUM_INOUT_Q,
+				0	AS	SUM_INOUT_I,
+				0	AS	SUM_INOUT_TAX_AMT,
+				0	AS	TOTAL_SUM_INOUT_I,
+				ISNULL(A.INOUT_Q,0)*(-1) AS SUM_RETURN_Q,	/*반품수량*/
+				ISNULL(A.INOUT_I,0)*(-1) AS SUM_RETURN_I, /*반품금액*/
+				ISNULL(A.INOUT_TAX_AMT,0)*(-1) AS SUM_RETURN_TAX_AMT,	 /*반품부가세*/
+				ISNULL(A.INOUT_I,0)*(-1) + ISNULL(A.INOUT_TAX_AMT,0)*(-1) AS TOTAL_SUM_RETURN_I,	/*반품합계*/
+				0	AS	SUM_STOCK_Q,
+				0	AS	SUM_STOCK_I,
+				0	AS	SUM_STOCK_TAX_AMT,
+				0	AS	TOTAL_SUM_STOCK_I
+			FROM BTR100T A WITH (NOLOCK)
+				INNER JOIN BCM100T B WITH (NOLOCK) ON B.COMP_CODE	=	A.COMP_CODE
+												AND B.CUSTOM_CODE	=	A.INOUT_CODE
+				INNER JOIN BPR100T C WITH (NOLOCK) ON C.COMP_CODE	=	A.COMP_CODE
+												AND C.ITEM_CODE		=	A.ITEM_CODE
+				INNER JOIN BSA210T F WITH (NOLOCK) ON F.COMP_CODE = A.COMP_CODE
+              									AND F.TYPE_LEVEL = A.DIV_CODE
+              									AND F.TREE_CODE = A.DEPT_CODE
+			WHERE	A.COMP_CODE = @CompCode
+	
+			<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+					AND A.DIV_CODE = #{DIV_CODE}
+					</if>
+			<if test="@foren.Ognl@isNotEmpty(INOUT_DATE_FR)">
+					AND A.INOUT_DATE &gt;= #{INOUT_DATE_FR}
+					</if>
+			<if test="@foren.Ognl@isNotEmpty(INOUT_DATE_TO)">
+					AND A.INOUT_DATE &lt;= #{INOUT_DATE_TO}
+					</if>
+			<if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+					AND A.WH_CODE = #{WH_CODE}
+					</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+					AND A.INOUT_CODE &gt;= #{CUSTOM_CODE}
+					</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE2)">
+					AND A.INOUT_CODE &lt;= #{CUSTOM_CODE2}
+					</if>
+	    	<if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">		/*부서*/
+		    	AND    F.TREE_LEVEL          LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =F.COMP_CODE AND TYPE_LEVEL=F.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+			</if>
+					AND	A.INOUT_TYPE		= '4'
+					AND A.CREATE_LOC		= '2'
+					AND A.INOUT_CODE_TYPE   = '4'
+
+		UNION ALL
+		
+			SELECT 
+				A.COMP_CODE,
+				A.DIV_CODE,
+				A.CUSTOM_CODE, 
+				B.CUSTOM_NAME, 
+				A.LAST_COUNT_DATE,
+				A.WH_CODE,
+				0	AS	SUM_INOUT_Q,
+				0	AS	SUM_INOUT_I,
+				0	AS	SUM_INOUT_TAX_AMT,
+				0	AS	TOTAL_SUM_INOUT_I,
+				0	AS SUM_RETURN_Q,	/*반품수량*/
+				0	AS SUM_RETURN_I, /*반품금액*/
+				0	AS SUM_RETURN_TAX_AMT,	 /*반품부가세*/
+				0	AS TOTAL_SUM_RETURN_I,	/*반품합계*/
+				ISNULL(A.STOCK_Q,0) AS SUM_STOCK_Q,		/*재고수량*/
+
+				CASE WHEN C.TAX_TYPE = '1' AND B.TAX_TYPE = '1' THEN
+							ISNULL(A.STOCK_I,0)
+					 WHEN C.TAX_TYPE = '1' AND B.TAX_TYPE = '2' THEN
+							UNILITE.fnAmtWonCalc(ISNULL(A.STOCK_I,0)/1.1,B.WON_CALC_BAS) 
+					ELSE ISNULL(A.STOCK_I,0)
+				END	AS SUM_RETURN_I, /*재고금액*/
+
+				CASE WHEN C.TAX_TYPE = '1' AND B.TAX_TYPE = '1' THEN
+							UNILITE.fnAmtWonCalc(ISNULL(A.STOCK_I,0)*0.1,B.WON_CALC_BAS) 
+					 WHEN C.TAX_TYPE = '1' AND B.TAX_TYPE = '2' THEN
+							ISNULL(A.STOCK_I,0) - UNILITE.fnAmtWonCalc(ISNULL(A.STOCK_I,0)/1.1,B.WON_CALC_BAS) 
+					ELSE 0
+				END	AS SUM_RETURN_TAX_AMT,	 /*재고부가세*/
+				
+				CASE WHEN C.TAX_TYPE = '1' AND B.TAX_TYPE = '1' THEN
+							ISNULL(A.STOCK_I,0) + UNILITE.fnAmtWonCalc(ISNULL(A.STOCK_I,0)*0.1,B.WON_CALC_BAS) 
+					 WHEN C.TAX_TYPE = '1' AND B.TAX_TYPE = '2' THEN
+							ISNULL(A.STOCK_I,0)
+					ELSE ISNULL(A.STOCK_I,0)
+				END	AS TOTAL_SUM_RETURN_I	/*재고합계*/
+
+				FROM BIV150T A WITH (NOLOCK)
+				INNER JOIN BCM100T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+													AND B.CUSTOM_CODE = A.CUSTOM_CODE
+				INNER JOIN BPR100T C WITH (NOLOCK) ON C.COMP_CODE	=	A.COMP_CODE
+													AND C.ITEM_CODE	=	A.ITEM_CODE
+			
+				WHERE	A.COMP_CODE = @CompCode
+			
+				<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+					AND A.DIV_CODE = #{DIV_CODE}
+					</if>
+				<if test="@foren.Ognl@isNotEmpty(INOUT_DATE_FR)">
+					AND A.LAST_COUNT_DATE &gt;= #{INOUT_DATE_FR}
+					</if>
+				<if test="@foren.Ognl@isNotEmpty(INOUT_DATE_TO)">
+					AND A.LAST_COUNT_DATE &lt;= #{INOUT_DATE_TO}
+					</if>
+				<if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+					AND A.WH_CODE = #{WH_CODE}
+					</if>
+				<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+					AND A.CUSTOM_CODE &gt;= #{CUSTOM_CODE}
+					</if>
+				<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE2)">
+					AND A.CUSTOM_CODE &lt;= #{CUSTOM_CODE2}
+					</if>
+		) A 
+
+GROUP BY A.COMP_CODE,A.DIV_CODE,A.INOUT_CODE,A.CUSTOM_NAME
+
+
+SET @END_TIME   = GETDATE()
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'mad120skrv', '매입처별 입고/재고현황 조회', #{INOUT_DATE_FR}, #{INOUT_DATE_TO}, @DIFF_TIME
+
+
+    SET NOCOUNT OFF
+    SET ARITHABORT OFF
+END 
+    </select>
+	
+<select id="mad120skrvServiceImpl.userWhcode" parameterType="Map" resultType="rMap">
+SELECT
+	A.WH_CODE
+FROM BSA210T A WITH(NOLOCK)
+	LEFT JOIN BSA300T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+									AND B.DEPT_CODE = A.TREE_CODE
+WHERE A.COMP_CODE = #{S_COMP_CODE}
+AND B.USER_ID = #{S_USER_ID}
+
+</select>	
+</mapper>

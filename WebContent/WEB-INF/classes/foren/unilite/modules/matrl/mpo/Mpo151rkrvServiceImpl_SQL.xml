@@ -1,0 +1,271 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mpo151rkrvServiceImpl">
+    <select id="mpo151rkrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+            /*mpo150rkrv.Cmpo150rkrv[fnMpo150QStd]query01*/
+                BEGIN
+                    SET NOCOUNT ON
+                    SET ARITHABORT ON
+
+                    DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+                          , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+
+                    SET @CompCode = 'MASTER'
+
+                    /* 날짜 포맷 유형 설정 */
+                    SELECT TOP 1 @DateFormat = CODE_NAME
+                      FROM BSA100T WITH (NOLOCK)
+                     WHERE COMP_CODE = @CompCode
+                       AND MAIN_CODE = N'B044'
+                       AND REF_CODE1 = N'Y'
+
+                    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+                    /* 데이터 조회 */
+
+                    SELECT
+                       CAST(0 AS BIT)          AS CHOICE         /*선택*/
+                     , A.MAIL_YN
+                     , A.AGREE_STATUS          AS AGREE_STATUS_CD
+
+                     , '2'                     AS CREATE_LOC
+                     , A.ORDER_NUM             AS ORDER_NUM
+
+                     , (CASE WHEN ISNULL(A.ORDER_DATE, '') = ''
+                        THEN ''
+                     ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.ORDER_DATE, 1, 4))
+                               , 'MM'  , SUBSTRING(A.ORDER_DATE, 5, 2))
+                               , 'DD'  , SUBSTRING(A.ORDER_DATE, 7, 2))
+                            END)                AS ORDER_DATE
+                     , C.CUSTOM_NAME         AS CUSTOM_NAME
+                     , C.CUSTOM_FULL_NAME         AS CUSTOM_FULL_NAME
+					 
+                     , SUM(B.ORDER_O)        AS ORDER_O
+                     , A.MONEY_UNIT          AS MONEY_UNIT
+                     , A.EXCHG_RATE_O        AS EXCHG_RATE_O
+                     , A.REMARK              AS REMARK
+                     , A.LC_NUM              AS LC_NUM
+                     , A.DIV_CODE
+                     , A.CUSTOM_CODE
+                     , SUM(B.ORDER_Q) AS ORDER_Q
+                     , K1.TOP_ITEM_NAME + K.ORDER_CNT AS ITEM_CODE
+                    -- , CASE WHEN MAX(A.PRINT_YN) = 'Y' THEN '출력'
+                    --         ELSE '미출력'
+                    --   END AS PRINT_YN
+                     , ISNULL(MAX(A.PRINT_YN), 'N') AS PRINT_YN
+                     , ISNULL(MAX(A.PRINT_YN2), 'N') AS PRINT_YN2
+                  FROM MPO100T A WITH (NOLOCK)
+                               INNER JOIN MPO200T B WITH (NOLOCK)
+                                       ON A.COMP_CODE = B.COMP_CODE
+                                      AND A.ORDER_NUM = B.ORDER_NUM
+                                LEFT JOIN BCM100T C WITH (NOLOCK)
+                                       ON A.COMP_CODE   = C.COMP_CODE
+                                      AND A.CUSTOM_CODE = C.CUSTOM_CODE
+                                LEFT JOIN (
+                                                SELECT COMP_CODE, CUSTOM_CODE, PRSN_NAME, MAIL_ID, SEQ
+                                                FROM BCM120T A WITH (NOLOCK)
+                                                WHERE COMP_CODE=@CompCode
+                                                AND MAIN_BILL_YN='Y'
+                                                AND SEQ = (SELECT MIN(SEQ) FROM BCM120T WITH (NOLOCK) WHERE COMP_CODE=A.COMP_CODE AND CUSTOM_CODE=A.CUSTOM_CODE)
+                                          ) C2
+                                       ON C.COMP_CODE   = C2.COMP_CODE
+                                      AND C.CUSTOM_CODE = C2.CUSTOM_CODE
+                                LEFT JOIN (
+                                              SELECT CASE WHEN COUNT(1) = 1 THEN ''
+                                                          ELSE '외 ' + CONVERT(NVARCHAR(5),COUNT(1) - 1 ) + '건'
+                                                     END  AS ORDER_CNT
+                                                    ,AA.COMP_CODE
+                                                    ,AA.ORDER_NUM
+                                                    ,AA.DIV_CODE
+                                              FROM MPO200T AA INNER JOIN BPR100T BB ON AA.COMP_CODE = BB.COMP_CODE
+                                                                                   AND AA.ITEM_CODE = BB.ITEM_CODE
+                                              WHERE AA.COMP_CODE = @CompCode
+                                              GROUP BY AA.COMP_CODE, AA.DIV_CODE, AA.ORDER_NUM
+                                            ) K  ON  A.COMP_CODE = K.COMP_CODE
+                                                  AND A.ORDER_NUM = K.ORDER_NUM
+                             LEFT JOIN (
+                                              SELECT AA.COMP_CODE
+                                                    ,AA.ORDER_NUM
+                                                    ,AA.DIV_CODE
+                                                    ,MAX(BB.ITEM_NAME) AS TOP_ITEM_NAME
+                                              FROM MPO200T AA INNER JOIN BPR100T BB ON AA.COMP_CODE = BB.COMP_CODE
+                                                                                   AND AA.ITEM_CODE = BB.ITEM_CODE
+                                              WHERE AA.COMP_CODE = @CompCode
+                                                AND AA.ORDER_SEQ = (SELECT MIN(ORDER_SEQ) FROM MPO200T WHERE COMP_CODE = AA.COMP_CODE
+                                                                                                         AND DIV_CODE  = AA.DIV_CODE
+                                                                                                         AND ORDER_NUM = AA.ORDER_NUM)
+                                              GROUP BY AA.COMP_CODE, AA.DIV_CODE, AA.ORDER_NUM
+                                            ) K1  ON  A.COMP_CODE = K1.COMP_CODE
+                                                  AND A.ORDER_NUM = K1.ORDER_NUM
+
+                 WHERE     A.COMP_CODE       = @CompCode
+                    AND A.DIV_CODE        = #{DIV_CODE}
+                     <if test="@foren.Ognl@isNotEmpty(ORDER_DATE_FR)">
+                          AND A.ORDER_DATE &gt;= #{ORDER_DATE_FR}
+                     </if>
+                     <if test="@foren.Ognl@isNotEmpty(ORDER_DATE_TO)">
+                          AND A.ORDER_DATE &lt;= #{ORDER_DATE_TO}
+                     </if>
+                     <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_FR)">
+                         AND     A.CUSTOM_CODE      =  #{CUSTOM_CODE_FR}            /* 거래처(FR)    */
+                     </if>
+					<!--2021.08 표준화 작업 Start-->
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_FR) and @foren.Ognl@isNotEmpty(CUSTOM_NAME_FR)">
+						AND A.CUSTOM_CODE = #{CUSTOM_CODE_FR}	/* 거래처(FR)    */
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_FR) and @foren.Ognl@isEmpty(CUSTOM_NAME_FR)">
+						AND A.CUSTOM_CODE LIKE #{CUSTOM_CODE_FR} + '%'	/* 거래처(FR)    */
+					</if>
+					<if test="@foren.Ognl@isEmpty(CUSTOM_CODE_FR) and @foren.Ognl@isNotEmpty(CUSTOM_NAME_FR)">
+						AND		(C.CUSTOM_NAME LIKE N'%' + #{CUSTOM_CODE_FR} + N'%')
+					</if>
+					<!--2021.08 표준화 작업 End-->
+					<!--2021.08 표준화 작업 Start-->
+					<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+						AND B.ITEM_CODE = #{ITEM_CODE}
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+						AND B.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+					</if>
+					<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+						AND		(K1.TOP_ITEM_NAME  LIKE N'%' + #{ITEM_CODE} + N'%')
+					</if>
+					<!--2021.08 표준화 작업 End-->
+                     <if test="ORDER_TYPE == &quot;2&quot;">
+                         AND A.ORDER_TYPE        =  '1'
+                     </if>
+                     <if test="ORDER_TYPE == &quot;4&quot;">
+                         AND A.ORDER_TYPE        =  '4'
+                     </if>                     
+                     <if test="ORDER_TYPE == &quot;6&quot;">
+                         AND A.ORDER_TYPE        =  '5'
+                     </if>
+                 GROUP BY A.ORDER_NUM, A.AGREE_STATUS, A.COMP_CODE , A.ORDER_DATE  , C.CUSTOM_NAME
+                        , A.MONEY_UNIT, A.EXCHG_RATE_O, A.RECEIPT_TYPE
+                        , A.REMARK      , A.LC_NUM    , A.PROJECT_NO, A.MAIL_YN,  C2.PRSN_NAME, C2.MAIL_ID, A.DIV_CODE
+                        , A.CUSTOM_CODE, C.CUSTOM_FULL_NAME, K.ORDER_CNT, K1.TOP_ITEM_NAME
+
+
+             SET NOCOUNT OFF
+             SET ARITHABORT OFF
+
+            END
+    </select>
+
+	<select id="mpo151rkrvServiceImpl.selectMasterList" parameterType="Map" resultType="rMap">
+		DECLARE @CompCode            NVARCHAR(08)  /* 법인코드             */
+		      , @UserId              NVARCHAR(100) /* 사용자ID             */
+		      , @LangType            NVARCHAR(2)   /* 언어구분             */
+		      , @RefItem             NVARCHAR(01)  /* 명칭 참조 유형       */
+		      , @DateFormat          NVARCHAR(10)  /* 날짜 포맷 유형 설정  */
+		      , @PRINT_USER          NVARCHAR(100) /* (선택) 출력자        */
+		      , @VIEW_PRINT_INFO_YN  NVARCHAR(01)  /* 인쇄출력정보 여부    */
+
+		SET @CompCode = #{S_COMP_CODE}
+		SET @UserId   = #{S_USER_ID}
+		SET @LangType = #{S_LANG_CODE}
+
+		/* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+		  FROM BSA300T WITH (NOLOCK)
+		 WHERE USER_ID = @UserId
+
+		SET @RefItem = ISNULL(@RefItem, N'0')
+
+		/* 날짜 포맷 유형 설정 */
+		SELECT TOP 1 @DateFormat = CODE_NAME
+		 FROM BSA100T WITH (NOLOCK)
+		WHERE COMP_CODE = @CompCode
+		  AND MAIN_CODE = N'B044'
+		  AND REF_CODE1 = N'Y'
+
+		SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+		SELECT @PRINT_USER = USER_NAME
+		 FROM BSA300T WITH(NOLOCK)
+		WHERE COMP_CODE = @CompCode
+		  AND USER_ID   = @UserId
+		
+		SELECT @VIEW_PRINT_INFO_YN = SUB_CODE
+		  FROM BSA100T WITH(NOLOCK)
+		 WHERE COMP_CODE = @CompCode
+		   AND MAIN_CODE = 'B249'
+		   AND SUB_CODE != '$'
+		   AND REF_CODE1 = 'Y'
+		
+		/* 데이터 조회 */
+		SELECT A.ORDER_NUM
+		     , MAX(F.CODE_NAME)                                                                       AS ORDER_PRSN
+		     , MAX(A2.MONEY_UNIT)                                                                     AS MONEY_UNIT
+		     , (SELECT SUM(S1.ORDER_O)
+		          FROM MPO200T S1 WITH(NOLOCK)
+		         WHERE S1.ORDER_NUM = A.ORDER_NUM)                                                    AS TOT_O
+		     , MAX(J2.TREE_NAME)                                                                      AS DEPT_NAME
+		     , MAX(D.CUSTOM_NAME)                                                                     AS CUSTOM_NAME
+		     , MAX(K1.PAY_DURING)                                                                     AS PAY_DURING
+		     , ISNULL(MAX(K4.CODE_NAME), '익월 말')                                                      AS RECEIPT_DAY --20200317 수정: 없을 경우 익월말
+		     , CASE WHEN FLOOR(MIN(C.PURCH_LDTIME) / 7) = 0 THEN '1주 이상'
+		            ELSE CONVERT(NVARCHAR, FLOOR(MIN(C.PURCH_LDTIME) / 7)) + '주 이상'
+		       END                                                                                    AS DVRY_PERIOD --20200602 추가
+		  FROM       MPO200T A  WITH (NOLOCK)
+		  INNER JOIN MPO100T A2 WITH (NOLOCK) ON A2.COMP_CODE   = A.COMP_CODE
+		                                     AND A2.DIV_CODE    = A.DIV_CODE
+		                                     AND A2.CUSTOM_CODE = A.CUSTOM_CODE
+		                                     AND A2.ORDER_NUM   = A.ORDER_NUM
+		  INNER JOIN BPR100T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+		                                     AND B.ITEM_CODE    = A.ITEM_CODE
+		  INNER JOIN BPR200T C  WITH (NOLOCK) ON C.COMP_CODE    = A.COMP_CODE
+		                                     AND C.DIV_CODE     = A.DIV_CODE
+		                                     AND C.ITEM_CODE    = A.ITEM_CODE
+		  INNER JOIN BCM100T D  WITH (NOLOCK) ON D.COMP_CODE    = A.COMP_CODE
+		                                     AND D.CUSTOM_CODE  = A.CUSTOM_CODE
+		  INNER JOIN BOR120T E  WITH (NOLOCK) ON E.COMP_CODE    = A.COMP_CODE
+		                                     AND E.DIV_CODE     = A.DIV_CODE
+		  LEFT  JOIN BSA100T F  WITH (NOLOCK) ON F.COMP_CODE    = A.COMP_CODE
+		                                     AND F.MAIN_CODE    = 'M201'
+		                                     AND F.SUB_CODE     = A2.ORDER_PRSN
+		  LEFT  JOIN BSA100T I  WITH (NOLOCK) ON I.COMP_CODE    = A.COMP_CODE
+		                                     AND I.SUB_CODE    != N'$'
+		                                     AND I.MAIN_CODE    = 'M008'
+		                                     AND I.REF_CODE1    = 'Y'
+		  LEFT  JOIN BSA300T I2 WITH (NOLOCK) ON I2.COMP_CODE   = A.COMP_CODE
+		                                     AND I2.USER_ID     = F.REF_CODE2
+		  LEFT  JOIN BSA220T J  WITH (NOLOCK) ON J.COMP_CODE    = A.COMP_CODE
+		                                     AND J.TREE_CODE    = A.WH_CODE
+		  LEFT  JOIN BSA210T J2 WITH (NOLOCK) ON J2.COMP_CODE   = A.COMP_CODE
+		                                     AND J2.TREE_CODE   = I2.DEPT_CODE
+		  LEFT  JOIN BSA100T K  WITH (NOLOCK) ON K.COMP_CODE    = A.COMP_CODE
+		                                     AND K.MAIN_CODE    = 'B020'
+		                                     AND K.SUB_CODE     = C.ITEM_ACCOUNT
+		  LEFT  JOIN BCM103T K1 WITH (NOLOCK) ON K1.COMP_CODE   = A.COMP_CODE
+		                                     AND K1.CUSTOM_CODE = A.CUSTOM_CODE
+		  LEFT  JOIN BSA100T K4 WITH (NOLOCK) ON K4.COMP_CODE   = A.COMP_CODE
+		                                     AND K4.MAIN_CODE   = 'B034'
+		                                     AND K4.SUB_CODE    = D.RECEIPT_DAY
+		 WHERE A.COMP_CODE = @CompCode
+		   AND A.DIV_CODE = #{DIV_CODE}
+		   AND ((I.SUB_CODE = '1' AND A2.AGREE_STATUS = '2')
+		        OR
+		        (I.SUB_CODE = '1' AND A2.AGREE_STATUS = '1' AND ISNULL(I.REF_CODE3,'N') = 'Y')
+		        OR
+		        (I.SUB_CODE = '2' AND A2.AGREE_STATUS IS NOT NULL))
+		   --AND A2.ORDER_TYPE  != N'4'    /*외주*/
+		   --AND A.CONTROL_STATUS NOT IN ('8', '9')
+		   AND
+		<foreach collection="ORDER_NUMS" item="item" separator="OR" close=")" open="(">
+		      ( A.ORDER_NUM = '${item.ORDER_NUM}')
+		</foreach>
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.ORDER_NUM
+		--ORDER BY A.ORDER_NUM, A.ORDER_SEQ, A.ITEM_CODE
+	</select>
+	<update  id="mpo151rkrvServiceImpl.updatePrintYn" parameterType="Map" >
+		UPDATE  MPO100T
+		   SET  PRINT_YN    = ISNULL(#{PRINT_YN},  'N')
+		      , PRINT_YN2   = ISNULL(#{PRINT_YN2}, 'N')
+		 WHERE  COMP_CODE   = #{S_COMP_CODE}
+		   AND  DIV_CODE    = #{DIV_CODE}
+		   AND  CUSTOM_CODE = #{CUSTOM_CODE}
+           AND  ORDER_NUM   = #{ORDER_NUM}
+		   
+	</update>
+</mapper>

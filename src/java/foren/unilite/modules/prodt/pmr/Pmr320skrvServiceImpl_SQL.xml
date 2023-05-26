@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="pmr320skrvServiceImpl">
+
+	<select id="pmr320skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+
+		   	/* pmr320skrv.Cpmr320skrv [fnPrpt300QSt1] QUERY01 */
+
+		/*  생산진척현황 조회 (수주별) */
+
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+
+			DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+			      , @UserId			NVARCHAR(100)	/* 사용자ID */
+			      , @LangType		NVARCHAR(2)		/* 언어구분 */
+			      , @RefItem		NVARCHAR(01)
+			      , @DateFormat		NVARCHAR(10)
+
+			SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_CODE}
+			SET @LangType = N'KR'
+
+			/* 명칭 참조 유형 */
+			SELECT TOP 1 @RefItem = REF_ITEM
+				FROM BSA300T WITH (NOLOCK)
+				WHERE COMP_CODE = @CompCode
+					AND USER_ID = @UserId
+
+			SET @RefItem = ISNULL(@RefItem, N'0')
+
+			/* 날짜 포맷 유형 설정 */
+			SELECT TOP 1 @DateFormat = CODE_NAME
+				FROM BSA100T WITH (NOLOCK)
+				WHERE COMP_CODE = @CompCode
+				AND MAIN_CODE = N'B044'
+				AND REF_CODE1 = N'Y'
+
+			SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+		/*  4. 생산진척현황 조회 (수주별) */
+			SELECT (A.SO_NUM + '-' + LTRIM(STR(A.SO_SEQ))) AS ORDER_NUM, C2.ITEM_ACCOUNT
+		         , A.ITEM_CODE
+		         , CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+		                ELSE C1.ITEM_NAME
+		           END                                              AS ITEM_NAME
+		         , C1.SPEC
+		         , C2.OUT_METH
+		         , C2.RESULT_YN
+		         , A.WORK_SHOP_CODE
+				 , C4.PROG_WORK_NAME
+				 , A.PRODT_WKORD_DATE
+
+				 , A.WKORD_NUM
+				 , uniLITE.fnGetUserdateComp(@CompCode, A.PRODT_START_DATE) AS PRODT_START_DATE
+		         , uniLITE.fnGetUserdateComp(@CompCode, A.PRODT_END_DATE)   AS PRODT_END_DATE
+		         , A.WKORD_Q
+		         , A.PRODT_Q
+		         , CASE WHEN B.LINE_END_YN = 'Y' THEN B1.WK_RATE ELSE 0 END AS WK_RATE
+		         , CASE WHEN B.LINE_END_YN = 'Y' THEN B1.BAL_Q	 ELSE 0 END AS BAL_Q
+		         , CASE WHEN B.LINE_END_YN = 'Y' THEN ISNULL(D.RECEIPT_Q, 0)      ELSE 0 END   AS RECEIPT_Q
+		         , CASE WHEN B.LINE_END_YN = 'Y' THEN ISNULL(E.INSPEC_Q,  0)      ELSE 0 END   AS INSPEC_Q
+		         , CASE WHEN B.LINE_END_YN = 'Y' THEN ISNULL(E.GOOD_INSPEC_Q, 0)  ELSE 0 END   AS GOOD_INSPEC_Q
+		         , CASE WHEN B.LINE_END_YN = 'Y' THEN ISNULL(E.BAD_INSPEC_Q,  0)  ELSE 0 END   AS BAD_INSPEC_Q
+		         , CASE WHEN B.LINE_END_YN = 'Y' THEN A.PRODT_Q ELSE 0 END - CASE WHEN B.LINE_END_YN = 'Y' THEN ISNULL(E.INSPEC_Q,  0)      ELSE 0 END                AS NOT_INSPEC_Q
+		         , CASE WHEN B.LINE_END_YN = 'Y' THEN ISNULL(C.IN_STOCK_Q, 0)     ELSE 0 END   AS IN_STOCK_Q
+				 , B.LOT_NO, B.EXPIRATION_DATE, B.CONTROL_STATUS
+				 , H.INIT_DVRY_DATE, H.DVRY_DATE
+				 , G.CUSTOM_CODE, C3.CUSTOM_NAME
+				 , B.HAZARD_DATE, B.MICROBE_DATE
+				 , B.BAD_WORK_Q
+				 , B.SAVING_Q
+				 , B.LOSS_Q
+				 , B.ETC_Q
+				 
+				 , B.MAN_HOUR
+				 , B.MAN_CNT
+				 
+				 , ISNULL(CONVERT(NVARCHAR(2),B.WORK_TIME_SUM / 60) +'시간'+ CONVERT(NVARCHAR(2),B.WORK_TIME_SUM % 60) + '분','0시간0분') AS WORK_TIME_SUM
+				  FROM PMP100T A WITH (NOLOCK)
+				  LEFT JOIN (SELECT COMP_CODE, DIV_CODE, WKORD_NUM, WK_PLAN_NUM,PRODT_DATE, PROG_WORK_CODE, LOT_NO, LINE_END_YN, MAX(EXPIRATION_DATE) AS EXPIRATION_DATE, SUM(PASS_Q) AS PASS_Q, MAX(CONTROL_STATUS) AS CONTROL_STATUS
+								,   MAX(CASE WHEN HAZARD_CHECK = 'Y' THEN PRODT_DATE ELSE NULL END) AS HAZARD_DATE,   MAX(CASE WHEN MICROBE_CHECK = 'Y' THEN PRODT_DATE ELSE NULL END) AS MICROBE_DATE
+								,   MAX(BAD_WORK_Q) AS BAD_WORK_Q
+								, 	MAX(SAVING_Q) AS SAVING_Q
+								,   MAX(LOSS_Q) AS LOSS_Q
+								,   MAX(ETC_Q) AS ETC_Q
+								
+								,	SUM(MAN_HOUR) AS MAN_HOUR	--투입공수
+								,	SUM(MAN_CNT) AS MAN_CNT 	--투입인원
+								,SUM((SUBSTRING((CASE WHEN LEN(ISNULL(TO_TIME,'')) != 8 AND LEN(ISNULL(TO_TIME,'')) != 5 THEN '00:00:00'
+												ELSE TO_TIME
+											END),1,2) * 60 
+								+ SUBSTRING((CASE WHEN LEN(ISNULL(TO_TIME,'')) != 8 AND LEN(ISNULL(TO_TIME,'')) != 5 THEN '00:00:00'
+												ELSE TO_TIME
+											END),4,2)
+								) -
+								(
+								SUBSTRING((CASE WHEN LEN(ISNULL(FR_TIME,'')) != 8 AND LEN(ISNULL(FR_TIME,'')) != 5 THEN '00:00:00'
+												ELSE FR_TIME
+											END),1,2) * 60 
+								+ SUBSTRING((CASE WHEN LEN(ISNULL(FR_TIME,'')) != 8 AND LEN(ISNULL(FR_TIME,'')) != 5 THEN '00:00:00'
+												ELSE FR_TIME
+											END),4,2)
+
+								)) AS WORK_TIME_SUM
+								
+				               FROM PMR100T WITH (NOLOCK)
+							  GROUP BY COMP_CODE, DIV_CODE, WKORD_NUM, WK_PLAN_NUM, PRODT_DATE, PROG_WORK_CODE, LOT_NO, LINE_END_YN) B ON A.COMP_CODE	= B.COMP_CODE
+																									AND A.DIV_CODE  = B.DIV_CODE
+																									AND A.WKORD_NUM = B.WKORD_NUM
+																								    AND A.PROG_WORK_CODE = B.PROG_WORK_CODE
+				  INNER JOIN PMP100TV3 B1  WITH (NOLOCK) ON B1.COMP_CODE   = A.COMP_CODE
+						                                                AND B1.DIV_CODE    = A.DIV_CODE
+						                                                AND B1.WKORD_NUM   = A.WKORD_NUM
+				  LEFT  JOIN (
+				             SELECT COMP_CODE, DIV_CODE, WKORD_NUM
+				                  , SUM(IN_STOCK_Q) AS IN_STOCK_Q
+				             FROM   PMR200T  WITH (NOLOCK)
+				             WHERE  COMP_CODE = @CompCode
+				             AND    DIV_CODE  = #{DIV_CODE}
+				             GROUP  BY COMP_CODE, DIV_CODE, WKORD_NUM
+				             ) C                        ON C.COMP_CODE   = A.COMP_CODE
+				                                       AND C.DIV_CODE    = A.DIV_CODE
+				                                       AND C.WKORD_NUM   = A.WKORD_NUM
+
+				  LEFT  JOIN (
+				             SELECT COMP_CODE, DIV_CODE, WKORD_NUM
+				                  , SUM(RECEIPT_Q) AS RECEIPT_Q
+				             FROM   QMS300T  WITH (NOLOCK)
+				             WHERE  COMP_CODE = @CompCode
+				             AND    DIV_CODE  = #{DIV_CODE}
+				             GROUP  BY COMP_CODE, DIV_CODE, WKORD_NUM
+				             ) D                        ON D.COMP_CODE   = A.COMP_CODE
+				                                       AND D.DIV_CODE    = A.DIV_CODE
+				                                       AND D.WKORD_NUM   = A.WKORD_NUM
+				  LEFT  JOIN (
+				             SELECT COMP_CODE, DIV_CODE, WKORD_NUM
+				                  , SUM(INSPEC_Q)      AS INSPEC_Q
+				                  , SUM(GOOD_INSPEC_Q) AS GOOD_INSPEC_Q
+				                  , SUM(BAD_INSPEC_Q)  AS BAD_INSPEC_Q
+				             FROM   QMS400T  WITH (NOLOCK)
+				             WHERE  COMP_CODE = @CompCode
+				             AND    DIV_CODE  = #{DIV_CODE}
+				             GROUP  BY COMP_CODE, DIV_CODE, WKORD_NUM
+				             ) E                        ON E.COMP_CODE   = A.COMP_CODE
+				                                       AND E.DIV_CODE    = A.DIV_CODE
+				                                       AND E.WKORD_NUM   = A.WKORD_NUM
+				  LEFT JOIN PPL100T F WITH (NOLOCK)		ON F.COMP_CODE	= B.COMP_CODE
+														AND F.DIV_CODE  = B.DIV_CODE
+														AND F.WK_PLAN_NUM = B.WK_PLAN_NUM
+				  LEFT JOIN SOF100T G WITH (NOLOCK)		ON G.COMP_CODE	= A.COMP_CODE
+														AND G.ORDER_NUM = A.SO_NUM
+				  LEFT JOIN SOF110T H WITH (NOLOCK)	ON H.COMP_CODE	= A.COMP_CODE
+														AND H.ORDER_NUM = A.SO_NUM
+														AND H.SER_NO	= A.SO_SEQ
+				  INNER JOIN BPR100T   C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE
+				                                       AND C1.ITEM_CODE  = A.ITEM_CODE
+				  INNER JOIN BPR200T   C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE
+				                                       AND C2.DIV_CODE   = A.DIV_CODE
+				                                       AND C2.ITEM_CODE  = A.ITEM_CODE
+				  LEFT JOIN BCM100T   C3 WITH (NOLOCK) ON C3.COMP_CODE  = A.COMP_CODE
+				                                       AND C3.CUSTOM_CODE  = G.CUSTOM_CODE
+				  LEFT JOIN PBS200T   C4 WITH(NOLOCK) ON C4.COMP_CODE = A.COMP_CODE
+													AND C4.DIV_CODE = A.DIV_CODE
+													AND C4.WORK_SHOP_CODE = A.WORK_SHOP_CODE
+													AND C4.PROG_WORK_CODE = A.PROG_WORK_CODE
+		    WHERE  A.COMP_CODE         = @CompCode
+
+			<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+				AND  A.DIV_CODE         	 = #{DIV_CODE}				/*사업장*/
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(PRODT_START_DATE_FR)">
+				AND  A.PRODT_START_DATE &gt;= #{PRODT_START_DATE_FR}			/*착수예정일 FR*/
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(PRODT_START_DATE_TO)">
+				AND  A.PRODT_START_DATE &lt;= #{PRODT_START_DATE_TO}			/*착수예정일 TO*/
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE_FR)">
+				AND  A.ITEM_CODE        &gt;= #{ITEM_CODE_FR}		/*품목코드 FR*/
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE_TO)">
+				AND  A.ITEM_CODE        &lt;= #{ITEM_CODE_TO}			/*품목코드 TO*/
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(WORK_SHOP_CODE)">
+				AND  A.WORK_SHOP_CODE    = #{WORK_SHOP_CODE}				/*작업장 */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(WKORD_NUM_FR)">
+				AND  A.WKORD_NUM        &gt;= #{WKORD_NUM_FR}			/*작업지시번호 FR*/
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(WKORD_NUM_TO)">
+				AND  A.WKORD_NUM        &lt;= #{WKORD_NUM_TO}			/*작업지시번호 TO*/
+			</if>
+
+		    ORDER BY A.SO_NUM DESC, A.SO_SEQ, F.PROD_WK_PLAN_NUM, C2.ITEM_ACCOUNT DESC
+
+
+		    SET ARITHABORT OFF
+		    SET NOCOUNT OFF
+		END
+
+
+	</select>
+
+</mapper>

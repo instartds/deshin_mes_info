@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="str400skrvServiceImpl">
+					
+	<select id="str400skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+
+		/* str400rkrv.Cstr400rkrv[fnstr400np] Query01 */
+		BEGIN
+			SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		    DECLARE @CompCode      NVARCHAR(08)   /* 법인코드    */
+		          , @UserId        NVARCHAR(100)   /* 사용자ID    */
+		          , @LangType      NVARCHAR(2)    /* 언어구분    */
+		          , @RefItem       NVARCHAR(01)   /* 명칭 참조 유형  */
+		          , @DateFormat    NVARCHAR(10)   /* 날짜 포맷 유형 설정 */		         
+			      , @DIVISION      NVARCHAR(08)   /* 출고인쇄구분 */  
+			      , @TodayDate     NVARCHAR(08)   /* 현재일자 */
+			      
+		
+			SET @CompCode 	 = #{S_COMP_CODE}
+		    SET @UserId   	 = #{S_USER_ID}
+		    SET @LangType 	 = #{S_LANG_CODE}
+			SET @DIVISION    = #{DIVISION}
+			
+			SELECT @TodayDate = CONVERT(NVARCHAR(08), GETDATE(), 112)
+		
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+		
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+		
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		      FROM BSA100T WITH (NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+		       AND MAIN_CODE = N'B044'
+		       AND REF_CODE1 = N'Y'
+		
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		    
+			SELECT A.COMP_CODE
+				 , A.DIV_CODE
+				 , A.INOUT_TYPE
+				 , A.INOUT_DATE
+				 , A.INOUT_NUM
+				 , A.WH_CODE
+				 , A.INOUT_PRSN
+				 , (CASE WHEN A.INOUT_TYPE = '2' THEN SUM(A.ORDER_UNIT_O)
+			             WHEN A.INOUT_TYPE = '3' THEN SUM(A.ORDER_UNIT_O  * (-1))
+			         END) AS ORDER_UNIT_O
+				 , (CASE WHEN A.INOUT_TYPE = '2' THEN SUM(A.INOUT_TAX_AMT)
+			             WHEN A.INOUT_TYPE = '3' THEN SUM(A.INOUT_TAX_AMT * (-1))
+			    	 END) AS INOUT_TAX_AMT
+				, ((CASE WHEN A.INOUT_TYPE = '2' THEN SUM(A.ORDER_UNIT_O)
+			    	     WHEN A.INOUT_TYPE = '3' THEN SUM(A.ORDER_UNIT_O  * (-1))
+			     END)  
+			     + 
+			    (CASE WHEN A.INOUT_TYPE = '2' THEN SUM(A.INOUT_TAX_AMT)
+			         WHEN A.INOUT_TYPE = '3' THEN SUM(A.INOUT_TAX_AMT * (-1))
+			     END))  AS TOTAL_CASH
+			  FROM            BTR100T A  WITH (NOLOCK)
+			       INNER JOIN BCM100T B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+			                                          AND B.CUSTOM_CODE = A.SALE_CUSTOM_CODE
+			       INNER JOIN BPR200T C  WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+			                                          AND C.DIV_CODE    = A.DIV_CODE
+			                                          AND C.ITEM_CODE   = A.ITEM_CODE
+			       LEFT  JOIN BPR300T CC WITH (NOLOCK) ON CC.TYPE            = '2'
+			                                          AND CC.DIV_CODE        = '*'
+			                                          AND CC.COMP_CODE       = A.COMP_CODE
+			                                          AND CC.CUSTOM_CODE     = A.INOUT_CODE
+			                                          AND CC.ITEM_CODE       = A.ITEM_CODE
+			                                          AND CC.APLY_START_DATE = (SELECT MAX(APLY_START_DATE)
+			                                                                      FROM BPR300T WITH (NOLOCK)
+			                                                                     WHERE COMP_CODE        = CC.COMP_CODE
+			                                                                       AND TYPE             = CC.TYPE
+			                                                                       AND DIV_CODE         = CC.DIV_CODE
+			                                                                       AND ITEM_CODE        = CC.ITEM_CODE
+			                                                                       AND CUSTOM_CODE      = CC.CUSTOM_CODE
+			                                                                       AND APLY_START_DATE &lt;= @TodayDate)
+			       LEFT  JOIN (SELECT DD.COMP_CODE
+			                        , DD.CUSTOM_CODE
+			                        , CONVERT(NVARCHAR(8), DD.DVRY_CUST_SEQ) AS DVRY_CUST_SEQ
+			                        , DD.DVRY_CUST_NM
+			                        , MAX(DD.DVRY_CUST_TEL)                  AS DVRY_CUST_TEL
+			                        , DD.DVRY_CUST_ADD
+			                     FROM SCM100T DD WITH (NOLOCK)
+			                    WHERE DD.COMP_CODE  = @CompCode
+			                    GROUP BY DD.COMP_CODE   , DD.CUSTOM_CODE, DD.DVRY_CUST_SEQ
+			                           , DD.DVRY_CUST_NM, DD.DVRY_CUST_ADD) D ON D.COMP_CODE     = A.COMP_CODE
+			                                                                 AND D.DVRY_CUST_SEQ = A.DVRY_CUST_CD
+			                                                                 AND D.CUSTOM_CODE   = A.INOUT_CODE
+			       INNER JOIN BOR120T E  WITH (NOLOCK) ON E.COMP_CODE   = A.COMP_CODE
+			                                          AND E.DIV_CODE    = A.DIV_CODE
+			       INNER JOIN BCM100T F  WITH (NOLOCK) ON F.COMP_CODE   = A.COMP_CODE
+			                                          AND F.CUSTOM_CODE = A.INOUT_CODE
+			       INNER JOIN BOR100T G  WITH (NOLOCK) ON G.COMP_CODE   = A.COMP_CODE                                                   
+			 WHERE A.COMP_CODE               =    #{S_COMP_CODE}
+			 <if test="@foren.Ognl@isNotEmpty(INOUT_DATE_FR)">
+			 AND    INOUT_DATE &gt;= #{INOUT_DATE_FR}
+			 </if>
+			 <if test="@foren.Ognl@isNotEmpty(INOUT_DATE_TO)">
+			 AND    INOUT_DATE &lt;= #{INOUT_DATE_TO}
+			 </if>
+			   AND A.CREATE_LOC              =   '1'
+			   AND A.INOUT_TYPE              IN ('2', '3')
+			   AND A.DIV_CODE                =    #{DIV_CODE}
+			 <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+			   AND A.WH_CODE 				 = 	  #{WH_CODE}
+			 </if>  
+			 <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">  
+			   AND F.AGENT_TYPE				 = 	  #{AGENT_TYPE}
+			 </if>
+			 
+			 <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			  AND A.INOUT_CODE 		= #{CUSTOM_CODE}					/* 거래처코드  */
+			  </if>
+			  <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+			  AND A.INOUT_CODE 		LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+			  </if>
+			  <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+			  AND F.CUSTOM_NAME 	LIKE '%' + #{CUSTOM_NAME} + '%'	/* 거래처명  */
+			  </if>
+
+			 <if test="@foren.Ognl@isNotEmpty(INOUT_NUM)">
+			   AND A.INOUT_NUM 		= 	  #{INOUT_NUM}
+			 </if>
+			 
+			GROUP BY  A.COMP_CODE, A.DIV_CODE,  A.INOUT_DATE,  A.INOUT_NUM, A.WH_CODE,A.INOUT_PRSN, A.INOUT_TYPE
+					    
+			ORDER BY  A.INOUT_DATE, A.INOUT_NUM
+			
+		
+			 SET ARITHABORT OFF
+		     SET NOCOUNT OFF
+		 END
+	</select>
+	  
+</mapper>

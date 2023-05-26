@@ -1,0 +1,354 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="btr160ukrvServiceImpl">
+	<select id="btr160ukrvServiceImpl.lotStockList" parameterType="Map" resultType="rMap">
+/* btr160ukrv LOT정보 조회 */
+	BEGIN
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+	
+	    DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+	          , @UserId      NVARCHAR(100) /* 사용자ID    */
+	          , @LangType    NVARCHAR(2)  /* 언어구분    */
+	          , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+	          , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+	
+	    SET @CompCode = 'MASTER'
+	    SET @UserId   = 'UNILITE5'
+	    SET @LangType = #{S_LANG_CODE}
+	
+	    /* 명칭 참조 유형 */
+	    SELECT TOP 1 @RefItem = REF_ITEM
+	      FROM BSA300T WITH (NOLOCK)
+	     WHERE USER_ID = #{S_USER_ID}
+	
+	    SET @RefItem = ISNULL(@RefItem, N'0')
+	
+	    /* 날짜 포맷 유형 설정 */
+	    SELECT TOP 1 @DateFormat = CODE_NAME
+	      FROM BSA100T WITH (NOLOCK)
+	     WHERE COMP_CODE = #{S_COMP_CODE}
+	       AND MAIN_CODE = N'B044'
+	       AND REF_CODE1 = N'Y'
+	
+	    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD');
+	    /* 데이터 조회 */
+	WITH LOT_MOVE_INFO AS (
+		SELECT A.COMP_CODE
+			 , A.DIV_CODE
+			 , A.WH_CODE
+			 , A.ITEM_CODE
+	         , (CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+	                 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+	                 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+	                                     ELSE C1.ITEM_NAME
+	             END) AS ITEM_NAME
+	         , C1.SPEC
+			 , B.PURCHASE_CUSTOM_CODE
+		     , (CASE WHEN @RefItem = '0' THEN C2.CUSTOM_NAME
+		             WHEN @RefItem = '1' THEN C2.CUSTOM_NAME1
+		             WHEN @RefItem = '2' THEN C2.CUSTOM_NAME2
+		                                 ELSE C2.CUSTOM_NAME
+		         END) AS CUSTOM_NAME
+			 , B.PURCHASE_RATE
+			 , B.PURCHASE_P
+			 , A.LOT_NO
+			 , A.STOCK_Q+ISNULL(C3.STOCK_Q,0) AS STOCK_Q /*수정*/
+		  FROM            BIV150T A  WITH (NOLOCK)
+			   INNER JOIN BIV350T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+									  			  AND B.DIV_CODE     = A.DIV_CODE
+									 			  AND B.ITEM_CODE    = A.ITEM_CODE
+									 			  AND B.WH_CODE      = A.WH_CODE
+												  AND B.LOT_NO       = A.LOT_NO
+	           LEFT  JOIN BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE
+	                                              AND C1.ITEM_CODE   = A.ITEM_CODE
+		       LEFT  JOIN BCM100T C2 WITH (NOLOCK) ON C2.COMP_CODE   = B.COMP_CODE
+		                                          AND C2.CUSTOM_CODE = B.PURCHASE_CUSTOM_CODE
+	/*추가 시작*/
+			   LEFT  JOIN (
+							SELECT	COMP_CODE
+								,	DIV_CODE
+								,	WH_CODE
+								,	ITEM_CODE
+								,	PURCHASE_CUSTOM_CODE
+								,	PURCHASE_RATE
+								,	PURCHASE_P
+								,	ISNULL(SUM(STOCK_Q),0)			AS STOCK_Q
+								,	ISNULL(SUM(STOCK_I),0)			AS STOCK_I
+							FROM vGetDailyStock 
+							<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+							WHERE ITEM_CODE = #{ITEM_CODE}/*품목코드 파라메터 값*/
+							</if>
+							GROUP BY	COMP_CODE
+									,	DIV_CODE
+									,	WH_CODE
+									,	ITEM_CODE
+									,	PURCHASE_CUSTOM_CODE
+									,	PURCHASE_RATE
+									,	PURCHASE_P
+							) C3 ON B.COMP_CODE				= C3.COMP_CODE
+								AND B.DIV_CODE				= C3.DIV_CODE
+								AND B.WH_CODE				= C3.WH_CODE
+								AND B.PURCHASE_CUSTOM_CODE	= C3.PURCHASE_CUSTOM_CODE
+								AND B.PURCHASE_RATE			= C3.PURCHASE_RATE
+								AND B.PURCHASE_P			= C3.PURCHASE_P
+		/*추가 끝*/                             
+		                                 
+		 WHERE A.COMP_CODE = #{S_COMP_CODE}
+		   AND A.DIV_CODE  = #{DIV_CODE}
+		 <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		   AND A.ITEM_CODE = #{ITEM_CODE}
+		 </if>
+		 <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+		   AND A.WH_CODE   = #{WH_CODE}
+		 </if>
+		 <if test="@foren.Ognl@isEmpty(INCLUDE_ZERO)">
+		   AND A.STOCK_Q+ISNULL(C3.STOCK_Q,0) != 0
+		 </if>
+		)
+		/*추가 시작*/
+		SELECT		A.COMP_CODE
+				,	A.DIV_CODE
+				,	A.WH_CODE
+				,	A.ITEM_CODE
+				,	A.ITEM_NAME
+				,	A.SPEC
+				,	A.PURCHASE_CUSTOM_CODE
+				,	A.CUSTOM_NAME
+				,	A.PURCHASE_RATE
+				,	A.PURCHASE_P
+				,	A.LOT_NO
+				,	A.STOCK_Q
+		FROM LOT_MOVE_INFO A
+		INNER JOIN (	SELECT A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE
+						FROM LOT_MOVE_INFO A
+						GROUP BY A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE
+						HAVING MIN(A.PURCHASE_P) != MAX(A.PURCHASE_P)
+					)A1 ON A1.COMP_CODE		= A.COMP_CODE 
+					   AND A1.DIV_CODE		= A.DIV_CODE 
+					   AND A1.WH_CODE		= A.WH_CODE
+					   AND A1.ITEM_CODE		= A.ITEM_CODE
+	/*추가 끝*/
+	    ORDER BY A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE, A.LOT_NO
+
+		SET NOCOUNT OFF
+	    SET ARITHABORT OFF
+	END
+	</select>
+	<select id="btr160ukrvServiceImpl.moveList" parameterType="Map" resultType="rMap">	
+	BEGIN
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+	
+	    DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+	          , @UserId      NVARCHAR(100) /* 사용자ID    */
+	          , @LangType    NVARCHAR(2)  /* 언어구분    */
+	          , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+	          , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+	
+	    SET @LangType = #{S_LANG_CODE}
+	
+	    /* 명칭 참조 유형 */
+	    SELECT TOP 1 @RefItem = REF_ITEM
+	      FROM BSA300T WITH (NOLOCK)
+	     WHERE USER_ID = #{S_USER_ID}
+	
+	    SET @RefItem = ISNULL(@RefItem, N'0')
+	
+	    /* 날짜 포맷 유형 설정 */
+	    SELECT TOP 1 @DateFormat = CODE_NAME
+	      FROM BSA100T WITH (NOLOCK)
+	     WHERE COMP_CODE = #{S_COMP_CODE}
+	       AND MAIN_CODE = N'B044'
+	       AND REF_CODE1 = N'Y'
+	
+	    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+	    /* 데이터 조회 */
+		SELECT A.COMP_CODE
+			 , A.DIV_CODE
+			 , A.STOCKMOVE_NUM
+			 , A.STOCKMOVE_SEQ
+			 , A.STOCKMOVE_DATE 
+			 , A.WH_CODE
+			 , A.ITEM_CODE
+	         , (CASE WHEN @RefItem = '0' THEN C.ITEM_NAME
+	                 WHEN @RefItem = '1' THEN C.ITEM_NAME1
+	                 WHEN @RefItem = '2' THEN C.ITEM_NAME2
+	                                     ELSE C.ITEM_NAME
+	             END) AS ITEM_NAME
+	         , C.SPEC
+			 , L1.PURCHASE_CUSTOM_CODE AS FR_PURCHASE_CUSTOM_CODE
+		     , (CASE WHEN @RefItem = '0' THEN C1.CUSTOM_NAME
+		             WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+		             WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+		                                 ELSE C1.CUSTOM_NAME
+		         END) AS FR_CUSTOM_NAME
+			 , L1.PURCHASE_RATE	AS FR_PURCHASE_RATE
+			 , L1.PURCHASE_P	AS FR_PURCHASE_P
+			 , A.LOT_NO
+			 , L2.PURCHASE_CUSTOM_CODE AS TO_PURCHASE_CUSTOM_CODE
+		     , (CASE WHEN @RefItem = '0' THEN C2.CUSTOM_NAME
+		             WHEN @RefItem = '1' THEN C2.CUSTOM_NAME1
+		             WHEN @RefItem = '2' THEN C2.CUSTOM_NAME2
+		                                 ELSE C2.CUSTOM_NAME
+		         END) AS TO_CUSTOM_NAME
+			 , L2.PURCHASE_RATE	AS TO_PURCHASE_RATE
+			 , L2.PURCHASE_P	AS TO_PURCHASE_RATE
+			 , A.TO_LOT_NO
+			 , A.STOCKMOVE_Q
+			 , A.REMARK
+		  FROM            BIV550T A  WITH (NOLOCK)
+	           LEFT  JOIN BPR100T C  WITH (NOLOCK) ON C.COMP_CODE    = A.COMP_CODE
+	                                              AND C.ITEM_CODE    = A.ITEM_CODE
+			   INNER JOIN BIV350T L1 WITH (NOLOCK) ON L1.COMP_CODE   = A.COMP_CODE
+									  			  AND L1.DIV_CODE    = A.DIV_CODE
+									 			  AND L1.ITEM_CODE   = A.ITEM_CODE
+									 			  AND L1.WH_CODE     = A.WH_CODE
+												  AND L1.LOT_NO      = A.LOT_NO
+		       LEFT  JOIN BCM100T C1 WITH (NOLOCK) ON C1.COMP_CODE   = L1.COMP_CODE
+		                                          AND C1.CUSTOM_CODE = L1.PURCHASE_CUSTOM_CODE
+			   INNER JOIN BIV350T L2 WITH (NOLOCK) ON L2.COMP_CODE   = A.COMP_CODE
+									  			  AND L2.DIV_CODE    = A.DIV_CODE
+									 			  AND L2.ITEM_CODE   = A.ITEM_CODE
+									 			  AND L2.WH_CODE     = A.WH_CODE
+												  AND L2.LOT_NO      = A.TO_LOT_NO
+		       LEFT  JOIN BCM100T C2 WITH (NOLOCK) ON C2.COMP_CODE   = L2.COMP_CODE
+		                                          AND C2.CUSTOM_CODE = L2.PURCHASE_CUSTOM_CODE
+		 WHERE A.COMP_CODE     = #{S_COMP_CODE}
+		   AND A.DIV_CODE      = #{DIV_CODE}
+		   AND A.STOCKMOVE_NUM = #{STOCKMOVE_NUM}
+	    ORDER BY A.COMP_CODE, A.DIV_CODE, A.STOCKMOVE_NUM, A.STOCKMOVE_SEQ
+
+		SET NOCOUNT OFF
+	    SET ARITHABORT OFF
+	END
+	</select>
+	<select id="btr160ukrvServiceImpl.movePopupList" parameterType="Map" resultType="rMap">	
+	BEGIN
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+	
+	    DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+	          , @UserId      NVARCHAR(100) /* 사용자ID    */
+	          , @LangType    NVARCHAR(2)  /* 언어구분    */
+	          , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+	          , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+	
+	    SET @CompCode = 'MASTER'
+	    SET @UserId   = 'UNILITE5'
+	    SET @LangType = 'KR'
+	
+	    /* 명칭 참조 유형 */
+	    SELECT TOP 1 @RefItem = REF_ITEM
+	      FROM BSA300T WITH (NOLOCK)
+	     WHERE USER_ID = #{S_USER_ID}
+	
+	    SET @RefItem = ISNULL(@RefItem, N'0')
+	
+	    /* 날짜 포맷 유형 설정 */
+	    SELECT TOP 1 @DateFormat = CODE_NAME
+	      FROM BSA100T WITH (NOLOCK)
+	     WHERE COMP_CODE = #{S_COMP_CODE}
+	       AND MAIN_CODE = N'B044'
+	       AND REF_CODE1 = N'Y'
+	
+	    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+	    /* 데이터 조회 */
+		SELECT A.COMP_CODE
+			 , A.DIV_CODE
+			 , A.STOCKMOVE_NUM
+			 , A.STOCKMOVE_SEQ
+			 , (CASE WHEN ISNULL(A.STOCKMOVE_DATE, '') = ''
+	                 THEN ''
+	                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.STOCKMOVE_DATE, 1, 4))
+	                                                         , 'MM'  , SUBSTRING(A.STOCKMOVE_DATE, 5, 2))
+	                                                         , 'DD'  , SUBSTRING(A.STOCKMOVE_DATE, 7, 2))
+	             END) AS STOCKMOVE_DATE
+			 , A.WH_CODE
+			 , A.ITEM_CODE
+	         , (CASE WHEN @RefItem = '0' THEN C.ITEM_NAME
+	                 WHEN @RefItem = '1' THEN C.ITEM_NAME1
+	                 WHEN @RefItem = '2' THEN C.ITEM_NAME2
+	                                     ELSE C.ITEM_NAME
+	             END) AS ITEM_NAME
+	         , C.SPEC
+			 , L1.PURCHASE_CUSTOM_CODE AS FR_PURCHASE_CUSTOM_CODE
+		     , (CASE WHEN @RefItem = '0' THEN C1.CUSTOM_NAME
+		             WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+		             WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+		                                 ELSE C1.CUSTOM_NAME
+		         END) AS FR_CUSTOM_NAME
+			 , L1.PURCHASE_RATE	AS FR_PURCHASE_RATE
+			 , L1.PURCHASE_P	AS FR_PURCHASE_P
+			 , A.LOT_NO
+			 , L2.PURCHASE_CUSTOM_CODE AS TO_PURCHASE_CUSTOM_CODE
+		     , (CASE WHEN @RefItem = '0' THEN C2.CUSTOM_NAME
+		             WHEN @RefItem = '1' THEN C2.CUSTOM_NAME1
+		             WHEN @RefItem = '2' THEN C2.CUSTOM_NAME2
+		                                 ELSE C2.CUSTOM_NAME
+		         END) AS TO_CUSTOM_NAME
+			 , L2.PURCHASE_RATE	AS TO_PURCHASE_RATE
+			 , L2.PURCHASE_P	AS TO_PURCHASE_RATE
+			 , A.TO_LOT_NO
+			 , A.STOCKMOVE_Q
+			 , A.REMARK
+		  FROM            BIV550T A  WITH (NOLOCK)
+	           LEFT  JOIN BPR100T C  WITH (NOLOCK) ON C.COMP_CODE    = A.COMP_CODE
+	                                              AND C.ITEM_CODE    = A.ITEM_CODE
+			   INNER JOIN BIV350T L1 WITH (NOLOCK) ON L1.COMP_CODE   = A.COMP_CODE
+									  			  AND L1.DIV_CODE    = A.DIV_CODE
+									 			  AND L1.ITEM_CODE   = A.ITEM_CODE
+									 			  AND L1.WH_CODE     = A.WH_CODE
+												  AND L1.LOT_NO      = A.LOT_NO
+		       LEFT  JOIN BCM100T C1 WITH (NOLOCK) ON C1.COMP_CODE   = L1.COMP_CODE
+		                                          AND C1.CUSTOM_CODE = L1.PURCHASE_CUSTOM_CODE
+			   INNER JOIN BIV350T L2 WITH (NOLOCK) ON L2.COMP_CODE   = A.COMP_CODE
+									  			  AND L2.DIV_CODE    = A.DIV_CODE
+									 			  AND L2.ITEM_CODE   = A.ITEM_CODE
+									 			  AND L2.WH_CODE     = A.WH_CODE
+												  AND L2.LOT_NO      = A.TO_LOT_NO
+		       LEFT  JOIN BCM100T C2 WITH (NOLOCK) ON C2.COMP_CODE   = L2.COMP_CODE
+		                                          AND C2.CUSTOM_CODE = L2.PURCHASE_CUSTOM_CODE
+		 WHERE A.COMP_CODE     = #{S_COMP_CODE}
+		   AND A.DIV_CODE      = #{DIV_CODE}
+		 <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		   AND A.ITEM_CODE = #{ITEM_CODE}
+		 </if>
+		 <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+		   AND A.WH_CODE   = #{WH_CODE}
+		 </if>
+
+	    ORDER BY A.COMP_CODE, A.DIV_CODE, A.STOCKMOVE_NUM, A.STOCKMOVE_SEQ
+
+		SET NOCOUNT OFF
+	    SET ARITHABORT OFF
+	END
+	</select>
+	<insert id="btr160ukrvServiceImpl.insertLog" parameterType="Map">
+		INSERT INTO L_BIV550T
+		     ( 
+		     	 KEY_VALUE     		,OPR_FLAG			
+		     	 ,COMP_CODE			,DIV_CODE           ,STOCKMOVE_NUM		,STOCKMOVE_SEQ		
+		     	 ,WH_CODE			,WH_CELL_CODE       ,ITEM_CODE			,STOCKMOVE_DATE		
+		     	 ,STOCKMOVE_Q		,LOT_NO				,TO_LOT_NO 			,REMARK				
+		     	 ,INSERT_DB_USER	,INSERT_DB_TIME		,UPDATE_DB_USER		,UPDATE_DB_TIME 
+ 			)
+		VALUES
+		     ( #{KEY_VALUE}			, #{OPR_FLAG}
+		     , #{S_COMP_CODE}		, #{DIV_CODE}		, #{STOCKMOVE_NUM}	, #{STOCKMOVE_SEQ}			
+		     , #{WH_CODE}			, #{WH_CELL_CODE}	, #{ITEM_CODE}		, #{STOCKMOVE_DATE}			
+		     , #{STOCKMOVE_Q}		, #{LOT_NO}			, #{TO_LOT_NO}		, #{REMARK}		
+		     , #{S_USER_ID}			, GETDATE()			, #{S_USER_ID}		, GETDATE())
+ 	</insert>
+	<update id="btr160ukrvServiceImpl.lotStockMoving" parameterType="Map" statementType="CALLABLE">
+		{call SP_STOCK_LotStockMoving (
+			#{KeyValue, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{LangCode, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{RtnStockMoveNum, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ErrorDesc, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	   
+	 </update>
+</mapper>

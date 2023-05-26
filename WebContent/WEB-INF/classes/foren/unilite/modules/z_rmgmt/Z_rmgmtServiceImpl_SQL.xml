@@ -1,0 +1,800 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- TestMapper.xml -->
+<mapper namespace="z_rmgmtService">
+	
+	<select id="z_rmgmtService.selectCommInfo" parameterType="map" resultType="map">		
+		
+		SELECT	MAIN_CODE	AS CODE_GROUP,
+				SUB_CODE	AS CODE_CD,
+				CODE_NAME	AS CODE_NM,
+				REF_CODE1,
+				REF_CODE2,
+				REF_CODE3,
+				REF_CODE4,
+				REF_CODE5,
+				REF_CODE6,
+				REF_CODE7,
+				REF_CODE8,
+				REF_CODE9,
+				REF_CODE10
+				 
+		FROM BSA100T
+		WHERE	COMP_CODE		= #{S_COMP_CODE}
+		AND		ORG_COMP_CODE	= #{S_COMP_CODE}
+		AND		MAIN_CODE		= #{MAIN_CODE}
+		AND		SUB_CODE		<![CDATA[<>]]> '$'
+		AND		USE_YN			= 'Y'
+		
+		<if test="REF_CODE1 != null and REF_CODE1 != ''">
+			AND REF_CODE1 	= #{REF_CODE1}
+		</if>
+		<if test="REF_CODE2 != null and REF_CODE2 != ''">
+			AND REF_CODE2 	= #{REF_CODE2}
+		</if>
+		ORDER BY SORT_SEQ, SUB_CODE
+	</select>
+	
+	<select id="z_rmgmtService.selectEquInfo" parameterType="map" resultType="map">		
+		
+		SELECT	EQU_CODE,
+				EQU_NAME
+		FROM EQU200T
+		WHERE	1 = 1 
+		AND		COMP_CODE	= #{S_COMP_CODE}
+		AND		DIV_CODE	= '02' -- 현재 코디만 적용이기에 일단 하드코딩 그러나 후에 전체로 바꿨을 땐 바코드 찍을 때 사업장 코드 가져와야 할듯
+		AND		EQU_TYPE	= '04'
+	</select>
+	<select id="z_rmgmtService.selectlatestRmgInfo" parameterType="map" resultType="map">
+	
+	</select>
+
+	<select id="z_rmgmtService.selectHeaderInfo" parameterType="map" resultType="map">		
+		
+	DECLARE		
+		 @V_COMP_CODE 			NVARCHAR(08) 	--기업코드
+		,@V_DIV_CODE  			NVARCHAR(08) 	--사업장
+		,@V_WKORD_NUM			NVARCHAR(20) 	--작업지시번호
+		,@V_PROG_WORK_CODE 		NVARCHAR(08) 	--공정코드
+	
+		,@V_ITEM_CODE			NVARCHAR(20) 	--작업지시의 품목코드
+		,@V_EQU_CODE  			NVARCHAR(60) 	--가동할 설비코드
+		,@V_WKORD_Q				NUMERIC(30,6) 	--이론량
+		,@V_MAX_INSERT_DB_TIME	DATETIME       	--최신 입력일자
+		,@V_USE_WKORD_Q_YN   	NVARCHAR(01)    -- WKORD_Q 로 조회 유무
+			
+		SET @V_COMP_CODE 		= #{S_COMP_CODE}
+		SET @V_DIV_CODE  		= #{DIV_CODE}
+		SET @V_WKORD_NUM		= #{WKORD_NUM}
+		SET @V_PROG_WORK_CODE	= #{PROG_WORK_CODE}
+		SET @V_EQU_CODE			= #{EQU_CODE}
+		
+		-- PMP100T 에서 정보 조회.
+		SELECT	@V_ITEM_CODE	= ITEM_CODE,
+				@V_WKORD_Q		= WKORD_Q
+		FROM PMP100T A
+		WHERE 	A.COMP_CODE 	= @V_COMP_CODE
+		AND 	A.DIV_CODE 		= @V_DIV_CODE
+		AND  	A.WKORD_NUM 	= @V_WKORD_NUM
+		-- 상무님의 order로 변경
+		--AND		A.PROG_WORK_CODE= @V_PROG_WORK_CODE
+		AND		A.LINE_END_YN 	= 'Y'
+	
+		-- 최신 입력 날짜를 구한다.
+		SET @V_MAX_INSERT_DB_TIME = (SELECT MAX(INSERT_DB_TIME)  AS INSERT_DB_TIME
+									 FROM RMG100T WITH(NOLOCK)
+									 WHERE COMP_CODE 		= @V_COMP_CODE
+									 AND 	DIV_CODE 		= @V_DIV_CODE
+									 AND 	EQU_CODE 		= @V_EQU_CODE
+									 AND	ITEM_CODE		= @V_ITEM_CODE
+									 AND	WKORD_Q			= @V_WKORD_Q)
+		
+		-- WKORD_Q로 조회 시 데이터가 존재하지 않을때
+		IF (ISNULL(@V_MAX_INSERT_DB_TIME, '') = '')
+		BEGIN	
+			SET @V_USE_WKORD_Q_YN = 'N';
+
+			SET @V_MAX_INSERT_DB_TIME = (SELECT MAX(INSERT_DB_TIME)  AS INSERT_DB_TIME
+										 FROM RMG100T WITH(NOLOCK)
+										 WHERE COMP_CODE 		= @V_COMP_CODE
+										 AND 	DIV_CODE 		= @V_DIV_CODE
+										 AND 	EQU_CODE 		= @V_EQU_CODE
+										 AND	ITEM_CODE		= @V_ITEM_CODE);
+		END
+		-- 존재 할 때			
+		ELSE
+		BEGIN
+			SET @V_USE_WKORD_Q_YN = 'Y'
+		END
+		;
+	
+	
+		-- 조회쿼리
+		SELECT	A.WKORD_NUM ,
+				B.WKORD_NUM 	 	AS LOAD_WKORD_NUM,
+				B.PROG_WORK_CODE 	AS LOAD_PROG_WORK_CODE,
+				--바코드로 읽은 작업지시 데이터가 제조이력에 존재하는지 체크,
+				ISNULL((SELECT 'Y' 
+				 FROM RMG100T
+				 WHERE 	COMP_CODE 		= @V_COMP_CODE 
+				 AND 	DIV_CODE 		= @V_DIV_CODE 
+				 AND 	WKORD_NUM 		= @V_WKORD_NUM 
+				 AND 	EQU_CODE 		= @V_EQU_CODE
+				 AND 	PROG_WORK_CODE 	= @V_PROG_WORK_CODE), 'N') AS DATA_EXIST_YN,
+				
+				@V_MAX_INSERT_DB_TIME 	AS MAX_INSERT_DB_TIME,
+				@V_USE_WKORD_Q_YN 		AS USE_WKORD_Q_YN,		
+				A.ITEM_CODE,
+				D.ITEM_NAME,
+				A.PROG_WORK_CODE,
+				MAX(C.LOT_NO) 			AS LOT_NO,
+				MAX(C.PRODT_DATE) 		AS PRODT_DATE,
+				A.WKORD_Q,
+				A.PRODT_Q 				AS WORK_Q,
+				A.PROG_UNIT,		
+				B.PRODT_PRSN,
+				B.EQU_CODE
+		FROM PMP100T 			A WITH(NOLOCK)
+		LEFT OUTER JOIN 
+		(
+			SELECT	TOP 1
+					COMP_CODE,
+					DIV_CODE,
+					WKORD_NUM,
+					PROG_WORK_CODE,
+					@V_WKORD_NUM		AS PMP_WKORD_NUM,
+					@V_PROG_WORK_CODE	AS PMP_PROG_WORK_CODE,
+					PRODT_PRSN,
+					EQU_CODE
+			FROM RMG100T A WITH(NOLOCK)
+			WHERE	A.COMP_CODE 		= @V_COMP_CODE
+			AND		A.DIV_CODE 			= @V_DIV_CODE
+			AND 	A.EQU_CODE 			= @V_EQU_CODE
+			AND		A.ITEM_CODE			= @V_ITEM_CODE
+			AND 	A.INSERT_DB_TIME 	= @V_MAX_INSERT_DB_TIME
+			AND		(@V_USE_WKORD_Q_YN = 'N' OR A.WKORD_Q = @V_WKORD_Q)
+		-- 작업지시번호 input박스 임시로 인해 조건 하나 변경
+		--) B ON A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE = B.DIV_CODE AND A.WKORD_NUM = B.PMP_WKORD_NUM AND A.PROG_WORK_CODE = B.PMP_PROG_WORK_CODE
+		) B ON A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE = B.DIV_CODE AND A.WKORD_NUM = B.PMP_WKORD_NUM 
+		LEFT OUTER JOIN PMR100T C WITH(NOLOCK) ON A.COMP_CODE = C.COMP_CODE AND A.DIV_CODE = C.DIV_CODE AND A.WKORD_NUM = C.WKORD_NUM
+		LEFT OUTER JOIN BPR100T D WITH(NOLOCK) ON A.COMP_CODE = D.COMP_CODE AND A.ITEM_CODE = D.ITEM_CODE
+		WHERE 	A.COMP_CODE 	= @V_COMP_CODE
+		AND 	A.DIV_CODE 		= @V_DIV_CODE
+		AND  	A.WKORD_NUM 	= @V_WKORD_NUM
+		--AND		A.PROG_WORK_CODE= @V_PROG_WORK_CODE
+		AND		A.LINE_END_YN 	= 'Y'
+		
+				
+		GROUP BY	A.WKORD_NUM, 	A.ITEM_CODE,	D.ITEM_NAME,	A.PROG_WORK_CODE,	A.PRODT_DATE,		
+					A.WKORD_Q,		A.PRODT_Q,		A.PROG_UNIT,	B.PRODT_PRSN,		B.EQU_CODE,
+					B.WKORD_NUM, 	B.PROG_WORK_CODE
+			
+	</select>
+	<select id="z_rmgmtService.selectAsideInfo" parameterType="map" resultType="map">
+		SELECT B.SEQ, B.PROC_DRAW
+		FROM PMP100T		A WITH(NOLOCK)
+		INNER JOIN BPR520T	B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE = B.DIV_CODE AND A.ITEM_CODE = B.PROD_ITEM_CODE
+		WHERE 	A.COMP_CODE 	= #{S_COMP_CODE}
+		AND 	A.DIV_CODE 		= #{DIV_CODE}
+		AND  	A.WKORD_NUM 	= #{WKORD_NUM}
+		AND		A.LINE_END_YN = 'Y'
+	
+		ORDER BY B.SEQ
+	</select>
+	<!-- 01.메인 바코드로 조회시  -->
+	<!-- 공정 차수 관련 조회 -->
+	<select id="z_rmgmtService.selectBodyTopInfo" parameterType="map" resultType="map">
+		SELECT 	#{WKORD_NUM} AS WKORD_NUM,
+				A.WKORD_NUM  AS LOAD_WKORD_NUM,
+				B.WKORD_NUM_SEQ,
+				B.RPM_Q,
+				B.TIME_Q,
+				B.SHARP_7_Q,
+				B.POWDER_YN,
+				B.COLORING_YN,
+				B.BINDER_YN,
+				B.PEARL_YN,
+				B.HGI_Q_CD,
+				B.PROC_GROUP_CD,
+				B.PROD_PROC,
+				B.USER_PROD_PROC
+		FROM RMG100T		A WITH(NOLOCK)
+		INNER JOIN RMG120T	B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE = B.DIV_CODE AND A.WKORD_NUM = B.WKORD_NUM AND A.PROG_WORK_CODE = B.PROG_WORK_CODE
+		WHERE 	A.COMP_CODE 		= #{S_COMP_CODE}
+		AND 	A.DIV_CODE 			= #{DIV_CODE}
+		AND 	A.EQU_CODE 			= #{EQU_CODE}
+		AND		A.ITEM_CODE			= #{ITEM_CODE}
+		<if test='USE_WKORD_Q_YN == "Y"'>
+		AND 	A.WKORD_Q 			= #{WKORD_Q}
+		</if>
+		AND 	A.INSERT_DB_TIME 	= #{MAX_INSERT_DB_TIME}
+			
+		ORDER BY B.WKORD_NUM_SEQ
+	</select>
+	<!-- 01.메인 바코드로 조회시  -->
+	<!-- 공정 차수 탭 생성  조회 -->
+	<select id="z_rmgmtService.selectBodySeq" parameterType="map" resultType="map">
+		SELECT 	B.WKORD_NUM_SEQ
+		FROM RMG100T		A WITH(NOLOCK)
+		INNER JOIN RMG120T	B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE = B.DIV_CODE AND A.WKORD_NUM = B.WKORD_NUM AND A.PROG_WORK_CODE = B.PROG_WORK_CODE
+		WHERE	A.COMP_CODE			= #{S_COMP_CODE}
+		AND 	A.DIV_CODE 			= #{DIV_CODE}
+		AND 	A.EQU_CODE 			= #{EQU_CODE}
+		AND		A.ITEM_CODE			= #{ITEM_CODE}
+		<if test='USE_WKORD_Q_YN == "Y"'>
+		AND 	A.WKORD_Q 			= #{WKORD_Q}
+		</if>
+		AND 	A.INSERT_DB_TIME 	= #{MAX_INSERT_DB_TIME}
+		
+		GROUP BY B.WKORD_NUM_SEQ
+		ORDER BY B.WKORD_NUM_SEQ
+		
+	</select>
+	<!-- 01.메인 바코드로 조회시  -->
+	<!-- 공정 차수 별 원료 조회  조회 -->
+	<select id="z_rmgmtService.selectBodyTbInfo" parameterType="map" resultType="map">
+		SELECT	M.DIV_CODE,																	--사업장
+				M.WKORD_NUM 			AS LOAD_WKORD_NUM,									--저장된 작업지시번호
+				#{WKORD_NUM}  			AS WKORD_NUM, 										--바코드 조회 작업지시번호
+				M.PROG_WORK_CODE,															--공정코드
+				M.WKORD_NUM_SEQ,															--공정차수
+				M.REF_TYPE,
+				M.PATH_CODE,
+				M.SEQ,																		--제조이력 순번
+				ISNULL(M.GROUP_CODE, '') AS GROUP_CODE,
+				ISNULL(E.CODE_NAME, '') AS GROUP_NAME,
+				/***** 하위 품목의 LOT는 수불에서 가져온다 *****/							
+				(SELECT	 STUFF((SELECT  ' '+ LOT_NO											
+								FROM    BTR100T WITH(NOLOCK)								
+								WHERE COMP_CODE		= M.COMP_CODE							
+								AND   DIV_CODE		= M.DIV_CODE							
+								AND   ORDER_NUM		= M.WKORD_NUM							
+								AND   ITEM_CODE		= M.CHILD_ITEM_CODE						
+								AND   INOUT_TYPE	= '2'									
+								GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, ITEM_CODE, LOT_NO	
+								FOR XML PATH('')),1,1,'')) 									
+										AS LOT_NO,											-- 제조이력 품목 LOT NO OR 시험번호
+				M.ITEM_CODE,																-- 제품코드
+				M.CHILD_ITEM_CODE,															-- 제조이력 품목코드
+				D.ITEM_NAME				AS CHILD_ITEM_NAME,									-- 제조이력 품목명
+				M.UNIT_Q,																	-- 함량
+				M.ALLOCK_Q,																	-- 이론량
+				D.STOCK_UNIT,																-- 단위
+				ISNULL(C.PRODT_Q_G, 0)	AS PRODT_Q_G,										-- 계량량(G)
+				ISNULL(C.PRODT_Q_P, 0)	AS PRODT_Q_P,										-- 계량량(P)
+				ISNULL(C.INSERT_DB_TIME, '') AS INSERT_DB_TIME,
+				M.WKORD_NUM_SEQ + CASE WHEN ISNULL(C.COMP_CODE, '') = '' THEN 'N' ELSE 'Y' END AS SEQ_SHOW_YN, --공정차수별 변경여부
+				CASE WHEN ISNULL(C.COMP_CODE, '') = '' THEN 'N' ELSE 'Y' END AS SHOW_YN,						   --변경여부
+				CASE WHEN ISNULL(C.COMP_CODE, '') = '' THEN 'N' ELSE 'Y' END AS DATA_EXIST_YN				   --데이터 존재유무
+		FROM (
+			
+			SELECT	A.COMP_CODE,							--법인코드
+					A.DIV_CODE,								--사업장코드
+					A.WKORD_NUM,							--작업지시번호
+					B.WKORD_NUM 	AS LOAD_WKORD_NUM, 		--최신 작업지시
+					A.PROG_WORK_CODE,						--공정코드
+					A.ITEM_CODE,							--작업지시 제품코드
+					B1.WKORD_NUM_SEQ,						--공정차수
+					B.SEQ,									--공정순서
+					B.ITEM_CODE AS CHILD_ITEM_CODE,			--작업지시 품목에 대한 재료의 품목코드
+					B.UNIT_Q,								--함량						
+					B.ALLOCK_Q,								--이론량
+					B.REF_TYPE,
+					B.PATH_CODE,
+					B.GROUP_CODE
+			FROM PMP100T		A WITH(NOLOCK)
+			INNER JOIN PMP200T	B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE = B.DIV_CODE AND A.WKORD_NUM = B.WKORD_NUM
+			CROSS JOIN (
+				/***** CROSS JOIN
+				 - 공정 차수 DEFAULT : Z014의 REF_CODE1이 Y인 차수
+				 - 데이터 존재시 Y차수 이상
+				***********************************/
+				SELECT SUB_CODE AS WKORD_NUM_SEQ
+				FROM BSA100T
+				WHERE 	COMP_CODE 		= #{S_COMP_CODE}
+				AND 	ORG_COMP_CODE 	= #{S_COMP_CODE}
+				AND 	MAIN_CODE 		= 'Z014'
+				AND 	REF_CODE1 		= 'Y'
+				
+				UNION
+				
+				SELECT B.WKORD_NUM_SEQ 
+				FROM RMG100T		A WITH(NOLOCK)
+				INNER JOIN RMG120T	B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE = B.DIV_CODE AND A.WKORD_NUM = B.WKORD_NUM AND A.PROG_WORK_CODE = B.PROG_WORK_CODE
+				WHERE	A.COMP_CODE			= #{S_COMP_CODE}
+				AND 	A.DIV_CODE 			= #{DIV_CODE}
+				AND 	A.EQU_CODE 			= #{EQU_CODE}
+				AND		A.ITEM_CODE			= #{ITEM_CODE}
+				<if test='USE_WKORD_Q_YN == "Y"'>
+				AND 	A.WKORD_Q 			= #{WKORD_Q}
+				</if>
+				AND 	A.INSERT_DB_TIME 	= #{MAX_INSERT_DB_TIME}
+				
+				GROUP BY B.WKORD_NUM_SEQ
+			) B1
+			WHERE 	A.COMP_CODE 		= #{S_COMP_CODE}
+			AND 	A.DIV_CODE 			= #{DIV_CODE}
+			AND  	A.WKORD_NUM 		= #{WKORD_NUM}
+			AND		A.PROG_WORK_CODE	= #{PROG_WORK_CODE}
+		
+		) M
+		LEFT OUTER JOIN 
+		(
+			SELECT	TOP 1
+					COMP_CODE,
+					DIV_CODE,
+					WKORD_NUM,
+					PROG_WORK_CODE,
+					#{WKORD_NUM}		AS PMP_WKORD_NUM,
+					#{PROG_WORK_CODE}	AS PMP_PROG_WORK_CODE
+
+			FROM RMG100T A WITH(NOLOCK)
+			WHERE	A.COMP_CODE			= #{S_COMP_CODE}
+			AND 	A.DIV_CODE 			= #{DIV_CODE}
+			AND 	A.EQU_CODE 			= #{EQU_CODE}
+			AND		A.ITEM_CODE			= #{ITEM_CODE}
+			<if test='USE_WKORD_Q_YN == "Y"'>
+			AND 	A.WKORD_Q 			= #{WKORD_Q}
+			</if>
+			AND 	A.INSERT_DB_TIME 	= #{MAX_INSERT_DB_TIME}
+		) B ON M.COMP_CODE = B.COMP_CODE AND M.DIV_CODE = B.DIV_CODE AND M.WKORD_NUM = B.PMP_WKORD_NUM AND M.PROG_WORK_CODE = B.PMP_PROG_WORK_CODE
+		LEFT OUTER JOIN RMG110T C WITH(NOLOCK) ON B.COMP_CODE = C.COMP_CODE AND B.DIV_CODE = C.DIV_CODE AND B.WKORD_NUM = C.WKORD_NUM AND B.PROG_WORK_CODE = C.PROG_WORK_CODE AND M.CHILD_ITEM_CODE = C.ITEM_CODE AND M.WKORD_NUM_SEQ = C.WKORD_NUM_SEQ
+		LEFT OUTER JOIN BPR100T D WITH(NOLOCK) ON M.COMP_CODE = D.COMP_CODE AND M.CHILD_ITEM_CODE = D.ITEM_CODE
+		LEFT OUTER JOIN BSA100T E WITH(NOLOCK) ON M.COMP_CODE = E.COMP_CODE AND M.COMP_CODE = E.ORG_COMP_CODE AND E.MAIN_CODE = 'B140' AND M.GROUP_CODE = E.SUB_CODE
+		WHERE 1=1		
+		
+		ORDER BY M.DIV_CODE,	M.WKORD_NUM,	M.PROG_WORK_CODE,	M.WKORD_NUM_SEQ,	M.SEQ		
+	</select>
+	
+	<!-- 02.팝업에서 확인 버튼 클릭 시 -->
+	<!-- 공정 차수 관련 조회 -->
+	<select id="z_rmgmtService.selectBodyTopInfo2" parameterType="map" resultType="map">
+		SELECT 	#{WKORD_NUM} AS WKORD_NUM,			--바코드 작업지시
+				A.WKORD_NUM  AS LOAD_WKORD_NUM,		--팝업 확인 시 작업지시번호
+				B.WKORD_NUM_SEQ,
+				B.RPM_Q,
+				B.TIME_Q,
+				B.SHARP_7_Q,
+				B.POWDER_YN,
+				B.COLORING_YN,
+				B.BINDER_YN,
+				B.PEARL_YN,
+				B.HGI_Q_CD,
+				B.PROC_GROUP_CD,
+				B.PROD_PROC,
+				B.USER_PROD_PROC
+		FROM RMG100T		A WITH(NOLOCK)
+		INNER JOIN RMG120T	B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE = B.DIV_CODE AND A.WKORD_NUM = B.WKORD_NUM AND A.PROG_WORK_CODE = B.PROG_WORK_CODE
+		WHERE 	A.COMP_CODE 		= #{S_COMP_CODE}
+		AND 	A.DIV_CODE 			= #{DIV_CODE}
+		AND 	A.WKORD_NUM 		= #{P_WKORD_NUM}
+		AND		A.PROG_WORK_CODE	= #{P_PROG_WORK_CODE}
+			
+		ORDER BY B.WKORD_NUM_SEQ
+	</select>
+	
+	<!-- 02.팝업에서 확인 버튼 클릭 시 -->
+	<!-- 공정 차수 탭 생성  조회 -->
+	<select id="z_rmgmtService.selectBodySeq2" parameterType="map" resultType="map">
+		SELECT 	B.WKORD_NUM_SEQ
+		FROM RMG100T		A WITH(NOLOCK)
+		INNER JOIN RMG120T	B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE = B.DIV_CODE AND A.WKORD_NUM = B.WKORD_NUM AND A.PROG_WORK_CODE = B.PROG_WORK_CODE
+		WHERE 	A.COMP_CODE 		= #{S_COMP_CODE}
+		AND 	A.DIV_CODE 			= #{DIV_CODE}
+		AND 	A.WKORD_NUM 		= #{P_WKORD_NUM}
+		AND		A.PROG_WORK_CODE	= #{P_PROG_WORK_CODE}
+		
+		GROUP BY B.WKORD_NUM_SEQ
+		ORDER BY B.WKORD_NUM_SEQ
+		
+	</select>
+	<!-- 02.팝업에서 확인 버튼 클릭 시 -->
+	<!-- 공정 차수 별 원료 조회  조회 -->
+	<select id="z_rmgmtService.selectBodyTbInfo2" parameterType="map" resultType="map">
+		SELECT	M.DIV_CODE,																	--사업장
+				M.WKORD_NUM 			AS LOAD_WKORD_NUM,									--팝업 확인 작업지시번호
+				#{WKORD_NUM}  			AS WKORD_NUM, 										--바코드 작업지시번호
+				M.PROG_WORK_CODE 		AS LOAD_PROG_WORK_CODE,								--팝업 확인 공정코드
+				#{PROG_WORK_CODE} 		AS PROG_WORK_CODE,									--바코드 공정코드
+				M.WKORD_NUM_SEQ,															--공정차수
+				M.REF_TYPE 				AS REF_TYPE,
+				M.PATH_CODE 			AS PATH_CODE,
+				M.SEQ,																		--제조이력 순번
+				ISNULL(M.GROUP_CODE, '') AS GROUP_CODE,
+				ISNULL(E.CODE_NAME, '') AS GROUP_NAME,
+				/***** 하위 품목의 LOT는 수불에서 가져온다 *****/							
+				(SELECT	 STUFF((SELECT  ' '+ LOT_NO											
+								FROM    BTR100T WITH(NOLOCK)								
+								WHERE COMP_CODE		= M.COMP_CODE							
+								AND   DIV_CODE		= M.DIV_CODE							
+								AND   ORDER_NUM		= M.WKORD_NUM							
+								AND   ITEM_CODE		= M.CHILD_ITEM_CODE						
+								AND   INOUT_TYPE	= '2'									
+								GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, ITEM_CODE, LOT_NO	
+								FOR XML PATH('')),1,1,'')) 									
+										AS LOT_NO,											-- 제조이력 품목 LOT NO OR 시험번호
+				M.ITEM_CODE,																-- 제품코드
+				M.CHILD_ITEM_CODE,															-- 제조이력 품목코드
+				D.ITEM_NAME				AS CHILD_ITEM_NAME,									-- 제조이력 품목명
+				M.UNIT_Q,																	-- 함량
+				M.ALLOCK_Q,																	-- 이론량
+				D.STOCK_UNIT,																-- 단위
+				ISNULL(C.PRODT_Q_G, 0)	AS PRODT_Q_G,										-- 계량량(G)
+				ISNULL(C.PRODT_Q_P, 0)	AS PRODT_Q_P,										-- 계량량(%)
+				ISNULL(C.INSERT_DB_TIME, '') AS INSERT_DB_TIME,
+				M.WKORD_NUM_SEQ + CASE WHEN ISNULL(C.COMP_CODE, '') = '' THEN 'N' ELSE 'Y' END AS SEQ_SHOW_YN, --공정차수별 변경여부
+				CASE WHEN ISNULL(C.COMP_CODE, '') = '' THEN 'N' ELSE 'Y' END AS SHOW_YN,						   --변경여부
+				CASE WHEN ISNULL(C.COMP_CODE, '') = '' THEN 'N' ELSE 'Y' END AS DATA_EXIST_YN				   --데이터 존재유무
+		FROM 
+		(
+			SELECT	A.COMP_CODE,							--법인코드
+					A.DIV_CODE,								--사업장코드
+					A.WKORD_NUM,							--작업지시번호
+					A.PROG_WORK_CODE,						--공정코드
+					A.ITEM_CODE,							--작업지시 제품코드
+					B1.WKORD_NUM_SEQ,						--공정차수
+					B.SEQ,									--공정순서
+					B.ITEM_CODE AS CHILD_ITEM_CODE,			--작업지시 품목에 대한 재료의 품목코드
+					B.UNIT_Q,								--함량						
+					B.ALLOCK_Q,								--이론량
+					B.REF_TYPE,
+					B.PATH_CODE,
+					B.GROUP_CODE
+			FROM PMP100T		A WITH(NOLOCK)
+			INNER JOIN PMP200T	B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE = B.DIV_CODE AND A.WKORD_NUM = B.WKORD_NUM
+			CROSS JOIN (
+				/***** CROSS JOIN
+				 - 공정 차수 DEFAULT : Z014의 REF_CODE1이 Y인 차수
+				 - 데이터 존재시 Y차수 이상
+				***********************************/
+				SELECT SUB_CODE AS WKORD_NUM_SEQ
+				FROM BSA100T
+				WHERE 	COMP_CODE 		= #{S_COMP_CODE}
+				AND 	ORG_COMP_CODE 	= #{S_COMP_CODE}
+				AND 	MAIN_CODE 		= 'Z014'
+				AND 	REF_CODE1 		= 'Y'
+				
+				UNION
+				
+				SELECT B.WKORD_NUM_SEQ 
+				FROM RMG100T		A WITH(NOLOCK)
+				INNER JOIN RMG120T	B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE = B.DIV_CODE AND A.WKORD_NUM = B.WKORD_NUM AND A.PROG_WORK_CODE = B.PROG_WORK_CODE
+				WHERE 	A.COMP_CODE 		= #{S_COMP_CODE}
+				AND 	A.DIV_CODE 			= #{DIV_CODE}
+				AND 	A.WKORD_NUM 		= #{P_WKORD_NUM}
+				AND		A.PROG_WORK_CODE	= #{P_PROG_WORK_CODE}
+				
+				GROUP BY B.WKORD_NUM_SEQ
+			) B1
+			WHERE 	A.COMP_CODE 		= #{S_COMP_CODE}
+			AND 	A.DIV_CODE 			= #{DIV_CODE}
+			AND 	A.WKORD_NUM 		= #{P_WKORD_NUM}
+			AND		A.PROG_WORK_CODE	= #{P_PROG_WORK_CODE}
+		
+		) M
+		LEFT OUTER JOIN RMG100T B WITH(NOLOCK) ON M.COMP_CODE = B.COMP_CODE AND M.DIV_CODE = B.DIV_CODE AND M.WKORD_NUM = B.WKORD_NUM AND M.PROG_WORK_CODE = B.PROG_WORK_CODE
+		LEFT OUTER JOIN RMG110T C WITH(NOLOCK) ON B.COMP_CODE = C.COMP_CODE AND B.DIV_CODE = C.DIV_CODE AND B.WKORD_NUM = C.WKORD_NUM AND B.PROG_WORK_CODE = C.PROG_WORK_CODE AND M.CHILD_ITEM_CODE = C.ITEM_CODE AND M.WKORD_NUM_SEQ = C.WKORD_NUM_SEQ
+		LEFT OUTER JOIN BPR100T D WITH(NOLOCK) ON M.COMP_CODE = D.COMP_CODE AND M.CHILD_ITEM_CODE = D.ITEM_CODE
+		LEFT OUTER JOIN BSA100T E WITH(NOLOCK) ON M.COMP_CODE = E.COMP_CODE AND M.COMP_CODE = E.ORG_COMP_CODE AND E.MAIN_CODE = 'B140' AND M.GROUP_CODE = E.SUB_CODE
+		WHERE 1=1		
+		
+		ORDER BY M.DIV_CODE,	M.WKORD_NUM,	M.PROG_WORK_CODE,	M.WKORD_NUM_SEQ,	M.SEQ		
+	</select>
+	
+	
+	<!-- 제조이력 조회 -->
+	<select id="z_rmgmtService.selectProdHistory" parameterType="Map" resultType="rMap">
+		DECLARE @COMP_CODE 		NVARCHAR(08)
+		      , @DIV_CODE  		NVARCHAR(08)
+		      , @PROD_ITEM_CODE	NVARCHAR(20)
+		      , @EQU_CODE  		NVARCHAR(60)
+	      	  , @WKORD_Q		NUMERIC(30,6)
+	      	  , @DT_FR 			NVARCHAR(08)
+	      	  , @DT_TO 			NVARCHAR(08)
+	      	  , @PRODT_PRSN 	NVARCHAR(50)
+		     
+		
+		    SET @COMP_CODE 		= #{S_COMP_CODE}
+		    SET @DIV_CODE  		= #{DIV_CODE}
+		    SET @PROD_ITEM_CODE = #{PROD_ITEM_CODE}  -- 품목코드
+		    SET @EQU_CODE  		= #{EQU_CODE}        -- 설비번호
+		    SET @WKORD_Q  		= #{WKORD_Q}     	 -- 이론량
+		    SET @DT_FR  		= #{DT_FR}     	 	 -- 제조일자 FR
+		    SET @DT_TO  		= #{DT_TO}     	 	 -- 제조일자 TO
+		    SET @PRODT_PRSN  	= #{PRODT_PRSN}      -- 제조자
+		
+		SELECT ISNULL(A.PRODT_DATE	, '')   AS PRODT_DATE	 -- 제조일시
+		     , ISNULL(A.EQU_CODE	, '')   AS EQU_CODE	     -- 설비번호
+			 , ISNULL(E.EQU_NAME	, '')   AS EQU_NAME	     -- 제조기기
+			 , ISNULL(A.LOT_NO		, '')   AS LOT_NO	     -- 제조번호
+			 , ISNULL(A.WKORD_Q	, 0)    AS WKORD_Q   -- 이론량
+			 , ISNULL(C.PRODT_Q	, 0)    AS PRODT_Q      -- 실제조량
+			 , ISNULL(B.PROD_PROC	, '')   AS PROD_PROC	 -- 제조이력
+			 , ISNULL(A.PRODT_PRSN	, '')   AS PRODT_PRSN	 -- 제조자 ID
+			 , ISNULL(D.CODE_NAME	, '')   AS PRODT_PRSN_NM -- 제조자
+			 
+			 , ISNULL(A.WKORD_NUM   , '')   AS WKORD_NUM	  -- 작업지시번호
+			 , ISNULL(A.PROG_WORK_CODE, '') AS PROG_WORK_CODE -- 공정코드
+		
+		  FROM RMG100T A
+		  LEFT OUTER JOIN RMG120T B  ON B.COMP_CODE      = A.COMP_CODE
+		   							AND B.DIV_CODE       = A.DIV_CODE
+		   							AND B.WKORD_NUM      = A.WKORD_NUM      -- 작업지시번호
+		   							AND B.PROG_WORK_CODE = A.PROG_WORK_CODE -- 공정코드
+		   							AND B.WKORD_NUM_SEQ  = '00'             -- 제조이력
+		
+		  /* 작업실적 정보 */
+		  LEFT OUTER JOIN ( SELECT SUM(A1.GOOD_WORK_Q) AS PRODT_Q
+								 , A1.COMP_CODE
+								 , A1.DIV_CODE
+								 , A1.WKORD_NUM
+							  FROM PMR100T A1
+							 WHERE A1.COMP_CODE   = @COMP_CODE
+							   AND A1.DIV_CODE    = @DIV_CODE
+							   AND A1.LINE_END_YN = 'Y'
+							 GROUP BY 
+								   A1.COMP_CODE
+								 , A1.DIV_CODE
+								 , A1.WKORD_NUM
+								 , A1.LINE_END_YN
+						
+						  ) C        ON C.COMP_CODE     = A.COMP_CODE
+		   						    AND C.DIV_CODE      = A.DIV_CODE
+		   						    AND C.WKORD_NUM     = A.WKORD_NUM
+		   
+		  LEFT OUTER JOIN BSA100T D  ON D.COMP_CODE     = A.COMP_CODE
+		                            AND D.SUB_CODE      = A.PRODT_PRSN
+		   						    AND D.MAIN_CODE     = 'P505'        -- 제조자 공통코드
+		
+		  /* 제조기기 */
+		  LEFT OUTER JOIN EQU200T E  ON E.COMP_CODE     = A.COMP_CODE
+		   						    AND E.DIV_CODE      = A.DIV_CODE
+		   						    AND E.EQU_CODE      = A.EQU_CODE   
+		
+		 WHERE A.COMP_CODE  	= @COMP_CODE
+		   AND A.DIV_CODE  	 	= @DIV_CODE
+		   AND A.ITEM_CODE  	= @PROD_ITEM_CODE	-- 품목코드
+		   AND A.WKORD_Q		= @WKORD_Q      -- 이론량
+		   AND (ISNULL(@EQU_CODE, '') 	= '' OR A.EQU_CODE   = @EQU_CODE)	-- 설비번호
+		   AND (ISNULL(@DT_FR, '') 		= '' OR A.PRODT_DATE <![CDATA[>=]]> @DT_FR)
+		   AND (ISNULL(@DT_TO, '') 		= '' OR A.PRODT_DATE <![CDATA[<=]]> @DT_TO)
+		   AND (ISNULL(@PRODT_PRSN, '') = '' OR A.PRODT_PRSN = @PRODT_PRSN)  
+		<!--    
+		<if test="DT_FR != null and DT_FR != ''">
+	       AND A.PRODT_DATE   <![CDATA[>=]]> #{DT_FR}
+		</if>
+		<if test="DT_TO != null and DT_TO != ''">
+	       AND A.PRODT_DATE   <![CDATA[<=]]> #{DT_TO}
+		</if>
+		 <if test="PRODT_PRSN != null and PRODT_PRSN != ''">
+	       AND A.PRODT_PRSN   = #{PRODT_PRSN}
+		</if> -->
+		 ORDER BY A.PRODT_DATE DESC, A.INSERT_DB_TIME DESC
+	</select>
+	
+	<!-- 공정차수 조회 -->
+	<select id="z_rmgmtService.selectWkordNum" parameterType="Map" resultType="rMap">
+		SELECT A.WKORD_NUM                           -- 작업지시번호
+		     , A.PROG_WORK_CODE                      -- 공정코드
+		     , A.WKORD_NUM_SEQ
+		     , B.CODE_NAME	AS WKORD_NUM_SEQ_NM
+		  FROM RMG110T A
+		  LEFT OUTER JOIN BSA100T B ON 	A.COMP_CODE 	= B.COMP_CODE 
+		  							AND A.COMP_CODE 	= B.ORG_COMP_CODE 
+		  							AND B.MAIN_CODE 	= 'Z014' 
+		  							AND A.WKORD_NUM_SEQ = B.SUB_CODE  
+		 WHERE A.COMP_CODE      = #{S_COMP_CODE}
+		   AND A.DIV_CODE       = #{DIV_CODE}
+		   AND A.WKORD_NUM      = #{WKORD_NUM}       -- 작업지시번호
+		   AND A.PROG_WORK_CODE = #{PROG_WORK_CODE}  -- 공정코드
+		   
+		   --AND LEN(A.WKORD_NUM_SEQ) > 0 AND SUBSTRING(A.WKORD_NUM_SEQ,1,1) = '0'
+		   
+		 GROUP BY A.COMP_CODE
+		        , A.DIV_CODE
+				, A.WKORD_NUM
+				, A.PROG_WORK_CODE
+				, A.WKORD_NUM_SEQ
+				, B.CODE_NAME
+		 ORDER BY A.WKORD_NUM_SEQ
+	</select>
+	
+	<!-- 제조이력 중 해당 공정 원료조회 -->
+	<select id="z_rmgmtService.selectChildHistory" parameterType="Map" resultType="rMap">
+		
+		SELECT  D.CODE_NAME	AS WKORD_NUM_SEQ_NM
+			 , C.PROD_PROC                  					-- 제조이력
+			 , B.ITEM_CODE      		AS CHILD_ITEM_CODE      -- 원료코드
+			 , B1.ITEM_NAME             AS CHILD_ITEM_NM		-- 원료명
+			 , B.OUTSTOCK_REQ_Q             					-- 이론량
+			 , B.PRODT_Q_G                    					-- 계량량(G)
+			 , B.PRODT_Q_P                    					-- 계량량(%)
+			 , P.SEQ
+			 , B.WKORD_NUM_SEQ									-- 공정차수
+			 , A.PROG_WORK_CODE            						-- 공정코드
+		
+		  FROM RMG100T A
+		
+		  INNER JOIN RMG110T B        ON B.COMP_CODE      = A.COMP_CODE
+									 AND B.DIV_CODE       = A.DIV_CODE
+									 AND B.PROG_WORK_CODE = A.PROG_WORK_CODE
+									 AND B.WKORD_NUM      = A.WKORD_NUM
+  		  INNER JOIN PMP200T P 		  ON B.COMP_CODE 		= P.COMP_CODE 
+		  							 AND B.DIV_CODE 		= P.DIV_CODE 
+		  							 AND B.WKORD_NUM 		= P.WKORD_NUM 
+		  							 AND B.ITEM_CODE 		= P.ITEM_CODE 
+		  							 AND B.REF_TYPE 		= P.REF_TYPE 
+		  							 AND B.PATH_CODE 		= P.PATH_CODE
+		  LEFT OUTER JOIN BPR100T B1  ON B1.COMP_CODE     = B.COMP_CODE
+		                             AND B1.ITEM_CODE     = B.ITEM_CODE
+		
+		  LEFT OUTER JOIN RMG120T C  ON C.COMP_CODE       = B.COMP_CODE
+									AND C.DIV_CODE        = B.DIV_CODE
+									AND C.WKORD_NUM       = B.WKORD_NUM
+									AND C.PROG_WORK_CODE  = B.PROG_WORK_CODE
+									AND C.WKORD_NUM_SEQ   = B.WKORD_NUM_SEQ
+		  LEFT OUTER JOIN BSA100T D ON 	A.COMP_CODE 	= D.COMP_CODE 
+		  							AND A.COMP_CODE 	= D.ORG_COMP_CODE 
+		  							AND D.MAIN_CODE 	= 'Z014' 
+		  							AND B.WKORD_NUM_SEQ = D.SUB_CODE  
+		   
+		 WHERE A.COMP_CODE 		= #{S_COMP_CODE}
+		   AND A.DIV_CODE  		= #{DIV_CODE}
+		   AND A.WKORD_NUM   	= #{WKORD_NUM}		-- 작업지시번호
+		   AND A.PROG_WORK_CODE = #{PROG_WORK_CODE}	-- 공정코드
+	
+		 ORDER BY P.SEQ
+	</select>
+	<select id="z_rmgmtService.selectRmgmtHistDetail" parameterType="Map" resultType="rMap">
+		SELECT
+			B.PRODT_DATE,
+			ISNULL((SELECT STUFF((
+				SELECT
+					', ' + LOT_NO
+				FROM
+					BTR100T WITH(NOLOCK)
+				WHERE
+						COMP_CODE 	= A.COMP_CODE
+	                AND DIV_CODE 	= A.DIV_CODE
+	                AND ORDER_NUM 	= B.WKORD_NUM
+	                AND ITEM_CODE 	= A.ITEM_CODE
+	                AND INOUT_TYPE 	= '2'
+				GROUP BY
+					COMP_CODE,
+	            	DIV_CODE,
+	                ORDER_NUM,
+	                ITEM_CODE,
+	                LOT_NO FOR XML PATH('')
+			), 1, 1, '')), '')			AS LOT_NO,
+			A.ITEM_CODE,
+			C.ITEM_NAME,
+			A.OUTSTOCK_REQ_Q,
+			A.PRODT_Q_G,
+			A.PRODT_Q_P
+		FROM RMG110T 			A WITH(NOLOCK)
+		INNER JOIN RMG100T 		B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE = B.DIV_CODE AND A.WKORD_NUM = B.WKORD_NUM AND A.PROG_WORK_CODE = B.PROG_WORK_CODE
+		LEFT OUTER JOIN BPR100T C WITH(NOLOCK) ON A.COMP_CODE = C.COMP_CODE AND A.ITEM_CODE = C.ITEM_CODE
+		WHERE 
+				B.COMP_CODE			= #{S_COMP_CODE}
+			AND B.DIV_CODE			= #{DIV_CODE}
+			AND B.EQU_CODE 			= #{EQU_CODE}
+			AND B.ITEM_CODE 		= #{ITEM_CODE}
+			AND A.ITEM_CODE 		= #{CHILD_ITEM_CODE}
+			AND A.WKORD_NUM_SEQ 	= '00'
+			AND (ISNULL(#{WKORD_Q}, '') = '' OR B.WKORD_Q = #{WKORD_Q})
+
+		ORDER BY B.PRODT_DATE DESC, B.INSERT_DB_TIME DESC			
+	</select>
+	<update id="z_rmgmtService.mergeRmg100t" parameterType="Map" >
+
+		MERGE INTO RMG100T AS A 
+		USING (SELECT 1 as dummy) AS B 
+		ON (	A.COMP_CODE			= #{S_COMP_CODE}
+			AND	A.DIV_CODE			= #{DIV_CODE}
+			AND	A.WKORD_NUM			= #{WKORD_NUM}
+			AND	A.PROG_WORK_CODE	= #{PROG_WORK_CODE}
+		)
+		WHEN MATCHED THEN
+		UPDATE 
+		SET		ITEM_CODE		= #{ITEM_CODE},
+				EQU_CODE		= #{EQU_CODE},
+				LOT_NO			= #{LOT_NO},
+				PRODT_DATE		= #{PRODT_DATE},
+				WKORD_Q			= #{WKORD_Q},				
+				PRODT_PRSN		= #{PRODT_PRSN},
+				UPDATE_DB_USER 	= #{S_USER_ID},
+				UPDATE_DB_TIME 	= GETDATE()
+		WHEN NOT MATCHED THEN
+		INSERT 
+		(
+			COMP_CODE,			DIV_CODE,		WKORD_NUM,		PROG_WORK_CODE,		ITEM_CODE,
+			EQU_CODE,			LOT_NO,			PRODT_DATE,		WKORD_Q,			PRODT_PRSN,
+			LAB_NO,
+			INSERT_DB_USER,		INSERT_DB_TIME,	UPDATE_DB_USER,	UPDATE_DB_TIME
+		)
+		VALUES 
+		(	
+			#{S_COMP_CODE},		#{DIV_CODE},		#{WKORD_NUM},	#{PROG_WORK_CODE},	#{ITEM_CODE},
+			#{EQU_CODE},		#{LOT_NO},			#{PRODT_DATE},	#{WKORD_Q},			#{PRODT_PRSN},
+			(
+			 SELECT DISTINCT LAB_NO 
+			 FROM 	BPR500T 
+			 WHERE 	COMP_CODE 		= #{S_COMP_CODE} 
+			 AND 	DIV_CODE 		= #{DIV_CODE} 
+			 AND 	PROD_ITEM_CODE 	= #{ITEM_CODE} 
+			 AND 	CHILD_ITEM_CODE = '$'
+			 ),
+			#{S_USER_ID},		GETDATE(),			#{S_USER_ID},	GETDATE()
+		);
+		
+		
+		UPDATE RMG100T
+		SET S_CNT 			= S_CNT + 1,
+			UPDATE_DB_USER 	= #{S_USER_ID},
+			UPDATE_DB_TIME 	= GETDATE()
+		WHERE 	COMP_CODE 		= #{S_COMP_CODE}
+		AND 	DIV_CODE 		= #{DIV_CODE}
+		AND 	WKORD_NUM 		= #{LOAD_WKORD_NUM}
+		AND 	PROG_WORK_CODE 	= #{LOAD_PROG_WORK_CODE}
+	     
+	</update>
+	<insert id="z_rmgmtService.insRmg110t" parameterType="Map" >
+
+		INSERT INTO RMG110T
+		(
+			COMP_CODE,			 DIV_CODE,			 WKORD_NUM,			 PROG_WORK_CODE,	 WKORD_NUM_SEQ,			 
+			ITEM_CODE,			 REF_TYPE,			 PATH_CODE,			 OUTSTOCK_REQ_Q,	 PRODT_Q_G,
+			PRODT_Q_P,			 DLIVY_REQ_CD,		 
+			INSERT_DB_USER,	 INSERT_DB_TIME,	 UPDATE_DB_USER,	 UPDATE_DB_TIME
+		)
+		VALUES 
+		(	
+			#{S_COMP_CODE}, 	#{DIV_CODE}, 		#{WKORD_NUM}, 		#{PROG_WORK_CODE}, 	#{WKORD_NUM_SEQ},
+			#{CHILD_ITEM_CODE}, #{REF_TYPE}, 		#{PATH_CODE}, 		#{ALLOCK_Q}, 		#{PRODT_Q_G},
+			#{PRODT_Q_P},		'01',				
+			#{S_USER_ID},		GETDATE(),			#{S_USER_ID},		GETDATE()
+		)
+	     
+	</insert>
+	
+	<delete id="z_rmgmtService.delRmg110t" parameterType="Map">
+	
+		DELETE FROM RMG110T
+		WHERE	COMP_CODE		= #{S_COMP_CODE}
+		AND		DIV_CODE		= #{DIV_CODE}
+		AND		WKORD_NUM		= #{WKORD_NUM}
+		AND		PROG_WORK_CODE	= #{PROG_WORK_CODE}
+	
+	</delete>
+	
+	<delete id="z_rmgmtService.delRmg120t" parameterType="Map">
+	
+		DELETE FROM RMG120T
+		WHERE 	COMP_CODE		= #{S_COMP_CODE}
+		AND		DIV_CODE		= #{DIV_CODE}
+		AND		WKORD_NUM		= #{WKORD_NUM}
+		AND		PROG_WORK_CODE	= #{PROG_WORK_CODE}
+	
+	</delete>
+	
+	<update id="z_rmgmtService.insRmg120t" parameterType="Map" >
+	
+	INSERT INTO RMG120T
+	(
+		COMP_CODE,			DIV_CODE,			WKORD_NUM,			PROG_WORK_CODE,		WKORD_NUM_SEQ,
+		RPM_Q,				TIME_Q,				SHARP_7_Q,			POWDER_YN,			COLORING_YN,
+		BINDER_YN,			PEARL_YN,			HGI_Q_CD,			PROC_GROUP_CD,		PROD_PROC,
+		USER_PROD_PROC,		INSERT_DB_USER,		INSERT_DB_TIME,		UPDATE_DB_USER,		UPDATE_DB_TIME
+	)
+	VALUES 
+	(	
+		#{S_COMP_CODE},		#{DIV_CODE},		#{WKORD_NUM},		#{PROG_WORK_CODE},				#{WKORD_NUM_SEQ},
+		#{RPM_Q},			#{TIME_Q},			#{SHARP_7_Q},		#{POWDER_YN},					#{COLORING_YN},
+		#{BINDER_YN},		#{PEARL_YN},		#{HGI_Q_CD},		ISNULL(#{PROC_GROUP_CD}, ''),	#{PROD_PROC},
+		#{USER_PROD_PROC},	#{S_USER_ID},		GETDATE(),			#{S_USER_ID},					GETDATE()
+	);
+	</update>
+	
+	
+</mapper>

@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="nboxDocRcvUserService">
+	
+	<select id="nboxDocRcvUserService.selects" parameterType="Map" resultType="rMap">
+    /* nboxDocRcvUserService.selects */
+    
+        SET @sUUID = ''
+        
+        DO (
+            SELECT @sUUID := nfnDeptTreeData(#{S_COMP_CODE}) FROM db_root
+        )
+        
+		SELECT 
+    		 '' as id
+    		,DocumentID
+    		,RcvType
+    		,DeptType
+    		,RcvUserDeptID
+    		,RcvUserID
+    		,ReadDate
+    		,RcvUserName + ' ' + RcvUserPosName AS RcvUserName
+    		,RcvUserDeptName
+    		,CASE WHEN ReadDate is null then '0' else '1' end AS ReadChk
+		FROM   tbApprovalDocRcvUser
+		WHERE  DocumentID = #{DocumentID}
+		AND    RcvType = #{RcvType}
+		AND    DeptType = 'P'
+		UNION ALL
+		SELECT 
+    		 ( SELECT c.id FROM t_nfnDeptTreeData c WHERE c.tree_code = T1.RcvUserDeptID ) as id
+    		,T1.DocumentID
+    		,T1.RcvType
+    		,T1.DeptType
+    		,T1.RcvUserDeptID
+    		,T1.RcvUserID
+    		,T1.ReadDate
+    		,CASE WHEN T2.RcvUserCnt = 0
+    		      THEN T1.RcvUserName + ' ' + T1.RcvUserPosName
+    			  ELSE T1.RcvUserName + ' ' + T1.RcvUserPosName + '&#91;' + '외' + cast(T2.RcvUserCnt as VARCHAR) + '명' + '&#93;'
+    		 END AS RcvUserName
+    		,T1.RcvUserDeptName
+    		,CASE WHEN ReadDate is null then '0' else '1' end AS ReadChk
+		FROM   tbApprovalDocRcvUser T1
+		INNER JOIN (
+            		SELECT M.DocumentID, M.RcvType, M.DeptType, M.RcvUserDeptID, MIN(M.RcvUserID) AS RcvUserID, MAX(K.RcvUserCnt) AS RcvUserCnt
+            		FROM   tbApprovalDocRcvUser M
+            		INNER JOIN BSA300T N ON M.RcvUserID = N.USER_ID
+            		INNER JOIN (
+                				SELECT 
+                				    A.DocumentID, A.RcvType, A.DeptType, A.RcvUserDeptID, MIN(B.POST_CODE) AS POST_CODE, COUNT(1) - 1 AS RcvUserCnt
+                				FROM   tbApprovalDocRcvUser A
+                				INNER JOIN BSA300T B ON A.RcvUserID = B.USER_ID
+                				WHERE  A.DocumentID = #{DocumentID}
+                				AND    A.RcvType = #{RcvType}
+                				AND    A.DeptType = 'D'
+                				GROUP BY  A.DocumentID, A.DeptType, A.RcvType, A.RcvUserDeptID 
+                                ) K ON M.DocumentID = K.DocumentID AND M.RcvUserDeptID = k.RcvUserDeptID AND N.POST_CODE = k.POST_CODE
+            		GROUP BY M.DocumentID, M.RcvType, M.DeptType, M.RcvUserDeptID 
+                    ) T2 ON 
+                			T1.DocumentID = T2.DocumentID AND
+                			T1.RcvType = T2.RcvType AND
+                			T1.DeptType = T2.DeptType AND
+                			T1.RcvUserID = t2.RcvUserID		
+                            
+        DO (
+            SELECT nfnDeleteTableByKeyValue('t_nfnDeptTreeData', @sUUID) FROM db_root
+        )	
+	</select>
+    
+    <insert id="nboxDocRcvUserService.insert" parameterType="Map">
+    /* nboxDocRcvUserService.insert */
+    
+        <if test='DeptType == "P"'>
+            
+            SET @uUserName = ''
+            SET @uPosName = ''
+            SET @uDeptName = ''
+            
+            DO(
+                SELECT @uUserName := nfnGetUserName(#{S_COMP_CODE}, #{RcvUserID}) FROM db_root
+            )
+            
+            DO(
+                SET @uPosName := nfnGetUserPosName(#{S_COMP_CODE},#{RcvUserID}, #{S_LANG_CODE}) FROM db_root
+            )
+            
+            DO(
+                SET @uDeptName := nfnGetUserDeptName(#{S_COMP_CODE}, #{RcvUserID} ) FROM db_root
+            )
+            
+            INSERT INTO tbApprovalDocRcvUser(
+                 DocumentID
+                ,RcvType
+                ,DeptType
+                ,RcvUserID
+                ,RcvUserName
+                ,RcvUserDeptID
+                ,RcvUserDeptName
+                ,RcvUserPosName
+                ,ReadDate
+                ,InsertUserID
+                ,InsertDate
+                ,UpdateUserID
+                ,UpdateDate)
+            VALUES(
+                 #{DocumentID}  
+                ,#{RcvType}     
+                ,#{DeptType}
+                ,#{RcvUserID}             
+                ,@uUserName
+                ,#{RcvUserDeptID}
+                ,@uDeptName
+                ,@uPosName
+                ,null
+                ,#{S_USER_ID}
+                ,SYSDATETIME
+                ,#{S_USER_ID}
+                ,SYSDATETIME ) 
+        </if>
+        <if test='DeptType == "D"'>
+        SET @sUUID = ''
+        
+        DO(
+            SELECT @sUUID := nfnDocRcvUserByDeptType(#{S_COMP_CODE}, #{id}) FROM db_root
+        )
+        
+        NSERT INTO tbApprovalDocRcvUser(
+                 DocumentID
+                ,RcvType
+                ,DeptType
+                ,RcvUserID
+                ,RcvUserName
+                ,RcvUserDeptID
+                ,RcvUserDeptName
+                ,RcvUserPosName
+                ,ReadDate
+                ,InsertUserID
+                ,InsertDate
+                ,UpdateUserID
+                ,UpdateDate)
+            SELECT  
+                 #{DocumentID}  
+                ,#{RcvType}
+                ,#{DeptType}
+                ,id as RcvUserID 
+                ,text as RcvUserName
+                ,#{RcvUserDeptID}
+                ,nfnGetDeptName(#{S_COMP_CODE},#{RcvUserDeptID}) as RcvUserDeptName
+                ,nfnGetUserPosName(#{S_COMP_CODE},TREE_CODE, #{S_LANG_CODE}) as RcvUserPosName
+                ,null
+                ,#{S_USER_ID}
+                ,SYSDATETIME
+                ,#{S_USER_ID}
+                ,SYSDATETIME
+            FROM    t_nfndocrcvuserbydepttype
+            WHERE   depttype = 'P'
+            AND key_value = @sUUID
+            ORDER BY  sort         
+            
+        DO (
+            SELECT nfnDeleteTableByKeyValue('t_nfndocrcvuserbydepttype', @sUUID) FROM db_root
+        )      
+        </if>
+    </insert>
+    
+    <delete id="nboxDocRcvUserService.deletes" parameterType="Map">
+    /* nboxDocRcvUserService.deletes */
+    
+        DELETE FROM tbApprovalDocRcvUser
+        WHERE DocumentID = #{DocumentID}
+        AND   RcvType = #{RcvType}
+    </delete>
+    
+    <select id="nboxDocRcvUserService.selectReadCheck" parameterType="Map" resultType="rMap">
+    /* nboxDocRcvUserService.deletes */
+    
+        SELECT *, T1.TOTALCOUNT
+        FROM (
+            select 
+                 RcvUserName
+                ,RcvUserPosName
+                --,convert(VARCHAR(10),ReadDate,23) + ' ' + convert(VARCHAR(10),ReadDate,24) as ReadDate
+                ,TO_CHAR(ReadDate, 'yyyy-mm-dd hh:mi:ss') as ReadDate
+                ,RcvUserDeptID
+                ,ROW_NUMBER() OVER ( ORDER BY ReadDate DESC ) AS ROWNUMBER
+                ,COUNT(*) OVER () AS TOTALCOUNT
+            from   tbApprovalDocRcvUser
+            where  DocumentID = #{DocumentID}
+            and    RcvType = #{RcvType}
+            and    DeptType = #{DeptType}
+            and    RcvUserDeptID = #{RcvUserDeptID}
+            ) T1
+        WHERE T1.ROWNUMBER &gt; #{start} AND T1.ROWNUMBER &lt;= #{limit} * #{page}
+        ORDER BY T1.ROWNUMBER 
+    </select>
+	
+</mapper>

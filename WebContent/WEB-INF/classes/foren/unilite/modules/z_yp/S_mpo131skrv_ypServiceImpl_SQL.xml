@@ -1,0 +1,533 @@
+<?xmliiff version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_mpo131skrv_ypServiceImpl">
+	<select id="s_mpo131skrv_ypServiceImpl.selectList" parameterType="Map" resultType="rMap">     
+		--입력된 날짜에 따라 그 다음 주 날짜 구하는 로직
+		DECLARE 
+			    @compCode		NVARCHAR(08)					--법인코드
+			  , @divCode		NVARCHAR(08)					--사업장코드
+			  , @customCode		NVARCHAR(08)					--거래처코드
+			  , @customName		NVARCHAR(50)					--거래처명
+			  , @orderNum		NVARCHAR(20)					--발주번호
+			  , @minDrvyDate	NVARCHAR(08)					--발주번호 DETAIL DATA 중 가장 빠른 납기일
+			  , @dvryDate		NVARCHAR(08)					--납기일이 가장 빠른 날의 해당 주 첫번째 납기일
+
+		--조회조건 입력부분
+		    SET @compCode	= #{S_COMP_CODE}
+		    SET @divCode	= #{DIV_CODE}
+		    SET @customCode	= #{CUSTOM_CODE}
+		    SET @customName	= #{CUSTOM_NAME}
+		    SET @orderNum	= #{ORDER_NUM}
+		    SET @dvryDate	= #{DVRY_DATE_FR}
+
+		    SET @compCode	= ISNULL(@compCode		, '')
+		    SET @divCode	= ISNULL(@divCode		, '')
+		    SET @customCode	= ISNULL(@customCode	, '')
+		    SET @customName	= ISNULL(@customName	, '')
+		    SET @orderNum	= ISNULL(@orderNum		, '')
+
+
+		/****** 입력된 발주번호의 DETAIL DATA의 가장빠른 납기일 기준으로 해당 주 가장 빠른 날짜 구하기 ******************/
+	  <if test="@foren.Ognl@isNotEmpty(ORDER_NUM)">
+		--입력받은 발주번호의 DETAIL DATA의 가장빠른 납기일을 가지고 @minDrvyDate에 SET
+		SELECT @minDrvyDate = MIN(DVRY_DATE)
+		  FROM MPO200T WITH (NOLOCK)
+		 WHERE COMP_CODE	= @compCode
+		   AND DIV_CODE		= @divCode
+		   AND ((CUSTOM_CODE= @customCode AND @customCode != '') OR (@customCode = ''))
+		   AND ORDER_NUM	= @orderNum
+
+		IF (@minDrvyDate, '') != ''
+			BEGIN
+				--minDrvyDate의 해당 주차의 첫번째 날(월요일)을 @dvryDate에 SET
+				SELECT @dvryDate = MIN(CAL_DATE) 
+				  FROM BCM400T WITH(NOLOCK)
+				 WHERE COMP_CODE = @compCode
+				   AND CAL_TYPE  = '3'
+				   AND WEEK_DAY != 1
+				   AND CAL_NO    = (SELECT CAL_NO 
+									  FROM BCM400T WITH(NOLOCK)
+									 WHERE COMP_CODE = @compCode
+									   AND CAL_TYPE  = '3'
+									   AND CAL_DATE  = @minDrvyDate)
+				   AND SUBSTRING(CAL_DATE, 1, 4) = SUBSTRING(@minDrvyDate, 1, 4)
+			END
+	  </if>
+
+
+ 		/****** 해당 날짜에 맞는 데이터 SELECT **************************************************************************/
+			BEGIN
+				--SELECT @dvryDate							--입력된 발주일 다음 주 날짜(개별) 확인
+					SELECT
+						   Z.CUSTOM_CODE
+						 , Z.CUSTOM_NAME
+						 , Z.TELEPHON
+						 , Z.주무
+						 , Z.FAX
+						 , Z.DIV_CODE
+						 , Z.DIV_NAME
+						 , Z.DIV_FULL_NAME
+						 , Z.S_TELEPHON
+						 , Z.ORDER_PRSN
+						 , Z.S_FAX_NUM
+						 , Z.ORDER_DATE
+						 , Z.ITEM_CODE
+						 , Z.ITEM_NAME
+						 , Z.SPEC
+						 , Z.S_CUSTOM_CODE
+						 , Z.S_CUSTOM_NAME
+						 , Z.SO_NUM
+						 , Z.REMARK
+						 , Z.ORDER_UNIT
+						 , SUM(Z.ORDER_UNIT_Q1)	AS ORDER_UNIT_Q1
+						 , SUM(Z.ORDER_UNIT_Q2)	AS ORDER_UNIT_Q2
+						 , SUM(Z.ORDER_UNIT_Q3)	AS ORDER_UNIT_Q3
+						 , SUM(Z.ORDER_UNIT_Q4)	AS ORDER_UNIT_Q4
+						 , SUM(Z.ORDER_UNIT_Q5)	AS ORDER_UNIT_Q5
+						 , SUM(Z.ORDER_UNIT_Q6)	AS ORDER_UNIT_Q6
+						 , SUM(Z.ORDER_UNIT_Q7)	AS ORDER_UNIT_Q7
+						 , SUM(Z.ORDER_UNIT_Q1)
+						 + SUM(Z.ORDER_UNIT_Q2)
+						 + SUM(Z.ORDER_UNIT_Q3)
+						 + SUM(Z.ORDER_UNIT_Q4)
+						 + SUM(Z.ORDER_UNIT_Q5)
+						 + SUM(Z.ORDER_UNIT_Q6)
+						 + SUM(Z.ORDER_UNIT_Q7) AS TOT_QTY
+						 , Z.ORDER_NUM
+						 , Z.AGREE_STATUS
+					 FROM (    
+							SELECT --MASTER정보
+									C.CUSTOM_CODE
+								  , C.CUSTOM_NAME												--수신(발주처)
+								  , CASE WHEN ISNULL(C.TELEPHON, '') = '' THEN C.HAND_PHON
+										 ELSE C.TELEPHON
+									END										AS TELEPHON			--연락처(TEL)
+								  , '담당'									AS 주무				--주무
+								  , C.FAX_NUM								AS FAX				--팩스번호(FAX)
+								  , A.DIV_CODE
+								  , D.DIV_NAME								AS DIV_NAME
+								  , D.DIV_FULL_NAME							AS DIV_FULL_NAME	--발신
+								  , D.TELEPHON								AS S_TELEPHON		--발신자 연락처(TEL)
+								  , Y3.CODE_NAME							AS ORDER_PRSN		--발주(구매담당)
+								  , D.FAX_NUM								AS S_FAX_NUM		--발신자 팩스번호(FAX)
+								  , uniLITE.fnGetUserDate(A.COMP_CODE, CONVERT(NVARCHAR(08), E.ORDER_DATE, 112))
+																			AS ORDER_DATE		--발주일
+								  --DETAIL정보
+								  , ISNULL(X.CUSTOM_ITEM_CODE, A.ITEM_CODE) AS ITEM_CODE
+								  , ISNULL(X.CUSTOM_ITEM_NAME, B.ITEM_NAME) AS ITEM_NAME
+								  , ISNULL(X.CUSTOM_ITEM_SPEC, B.SPEC)      AS SPEC
+								  , Z1.CUSTOM_CODE							AS S_CUSTOM_CODE
+								  , Z2.CUSTOM_NAME							AS S_CUSTOM_NAME--수주처명
+								  , A.SO_NUM												--수주번호
+
+								  , A.REMARK								AS REMARK		--적요
+								  --, CASE WHEN ISNULL(A.REMARK, '') = '' THEN  Z4.ITEM_NAME  
+								  --		ELSE A.REMARK + ', ' + Z4.ITEM_NAME END		AS REMARK  --적요
+								  
+
+								  , A.ORDER_UNIT											--단위
+								  , CASE WHEN A.DVRY_DATE = @dvryDate THEN A.ORDER_UNIT_Q
+										 ELSE 0
+									END										AS ORDER_UNIT_Q1--발주량(구매단위)
+								  , CASE WHEN A.DVRY_DATE = CONVERT(NVARCHAR(08), DATEADD(DAY, 1, @dvryDate), 112) THEN A.ORDER_UNIT_Q
+										 ELSE 0
+									END										AS ORDER_UNIT_Q2--발주량(구매단위)
+								  , CASE WHEN A.DVRY_DATE = CONVERT(NVARCHAR(08), DATEADD(DAY, 2, @dvryDate), 112) THEN A.ORDER_UNIT_Q
+										 ELSE 0
+									END										AS ORDER_UNIT_Q3--발주량(구매단위)
+								  , CASE WHEN A.DVRY_DATE = CONVERT(NVARCHAR(08), DATEADD(DAY, 3, @dvryDate), 112) THEN A.ORDER_UNIT_Q
+										 ELSE 0
+									END										AS ORDER_UNIT_Q4--발주량(구매단위)
+								  , CASE WHEN A.DVRY_DATE = CONVERT(NVARCHAR(08), DATEADD(DAY, 4, @dvryDate), 112) THEN A.ORDER_UNIT_Q
+										 ELSE 0
+									END										AS ORDER_UNIT_Q5--발주량(구매단위)
+								  , CASE WHEN A.DVRY_DATE = CONVERT(NVARCHAR(08), DATEADD(DAY, 5, @dvryDate), 112) THEN A.ORDER_UNIT_Q
+										 ELSE 0
+									END										AS ORDER_UNIT_Q6--발주량(구매단위)
+								  , CASE WHEN A.DVRY_DATE = CONVERT(NVARCHAR(08), DATEADD(DAY, 6, @dvryDate), 112) THEN A.ORDER_UNIT_Q
+										 ELSE 0
+									END										AS ORDER_UNIT_Q7--발주량(구매단위)
+								  , A.ORDER_NUM
+								  , E.AGREE_STATUS
+							  FROM       MPO200T AS A WITH(NOLOCK)
+							  INNER JOIN BPR100T AS B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+																  AND B.ITEM_CODE   = A.ITEM_CODE
+							  INNER JOIN MPO100T AS E WITH(NOLOCK) ON E.COMP_CODE   = A.COMP_CODE
+																  AND E.DIV_CODE    = A.DIV_CODE  
+																  AND E.ORDER_NUM   = A.ORDER_NUM
+							   LEFT JOIN BCM100T AS C WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+																  AND C.CUSTOM_CODE = E.CUSTOM_CODE
+							  INNER JOIN BOR120T AS D WITH(NOLOCK) ON D.COMP_CODE   = A.COMP_CODE
+																  AND D.DIV_CODE    = A.DIV_CODE
+							  INNER JOIN BSA220T AS G WITH(NOLOCK) ON G.COMP_CODE   = A.COMP_CODE
+																  AND G.TYPE_LEVEL  = A.DIV_CODE
+																  AND G.TREE_CODE   = A.WH_CODE
+    
+							   LEFT JOIN BPR300T AS X WITH(NOLOCK) ON X.COMP_CODE   = C.COMP_CODE
+																  AND X.CUSTOM_CODE = C.CUSTOM_CODE
+																  AND X.ITEM_CODE   = A.ITEM_CODE
+																  AND X.TYPE        = '1'
+																  AND X.APLY_START_DATE = (SELECT MAX(APLY_START_DATE)
+																							 FROM BPR300T WITH(NOLOCK)
+																							WHERE TYPE             = X.TYPE
+																							  AND COMP_CODE        = X.COMP_CODE
+																							  AND DIV_CODE         = X.DIV_CODE
+																							  AND ITEM_CODE        = X.ITEM_CODE
+																							  AND CUSTOM_CODE      = X.CUSTOM_CODE
+																							  AND APLY_START_DATE &lt;=  CONVERT(NVARCHAR(8), GETDATE(), 112))
+    
+							   LEFT JOIN BSA100T AS Y3 WITH(NOLOCK) ON Y3.COMP_CODE = C.COMP_CODE
+																   AND Y3.MAIN_CODE = 'M201'
+																   AND Y3.SUB_CODE != '$'
+																   AND Y3.SUB_CODE  = E.ORDER_PRSN
+    						   LEFT JOIN SOF100T AS Z1 WITH(NOLOCK) ON Z1.COMP_CODE   = A.COMP_CODE
+																   AND Z1.DIV_CODE    = A.DIV_CODE  
+																   AND Z1.ORDER_NUM   = A.SO_NUM
+ 
+    						   LEFT JOIN SOF110T AS Z3 WITH(NOLOCK) ON Z3.COMP_CODE   = A.COMP_CODE
+																   AND Z3.DIV_CODE    = A.DIV_CODE  
+																   AND Z3.ORDER_NUM   = A.SO_NUM
+																   AND Z3.SER_NO	  = A.SO_SEQ
+
+								LEFT JOIN BPR100T AS Z4 WITH(NOLOCK) ON Z4.COMP_CODE = Z3.COMP_CODE
+																	AND Z4.ITEM_CODE = Z3.ITEM_CODE
+
+ 							   LEFT JOIN BCM100T AS Z2 WITH(NOLOCK) ON Z2.COMP_CODE   = Z1.COMP_CODE
+																   AND Z2.CUSTOM_CODE = Z1.CUSTOM_CODE
+  
+							 WHERE A.COMP_CODE		= @compCode
+							   AND A.DIV_CODE		= @divCode
+							   AND ((E.CUSTOM_CODE	like @customCode + '%' AND @customCode != '') OR (@customCode = ''))
+							   AND ((C.CUSTOM_NAME	like @customName + '%' AND @customName != '') OR (@customName = ''))
+						--	   AND E.AGREE_STATUS	= N'2'    --승인
+							   AND G.USE_YN			= N'Y'    
+							   AND E.ORDER_TYPE	   != N'4'    --외주
+							   AND A.CONTROL_STATUS NOT IN ('8', '9')
+		  <if test="@foren.Ognl@isNotEmpty(ORDER_NUM)">
+							   AND A.ORDER_NUM		= @orderNum
+		  </if>
+						) Z
+				GROUP BY 
+						 Z.CUSTOM_CODE
+						,Z.CUSTOM_NAME
+						,Z.TELEPHON
+						,Z.주무
+						,Z.FAX	
+						,Z.DIV_CODE
+						,Z.DIV_NAME	
+						,Z.DIV_FULL_NAME	
+						,Z.S_TELEPHON	
+						,Z.ORDER_PRSN	
+						,Z.S_FAX_NUM	
+						,Z.ORDER_DATE
+						,Z.ITEM_CODE
+						,Z.ITEM_NAME
+						,Z.SPEC
+						,Z.S_CUSTOM_CODE
+						,Z.S_CUSTOM_NAME
+						,Z.SO_NUM
+						,Z.REMARK
+						,Z.ORDER_UNIT
+						,Z.ORDER_NUM
+						,Z.AGREE_STATUS
+				HAVING SUM(Z.ORDER_UNIT_Q1) + SUM(Z.ORDER_UNIT_Q2) + SUM(Z.ORDER_UNIT_Q3) + SUM(Z.ORDER_UNIT_Q4) + SUM(Z.ORDER_UNIT_Q5) + SUM(Z.ORDER_UNIT_Q6) + SUM(Z.ORDER_UNIT_Q7) != 0
+				 ORDER BY Z.ITEM_NAME, Z.CUSTOM_CODE
+			END
+	</select>
+	
+	
+	
+	
+	<select id="s_mpo131skrv_ypServiceImpl.getCalNo" parameterType="Map" resultType="rMap">
+		/* s_mpo131skrv_ypServiceImpl.getCalNo */ 
+		SELECT CASE WHEN A.WEEK_DAY = 1 THEN CASE WHEN A.CAL_NO -1 = 0 THEN 52				--입력한 일자가 일요일일 경우: CAL_NO-1, CAL_NO-1=0일 경우: 52
+												  ELSE A.CAL_NO -1
+											 END
+					ELSE A.CAL_NO
+				END										AS CAL_NO
+		  FROM BCM400T A WITH(NOLOCK)
+		 WHERE A.COMP_CODE	= #{S_COMP_CODE}
+		   AND A.CAL_TYPE	= '3'
+		   AND A.CAL_DATE	= #{CAL_DATE}
+	</select>	
+	
+	
+    <select id="s_mpo131skrv_ypServiceImpl.getCalDate" parameterType="Map" resultType="rMap">
+        /* s_mpo131skrv_ypServiceImpl.getCalDate */ 
+        DECLARE @CAL_DATE NVARCHAR(08)
+            SET @CAL_DATE = #{CAL_DATE}
+        
+        SELECT CONVERT(NVARCHAR(08), DATEADD(D, NUMBER - ((DATEPART(DW, @CAL_DATE) + 5) % 7), @CAL_DATE), 112)  AS CAL_DATE
+          FROM MASTER..SPT_VALUES
+         WHERE TYPE = 'P'
+           AND NUMBER &lt; 7
+    </select>
+    
+    <select id="s_mpo131skrv_ypServiceImpl.getCalDate_bak" parameterType="Map" resultType="rMap">
+        /* s_mpo131skrv_ypServiceImpl.getCalDate */ 
+        DECLARE @CAL_DATE NVARCHAR(08)
+            SET @CAL_DATE = #{CAL_DATE}
+        
+        SELECT A.CAL_DATE           AS CAL_DATE
+          FROM BCM400T A WITH(NOLOCK)
+         WHERE A.COMP_CODE  = #{S_COMP_CODE}
+           AND A.CAL_TYPE   = '3'
+           AND A.CAL_NO     = #{CAL_NO}
+           AND A.WEEK_DAY  != 1
+           AND (   SUBSTRING(A.CAL_DATE, 1, 6) = CONVERT(NVARCHAR(06), DATEADD(MONTH, -1, @CAL_DATE), 112)
+                OR SUBSTRING(A.CAL_DATE, 1, 6) = CONVERT(NVARCHAR(06), DATEADD(MONTH,  0, @CAL_DATE), 112)
+                OR SUBSTRING(A.CAL_DATE, 1, 6) = CONVERT(NVARCHAR(06), DATEADD(MONTH,  1, @CAL_DATE), 112)
+                ) 
+
+        UNION ALL
+
+        SELECT MIN(A.CAL_DATE)      AS CAL_DATE
+          FROM BCM400T A WITH(NOLOCK)
+         WHERE A.COMP_CODE  = #{S_COMP_CODE}
+           AND A.CAL_TYPE   = '3'
+           AND A.CAL_NO     = (#{CAL_NO} + 1) % 52
+           AND (   SUBSTRING(A.CAL_DATE, 1, 6) = CONVERT(NVARCHAR(06), DATEADD(MONTH, -1, @CAL_DATE), 112)
+                OR SUBSTRING(A.CAL_DATE, 1, 6) = CONVERT(NVARCHAR(06), DATEADD(MONTH,  0, @CAL_DATE), 112)
+                OR SUBSTRING(A.CAL_DATE, 1, 6) = CONVERT(NVARCHAR(06), DATEADD(MONTH,  1, @CAL_DATE), 112)
+                ) 
+    </select>
+    
+	<select id="s_mpo131skrv_ypServiceImpl.printList" parameterType="Map" resultType="rMap">
+		DECLARE 
+                @compCode       NVARCHAR(08)                    --법인코드
+              , @divCode        NVARCHAR(08)                    --사업장코드
+              , @customCode     NVARCHAR(08)                    --거래처코드
+              , @customName     NVARCHAR(50)                    --거래처명
+              , @orderNum       NVARCHAR(20)                    --발주번호
+              , @minDrvyDate    NVARCHAR(08)                    --발주번호 DETAIL DATA 중 가장 빠른 납기일
+              , @dvryDate       NVARCHAR(08)                    --납기일이 가장 빠른 날의 해당 주 첫번째 납기일
+              , @PRINT_USER          NVARCHAR(100)            --(선택) 출력자
+              , @VIEW_PRINT_INFO_YN  NVARCHAR(01)             --인쇄출력정보 여부   
+              , @USER_ID             NVARCHAR(100)             --(필수) USER ID
+        --조회조건 입력부분
+            SET @compCode   = #{S_COMP_CODE}
+            SET @divCode    = #{DIV_CODE}
+            SET @customCode = #{CUSTOM_CODE}
+            SET @customName = #{CUSTOM_NAME}
+            SET @orderNum   = NULL
+            SET @dvryDate   = #{BASIS_DATE}
+
+            SET @compCode   = ISNULL(@compCode      , '')
+            SET @divCode    = ISNULL(@divCode       , '')
+            SET @customCode = ISNULL(@customCode    , '')
+            SET @customName = ISNULL(@customName    , '')
+            SET @orderNum   = ISNULL(@orderNum      , '')
+            SET @USER_ID    = ISNULL(#{S_USER_ID}, '')
+
+        /****** 입력된 발주번호의 DETAIL DATA의 가장빠른 납기일 기준으로 해당 주 가장 빠른 날짜 구하기 ******************/
+       
+            SELECT @PRINT_USER = USER_NAME
+              FROM BSA300T WITH(NOLOCK)
+             WHERE COMP_CODE = @compCode
+               AND USER_ID = @USER_ID
+            
+            SELECT @VIEW_PRINT_INFO_YN = SUB_CODE
+              FROM BSA100T WITH(NOLOCK)
+             WHERE COMP_CODE = @compCode
+               AND MAIN_CODE = 'B249'
+               AND SUB_CODE != '$'
+               AND REF_CODE1 = 'Y'
+
+        /****** 해당 날짜에 맞는 데이터 SELECT **************************************************************************/
+            BEGIN
+                --SELECT @dvryDate                          --입력된 발주일 다음 주 날짜(개별) 확인
+                    SELECT
+                           Z.ORDER_NUM
+                         , Z.ORDER_DATE
+                         , Z.ORDER_PRSN
+                         , Z.CUSTOM_CODE    
+                         , Z.CUSTOM_NAME    
+                         , Z.CUST_TEL_PHON  
+                         , Z.CUST_FAX_NUM   
+                         , Z.MY_CUSTOM_CODE 
+                         , Z.MY_CUSTOM_NAME 
+                         , MAX(Z.MY_TOP_NAME)       AS MY_TOP_NAME
+                         , MAX(Z.COMP_TYPE)         AS COMP_TYPE
+                         , MAX(Z.COMP_CLASS)        AS COMP_CLASS
+                         , MAX(Z.MY_COMPANY_NUM)    AS MY_COMPANY_NUM
+                         , MAX(Z.MY_ZIP_CODE)       AS MY_ZIP_CODE
+                         , MAX(Z.MY_ADDR)           AS MY_ADDR
+                         , MAX(Z.TELEPHON)          AS TELEPHON
+                         , MAX(Z.FAX_NUM)           AS FAX_NUM
+                         , Z.ITEM_CODE  
+                         , Z.ITEM_NAME  
+                         , Z.SPEC 
+                         , Z.S_CUSTOM_CODE  
+                         , Z.S_CUSTOM_NAME  
+                         , Z.SO_NUM 
+                         , Z.REMARK     
+                         , Z.ORDER_UNIT     
+                         , MAX(Z.ORDER_DATE1)   AS ORDER_DATE1  
+                         , MAX(Z.ORDER_DATE1)   AS ORDER_DATE1  
+                         , MAX(Z.ORDER_DATE2)   AS ORDER_DATE2  
+                         , MAX(Z.ORDER_DATE3)   AS ORDER_DATE3  
+                         , MAX(Z.ORDER_DATE4)   AS ORDER_DATE4  
+                         , MAX(Z.ORDER_DATE5)   AS ORDER_DATE5  
+                         , MAX(Z.ORDER_DATE6)   AS ORDER_DATE6  
+                         , MAX(Z.ORDER_DATE7)   AS ORDER_DATE7  
+                         , SUM(Z.ORDER_UNIT_Q1) AS ORDER_UNIT_Q1
+                         , SUM(Z.ORDER_UNIT_Q2) AS ORDER_UNIT_Q2
+                         , SUM(Z.ORDER_UNIT_Q3) AS ORDER_UNIT_Q3
+                         , SUM(Z.ORDER_UNIT_Q4) AS ORDER_UNIT_Q4
+                         , SUM(Z.ORDER_UNIT_Q5) AS ORDER_UNIT_Q5
+                         , SUM(Z.ORDER_UNIT_Q6) AS ORDER_UNIT_Q6
+                         , SUM(Z.ORDER_UNIT_Q7) AS ORDER_UNIT_Q7
+                         , SUM(Z.ORDER_UNIT_Q1)
+                         + SUM(Z.ORDER_UNIT_Q2)
+                         + SUM(Z.ORDER_UNIT_Q3)
+                         + SUM(Z.ORDER_UNIT_Q4)
+                         + SUM(Z.ORDER_UNIT_Q5)
+                         + SUM(Z.ORDER_UNIT_Q6)
+                         + SUM(Z.ORDER_UNIT_Q7) AS TOT_QTY
+                         , Z.AGREE_STATUS
+                         , @PRINT_USER           AS PRINT_USER                   --출력자 이름
+                         , @VIEW_PRINT_INFO_YN  AS VIEW_PRINT_INFO_YN           --인쇄출력정보 표시여부
+                     FROM (    
+                            SELECT --MASTER정보
+                                    A.ORDER_NUM
+                                  , uniLITE.fnGetUserDate(A.COMP_CODE, CONVERT(NVARCHAR(08), E.ORDER_DATE, 112))
+                                                                            AS ORDER_DATE       --발주일
+                                  , Y3.CODE_NAME                            AS ORDER_PRSN       --발주(구매담당)
+                            --수신자(발주처)정보
+                                  , C.CUSTOM_CODE
+                                  , C.CUSTOM_NAME                                               --수신(발주처)
+                                  , CASE WHEN ISNULL(C.TELEPHON, '') = '' THEN C.HAND_PHON
+                                         ELSE C.TELEPHON
+                                    END                                     AS CUST_TEL_PHON            --연락처(TEL)                                
+                                  , C.FAX_NUM                               AS CUST_FAX_NUM             --팩스번호(FAX)
+
+                            --발신자 정보
+                                   , D.DIV_CODE    AS MY_CUSTOM_CODE      --사업장코드                                                                 
+                                   , D.DIV_NAME    AS MY_CUSTOM_NAME      --상호 
+                                   , D.REPRE_NAME  AS MY_TOP_NAME         --대표자   
+                                   , D.COMP_TYPE                       --업태       
+                                   , D.COMP_CLASS                      --종목                                                       
+                                   , CASE ISNULL(D.COMPANY_NUM,'')                                                                         
+                                    WHEN '' THEN ''                                                                                  
+                                    ELSE         SUBSTRING(D.COMPANY_NUM,1,3) + '-'                                                  
+                                                + SUBSTRING(D.COMPANY_NUM,4,2) + '-'                                                  
+                                                + SUBSTRING(D.COMPANY_NUM,6,5)                                                        
+                                   END          AS MY_COMPANY_NUM          --등록번호                                                                  
+                                   , D.ZIP_CODE    AS MY_ZIP_CODE          --우편번호                                                                
+                                   , D.ADDR AS  MY_ADDR              --주소                                                      
+                                   , D.TELEPHON                            --전화번호
+                                   , D.FAX_NUM                             --팩스  
+                                  
+
+                                
+                                  --DETAIL정보
+                                  , ISNULL(X.CUSTOM_ITEM_CODE, A.ITEM_CODE) AS ITEM_CODE
+                                  , ISNULL(X.CUSTOM_ITEM_NAME, B.ITEM_NAME) AS ITEM_NAME
+                                  , ISNULL(X.CUSTOM_ITEM_SPEC, B.SPEC)      AS SPEC
+                                  , Z1.CUSTOM_CODE                          AS S_CUSTOM_CODE
+                                  , Z2.CUSTOM_NAME                          AS S_CUSTOM_NAME--수주처(학교)명
+                                  , A.SO_NUM                                                --수주번호
+                                  , A.REMARK                                AS REMARK       --적요
+                                  , A.ORDER_UNIT                                            --단위                20180115
+                                  , SUBSTRING(CONVERT(NVARCHAR(08), @dvryDate, 112), 5, 2)  + '/' + SUBSTRING(CONVERT(NVARCHAR(08), @dvryDate, 112), 7, 2)  AS ORDER_DATE1
+                                  , SUBSTRING(CONVERT(NVARCHAR(08), CONVERT(NVARCHAR(08), DATEADD(DAY, 1, @dvryDate), 112), 112), 5, 2)  + '/' + SUBSTRING(CONVERT(NVARCHAR(08), CONVERT(NVARCHAR(08), DATEADD(DAY, 1, @dvryDate), 112), 112), 7, 2)    AS ORDER_DATE2
+                                  , SUBSTRING(CONVERT(NVARCHAR(08), CONVERT(NVARCHAR(08), DATEADD(DAY, 2, @dvryDate), 112), 112), 5, 2)  + '/' + SUBSTRING(CONVERT(NVARCHAR(08), CONVERT(NVARCHAR(08), DATEADD(DAY, 2, @dvryDate), 112), 112), 7, 2)    AS ORDER_DATE3
+                                  , SUBSTRING(CONVERT(NVARCHAR(08), CONVERT(NVARCHAR(08), DATEADD(DAY, 3, @dvryDate), 112), 112), 5, 2)  + '/' + SUBSTRING(CONVERT(NVARCHAR(08), CONVERT(NVARCHAR(08), DATEADD(DAY, 3, @dvryDate), 112), 112), 7, 2)    AS ORDER_DATE4
+                                  , SUBSTRING(CONVERT(NVARCHAR(08), CONVERT(NVARCHAR(08), DATEADD(DAY, 4, @dvryDate), 112), 112), 5, 2)  + '/' + SUBSTRING(CONVERT(NVARCHAR(08), CONVERT(NVARCHAR(08), DATEADD(DAY, 4, @dvryDate), 112), 112), 7, 2)    AS ORDER_DATE5
+                                  , SUBSTRING(CONVERT(NVARCHAR(08), CONVERT(NVARCHAR(08), DATEADD(DAY, 5, @dvryDate), 112), 112), 5, 2)  + '/' + SUBSTRING(CONVERT(NVARCHAR(08), CONVERT(NVARCHAR(08), DATEADD(DAY, 5, @dvryDate), 112), 112), 7, 2)    AS ORDER_DATE6
+                                  , SUBSTRING(CONVERT(NVARCHAR(08), CONVERT(NVARCHAR(08), DATEADD(DAY, 6, @dvryDate), 112), 112), 5, 2)  + '/' + SUBSTRING(CONVERT(NVARCHAR(08), CONVERT(NVARCHAR(08), DATEADD(DAY, 6, @dvryDate), 112), 112), 7, 2)    AS ORDER_DATE7                                
+                                  , CASE WHEN A.DVRY_DATE = @dvryDate THEN A.ORDER_UNIT_Q
+                                         ELSE 0
+                                    END                                     AS ORDER_UNIT_Q1--발주량(구매단위)
+                                  , CASE WHEN A.DVRY_DATE = CONVERT(NVARCHAR(08), DATEADD(DAY, 1, @dvryDate), 112) THEN A.ORDER_UNIT_Q
+                                         ELSE 0
+                                    END                                     AS ORDER_UNIT_Q2--발주량(구매단위)
+                                  , CASE WHEN A.DVRY_DATE = CONVERT(NVARCHAR(08), DATEADD(DAY, 2, @dvryDate), 112) THEN A.ORDER_UNIT_Q
+                                         ELSE 0
+                                    END                                     AS ORDER_UNIT_Q3--발주량(구매단위)
+                                  , CASE WHEN A.DVRY_DATE = CONVERT(NVARCHAR(08), DATEADD(DAY, 3, @dvryDate), 112) THEN A.ORDER_UNIT_Q
+                                         ELSE 0
+                                    END                                     AS ORDER_UNIT_Q4--발주량(구매단위)
+                                  , CASE WHEN A.DVRY_DATE = CONVERT(NVARCHAR(08), DATEADD(DAY, 4, @dvryDate), 112) THEN A.ORDER_UNIT_Q
+                                         ELSE 0
+                                    END                                     AS ORDER_UNIT_Q5--발주량(구매단위)
+                                  , CASE WHEN A.DVRY_DATE = CONVERT(NVARCHAR(08), DATEADD(DAY, 5, @dvryDate), 112) THEN A.ORDER_UNIT_Q
+                                         ELSE 0
+                                    END                                     AS ORDER_UNIT_Q6--발주량(구매단위)
+                                  , CASE WHEN A.DVRY_DATE = CONVERT(NVARCHAR(08), DATEADD(DAY, 6, @dvryDate), 112) THEN A.ORDER_UNIT_Q
+                                         ELSE 0
+                                    END                                     AS ORDER_UNIT_Q7--발주량(구매단위)                               
+                                  , E.AGREE_STATUS
+                              FROM       MPO200T AS A WITH(NOLOCK)
+                              INNER JOIN BPR100T AS B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                                  AND B.ITEM_CODE   = A.ITEM_CODE
+                              INNER JOIN MPO100T AS E WITH(NOLOCK) ON E.COMP_CODE   = A.COMP_CODE
+                                                                  AND E.DIV_CODE    = A.DIV_CODE  
+                                                                  AND E.ORDER_NUM   = A.ORDER_NUM
+                               LEFT JOIN BCM100T AS C WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                                  AND C.CUSTOM_CODE = E.CUSTOM_CODE
+                              INNER JOIN BOR120T AS D WITH(NOLOCK) ON D.COMP_CODE   = A.COMP_CODE
+                                                                  AND D.DIV_CODE    = A.DIV_CODE
+                              INNER JOIN BSA220T AS G WITH(NOLOCK) ON G.COMP_CODE   = A.COMP_CODE
+                                                                  AND G.TYPE_LEVEL  = A.DIV_CODE
+                                                                  AND G.TREE_CODE   = A.WH_CODE
+    
+                               LEFT JOIN BPR300T AS X WITH(NOLOCK) ON X.COMP_CODE   = C.COMP_CODE
+                                                                  AND X.CUSTOM_CODE = C.CUSTOM_CODE
+                                                                  AND X.ITEM_CODE   = A.ITEM_CODE
+                                                                  AND X.TYPE        = '1'
+                                                                  AND X.APLY_START_DATE = (SELECT MAX(APLY_START_DATE)
+                                                                                             FROM BPR300T WITH(NOLOCK)
+                                                                                            WHERE TYPE             = X.TYPE
+                                                                                              AND COMP_CODE        = X.COMP_CODE
+                                                                                              AND DIV_CODE         = X.DIV_CODE
+                                                                                              AND ITEM_CODE        = X.ITEM_CODE
+                                                                                              AND CUSTOM_CODE      = X.CUSTOM_CODE
+                                                                                              AND APLY_START_DATE &lt;=  CONVERT(NVARCHAR(8), GETDATE(), 112))
+    
+                               LEFT JOIN BSA100T AS Y3 WITH(NOLOCK) ON Y3.COMP_CODE = C.COMP_CODE
+                                                                   AND Y3.MAIN_CODE = 'M201'
+                                                                   AND Y3.SUB_CODE != '$'
+                                                                   AND Y3.SUB_CODE  = E.ORDER_PRSN
+                               LEFT JOIN SOF100T AS Z1 WITH(NOLOCK) ON Z1.COMP_CODE   = A.COMP_CODE
+                                                                   AND Z1.DIV_CODE    = A.DIV_CODE  
+                                                                   AND Z1.ORDER_NUM   = A.SO_NUM
+                               LEFT JOIN BCM100T AS Z2 WITH(NOLOCK) ON Z2.COMP_CODE   = Z1.COMP_CODE
+                                                                   AND Z2.CUSTOM_CODE = Z1.CUSTOM_CODE
+  
+                             WHERE A.COMP_CODE      = @compCode
+                               AND A.DIV_CODE       = @divCode
+                               AND ((E.CUSTOM_CODE  like @customCode + '%' AND @customCode != '') OR (@customCode = ''))
+                               AND ((C.CUSTOM_NAME  like @customName + '%' AND @customName != '') OR (@customName = ''))
+                        --     AND E.AGREE_STATUS   = N'2'    --승인
+                               AND G.USE_YN         = N'Y'    
+                               AND E.ORDER_TYPE    != N'4'    --외주
+                               AND A.CONTROL_STATUS NOT IN ('8', '9')
+           
+                        ) Z
+                GROUP BY 
+                         Z.CUSTOM_CODE
+                        ,Z.CUSTOM_NAME
+                        ,Z.CUST_TEL_PHON
+                        ,Z.CUST_FAX_NUM 
+                        ,Z.MY_CUSTOM_CODE
+                        ,Z.MY_CUSTOM_NAME   
+                        ,Z.TELEPHON                         
+                        ,Z.ORDER_PRSN
+                        ,Z.FAX_NUM  
+                        ,Z.ORDER_DATE
+                        ,Z.ITEM_CODE
+                        ,Z.ITEM_NAME
+                        ,Z.SPEC
+                        ,Z.S_CUSTOM_CODE
+                        ,Z.S_CUSTOM_NAME
+                        ,Z.SO_NUM
+                        ,Z.REMARK
+                        ,Z.ORDER_UNIT
+                        ,Z.ORDER_NUM
+                        ,Z.AGREE_STATUS
+                HAVING SUM(Z.ORDER_UNIT_Q1) + SUM(Z.ORDER_UNIT_Q2) + SUM(Z.ORDER_UNIT_Q3) + SUM(Z.ORDER_UNIT_Q4) + SUM(Z.ORDER_UNIT_Q5) + SUM(Z.ORDER_UNIT_Q6) + SUM(Z.ORDER_UNIT_Q7) != 0
+                 ORDER BY ORDER_NUM, Z.CUSTOM_CODE,Z.ITEM_NAME
+            END 
+	</select>
+</mapper>

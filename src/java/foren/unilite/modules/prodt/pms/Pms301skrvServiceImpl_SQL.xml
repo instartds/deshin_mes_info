@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="pms301skrvServiceImpl">
+   
+	<select id="pms301skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+   	
+   	/* pms300skrv.Cpms300skrv SetQms300Kr[fnQms300QStd] QUERY02 */
+   	
+	BEGIN
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+			
+		DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+		      , @UserId			NVARCHAR(100)	/* 사용자ID */
+		      , @LangType		NVARCHAR(2)		/* 언어구분 */
+		      , @RefItem		NVARCHAR(01)
+		      , @DateFormat		NVARCHAR(10)
+			
+		SET @CompCode = #{S_COMP_CODE}
+		SET @UserId   = #{S_USER_ID}
+		SET @LangType = #{S_LANG_CODE}
+			
+		/* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+			FROM BSA300T WITH (NOLOCK)
+			WHERE COMP_CODE = @CompCode
+				AND USER_ID = @UserId
+			
+		SET @RefItem = ISNULL(@RefItem, N'0')
+			
+		/* 날짜 포맷 유형 설정 */
+		SELECT TOP 1 @DateFormat = CODE_NAME
+			FROM BSA100T WITH (NOLOCK)
+			WHERE COMP_CODE = @CompCode
+			AND MAIN_CODE = N'B044'
+			AND REF_CODE1 = N'Y'
+			
+		SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+	
+	/* 조회  */
+	
+	    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#TEMP_2_0810311930'))
+	        DROP TABLE #TEMP_2_0810311930
+	
+	    SELECT
+	           CONVERT(NVARCHAR(1), 'D') AS DATA_TYPE
+	         , A.DIV_CODE
+	         , A.WORK_SHOP_CODE
+	         , Z.TREE_NAME
+			 , (CASE WHEN ISNULL(A.PRODT_DATE, '') = ''
+					 THEN ''
+					 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PRODT_DATE, 1, 4))
+															 , 'MM'  , SUBSTRING(A.PRODT_DATE, 5, 2))
+															 , 'DD'  , SUBSTRING(A.PRODT_DATE, 7, 2))
+				 END)																				AS PRODT_DATE		 
+	
+	         , A.ITEM_CODE
+			  , CASE WHEN @RefItem = '1' THEN X.ITEM_NAME1
+					 WHEN @RefItem = '2' THEN X.ITEM_NAME2
+					 ELSE X.ITEM_NAME
+				END                                                     AS ITEM_NAME
+	
+	         , X.SPEC
+	         , A.PRODT_Q
+			 , (CASE WHEN ISNULL(B.RECEIPT_DATE, '') = ''
+					 THEN ''
+					 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.RECEIPT_DATE, 1, 4))
+															 , 'MM'  , SUBSTRING(B.RECEIPT_DATE, 5, 2))
+															 , 'DD'  , SUBSTRING(B.RECEIPT_DATE, 7, 2))
+				 END)																				AS RECEIPT_DATE		 
+	
+	         , B.RECEIPT_PRSN
+	         , B.RECEIPT_Q
+	         , C.INSPEC_PRSN
+	         , C.INSPEC_Q
+	         , C.GOOD_INSPEC_Q
+	         , C.BAD_INSPEC_Q
+	         , B.RECEIPT_Q - ISNULL(D.TOT_INSPEC_Q,0) AS NOTINSPEC_Q
+	         , A.PRODT_NUM
+	         , B.RECEIPT_NUM
+	         , B.RECEIPT_SEQ
+	         , C.INSPEC_NUM
+	         , C.INSPEC_SEQ
+	         , A.LOT_NO
+	         , B.REMARK AS RECEIPT_REMARK
+	         , C.REMARK AS INSPEC_REMARK
+	      INTO #TEMP_2_0810311930
+	      FROM            PMR200T A WITH (NOLOCK)
+	           INNER JOIN QMS300T B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+	                                             AND B.DIV_CODE    = A.DIV_CODE
+	                                             AND B.PRODT_NUM   = A.PRODT_NUM
+	           LEFT  JOIN QMS400T C WITH (NOLOCK) ON C.COMP_CODE   = B.COMP_CODE
+	                                             AND C.DIV_CODE    = B.DIV_CODE
+	                                             AND C.RECEIPT_NUM = B.RECEIPT_NUM
+	                                             AND C.RECEIPT_SEQ = B.RECEIPT_SEQ
+	           LEFT  JOIN (SELECT COMP_CODE, DIV_CODE, RECEIPT_NUM, RECEIPT_SEQ, INSPEC_NUM, INSPEC_SEQ
+	                            , SUM(ISNULL(GOOD_INSPEC_Q,0) + ISNULL(BAD_INSPEC_Q,0)) AS TOT_INSPEC_Q
+	                         FROM QMS400T WITH (NOLOCK)
+	                        WHERE COMP_CODE = @CompCode
+	                        GROUP BY COMP_CODE, DIV_CODE, RECEIPT_NUM, RECEIPT_SEQ, INSPEC_NUM, INSPEC_SEQ
+	                      ) D  ON D.COMP_CODE   = B.COMP_CODE
+	                          AND D.DIV_CODE    = B.DIV_CODE
+	                          AND D.RECEIPT_NUM = B.RECEIPT_NUM
+	                          AND D.RECEIPT_SEQ = B.RECEIPT_SEQ
+	                          AND D.INSPEC_NUM  = C.INSPEC_NUM
+	                          AND D.INSPEC_SEQ  = C.INSPEC_SEQ
+	           INNER JOIN BPR100T X WITH (NOLOCK) ON X.COMP_CODE   = A.COMP_CODE
+	                                             AND X.ITEM_CODE   = A.ITEM_CODE
+	           INNER JOIN BPR200T Y WITH (NOLOCK) ON Y.COMP_CODE   = A.COMP_CODE
+	                                             AND Y.DIV_CODE    = A.DIV_CODE
+	                                             AND Y.ITEM_CODE   = A.ITEM_CODE
+	                                             AND ISNULL(Y.INSPEC_YN, 'N') = 'Y'
+	           INNER JOIN BSA230T Z WITH (NOLOCK) ON Z.COMP_CODE   = A.COMP_CODE
+	                                             AND Z.TYPE_LEVEL  = A.DIV_CODE
+	                                             AND Z.TREE_CODE   = A.WORK_SHOP_CODE
+	     WHERE A.COMP_CODE      = @CompCode
+	       
+		/*  조회조건  */
+		<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+	       AND A.DIV_CODE = #{DIV_CODE}										/*사업장*/
+	    </if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">    
+	       AND A.ITEM_CODE      = #{ITEM_CODE}								/*품목코드*/
+	    </if>
+		<if test="@foren.Ognl@isNotEmpty(WORK_SHOP_CODE)"> 
+	       AND A.WORK_SHOP_CODE = #{WORK_SHOP_CODE}							/*작업장*/
+	    </if>
+		<if test="@foren.Ognl@isNotEmpty(PRODT_DATE_FR)"> 
+	       AND A.PRODT_DATE    &gt;= #{PRODT_DATE_FR}						/*생산일자 FR*/
+	    </if>
+		<if test="@foren.Ognl@isNotEmpty(PRODT_DATE_TO)"> 
+	       AND A.PRODT_DATE    &lt;= #{PRODT_DATE_TO}						/*생산일자 TO*/
+	    </if>
+		<if test="@foren.Ognl@isNotEmpty(RECEIPT_DATE_FR)"> 
+	       AND ISNULL(B.RECEIPT_DATE,'99999999') &gt;= #{RECEIPT_DATE_FR}	/*접수일자 FR*/
+	    </if>
+		<if test="@foren.Ognl@isNotEmpty(RECEIPT_DATE_TO)"> 
+	       AND ISNULL(B.RECEIPT_DATE,'00000000') &lt;= #{RECEIPT_DATE_TO}	/*접수일자 TO*/
+	    </if>
+		<if test="@foren.Ognl@isNotEmpty(INSPEC_DATE_FR)"> 
+	       AND ISNULL(C.INSPEC_DATE ,'') &gt;= #{INSPEC_DATE_FR}				/*검사일자 FR*/
+	    </if>
+		<if test="@foren.Ognl@isNotEmpty(INSPEC_DATE_TO)"> 
+	       AND ISNULL(C.INSPEC_DATE ,'') &lt;= #{INSPEC_DATE_TO}				/*검사일자 TO*/
+	    </if>
+	
+	       /*조회구분 조건 */
+				/* 공백  */
+				/* 미검사일때  */
+		<if test="RECEIPT_Q == &quot;N&quot;">			
+	       AND B.RECEIPT_Q &gt; ISNULL(D.TOT_INSPEC_Q,0)
+	    </if>   
+				/* 검사일때  */
+		<if test="RECEIPT_Q == &quot;Y&quot;">			
+	       AND ISNULL(D.TOT_INSPEC_Q,0) &gt; 0
+	    </if>   
+	       /* */
+	        
+	
+	    DECLARE @dSumProdtQ           NUMERIC(18,6)
+	          , @dSumReceiptQ         NUMERIC(18,6)
+	          , @dSumInspecQ          NUMERIC(18,6)
+	          , @dSumGoodInspecQ      NUMERIC(18,6)
+	          , @dSumBadInspecQ       NUMERIC(18,6)
+	
+	    /* 생산량 총계  */
+	    SELECT @dSumProdtQ   = SUM(ISNULL(PRODT_Q,0))
+	      FROM (SELECT MAX(ISNULL(PRODT_Q,0)) PRODT_Q
+	              FROM #TEMP_2_0810311930
+	             GROUP BY PRODT_NUM
+	           ) AT1
+	    /* 접수량 총계  */
+	    SELECT @dSumReceiptQ = SUM(ISNULL(RECEIPT_Q,0))
+	      FROM (SELECT MAX(ISNULL(RECEIPT_Q,0)) RECEIPT_Q
+	              FROM #TEMP_2_0810311930
+	             GROUP BY PRODT_NUM, RECEIPT_NUM, RECEIPT_SEQ
+	           ) AT2
+	    /* 검사량, 양품량, 불량량  */
+	    SELECT @dSumInspecQ       = SUM(ISNULL(INSPEC_Q,0))
+	         , @dSumGoodInspecQ   = SUM(ISNULL(GOOD_INSPEC_Q,0))
+	         , @dSumBadInspecQ    = SUM(ISNULL(BAD_INSPEC_Q,0))
+	      FROM (SELECT MAX(ISNULL(INSPEC_Q,0))      INSPEC_Q
+	                 , MAX(ISNULL(GOOD_INSPEC_Q,0)) GOOD_INSPEC_Q
+	                 , MAX(ISNULL(BAD_INSPEC_Q,0))  BAD_INSPEC_Q
+	              FROM #TEMP_2_0810311930
+	             GROUP BY PRODT_NUM, RECEIPT_NUM, RECEIPT_SEQ, INSPEC_NUM, INSPEC_SEQ
+	           ) AT3
+	
+	/* 목록 조회  */
+	    SELECT *
+	      FROM #TEMP_2_0810311930
+	
+	
+	    SET NOCOUNT OFF
+	    SET ARITHABORT OFF
+	END
+   	 
+		
+	</select>
+   
+</mapper>

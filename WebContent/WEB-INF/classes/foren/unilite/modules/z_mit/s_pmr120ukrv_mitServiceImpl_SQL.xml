@@ -1,0 +1,299 @@
+<?xml version="1.0" encoding="UTF-8"?><!---->
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_pmr120ukrv_mitServiceImpl">
+	
+	<select id="s_pmr120ukrv_mitServiceImpl.selectList" parameterType="Map" resultType="rMap">
+			SELECT  A.DIV_CODE
+			      , A.WKORD_NUM
+				  , LEFT(A.PRODT_DATE, 6) AS PRODT_MONTH   
+				  , uniLITE.fnGetUserDateComp(A.COMP_CODE, A.PRODT_DATE) AS PRODT_DATE    
+				  , B.ITEM_CODE
+				  , C1.ITEM_NAME
+				  , C1.SPEC
+				  , A.WORK_Q  AS PRODT_Q
+			  FROM		 PMR100T A WITH (NOLOCK)
+			  INNER JOIN PMP100T B WITH(NOLOCK)  ON B.COMP_CODE	= A.COMP_CODE
+			  									AND B.WKORD_NUM	= A.WKORD_NUM
+			  INNER JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE	= B.COMP_CODE
+			  									AND C1.ITEM_CODE	= B.ITEM_CODE
+			  								
+			 WHERE A.COMP_CODE	= #{S_COMP_CODE}
+			   AND A.DIV_CODE	= #{DIV_CODE}
+			   AND A.TEMPC_01   != ''
+               AND LEFT(A.PRODT_DATE, 6) = #{PRODT_MONTH}
+               AND B.LINE_END_YN='Y'
+			ORDER BY A.WKORD_NUM
+	</select>
+	<select id="s_pmr120ukrv_mitServiceImpl.updateList" parameterType="Map"  resultType="rMap">
+	BEGIN
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+	
+	    DECLARE @CompCode       NVARCHAR(08)    /* 법인코드            */
+	          , @DivCode        NVARCHAR(08)    /* 사업장코드          */
+	          , @WkordNum       NVARCHAR(20)    /* 작지번호            */
+	          , @ProdWkordDate  NVARCHAR(08)    /* 작지일,실적일       */
+	          , @ItemCode       NVARCHAR(20)    /* 품목코드            */
+	          , @WkordQ         NUMERIC(30,6)   /* 작지량              */
+	          , @ProdtNum       NVARCHAR(20)    /* 생산실적번호        */
+	          , @UserId         NVARCHAR(100)   /* 사용자ID            */
+	
+	          , @WhCode         NVARCHAR(08)    /* 자재출고창고        */
+	          , @GoodWhCode     NVARCHAR(08)    /* 양품입고창고        */
+	          , @GoodWhCellCode NVARCHAR(20)    /* 양품입고창고Cell    */
+	          , @GoodPrsn       NVARCHAR(10)    /* 양품입고담당자      */
+	          , @BadWhCode      NVARCHAR(08)    /* 불량입고창고        */
+	          , @BadWhCellCode  NVARCHAR(20)    /* 불량입고창고Cell    */
+	          , @BadPrsn        NVARCHAR(10)    /* 불량입고담당자      */
+			  , @ExcelJobId     NVARCHAR(32)    /* 엑셀업로드 키   */
+	          , @ErrorDesc      NVARCHAR(2000)  
+	
+	    SET @CompCode      = #{S_COMP_CODE}
+	    SET @DivCode       = #{DIV_CODE}
+	    SET @WkordNum      = #{WKORD_NUM}
+	    SET @ProdWkordDate = #{PRODT_DATE}
+	    SET @ItemCode      = #{ITEM_CODE}
+	    SET @WkordQ        = #{PRODT_Q}
+	    SET @UserId        = #{S_USER_ID}
+	    SET @ExcelJobId    = #{_EXCEL_JOBID}
+
+	    -- 1.생산실적번호 생성
+	    EXEC unilite.SP_GetAutoNumComp @CompCode, @DivCode, 'PMR100T', 'P', @ProdWkordDate, '1', @ProdtNum OUTPUT    
+	
+	    -- 2.생산실적정보생성
+	    INSERT INTO PMR100T
+	         ( COMP_CODE        , DIV_CODE          , PRODT_NUM         , PRODT_DATE        , PROG_WORK_CODE
+	         , PROG_WKORD_Q     , WORK_Q            , PASS_Q            , GOOD_WORK_Q       , BAD_WORK_Q
+	         , WKORD_NUM        , LINE_END_YN       , WK_PLAN_NUM       , CONTROL_STATUS    , MAN_HOUR
+	         , REMARK           , PROJECT_NO        , PJT_CODE          , LOT_NO            , FR_SERIAL_NO
+	         , TO_SERIAL_NO     , FR_TIME           , TO_TIME           , PROG_PRODT_NUM    , PROG_PRODT_Q
+	         , PROG_EXCEED_Q    , MOLD_CODE         , EQUIP_CODE        , NOW_DEPR          , PRODT_PRSN
+	         , PRODT_MACH       , PRODT_TIME        , DAY_NIGHT         , PQC               , BOX_TRNS_RATE
+	         , BOX_Q            , SAVING_Q          , MAN_CNT           , HAZARD_CHECK      , MICROBE_CHECK
+	         , BAD_QC_Q         , BAD_PROG_Q        , PRODT_START_TIME  , PRODT_END_TIME    , PIECE
+	         , EXPIRATION_DATE  , YIELD             , LOSS_Q            , ETC_Q             , TEMPC_01
+	         , INSERT_DB_USER   , INSERT_DB_TIME    , UPDATE_DB_USER    , UPDATE_DB_TIME )
+	    SELECT COMP_CODE        , DIV_CODE          , @ProdtNum         , @ProdWkordDate AS PRODT_DATE  , PROG_WORK_CODE
+	         , WKORD_Q          , WKORD_Q           , WKORD_Q           , WKORD_Q           , 0 
+	         , WKORD_NUM        , LINE_END_YN       , WK_PLAN_NUM       , '9'               , 0
+	         , REMARK           , PROJECT_NO        , PJT_CODE          , LOT_NO            , ''
+	         , ''               , NULL              , NULL              , NULL              , 0
+	         , 0                , NULL              , ''                , 0                 , ' '
+	         , NULL             , NULL              , DAY_NIGHT         , NULL              , 0
+	         , 0                , 0                 , 0                 , 'N'               , 'N'
+	         , NULL             , NULL              , NULL              , NULL              , 0
+	         , EXPIRATION_DATE  , 0                 , 0                 , 0                 , @ExcelJobId
+	         , @UserId          , GETDATE()         , @UserId           , GETDATE()
+	      FROM PMP100T WITH (NOLOCK)
+	     WHERE COMP_CODE   = @CompCode
+	       AND DIV_CODE    = @DivCode
+	       AND WKORD_NUM   = @WkordNum
+	       AND LINE_END_YN = 'Y'
+	
+	    -- 3.입고정보 조회
+	    SELECT @GoodWhCode     = ISNULL(REF_CODE1,'')
+	         , @GoodWhCellCode = ISNULL(REF_CODE2,'')
+	         , @GoodPrsn       = ISNULL(REF_CODE3,'')
+	         , @BadWhCode      = ISNULL(REF_CODE4,'')
+	         , @BadWhCellCode  = ISNULL(REF_CODE5,'')
+	         , @BadPrsn        = ISNULL(REF_CODE6,'')
+	      FROM BSA100T WITH (NOLOCK)
+	     WHERE COMP_CODE = @CompCode
+	       AND MAIN_CODE = 'Z022'
+	       AND SUB_CODE  = @DivCode
+	
+	    SET @GoodWhCode     = ISNULL(@GoodWhCode    ,'')
+	    SET @GoodWhCellCode = ISNULL(@GoodWhCellCode,'')
+	    SET @GoodPrsn       = ISNULL(@GoodPrsn      ,'')
+	    SET @BadWhCode      = ISNULL(@BadWhCode     ,'')
+	    SET @BadWhCellCode  = ISNULL(@BadWhCellCode ,'')
+	    SET @BadPrsn        = ISNULL(@BadPrsn       ,'')
+	
+	    -- 7.실적 SP 호출
+	    EXEC uniLITE.SP_PRODT_ProductionResult @CompCode
+	                                         , @DivCode
+	                                         , @ProdtNum
+	                                         , @WkordNum
+	                                         , @GoodWhCode     
+	                                         , @GoodWhCellCode 
+	                                         , @GoodPrsn
+	                                         , @WkordQ                                            
+	                                         , @BadWhCode      
+	                                         , @BadWhCellCode  
+	                                         , @BadPrsn        
+	                                         , 0
+	                                         , '9'
+	                                         , '1'
+	                                         , 'N'
+	                                         , @UserId
+	                                         , @ErrorDesc OUTPUT
+	                                         
+	    SELECT @WkordNum AS WKORD_NUM ,  @ErrorDesc AS ERROR_DESC
+	
+	    SET NOCOUNT OFF
+	    SET ARITHABORT OFF
+	END
+	</select>
+	<insert id="s_pmr120ukrv_mitServiceImpl.insertExcel" parameterType="Map">
+		/* s_pmr120ukrv_mitServiceImpl.insertExcel */
+
+		INSERT INTO L_PMP100T_MIT_XLS (
+			   _EXCEL_JOBID
+		     , _EXCEL_ROWNUM
+		     , _EXCEL_HAS_ERROR
+		     , _EXCEL_ERROR_MSG
+			 , COMP_CODE		
+			 , DIV_CODE		
+			 , WKORD_NUM 
+			 , PRODT_DATE
+			 , INSERT_DB_USER   
+			 , INSERT_DB_TIME   
+		) VALUES (
+			   #{_EXCEL_JOBID}
+		     , #{_EXCEL_ROWNUM}
+		     , #{_EXCEL_HAS_ERROR,jdbcType=VARCHAR}
+		     , #{_EXCEL_ERROR_MSG,jdbcType=VARCHAR}
+			 , #{S_COMP_CODE}
+			 , #{DIV_CODE}
+			 , #{WKORD_NUM}
+			 , #{PRODT_DATE}
+			 , #{S_USER_ID}
+			 , GETDATE()
+		)
+	</insert>
+	<update id="s_pmr120ukrv_mitServiceImpl.excelValidate" parameterType="Map">
+		UPDATE A
+		   SET  _EXCEL_HAS_ERROR = CASE WHEN ISNULL(B.TEMPC_01, '') != '' THEN 'Y'
+		   								WHEN B.WKORD_STATUS IN ('8','9') THEN 'Y'
+		                                ELSE 'N'
+		                           END
+			   ,_EXCEL_ERROR_MSG = CASE WHEN ISNULL(B.tempc_01, '') != '' THEN '업로드한 자료가 존재합니다. 삭제후 업로드해주세요.'
+			   							WHEN B.WKORD_STATUS IN ('8','9') THEN '마감 또는 종료된 작업지시 번호입니다.(' + B.WKORD_STATUS  +')'
+		                                ELSE ''
+		                           END
+		 FROM L_PMP100T_MIT_XLS A
+		      LEFT JOIN PMP100T B ON B.COMP_CODE = A.COMP_CODE
+		                         AND B.DIV_CODE  = A.DIV_CODE
+		                         AND B.WKORD_NUM = A.WKORD_NUM
+		      					 AND B.LINE_END_YN = 'Y'
+		WHERE _EXCEL_JOBID = #{_EXCEL_JOBID}
+		
+	</update>
+	<select id="s_pmr120ukrv_mitServiceImpl.selectExcelUploadSheet1" parameterType="Map" resultType="rMap">
+		SELECT
+                _EXCEL_JOBID
+              , _EXCEL_ROWNUM
+              , _EXCEL_HAS_ERROR
+              , _EXCEL_ERROR_MSG
+              , A.DIV_CODE
+              , A.WKORD_NUM
+              , A.PRODT_DATE AS PRODT_DATE
+              , B.ITEM_CODE
+              , M2.ITEM_NAME
+              , M2.SPEC
+              , B.WKORD_Q as PRODT_Q
+		FROM  L_PMP100T_MIT_XLS A
+		INNER JOIN PMP100T B   ON B.COMP_CODE  = A.COMP_CODE
+		                      AND B.WKORD_NUM  = A.WKORD_NUM
+		                      AND B.LINE_END_YN='Y'
+		                      AND B.WKORD_STATUS NOT IN ('8','9')
+		INNER JOIN BSA100T M1  ON M1.COMP_CODE = A.COMP_CODE
+		                      AND M1.MAIN_CODE = 'Z022'
+		                      AND M1.SUB_CODE  = A.DIV_CODE  
+		INNER JOIN BPR100T M2  ON M2.COMP_CODE = A.COMP_CODE
+		                      AND M2.ITEM_CODE = B.ITEM_CODE   
+		WHERE _EXCEL_JOBID = #{_EXCEL_JOBID}  
+	</select>
+	<select id="s_pmr120ukrv_mitServiceImpl.deleteList" parameterType="Map" resultType="rMap">
+			SELECT  A.DIV_CODE
+			      , A.WKORD_NUM
+			  FROM		 PMR100T A WITH (NOLOCK)
+			 WHERE A.COMP_CODE	= #{S_COMP_CODE}
+			   AND A.DIV_CODE	= #{DIV_CODE}
+			   AND A.TEMPC_01   != ''
+               AND LEFT(A.PRODT_DATE, 6) = #{PRODT_MONTH}
+	</select>
+	<update id="s_pmr120ukrv_mitServiceImpl.deleteAll" parameterType="Map">
+	BEGIN
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+	
+	    DECLARE @CompCode       NVARCHAR(08)    /* 법인코드            */
+	          , @DivCode        NVARCHAR(08)    /* 사업장코드          */
+	          , @WkordNum       NVARCHAR(20)    /* 작지번호            */
+	          , @ProdtNum       NVARCHAR(20)    /* 생산실적번호        */
+	          , @UserId         NVARCHAR(100)   /* 사용자ID            */
+	
+	          , @GoodWhCode     NVARCHAR(08)    /* 양품입고창고        */
+	          , @GoodWhCellCode NVARCHAR(20)    /* 양품입고창고Cell    */
+	          , @GoodPrsn       NVARCHAR(10)    /* 양품입고담당자      */
+	          , @BadWhCode      NVARCHAR(08)    /* 불량입고창고        */
+	          , @BadWhCellCode  NVARCHAR(20)    /* 불량입고창고Cell    */
+	          , @BadPrsn        NVARCHAR(10)    /* 불량입고담당자      */
+	
+	          , @ErrorDesc      NVARCHAR(2000)  
+	
+	    SET @CompCode      = #{S_COMP_CODE}
+	    SET @DivCode       = #{DIV_CODE}
+	    SET @WkordNum      = #{WKORD_NUM}
+	    SET @UserId        = #{S_USER_ID}
+	
+	    -- 1.생산실적번호 조회
+	    SELECT TOP 1 @ProdtNum = PRODT_NUM
+	      FROM PMR100T WITH (NOLOCK)
+	     WHERE COMP_CODE   = @CompCode
+	       AND DIV_CODE    = @DivCode
+	       AND WKORD_NUM   = @WkordNum
+	       AND LINE_END_YN = 'Y'
+	
+	    -- 2.생산실적정보 삭제
+	    DELETE FROM PMR100T
+	     WHERE COMP_CODE   = @CompCode
+	       AND DIV_CODE    = @DivCode
+	       AND WKORD_NUM   = @WkordNum
+	
+	    -- 3.입고정보 조회
+	    SELECT @GoodWhCode     = ISNULL(REF_CODE1,'')
+	         , @GoodWhCellCode = ISNULL(REF_CODE2,'')
+	         , @GoodPrsn       = ISNULL(REF_CODE3,'')
+	         , @BadWhCode      = ISNULL(REF_CODE4,'')
+	         , @BadWhCellCode  = ISNULL(REF_CODE5,'')
+	         , @BadPrsn        = ISNULL(REF_CODE6,'')
+	      FROM BSA100T WITH (NOLOCK)
+	     WHERE COMP_CODE = @CompCode
+	       AND MAIN_CODE = 'Z022'
+	       AND SUB_CODE  = @DivCode
+	
+	    SET @GoodWhCode     = ISNULL(@GoodWhCode    ,'')
+	    SET @GoodWhCellCode = ISNULL(@GoodWhCellCode,'')
+	    SET @GoodPrsn       = ISNULL(@GoodPrsn      ,'')
+	    SET @BadWhCode      = ISNULL(@BadWhCode     ,'')
+	    SET @BadWhCellCode  = ISNULL(@BadWhCellCode ,'')
+	    SET @BadPrsn        = ISNULL(@BadPrsn       ,'')
+	
+	    -- 4.생산실적대입고 SP 호출
+	    EXEC uniLITE.SP_PRODT_ProductionResult @CompCode
+	                                         , @DivCode
+	                                         , @ProdtNum
+	                                         , @WkordNum
+	                                         , @GoodWhCode     
+	                                         , @GoodWhCellCode 
+	                                         , @GoodPrsn
+	                                         , 0                                            
+	                                         , @BadWhCode      
+	                                         , @BadWhCellCode  
+	                                         , @BadPrsn        
+	                                         , 0
+	                                         , '9'
+	                                         , '1'
+	                                         , 'D'
+	                                         , @UserId
+	                                         , @ErrorDesc OUTPUT
+
+	    SET NOCOUNT OFF
+	    SET ARITHABORT OFF
+	END
+	</update>
+	
+    
+</mapper>

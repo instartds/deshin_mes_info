@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ssd100skrvServiceImpl">
+					
+	<select id="ssd100skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">		
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+		 
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+		 
+			DECLARE @COMP_CODE      NVARCHAR(08)
+			      , @DIV_CODE       NVARCHAR(08)
+			      , @DEPT_CODE      NVARCHAR(08)
+			      , @CUST_CODE   	NVARCHAR(08)
+			      , @CUST_CODE_TO   NVARCHAR(08)
+			      , @SALE_DATE_FR   NVARCHAR(08)
+			      , @SALE_DATE_TO   NVARCHAR(08)
+			      , @ITEM_CODE   	NVARCHAR(20)
+			      
+			      
+		
+			SET @COMP_CODE      = #{S_COMP_CODE}          /* 법인 */
+			SET @DIV_CODE       = #{DIV_CODE}             /* 사업장 */
+			SET @SALE_DATE_FR   = #{SALE_DATE_FR}         /* 매출일(FROM) */
+			SET @SALE_DATE_TO   = #{SALE_DATE_TO}         /* 매출일(TO) */
+			
+			
+			/*  법인명 호출  */
+			DECLARE @COMP_NAME      NVARCHAR(30)
+
+			SELECT  @COMP_NAME = COMP_NAME
+			  FROM  BOR100T WITH (NOLOCK)  
+			 WHERE  COMP_CODE = @COMP_CODE
+			
+		
+			SELECT K.COMP_CODE			/*   K.DIV_CODE */ 
+		         , K.CUSTOM_CODE, ISNULL(B.CUSTOM_NAME, '') AS CUSTOM_NAME      /* 법인/사업장/거래처코드/거래처명 */
+		         , K.ITEM_CODE,   A.ITEM_NAME, ISNULL(A.SPEC, '') AS SPEC, A.STOCK_UNIT                        /* 품목코드/품목명/규격/단위 */
+		         , CASE WHEN A.STOCK_CARE_YN = 'Y' THEN ISNULL(D.STOCK_Q,0) ELSE 0 END 	 STOCK_Q                               /* 현재고 */
+		         , K.PUR_PRICE	 ,K.SALE_PRICE
+		         , K.CON_Q,       K.CON_DISCOUNT_AMT,   K.CON_SALE_AMT,  K.CON_TAX_AMT,   K.CON_TOT_AMT        /* 위탁-매출량/할인금액/매출금액/부가세/매출합계 */
+		         , K.CASH_Q,      K.CASH_DISCOUNT_AMT,  K.CASH_SALE_AMT, K.CASH_TAX_AMT,  K.CASH_TOT_AMT       /* 현매-매출량/할인금액/매출금액/부가세/매출합계 */
+		         , K.TOT_Q,       K.TOT_DISCOUNT_AMT,   K.TOT_SALE_AMT,  K.TOT_TAX_AMT,   K.TOT_AMT_SUM        /* 합계-매출량/할인금액/매출금액/부가세/매출합계 */
+		         , E.CODE_NAME AS AGENT_TYPE
+		         , F.CODE_NAME AS TAX_TYPE
+		         , @COMP_NAME  AS COMP_NAME /* 법인명 */
+		      FROM (SELECT A.COMP_CODE     /* A.DIV_CODE */
+			             , ISNULL(B.PURCHASE_CUSTOM_CODE, '') AS CUSTOM_CODE
+			             , B.ITEM_CODE
+			             , MAX(ISNULL(G.ITEM_P, 0))					AS PUR_PRICE
+						 , MAX(I.SALE_BASIS_P)						AS SALE_PRICE
+			             , SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) = '1' THEN B.SALE_Q                             ELSE 0 END) AS CON_Q
+			             , SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) = '1' THEN (B.SALE_Q * ISNULL(B.DISCOUNT_P, 0)) ELSE 0 END) AS CON_DISCOUNT_AMT
+			             , SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) = '1' THEN B.SALE_AMT_O                         ELSE 0 END) AS CON_SALE_AMT
+			             , SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) = '1' THEN B.TAX_AMT_O                          ELSE 0 END) AS CON_TAX_AMT
+			             , SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) = '1' THEN (B.SALE_AMT_O + B.TAX_AMT_O)         ELSE 0 END) AS CON_TOT_AMT
+						 /* 현매-매출수량/할인금액/매출금액/부가세/합계금액 */
+						 , SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) = '2' THEN B.SALE_Q                             ELSE 0 END) AS CASH_Q
+						 , SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) = '2' THEN (B.SALE_Q * ISNULL(B.DISCOUNT_P, 0)) ELSE 0 END) AS CASH_DISCOUNT_AMT
+						 , SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) = '2' THEN B.SALE_AMT_O                         ELSE 0 END) AS CASH_SALE_AMT
+						 , SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) = '2' THEN B.TAX_AMT_O                          ELSE 0 END) AS CASH_TAX_AMT
+						 , SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) = '2' THEN (B.SALE_AMT_O + B.TAX_AMT_O)         ELSE 0 END) AS CASH_TOT_AMT
+						 /* 현매-매출수량/할인금액/매출금액/부가세/합계금액 */
+						 , SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) IN ('1', '2') THEN B.SALE_Q                             ELSE 0 END) AS TOT_Q
+						 , SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) IN ('1', '2') THEN (B.SALE_Q * ISNULL(B.DISCOUNT_P, 0)) ELSE 0 END) AS TOT_DISCOUNT_AMT
+						 , SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) IN ('1', '2') THEN B.SALE_AMT_O                         ELSE 0 END) AS TOT_SALE_AMT
+						 , SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) IN ('1', '2') THEN B.TAX_AMT_O                          ELSE 0 END) AS TOT_TAX_AMT
+						 , SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) IN ('1', '2') THEN (B.SALE_AMT_O + B.TAX_AMT_O)         ELSE 0 END) AS TOT_AMT_SUM
+        			  FROM            SSA100T A WITH(NOLOCK)
+			               INNER JOIN SSA110T B WITH(NOLOCK) ON A.COMP_CODE    = B.COMP_CODE 
+										               	    AND A.DIV_CODE     = B.DIV_CODE
+											                AND A.BILL_NUM     = B.BILL_NUM
+			               LEFT  JOIN BTR100T C WITH(NOLOCK) ON B.COMP_CODE    = C.COMP_CODE 
+							        				        AND B.OUT_DIV_CODE = C.DIV_CODE
+											                AND B.INOUT_NUM    = C.INOUT_NUM 
+											                AND B.INOUT_SEQ    = C.INOUT_SEQ
+											                AND B.INOUT_TYPE   = C.INOUT_TYPE
+			               LEFT  JOIN BSA210T F WITH(NOLOCK) ON A.COMP_CODE    = F.COMP_CODE  
+			                                                AND A.DIV_CODE     = F.TYPE_LEVEL 
+			                                                AND A.DEPT_CODE    = F.TREE_CODE
+						   LEFT OUTER JOIN BPR400T G WITH (NOLOCK) ON B.ITEM_CODE = G.ITEM_CODE
+																	AND B.PURCHASE_CUSTOM_CODE  = G.CUSTOM_CODE												   
+																	AND (CASE WHEN @DIV_CODE = '' THEN '01' ELSE B.DIV_CODE END) = G.DIV_CODE
+																	AND B.COMP_CODE = G.COMP_CODE 
+																	AND G.TYPE = 1
+																	AND G.APLY_START_DATE = (SELECT MAX(X.APLY_START_DATE)  AS APLY_START_DATE
+																												FROM BPR400T X WITH(NOLOCK)
+																												WHERE X.COMP_CODE      = G.COMP_CODE
+																												AND X.DIV_CODE         = G.DIV_CODE 
+																												AND X.ITEM_CODE        = G.ITEM_CODE
+																												AND X.CUSTOM_CODE      = G.CUSTOM_CODE   
+																												AND X.MONEY_UNIT       = G.MONEY_UNIT
+																												AND X.ORDER_UNIT       = G.ORDER_UNIT
+																												AND X.TYPE             = G.TYPE
+																												--AND X.APLY_START_DATE &gt;= A.SALE_DATE
+																												)			                                                
+  		             	  INNER JOIN BPR200T H WITH (NOLOCK) ON B.COMP_CODE = H.COMP_CODE
+															  AND B.DIV_CODE  = H.DIV_CODE
+															  AND B.ITEM_CODE = H.ITEM_CODE
+															  AND H.ITEM_ACCOUNT != '03'
+  		             	  INNER JOIN BPR100T I WITH (NOLOCK) ON B.COMP_CODE = I.COMP_CODE
+															  AND B.ITEM_CODE = I.ITEM_CODE							   						   									  
+															  
+  		             WHERE A.COMP_CODE     = @COMP_CODE
+  		             <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">   
+		               AND A.DIV_CODE      = @DIV_CODE
+  		             </if>
+		               AND A.SALE_DATE &gt;= @SALE_DATE_FR
+		               AND A.SALE_DATE &lt;= @SALE_DATE_TO
+				  /* 매입처 FROM ~ TO 조건 */
+				  <if test="@foren.Ognl@isNotEmpty(CUST_CODE)">   
+				  	   AND B.PURCHASE_CUSTOM_CODE  LIKE  #{CUST_CODE} + '%'
+				  </if>
+				  /* 품목 FROM ~ TO 조건 */
+				  <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+				  	   AND B.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+				  </if>
+				  /* 부서 */
+				  <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">   
+				  	   AND F.TREE_LEVEL LIKE (SELECT X.TREE_LEVEL FROM BSA210T X WITH(NOLOCK) WHERE X.COMP_CODE = @COMP_CODE <if test="@foren.Ognl@isNotEmpty(DIV_CODE)"> AND X.TYPE_LEVEL = @DIV_CODE </if> AND X.TREE_CODE = #{DEPT_CODE}) + '%'
+				  </if>
+   			         GROUP BY A.COMP_CODE   /* A.DIV_CODE */
+   			                , B.PURCHASE_CUSTOM_CODE, B.ITEM_CODE
+   			         HAVING SUM(CASE WHEN ISNULL(C.PURCHASE_TYPE,G.PURCHASE_TYPE) IN ('1', '2') THEN B.SALE_AMT_O + B.TAX_AMT_O ELSE 0 END) != 0
+   			         ) K
+			       INNER JOIN BPR100T A WITH(NOLOCK) ON A.COMP_CODE   = K.COMP_CODE
+			                                        AND A.ITEM_CODE   = K.ITEM_CODE
+			       LEFT  JOIN BCM100T B WITH(NOLOCK) ON B.COMP_CODE   = K.COMP_CODE
+			                                        AND B.CUSTOM_CODE = K.CUSTOM_CODE
+			       LEFT  JOIN (
+			                    SELECT COMP_CODE  /* DIV_CODE */
+			                         , ITEM_CODE, SUM(STOCK_Q) AS STOCK_Q
+		                        FROM
+		                        (
+		                        SELECT COMP_CODE  /* DIV_CODE */
+		                             , ITEM_CODE, ISNULL(STOCK_Q, 0) AS STOCK_Q
+		                         FROM BIV100T WITH(NOLOCK) 
+						        WHERE COMP_CODE = @COMP_CODE
+						        <if test="@foren.Ognl@isNotEmpty(DIV_CODE)"> 
+						          AND DIV_CODE 	= @DIV_CODE
+						        </if>
+						          
+						        UNION ALL
+						       
+						        SELECT COMP_CODE  /* DIV_CODE */
+						             , ITEM_CODE, ISNULL(STOCK_Q, 0) AS STOCK_Q
+		                         FROM UNILITE.VGetDailyStock WITH(NOLOCK) 
+						        WHERE COMP_CODE = @COMP_CODE
+						        <if test="@foren.Ognl@isNotEmpty(DIV_CODE)"> 
+						          AND DIV_CODE 	= @DIV_CODE
+						        </if>
+						        ) A 
+						        GROUP BY COMP_CODE /* DIV_CODE */
+						               , ITEM_CODE
+						        
+						        ) D ON D.COMP_CODE  = K.COMP_CODE      /* AND D.DIV_CODE   = K.DIV_CODE */
+                                   AND D.ITEM_CODE  = K.ITEM_CODE
+                                   
+                    LEFT JOIN BSA100T E  WITH (NOLOCK) ON B.COMP_CODE  = E.COMP_CODE			/* 고객분류 */
+					  								  AND E.MAIN_CODE  = 'B055'
+					  								  AND E.SUB_CODE  != '$'
+					  								  AND B.AGENT_TYPE = E.SUB_CODE     
+					  								  
+					LEFT JOIN BSA100T F  WITH (NOLOCK) ON A.COMP_CODE  = F.COMP_CODE			/* 과세구분 */
+					  								  AND F.MAIN_CODE  = 'B059'
+					  								  AND F.SUB_CODE  != '$'
+					  								  AND A.TAX_TYPE = F.SUB_CODE          								              
+                                   
+		     WHERE 1 = 1
+			 <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)"> 
+			   AND B.AGENT_TYPE = #{AGENT_TYPE}
+			 </if>
+			ORDER BY K.CUSTOM_CODE, A.ITEM_NAME 
+			
+			
+SET @END_TIME   = GETDATE()
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'ssd100skrv', '매입처별 매출현황 조회', @SALE_DATE_FR, @SALE_DATE_TO, @DIFF_TIME
+			
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END	
+    </select>
+</mapper>

@@ -1,0 +1,732 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_srq100ukrv_mitServiceImpl">
+	<select id="s_srq100ukrv_mitServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* s_srq100ukrv_mitServiceImpl.selectList */
+		
+		SET NOCOUNT ON
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects  WHERE id=object_id('tempdb..#S_SRQ100UKRV_MIT'))
+		    DROP TABLE #S_SRQ100UKRV_MIT
+
+		DECLARE @dOdernum         NVARCHAR(20)
+		      , @dSerno           NUMERIC(4,0)
+		      , @dLotno           NVARCHAR(20)
+		      --금액 계산용 변수 선언
+		      , @dTransRate       NUMERIC(12, 6)
+		      , @dIssueReqQ       NUMERIC(30, 6)
+		      , @dIssueReqVolQ    NUMERIC(30, 6)
+		      , @dIssueReqWgtQ    NUMERIC(30, 6)
+		      , @dOrderP          NUMERIC(30, 6)
+		      , @dOrderWgtP       NUMERIC(30, 6)
+		      , @dOrderVolP       NUMERIC(30, 6)
+		      , @dOrderForP       NUMERIC(30, 6)
+		      , @dOrderWgtForP    NUMERIC(30, 6)
+		      , @dOrderVolForP    NUMERIC(30, 6)
+		      , @dExchgRate       NUMERIC(18, 6)
+		      , @dOrderO          NUMERIC(30, 6)
+		      , @dOrderForO       NUMERIC(30, 6)
+		      , @dDCRate          NUMERIC(05, 2)
+		      , @dUnitWgt         NUMERIC(30, 6)
+		      , @dUnitVol         NUMERIC(30, 6)
+		      , @dPriceType       NVARCHAR(03)
+		      --세액계산용 변수 선언
+		      , @sTaxType         NVARCHAR(01)
+		      , @sUnderCalcType   NVARCHAR(01)
+		      , @sTaxInoutType    NVARCHAR(01)
+		      , @dVatRate         NUMERIC(30, 6)
+		      , @dIRAmtO          NUMERIC(30, 6)
+		      , @dTaxAmtO         NUMERIC(30, 6)
+		      , @dTemp            NUMERIC(30, 6)
+
+		--부가세율 변수에 입력
+		SELECT @dVatRate = REF_CODE1
+		  FROM BSA100T WITH(NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND MAIN_CODE = 'S028'
+		   AND SUB_CODE  = '1'
+
+		--0. 조건에 맞는 데이터 임시테이블에 SELECT INTO
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , B.INOUT_TYPE_DETAIL             AS REF_CODE2
+		     , CONVERT(VARCHAR(8), GETDATE(), 112) AS ISSUE_REQ_DATE
+		     , A.CUSTOM_CODE
+		     , M1.CUSTOM_NAME
+		     , A.BILL_TYPE    
+		     , A.ORDER_TYPE
+		     , B.SALE_CUST_CD                  AS SALE_CUSTOM_CODE
+		     , M1.CUSTOM_NAME                  AS SALE_CUSTOM_NAME
+		     , A.ORDER_PRSN                    AS ISSUE_REQ_PRSN
+		     , B.OUT_DIV_CODE                  AS ISSUE_DIV_CODE
+		     --, ISNULL(B.WH_CODE, M3.WH_CODE)   AS WH_CODE
+			 , ISNULL(D2.WH_CODE,'') 			AS WH_CODE
+			 , ISNULL(D2.WH_CELL_CODE,'') 		AS WH_CELL_CODE
+		     , B.ITEM_CODE
+		     , M2.ITEM_NAME
+		     , M2.SPEC
+		     , B.ORDER_UNIT
+		     , B.TRANS_RATE
+		     , ISNULL(D2.STOCK_Q,0)            AS STOCK_Q
+/*			 
+		     , CASE WHEN M3.ITEM_ACCOUNT = '10' THEN 1
+		            ELSE ISNULL(B.ORDER_Q,0) + ISNULL(B.RETURN_Q,0) - ISNULL(B.OUTSTOCK_Q,0) - ISNULL(D1.NOT_ISSUE_QTY,0)
+		       END                                                                                              AS NOTOUT_Q
+		     , CASE WHEN M3.ITEM_ACCOUNT = '10' THEN 1
+		            ELSE ISNULL(B.ORDER_Q,0) + ISNULL(B.RETURN_Q,0) - ISNULL(B.OUTSTOCK_Q,0) - ISNULL(D1.NOT_ISSUE_QTY,0)
+		       END                                                                                              AS ISSUE_REQ_QTY
+		     --20200611 수정: 자사단가 가져오는 로직 수정
+		     , B.ORDER_P * A.EXCHG_RATE_O / unilite.fnGetExchangeRateBasis(A.COMP_CODE, A.MONEY_UNIT)      AS ISSUE_REQ_PRICE
+		     --20200611 수정: 자사단가 가져오는 로직 수정
+		     , CASE WHEN ISNULL(B.OUTSTOCK_Q    , 0) > 0 THEN ((CASE WHEN M3.ITEM_ACCOUNT = '10' THEN 1
+		                                                             ELSE ISNULL(B.ORDER_Q,0) + ISNULL(B.RETURN_Q,0) - ISNULL(B.OUTSTOCK_Q,0) - ISNULL(D1.NOT_ISSUE_QTY,0)
+		                                                        END) * B.ORDER_P) * A.EXCHG_RATE_O / unilite.fnGetExchangeRateBasis(A.COMP_CODE, A.MONEY_UNIT)
+		            WHEN ISNULL(D1.NOT_ISSUE_QTY, 0) > 0 THEN ((CASE WHEN M3.ITEM_ACCOUNT = '10' THEN 1
+		                                                             ELSE ISNULL(B.ORDER_Q,0) + ISNULL(B.RETURN_Q,0) - ISNULL(B.OUTSTOCK_Q,0) - ISNULL(D1.NOT_ISSUE_QTY,0)
+		                                                        END) * B.ORDER_P) * A.EXCHG_RATE_O / unilite.fnGetExchangeRateBasis(A.COMP_CODE, A.MONEY_UNIT)
+		            ELSE B.ORDER_O * A.EXCHG_RATE_O / unilite.fnGetExchangeRateBasis(A.COMP_CODE, A.MONEY_UNIT)
+		       END                             AS ISSUE_REQ_AMT
+		     , A.EXCHG_RATE_O                  AS EXCHANGE_RATE
+		     , B.ORDER_P                       AS ISSUE_FOR_PRICE
+		     , CASE WHEN ISNULL(B.OUTSTOCK_Q    , 0) > 0 THEN ((CASE WHEN M3.ITEM_ACCOUNT = '10' THEN 1
+		                                                             ELSE ISNULL(B.ORDER_Q,0) + ISNULL(B.RETURN_Q,0) - ISNULL(B.OUTSTOCK_Q,0) - ISNULL(D1.NOT_ISSUE_QTY,0)
+		                                                        END) * B.ORDER_P)
+		            WHEN ISNULL(D1.NOT_ISSUE_QTY, 0) > 0 THEN ((CASE WHEN M3.ITEM_ACCOUNT = '10' THEN 1
+		                                                             ELSE ISNULL(B.ORDER_Q,0) + ISNULL(B.RETURN_Q,0) - ISNULL(B.OUTSTOCK_Q,0) - ISNULL(D1.NOT_ISSUE_QTY,0)
+		                                                        END) * B.ORDER_P)
+		            ELSE B.ORDER_O
+		       END                             AS ISSUE_FOR_AMT
+		     , B.TAX_TYPE
+		     , B.ORDER_TAX_O                   AS ISSUE_REQ_TAX_AMT
+*/
+			 , ISNULL(B.ORDER_Q,0) + ISNULL(B.RETURN_Q,0) - ISNULL(B.OUTSTOCK_Q,0) - ISNULL(D1.NOT_ISSUE_QTY,0) AS NOTOUT_Q
+			 , CASE WHEN M3.ITEM_ACCOUNT = '10' THEN ISNULL(C.ALLOT_Q, 0)
+			 		ELSE ISNULL(B.ORDER_Q,0) + ISNULL(B.RETURN_Q,0) - ISNULL(B.OUTSTOCK_Q,0) - ISNULL(D1.NOT_ISSUE_QTY,0)
+			   END                            AS ISSUE_REQ_QTY
+			 , B.ORDER_P      				  AS ISSUE_REQ_PRICE
+			 , B.ORDER_P * CASE WHEN M3.ITEM_ACCOUNT = '10' THEN ISNULL(C.ALLOT_Q,0) 
+								ELSE (B.ORDER_Q - ISNULL(D1.NOT_ISSUE_QTY,0) - ISNULL(B.OUTSTOCK_Q,0)) 
+						   END				   AS ISSUE_REQ_AMT
+			 , A.EXCHG_RATE_O                  AS EXCHANGE_RATE
+			 , B.ORDER_P                       AS ISSUE_FOR_PRICE
+			 , B.ORDER_P * CASE WHEN M3.ITEM_ACCOUNT = '10' THEN ISNULL(C.ALLOT_Q,0) 
+								ELSE (B.ORDER_Q - ISNULL(D1.NOT_ISSUE_QTY,0) - ISNULL(B.OUTSTOCK_Q,0)) 
+						   END 				   AS ISSUE_FOR_AMT
+			 , B.TAX_TYPE
+			 , B.ORDER_TAX_O                   AS ISSUE_REQ_TAX_AMT
+
+
+		     , B.DVRY_DATE                     AS ISSUE_DATE
+		     , B.DVRY_TIME                     AS DELIVERY_TIME
+		     , B.DISCOUNT_RATE
+		     , B.PRICE_YN
+		     , B.ACCOUNT_YNC
+		     , B.DVRY_CUST_CD
+		     , M5.DVRY_CUST_NM                 AS DVRY_CUST_NAME
+		     , B.PROJECT_NO
+		     , B.PO_NUM    
+		     , B.PO_SEQ    
+		     , B.ORDER_NUM
+		     , B.SER_NO
+		     , B.REMARK    
+		     , '*'                             AS TREE_NAME
+		     , A.MONEY_UNIT                    AS REF_MONEY_UNIT
+			 , A.MONEY_UNIT                    AS MONEY_UNIT
+		     , B.ORDER_Q
+		     , B.ISSUE_REQ_Q
+		     , B.DVRY_DATE
+		     , B.DVRY_TIME
+		     , A.TAX_INOUT
+		     , M2.STOCK_UNIT
+		     , 'Y'                             AS PRE_ACCNT_YN
+		     , M1.AGENT_TYPE                   AS REF_AGENT_TYPE
+		     , M1.WON_CALC_BAS                 AS REF_WON_CALC_TYPE
+		     , '1'                             AS REF_LOC
+		     , ''                              AS PAY_METHODE1
+		     , ''                              AS LC_SER_NO
+		     , (CASE WHEN M3.ITEM_ACCOUNT = '10' THEN 1
+		             ELSE ISNULL(B.ORDER_Q,0) + ISNULL(B.RETURN_Q,0) - ISNULL(B.OUTSTOCK_Q,0) - ISNULL(D1.NOT_ISSUE_QTY,0)
+		        END) * B.UNIT_WGT              AS ISSUE_WGT_Q
+		     , (CASE WHEN M3.ITEM_ACCOUNT = '10' THEN 1
+		             ELSE ISNULL(B.ORDER_Q,0) + ISNULL(B.RETURN_Q,0) - ISNULL(B.OUTSTOCK_Q,0) - ISNULL(D1.NOT_ISSUE_QTY,0)
+		        END) * B.UNIT_VOL              AS ISSUE_VOL_Q
+		     , B.PRICE_TYPE
+		     , B.ORDER_WGT_P                   AS ISSUE_FOR_WGT_P
+		     , B.ORDER_VOL_P                   AS ISSUE_FOR_VOL_P
+		     --20200611 수정: 자사단가 가져오는 로직 수정
+		     , B.ORDER_WGT_P * A.EXCHG_RATE_O / unilite.fnGetExchangeRateBasis(A.COMP_CODE, A.MONEY_UNIT)  AS ISSUE_WGT_P
+		     --20200611 수정: 자사단가 가져오는 로직 수정
+		     , B.ORDER_VOL_P * A.EXCHG_RATE_O / unilite.fnGetExchangeRateBasis(A.COMP_CODE, A.MONEY_UNIT)  AS ISSUE_VOL_P
+		     , B.WGT_UNIT
+		     , B.UNIT_WGT
+		     , B.VOL_UNIT
+		     , B.UNIT_VOL
+		     , 'FEFER'                         AS GUBUN
+		     , B.INOUT_TYPE_DETAIL
+		     , C.LOT_NO
+		     , B.REMARK_INTER
+		     , '2'                             AS ISSUE_REQ_METH
+		     , M2.STOCK_CARE_YN
+		     , 'F'                             AS REF_FLAG
+		     , 'N'                             AS AMEND_YN
+		  --20200325 계산하기 위해 임시테이블에 INSERT
+		  INTO #S_SRQ100UKRV_MIT
+		  FROM       SOF100T       A  WITH(NOLOCK) 
+		  INNER JOIN SOF110T       B  WITH(NOLOCK) ON A.COMP_CODE   = B.COMP_CODE
+		                                          AND A.DIV_CODE    = B.DIV_CODE
+		                                          AND A.ORDER_NUM   = B.ORDER_NUM
+		  LEFT  JOIN S_SOF120T_MIT C  WITH(NOLOCK) ON B.COMP_CODE   = C.COMP_CODE
+		                                          AND B.DIV_CODE    = C.DIV_CODE
+		                                          AND B.ORDER_NUM   = C.ORDER_NUM
+		                                          AND B.SER_NO      = C.ORDER_SEQ
+		                                          AND ISNULL(C.LOT_NO,'*') != '*'
+		  LEFT  JOIN BCM100T       M1 WITH(NOLOCK) ON A.COMP_CODE   = M1.COMP_CODE
+		                                          AND A.CUSTOM_CODE = M1.CUSTOM_CODE
+		  LEFT  JOIN BPR100T       M2 WITH(NOLOCK) ON A.COMP_CODE   = M1.COMP_CODE
+		                                          AND B.ITEM_CODE   = M2.ITEM_CODE
+		  LEFT  JOIN BPR200T       M3 WITH(NOLOCK) ON M3.COMP_CODE  = B.COMP_CODE
+		                                          AND M3.DIV_CODE   = B.OUT_DIV_CODE
+		                                          AND M3.ITEM_CODE  = B.ITEM_CODE
+		  LEFT JOIN SCM100T        M5 WITH(NOLOCK) ON M5.COMP_CODE   = A.COMP_CODE
+		                                          AND M5.CUSTOM_CODE = A.CUSTOM_CODE
+		                                          AND CAST(M5.DVRY_CUST_SEQ AS NVARCHAR(8)) = B.DVRY_CUST_CD
+		  LEFT  JOIN (SELECT
+		                     COMP_CODE
+		                   , DIV_CODE
+		                   , ORDER_NUM
+		                   , SER_NO
+						   , ITEM_CODE
+						   , LOT_NO
+		                   , SUM(ISSUE_REQ_QTY - ISSUE_QTY) AS NOT_ISSUE_QTY
+		                FROM SRQ100T WITH (NOLOCK)
+		               GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, SER_NO, ITEM_CODE, LOT_NO) D1 ON D1.COMP_CODE = C.COMP_CODE
+		                                                                  AND D1.DIV_CODE  = C.DIV_CODE
+		                                                                  AND D1.ORDER_NUM = C.ORDER_NUM
+		                                                                  AND D1.SER_NO    = C.ORDER_SEQ
+																		  AND D1.ITEM_CODE = C.ITEM_CODE
+																		  AND D1.LOT_NO    = C.LOT_NO
+		  LEFT  JOIN (SELECT COMP_CODE
+		                   , DIV_CODE
+		                   , ITEM_CODE
+						   , LOT_NO
+		                   , SUM(STOCK_Q) AS STOCK_Q
+						   , LEFT(MIN(WH_CODE+'-'+WH_CELL_CODE), CHARINDEX('-', MIN(WH_CODE+'-'+WH_CELL_CODE))-1) AS WH_CODE
+						   , RIGHT(MIN(WH_CODE+'-'+WH_CELL_CODE), CHARINDEX('-', MIN(WH_CODE+'-'+WH_CELL_CODE))-3) AS WH_CELL_CODE						   
+		                FROM BIV150TV WITH (NOLOCK)
+					   WHERE COMP_CODE    = #{S_COMP_CODE}
+					     AND DIV_CODE     = #{DIV_CODE}
+					     AND GOOD_STOCK_Q &gt; 0						
+		               GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, LOT_NO) D2 ON D2.COMP_CODE = C.COMP_CODE
+		                                                         AND D2.DIV_CODE  = C.DIV_CODE
+		                                                         AND D2.ITEM_CODE = C.ITEM_CODE
+																 AND D2.LOT_NO	  = C.LOT_NO
+		  LEFT JOIN BTR100T M6 WITH (NOLOCK) ON   M6.COMP_CODE=C.COMP_CODE AND M6.DIV_CODE=C.DIV_CODE AND M6.ORDER_NUM=C.ORDER_NUM AND M6.ORDER_SEQ=C.ORDER_SEQ AND M6.ITEM_CODE=C.ITEM_CODE AND M6.LOT_NO=C.LOT_NO AND M6.INOUT_TYPE='2' AND M6.CREATE_LOC='1'																 
+		  
+		 WHERE A.COMP_CODE    = #{S_COMP_CODE}
+		   AND A.DIV_CODE     = #{DIV_CODE}
+		   AND B.DVRY_DATE   &gt;= #{DVRY_DATE_FR}
+		   AND B.DVRY_DATE   &lt;= #{DVRY_DATE_TO}
+		   AND B.ORDER_STATUS = 'N'
+		   AND ISNULL(A.STATUS,'6') = '6'
+		   --20200302 수정
+		   AND ISNULL(B.ORDER_Q, 0) + ISNULL(B.RETURN_Q, 0) - ISNULL(B.OUTSTOCK_Q, 0) - ISNULL(D1.NOT_ISSUE_QTY, 0) > 0
+		   --AND ISNULL(D1.NOT_ISSUE_QTY, 0) = 0		--한번 출하지시처리한 수주품목은 재출하지시 지정못하도록 함
+		   AND D1.COMP_CODE IS NULL	--출하지시등록한 LOT 는 제외
+--		   AND ISNULL((B.ORDER_Q + B.RETURN_Q - B.OUTSTOCK_Q) -
+--		               ISNULL((SELECT SUM(ISSUE_REQ_QTY - ISSUE_QTY)
+--		                         FROM SRQ100T WITH(NOLOCK)
+--		                        WHERE COMP_CODE = B.COMP_CODE
+--		                          AND ORDER_NUM = B.ORDER_NUM
+--		                          AND SER_NO    = B.SER_NO),0), 0) > 0
+			--분할 출고시 이미 출고한  LOT 은 제외 
+--		   AND NOT EXISTS (SELECT TOP 1 1 FROM BTR100T WITH (NOLOCK) WHERE COMP_CODE=C.COMP_CODE AND DIV_CODE=C.DIV_CODE AND ORDER_NUM=C.ORDER_NUM AND ORDER_SEQ=C.ORDER_SEQ AND ITEM_CODE=C.ITEM_CODE AND LOT_NO=C.LOT_NO AND INOUT_TYPE='2' AND CREATE_LOC='1')
+		   AND M6.COMP_CODE IS NULL
+		<if test="@foren.Ognl@isNotEmpty(ORDER_NUM)">
+		   AND A.ORDER_NUM    LIKE  #{ORDER_NUM} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+		   AND A.CUSTOM_CODE  LIKE #{CUSTOM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+		   AND M1.CUSTOM_NAME LIKE #{CUSTOM_NAME} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		   AND B.ITEM_CODE    LIKE #{ITEM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+		   AND M2.ITEM_NAME   LIKE #{ITEM_NAME} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(SPEC)">
+		   AND M2.SPEC        LIKE #{SPEC} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+		   --20200302 추가
+		   AND A.ORDER_TYPE   = #{ORDER_TYPE}
+		</if>
+		 ORDER BY A.CUSTOM_CODE, B.ITEM_CODE, B.DVRY_DATE, A.ORDER_NUM, B.SER_NO
+
+		--과세만 부가세 포함여부에 따른 재계산
+		 UPDATE #S_SRQ100UKRV_MIT SET  @dTemp    =  CASE WHEN ISNULL(TAX_INOUT, 1) = '1' THEN 0																			 ELSE uniLITE.fnAmtWonCalc((ISSUE_REQ_AMT / ( @dVatRate + 100 )) * 100, REF_WON_CALC_TYPE) END
+									 , @dTaxAmtO =  CASE WHEN ISNULL(TAX_INOUT, 1) = '1' THEN uniLITE.fnAmtWonCalc(ISSUE_REQ_AMT * (@dVatRate / 100), REF_WON_CALC_TYPE) ELSE uniLITE.fnAmtWonCalc(@dTemp * @dVatRate / 100, REF_WON_CALC_TYPE) END
+									 , @dIRAmtO  =  CASE WHEN ISNULL(TAX_INOUT, 1) = '1' THEN uniLITE.fnAmtWonCalc(ISSUE_REQ_AMT, REF_WON_CALC_TYPE)					 ELSE ISSUE_REQ_AMT - @dTaxAmtO   END
+									 , ISSUE_REQ_AMT	 = @dIRAmtO
+									 , ISSUE_REQ_TAX_AMT = @dTaxAmtO
+									 , ISSUE_FOR_AMT	 = @dIRAmtO
+		 WHERE TAX_TYPE = '1'
+		 
+/*
+		--20200325 추가: JSP에서 수행하던 금액 / 세액 계산로직 수행
+		BEGIN TRY
+		    DECLARE fnOrderAmtAndTaxCal CURSOR FOR
+		        SELECT ORDER_NUM      , SER_NO           , LOT_NO
+		             , TRANS_RATE
+		             , ISSUE_REQ_QTY  , ISSUE_VOL_Q      , ISSUE_WGT_Q
+		             , ISSUE_REQ_PRICE, ISSUE_WGT_P      , ISSUE_VOL_P
+		             , ISSUE_FOR_PRICE, ISSUE_FOR_WGT_P  , ISSUE_FOR_VOL_P
+		             , EXCHANGE_RATE
+		             , ISSUE_REQ_AMT  , ISSUE_FOR_AMT
+		             , DISCOUNT_RATE
+		             , UNIT_WGT       , UNIT_VOL
+		             , CASE WHEN ISNULL(PRICE_TYPE, '')  = '' THEN 'A'
+		                    ELSE ISNULL(PRICE_TYPE, '')
+		               END                                 AS PRICE_TYPE
+		             , TAX_TYPE       , REF_WON_CALC_TYPE, ISNULL(TAX_INOUT, 1)  AS TAX_INOUT
+		          FROM #S_SRQ100UKRV_MIT
+		         WHERE ORDER_Q != NOTOUT_Q
+
+		    OPEN fnOrderAmtAndTaxCal
+		    FETCH NEXT FROM fnOrderAmtAndTaxCal INTO @dOdernum  , @dSerno       , @dLotno
+		                                           , @dTransRate
+		                                           , @dIssueReqQ, @dIssueReqVolQ, @dIssueReqWgtQ
+		                                           , @dOrderP   , @dOrderWgtP   , @dOrderVolP 
+		                                           , @dOrderForP, @dOrderWgtForP, @dOrderVolForP
+		                                           , @dExchgRate
+		                                           , @dOrderO   , @dOrderForO
+		                                           , @dDCRate
+		                                           , @dUnitWgt  , @dUnitVol
+		                                           , @dPriceType
+		                                           , @sTaxType  , @sUnderCalcType, @sTaxInoutType
+
+		    WHILE @@FETCH_STATUS = 0
+		    BEGIN
+		        SET @dOrderP    = @dOrderForP    * @dExchgRate
+		        SET @dOrderWgtP = @dOrderWgtForP * @dExchgRate
+		        SET @dOrderVolP = @dOrderVolForP * @dExchgRate
+		        SET @dIRAmtO    = 0
+		        SET @dTaxAmtO   = 0
+
+		        --1. fnOrderAmtCal
+		        IF @dPriceType = 'B'
+		            BEGIN
+		                SET @dOrderForO = @dIssueReqWgtQ * @dOrderWgtForP;
+		                SET @dOrderO    = @dIssueReqWgtQ * @dOrderWgtP;
+		            END
+		        ELSE IF @dPriceType = 'C'
+		            BEGIN
+		                SET @dOrderForO = @dIssueReqVolQ * @dOrderVolForP;
+		                SET @dOrderO    = @dIssueReqVolQ * @dOrderVolP;
+		            END
+		        ELSE
+		            BEGIN
+		                SET @dOrderForO = @dIssueReqQ * @dOrderForP;;
+		                SET @dOrderO    = @dIssueReqQ * @dOrderP;
+		            END
+
+		        --2. fnTaxCalculate
+		        IF @sTaxInoutType = '1'
+		            BEGIN
+		                SET @dIRAmtO  = uniLITE.fnAmtWonCalc(@dOrderO                    , @sUnderCalcType)
+		                SET @dTaxAmtO = uniLITE.fnAmtWonCalc(@dOrderO * (@dVatRate / 100), @sUnderCalcType)
+		            END
+		        ELSE IF @sTaxInoutType = '2'
+		            BEGIN
+		                SET @dTemp    = uniLITE.fnAmtWonCalc((@dOrderO / ( @dVatRate + 100 )) * 100, @sUnderCalcType)
+		                SET @dTaxAmtO = uniLITE.fnAmtWonCalc(@dTemp * @dVatRate / 100              , @sUnderCalcType)
+		                SET @dIRAmtO  = uniLITE.fnAmtWonCalc((@dOrderO - @dTaxAmtO)                , @sUnderCalcType)
+		            END
+
+		        IF @sTaxType = '2'
+		            BEGIN
+		                SET @dIRAmtO  = uniLITE.fnAmtWonCalc(@dOrderO, @sUnderCalcType)
+		                SET @dTaxAmtO = 0
+		            END
+
+		        --3. 임시테이블에 계산한 값 UPDATE
+		        UPDATE #S_SRQ100UKRV_MIT
+		           SET ISSUE_FOR_AMT     = @dOrderForO
+		             , ISSUE_FOR_PRICE   = @dOrderForP
+		             , ISSUE_FOR_WGT_P   = @dOrderWgtForP
+		             , ISSUE_FOR_VOL_P   = @dOrderVolForP
+		             , ISSUE_REQ_PRICE   = @dOrderP
+		             , ISSUE_WGT_P       = @dOrderWgtP
+		             , ISSUE_VOL_P       = @dOrderVolP
+		             , ISSUE_REQ_AMT     = @dIRAmtO
+		             , ISSUE_REQ_TAX_AMT = @dTaxAmtO
+		         WHERE ORDER_NUM = @dOdernum
+		           AND SER_NO    = @dSerno
+		           AND LOT_NO    = @dLotno
+
+		        FETCH NEXT FROM fnOrderAmtAndTaxCal INTO @dOdernum  , @dSerno       , @dLotno
+		                                               , @dTransRate
+		                                               , @dIssueReqQ, @dIssueReqVolQ, @dIssueReqWgtQ
+		                                               , @dOrderP   , @dOrderWgtP   , @dOrderVolP 
+		                                               , @dOrderForP, @dOrderWgtForP, @dOrderVolForP
+		                                               , @dExchgRate
+		                                               , @dOrderO   , @dOrderForO
+		                                               , @dDCRate
+		                                               , @dUnitWgt  , @dUnitVol
+		                                               , @dPriceType
+		                                               , @sTaxType  , @sUnderCalcType, @sTaxInoutType
+		    END
+		    CLOSE fnOrderAmtAndTaxCal
+		    DEALLOCATE fnOrderAmtAndTaxCal
+		END TRY
+
+		BEGIN CATCH
+		    IF CURSOR_STATUS('GLOBAL', 'fnOrderAmtAndTaxCal') > 0
+		        BEGIN
+		            CLOSE fnOrderAmtAndTaxCal
+		            DEALLOCATE fnOrderAmtAndTaxCal
+		            select 'error - ' + ERROR_MESSAGE()
+		        END
+		END CATCH
+*/
+		SET NOCOUNT OFF
+
+		SELECT *
+		  FROM #S_SRQ100UKRV_MIT
+		 ORDER BY CUSTOM_CODE, ITEM_CODE, DVRY_DATE, ORDER_NUM, SER_NO
+	</select>
+
+	<select id="s_srq100ukrv_mitServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+		    DECLARE @COMP_CODE       NVARCHAR(08)
+		          , @DIV_CODE        NVARCHAR(08)
+		          , @ISSUE_REQ_NUM   NVARCHAR(20)
+		          , @USER_ID         NVARCHAR(20)
+
+		/*  1. 변수 값 할당 */
+		    SET @COMP_CODE     =  #{S_COMP_CODE}
+		    SET @DIV_CODE      =  #{DIV_CODE}
+		    SET @ISSUE_REQ_NUM =  #{ISSUE_REQ_NUM}
+		    SET @USER_ID       =  #{S_USER_ID}
+
+		/*  2. 명칭 조회 유형 설정 */
+		    DECLARE @RefItem         NVARCHAR(01)
+
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @USER_ID
+
+		    SET @RefItem = ISNULL(@RefItem, '0')
+
+		/*  3. 데이터 조회 */
+		    SELECT
+		           A.DIV_CODE                                                                      /*01.사업장          */
+		         , A.ISSUE_REQ_METH                                                                /*02.출하지시방법    */
+		         , A.ISSUE_REQ_PRSN                                                                /*03.출하지시담당자  */
+		         , A.ISSUE_REQ_DATE                                                                /*04.출하지시일      */
+		         , A.ISSUE_REQ_NUM                                                                 /*05.출하지시번호    */
+		         , A.ISSUE_REQ_SEQ                                                                 /*06.출하지시순번    */
+		         , A.CUSTOM_CODE                                                                   /*07.고객            */
+		         , (CASE WHEN @RefItem = '1' THEN M3.CUSTOM_NAME1
+		                 WHEN @RefItem = '2' THEN M3.CUSTOM_NAME2
+		                                     ELSE M3.CUSTOM_NAME
+		             END)                                                   AS CUSTOM_NAME         /*08.고객명          */
+		         , A.BILL_TYPE                                                                     /*09.부가세유형      */
+		         , A.ORDER_TYPE                                                                    /*10.수주구분        */
+		         , A.INOUT_TYPE_DETAIL                                                             /*11.출고유형        */
+		         , A.ISSUE_DIV_CODE                                                                /*12.출고사업장      */
+		         , A.WH_CODE                                                                       /*13.출하창고        */
+				 , A.WH_CELL_CODE                                                                  /*13.출하창고CELL        */
+		         , A.ITEM_CODE                                                                     /*14.품목코드        */
+		         , M1.ITEM_NAME                                                                    /*15.품목명          */
+		         , M1.SPEC                                                                         /*16.규격            */
+		         , A.ORDER_UNIT                                                                    /*17.판매단위        */
+		         , A.PRICE_TYPE                                                                    /*단가구분*/
+		         , A.TRANS_RATE                                                                    /*18.입수            */
+		         , ISNULL(D1.STOCK_Q,0) / ISNULL(A.TRANS_RATE,1)            AS STOCK_Q             /*19.재고수량(판매단위재고량)*/
+		         , A.ISSUE_REQ_QTY                                                                 /*20.출하지시량      */
+		         , ISNULL(A.ISSUE_FOR_PRICE, 0)                             AS ISSUE_FOR_PRICE     /*외화단가*/
+		         , ISNULL(A.ISSUE_WGT_Q, 0)                                 AS ISSUE_WGT_Q         /*출하지시량(중량단위)*/
+		         , ISNULL(A.ISSUE_FOR_WGT_P, 0)                             AS ISSUE_FOR_WGT_P     /*외화단가(중량단위)*/
+		         , ISNULL(A.ISSUE_VOL_Q, 0)                                 AS ISSUE_VOL_Q         /*출하지시량(부피단위)*/
+		         , ISNULL(A.ISSUE_FOR_VOL_P, 0)                             AS ISSUE_FOR_VOL_P     /*외화단가(부피단위)*/
+		         , ISNULL(A.ISSUE_FOR_AMT, 0)                               AS ISSUE_FOR_AMT       /*외화금액*/
+		         , A.ISSUE_REQ_PRICE                                                               /*21.단가       */
+		         , A.ISSUE_WGT_P                                                                   /*21.단가(중량단위)  */
+		         , A.ISSUE_VOL_P                                                                   /*21.단가(부피단위)  */
+		         , A.ISSUE_REQ_AMT                                                                 /*22.금액           */
+		         , A.TAX_TYPE                                                                      /*23.과세여부       */
+		         , A.ISSUE_REQ_TAX_AMT                                                             /*24.세액            */
+		         , A.WGT_UNIT                                                                      /*중량단위*/
+		         , A.UNIT_WGT                                                                      /*단위중량*/
+		         , A.VOL_UNIT                                                                      /*부피단위*/
+		         , A.UNIT_VOL                                                                      /*단위부피*/
+		         , uniLITE.fnGetUserDate(A.COMP_CODE, A.ISSUE_DATE)         AS ISSUE_DATE          /*25.출고요청일      */
+		         , A.DELIVERY_TIME                                                                 /*25.출고요청시간    */
+		         , A.DISCOUNT_RATE                                                                 /*26.할인율          */
+		         , A.LOT_NO                                                                        /*27.Lot번호         */
+		         , A.PRICE_YN                                                                      /*28.단가구분        */
+		         , A.SALE_CUSTOM_CODE                                                              /*29.매출처          */
+		         , (CASE WHEN @RefItem = '1' THEN M4.CUSTOM_NAME1
+		                 WHEN @RefItem = '2' THEN M4.CUSTOM_NAME2
+		                                     ELSE M4.CUSTOM_NAME
+		             END)                                                   AS SALE_CUSTOM_NAME    /*30.매출처          */
+		         , A.ACCOUNT_YNC                                                                   /*31.매출대상        */
+		         , A.DVRY_CUST_CD                                                                  /*32.배송처          */
+		         , M5.DVRY_CUST_NM                                          AS DVRY_CUST_NAME      /*33.배송처명        */
+		         , A.PROJECT_NO                                                                    /*34.관리번호        */
+		         , A.PO_NUM                                                                        /*35.P/O NO          */
+		         , A.PO_SEQ                                                                        /*35.P/O SEQ         */
+		         , A.ORDER_NUM                                                                     /*36.수주번호        */
+		         , A.SER_NO                                                                        /*37.수주순번        */
+		         , A.REMARK                                                                        /*38.비고            */
+		         , A.UPDATE_DB_USER                                                                /*39.수정자          */
+		         , CONVERT(VARCHAR(20), A.UPDATE_DB_TIME, 120)   AS UPDATE_DB_TIME                   /*40.수정일          */
+		         , A.DEPT_CODE                                                                     /*41.출하지시부서    */
+		         , A.TREE_NAME                                                                     /*42.부서명          */
+		         , A.MONEY_UNIT                                                                    /*43.화폐단위        */
+		         , A.EXCHANGE_RATE                                                                 /*44.환율            */
+		         , ISNULL(A.ISSUE_QTY, 0) AS ISSUE_QTY                                             /*45.출고량          */
+		         , (CASE WHEN ISNULL(A.REF_LOC, '') = '1' THEN ISNULL(R11.RETURN_Q,0)
+		                 WHEN ISNULL(A.REF_LOC, '') = '5' THEN ISNULL(R51.RETURN_Q,0)
+		                                                  ELSE 0
+		             END)                                                   AS RETURN_Q            /*46.수주의반품량    */
+		         , (CASE WHEN ISNULL(A.REF_LOC, '') = '1' THEN ISNULL(R11.ORDER_Q,0)
+		                 WHEN ISNULL(A.REF_LOC, '') = '5' THEN ISNULL(R51.ORDER_Q,0)
+		                                                  ELSE 0
+		             END)                                                   AS ORDER_Q             /*47.수주의수주량    */
+		         , (CASE WHEN ISNULL(A.REF_LOC, '') = '1' THEN ISNULL(R11.ISSUE_REQ_Q,0)
+		                 WHEN ISNULL(A.REF_LOC, '') = '5' THEN ISNULL(R51.ISSUE_REQ_Q,0)
+		                                                  ELSE 0
+		             END)                                                   AS ISSUE_REQ_Q         /*48.수주의출하요청량*/
+		         , (CASE WHEN ISNULL(A.REF_LOC, '') = '1' THEN uniLITE.fnGetUserDate(A.COMP_CODE, R13.DVRY_DATE)
+		                 WHEN ISNULL(A.REF_LOC, '') = '5' THEN uniLITE.fnGetUserDate(A.COMP_CODE, R53.DELIVERY_DATE)
+		                                                  ELSE ''
+		             END)                                                   AS DVRY_DATE           /*49-1.납기일        */
+		         , (CASE WHEN ISNULL(A.REF_LOC, '') = '1' THEN R13.DVRY_TIME
+		                 WHEN ISNULL(A.REF_LOC, '') = '5' THEN R53.DELIVERY_TIME
+		                                                  ELSE ''
+		             END)                                                   AS DVRY_TIME           /*49-2.납기시간      */
+		         , (CASE WHEN ISNULL(A.REF_LOC, '') = '1' THEN R12.TAX_INOUT
+		                 WHEN ISNULL(A.REF_LOC, '') = '5' THEN '2'
+		                                                  ELSE M3.TAX_TYPE
+		             END)                                                   AS TAX_INOUT           /*50.세액포함여부    */
+		         , M1.STOCK_UNIT                                                                   /*51.재고단위        */
+		         , A.ACCOUNT_YNC                                            AS PRE_ACCNT_YN        /*52.원매출대상여부  */
+		         , CAST('F' AS VARCHAR(1))                                  AS REF_FLAG            /*53.참조여부        */
+		         , CAST(0.0 AS NUMERIC(18,4))                               AS SALE_P              /*54.거래처/품목/단위 별 단가set하는 필드*/
+		         , ISNULL(A.TREE_NAME,'N')                                  AS AMEND_YN            /*55.할인정보세트후, 수정여부(부서명FIELD을 사용)*/
+		         , (CASE WHEN ISNULL(A.REF_LOC, '') = '1' THEN ISNULL(R11.OUTSTOCK_Q,0)
+		                 WHEN ISNULL(A.REF_LOC, '') = '5' THEN ISNULL(R51.OUTSTOCK_Q,0)
+		                                                  ELSE 0
+		             END)                                                   AS OUTSTOCK_Q          /*56.수주의 출고량   */
+		         , (CASE WHEN ISNULL(A.REF_LOC, '') = '1' THEN (CASE WHEN @RefItem = '1' THEN R14.CUSTOM_NAME1
+		                                                             WHEN @RefItem = '2' THEN R14.CUSTOM_NAME2
+		                                                                                 ELSE R14.CUSTOM_NAME
+		                                                         END)
+		                 WHEN ISNULL(A.REF_LOC, '') = '5' THEN (CASE WHEN @RefItem = '1' THEN R54.CUSTOM_NAME1
+		                                                             WHEN @RefItem = '2' THEN R54.CUSTOM_NAME2
+		                                                                                 ELSE R54.CUSTOM_NAME
+		                                                         END)
+		                                                  ELSE ''
+		             END)                                                   AS ORDER_CUST_NM       /*57.수주거래처      */
+		         , ISNULL(M1.STOCK_CARE_YN, 'Y')                            AS STOCK_CARE_YN       /*58.재고관리대상    */
+		         , (CASE WHEN ISNULL(A.REF_LOC, '') = '1' THEN ISNULL(R11.ORDER_Q,0) + ISNULL(R11.RETURN_Q,0) - ISNULL(R11.OUTSTOCK_Q,0) - ISNULL(R1.NOTOUT_Q,0)
+		                 WHEN ISNULL(A.REF_LOC, '') = '5' THEN ISNULL(R51.ORDER_Q,0) + ISNULL(R51.RETURN_Q,0) - ISNULL(R51.OUTSTOCK_Q,0) - ISNULL(R1.NOTOUT_Q,0)
+		                                                  ELSE 0
+		             END)                                                   AS NOTOUT_Q            /*59.미납량          */
+		         , RTRIM(A.ISSUE_REQ_NUM) + RTRIM(CONVERT(VARCHAR(4),A.ISSUE_REQ_SEQ)) AS SORT_KEY /*60.SORT KEY용      */
+		         , M3.AGENT_TYPE                                            AS REF_AGENT_TYPE      /*61.거래처분류      */
+		         , M3.WON_CALC_BAS                                          AS REF_WON_CALC_TYPE   /*62.원미만계산      */
+		         , ISNULL(M6.REF_CODE2, M6.SUB_CODE)                        AS REF_CODE2           /*63.해당 출고유형의 시스템출고유형*/
+		         , A.COMP_CODE                                                                     /*64.법인코드        */
+		         , ISNULL(A.SCM_FLAG_YN, 'N')                               AS SCM_FLAG_YN         /*65.타시스템연계여부*/
+		         , ISNULL(A.REF_LOC, '')                                    AS REF_LOC             /*66.참고경로        */
+		         , ISNULL(R52.PAY_METHODE1, '')                             AS PAY_METHODE1
+		         , ISNULL(R52.LC_SER_NO, '')                                AS LC_SER_NO
+		         , 'FEFER'                                                  AS GUBUN
+		         , A.REMARK_INTER
+		      FROM            SRQ100T A WITH (NOLOCK)
+		           INNER JOIN BPR100T M1 WITH (NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE
+		                                              AND M1.ITEM_CODE   = A.ITEM_CODE
+		           LEFT  JOIN BPR200T M7 WITH (NOLOCK) ON M7.COMP_CODE   = A.COMP_CODE
+		                                              AND M7.DIV_CODE    = A.DIV_CODE
+		                                              AND M7.ITEM_CODE   = A.ITEM_CODE
+		           INNER JOIN BCM100T M3 WITH (NOLOCK) ON M3.COMP_CODE   = A.COMP_CODE
+		                                              AND M3.CUSTOM_CODE = A.CUSTOM_CODE
+		           INNER JOIN BCM100T M4 WITH (NOLOCK) ON M4.COMP_CODE   = A.COMP_CODE
+		                                              AND M4.CUSTOM_CODE = A.SALE_CUSTOM_CODE
+		           LEFT  JOIN SCM100T M5 WITH (NOLOCK) ON M5.COMP_CODE   = A.COMP_CODE
+		                                              AND M5.CUSTOM_CODE = A.CUSTOM_CODE
+		                                              AND CAST(M5.DVRY_CUST_SEQ AS NVARCHAR(8)) = A.DVRY_CUST_CD
+		           LEFT  JOIN BSA100T M6 WITH (NOLOCK) ON M6.COMP_CODE   = A.COMP_CODE
+		                                              AND M6.MAIN_CODE   = 'S007'
+		                                              AND M6.SUB_CODE    = A.INOUT_TYPE_DETAIL
+		           LEFT  JOIN (SELECT
+		                              COMP_CODE
+		                            , DIV_CODE
+		                            , ITEM_CODE
+		                            , WH_CODE
+		                            , SUM(STOCK_Q) AS STOCK_Q
+		                         FROM BIV100T WITH (NOLOCK)
+		                        GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, WH_CODE) D1 ON D1.COMP_CODE = A.COMP_CODE
+		                                                                            AND D1.DIV_CODE  = A.ISSUE_DIV_CODE
+		                                                                            AND D1.ITEM_CODE = A.ITEM_CODE
+		                                                                            AND D1.WH_CODE   = A.WH_CODE
+		           LEFT  JOIN (SELECT
+		                              COMP_CODE
+		                            , ORDER_NUM
+		                            , SER_NO
+		                            , SUM(ISSUE_REQ_QTY - ISSUE_QTY) AS NOTOUT_Q
+		                         FROM SRQ100T WITH (NOLOCK)
+		                        GROUP BY COMP_CODE, ORDER_NUM, SER_NO) R1 ON R1.COMP_CODE = A.COMP_CODE
+		                                                                 AND R1.ORDER_NUM = A.ORDER_NUM
+		                                                                 AND R1.SER_NO    = A.SER_NO
+		           LEFT JOIN (SELECT
+		                             COMP_CODE
+		                           , ORDER_NUM
+		                           , SER_NO
+		                           , ITEM_CODE
+		                           , SUM(OUTSTOCK_Q)  AS OUTSTOCK_Q
+		                           , SUM(RETURN_Q)    AS RETURN_Q
+		                           , SUM(ORDER_Q)     AS ORDER_Q
+		                           , SUM(ISSUE_REQ_Q) AS ISSUE_REQ_Q
+		                        FROM SOF110T WITH (NOLOCK)
+		                       GROUP BY COMP_CODE, ORDER_NUM, SER_NO, ITEM_CODE) R11 ON R11.COMP_CODE = A.COMP_CODE
+		                                                                            AND R11.ORDER_NUM = A.ORDER_NUM
+		                                                                            AND R11.SER_NO    = A.SER_NO
+		                                                                            AND R11.ITEM_CODE = A.ITEM_CODE
+		           LEFT JOIN SOF100T R12 WITH (NOLOCK) ON R12.COMP_CODE   = A.COMP_CODE
+		                                              AND R12.ORDER_NUM   = A.ORDER_NUM
+		           LEFT JOIN SOF110T R13 WITH (NOLOCK) ON R13.COMP_CODE   = A.COMP_CODE
+		                                              AND R13.ORDER_NUM   = A.ORDER_NUM
+		                                              AND R13.SER_NO      = A.SER_NO
+		           LEFT JOIN BCM100T R14 WITH (NOLOCK) ON R14.COMP_CODE   = R12.COMP_CODE
+		                                              AND R14.CUSTOM_CODE = R12.CUSTOM_CODE
+		           LEFT JOIN (SELECT
+		                             COMP_CODE
+		                           , SO_SER_NO
+		                           , SO_SER
+		                           , ITEM_CODE
+		                           , SUM(SALE_QTY)  AS OUTSTOCK_Q
+		                           , 0              AS RETURN_Q
+		                           , SUM(QTY)       AS ORDER_Q
+		                           , 0              AS ISSUE_REQ_Q
+		                        FROM TEA110T WITH (NOLOCK)
+		                       GROUP BY COMP_CODE, SO_SER_NO, SO_SER, ITEM_CODE) R51 ON R51.COMP_CODE = A.COMP_CODE
+		                                                                            AND R51.SO_SER_NO = A.ORDER_NUM
+		                                                                            AND R51.SO_SER    = A.SER_NO
+		                                                                            AND R51.ITEM_CODE = A.ITEM_CODE
+		           LEFT JOIN TEA100T R52 WITH (NOLOCK) ON R52.COMP_CODE   = A.COMP_CODE
+		                                              AND R52.DIV_CODE    = A.DIV_CODE
+		                                              AND R52.SO_SER_NO   = A.ORDER_NUM
+		           LEFT JOIN TEA110T R53 WITH (NOLOCK) ON R53.COMP_CODE   = A.COMP_CODE
+		                                              AND R53.DIV_CODE    = A.DIV_CODE
+		                                              AND R53.SO_SER_NO   = A.ORDER_NUM
+		                                              AND R53.SO_SER      = A.SER_NO
+		           LEFT JOIN BCM100T R54 WITH (NOLOCK) ON R54.COMP_CODE   = R52.COMP_CODE
+		                                              AND R54.CUSTOM_CODE = R52.IMPORTER
+		     WHERE A.COMP_CODE     = @COMP_CODE
+		       AND A.DIV_CODE      = @DIV_CODE
+		       AND CASE WHEN ISNULL(A.REF_LOC, '') = '1' THEN R13.DVRY_DATE
+		                WHEN ISNULL(A.REF_LOC, '') = '5' THEN R53.DELIVERY_DATE
+		                ELSE ''
+		           END   &gt;= #{DVRY_DATE_FR}
+		       AND CASE WHEN ISNULL(A.REF_LOC, '') = '1' THEN R13.DVRY_DATE
+		                WHEN ISNULL(A.REF_LOC, '') = '5' THEN R53.DELIVERY_DATE
+		                ELSE ''
+		           END   &lt;= #{DVRY_DATE_TO}
+		       AND A.ISSUE_REQ_DATE   &gt;= #{ISSUE_REQ_DATE_FR}
+		       AND A.ISSUE_REQ_DATE   &lt;= #{ISSUE_REQ_DATE_TO}
+		<if test="@foren.Ognl@isNotEmpty(ORDER_NUM)">
+		       AND A.ORDER_NUM    LIKE  #{ORDER_NUM} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+		       AND A.CUSTOM_CODE  LIKE #{CUSTOM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+		       AND CASE WHEN @RefItem = '1' THEN M3.CUSTOM_NAME1
+		                WHEN @RefItem = '2' THEN M3.CUSTOM_NAME2
+		                                    ELSE M3.CUSTOM_NAME
+		           END LIKE #{CUSTOM_NAME} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		       AND A.ITEM_CODE    LIKE #{ITEM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+		       AND M1.ITEM_NAME   LIKE #{ITEM_NAME} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(SPEC)">
+		       AND M1.SPEC        LIKE #{SPEC} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ISSUE_REQ_NUM)">
+		       AND A.ISSUE_REQ_NUM LIKE @ISSUE_REQ_NUM + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(SPEC)">
+		       AND M1.SPEC        LIKE #{SPEC} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+		       --20200302 추가
+		       AND A.ORDER_TYPE   = #{ORDER_TYPE}
+		</if>
+		     ORDER BY A.ISSUE_REQ_NUM, A.ISSUE_REQ_SEQ
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+
+
+	<insert id="s_srq100ukrv_mitServiceImpl.insertLogDetail" parameterType="Map">
+		INSERT INTO L_SRQ100T
+		     ( KEY_VALUE		    , OPR_FLAG
+		     , COMP_CODE            , DIV_CODE              , ISSUE_REQ_NUM         , ISSUE_REQ_SEQ         , ISSUE_REQ_METH
+		     , ISSUE_REQ_DATE       , DEPT_CODE             , TREE_NAME             , CUSTOM_CODE           , AGENT_TYPE
+		     , INOUT_TYPE_DETAIL    , WH_CODE               , ITEM_CODE             , ISSUE_REQ_QTY         , ISSUE_REQ_PRICE
+		     , ISSUE_REQ_AMT        , ISSUE_REQ_TAX_AMT     , ORDER_UNIT            , TRANS_RATE            , PRICE_YN
+		     , TAX_TYPE             , DISCOUNT_RATE         , MONEY_UNIT            , EXCHANGE_RATE         , ISSUE_FOR_PRICE
+		     , ISSUE_FOR_AMT        , ISSUE_REQ_PRSN        , ISSUE_DIV_CODE        , ISSUE_DATE            , ISSUE_TIME
+		     , DELIVERY_TIME        , SALE_CUSTOM_CODE      , DVRY_CUST_CD          , CARD_CUST_CD          , BILL_TYPE
+		     , ORDER_TYPE           , RECEIPT_PLAN_DATE     , WH_CELL_CODE          , ISSUE_QTY             , ACCOUNT_YNC
+		     , ORDER_NUM            , SER_NO                , PO_NUM                , PO_SEQ                , DO_NO
+		     , DO_SEQ               , COMFIRM_DO_FLAG       , SCM_FLAG_YN           , REF_LOC               , SO_KIND
+		     , CUSTOMER_ID          , RECEIVER_ID           , PICK_BOX_QTY          , PICK_EA_QTY           , PICK_STATUS
+		     , PROJECT_NO           , LOT_NO                , REMARK                , PRICE_TYPE            , WGT_UNIT
+		     , UNIT_WGT             , VOL_UNIT              , UNIT_VOL              , ISSUE_WGT_Q           , ISSUE_WGT_P
+		     , ISSUE_FOR_WGT_P      , ISSUE_VOL_Q           , ISSUE_VOL_P           , ISSUE_FOR_VOL_P
+	         , INSERT_DB_USER       , INSERT_DB_TIME        , UPDATE_DB_USER        , UPDATE_DB_TIME
+		     , REMARK_INTER
+		    )
+		VALUES
+		     ( #{KEY_VALUE}         , #{OPR_FLAG}
+		     , #{S_COMP_CODE}       , #{DIV_CODE}           , #{ISSUE_REQ_NUM}      , #{ISSUE_REQ_SEQ}      , #{ISSUE_REQ_METH}
+		     , #{ISSUE_REQ_DATE}    , #{DEPT_CODE}          , #{TREE_NAME}          , #{CUSTOM_CODE}        , #{AGENT_TYPE}
+		     , #{INOUT_TYPE_DETAIL} , #{WH_CODE}            , #{ITEM_CODE}          , #{ISSUE_REQ_QTY}      , #{ISSUE_REQ_PRICE}
+		     , #{ISSUE_REQ_AMT}     , #{ISSUE_REQ_TAX_AMT}  , #{ORDER_UNIT}         , #{TRANS_RATE}         , #{PRICE_YN}
+		     , #{TAX_TYPE}          , #{DISCOUNT_RATE}      , #{MONEY_UNIT}         , #{EXCHANGE_RATE}      , #{ISSUE_FOR_PRICE}
+		     , #{ISSUE_FOR_AMT}     , #{ISSUE_REQ_PRSN}     , #{ISSUE_DIV_CODE}     , #{ISSUE_DATE}         , #{ISSUE_TIME}
+		     , #{DELIVERY_TIME}     , #{SALE_CUSTOM_CODE}   , #{DVRY_CUST_CD}       , #{CARD_CUST_CD}       , #{BILL_TYPE}
+		     , #{ORDER_TYPE}        , #{RECEIPT_PLAN_DATE}  , #{WH_CELL_CODE}       , #{ISSUE_QTY}          , #{ACCOUNT_YNC}
+		     , #{ORDER_NUM}         , #{SER_NO}             , #{PO_NUM}             , #{PO_SEQ}             , #{DO_NO}
+		     , #{DO_SEQ}            , #{COMFIRM_DO_FLAG}    , #{SCM_FLAG_YN}        , #{REF_LOC}            , #{SO_KIND}
+		     , #{CUSTOMER_ID}       , #{RECEIVER_ID}        , #{PICK_BOX_QTY}       , #{PICK_EA_QTY}        , #{PICK_STATUS}
+		     , #{PROJECT_NO}        , #{LOT_NO}             , #{REMARK}             , #{PRICE_TYPE}         , #{WGT_UNIT}
+		     , #{UNIT_WGT}          , #{VOL_UNIT}           , #{UNIT_VOL}           , #{ISSUE_WGT_Q}        , #{ISSUE_WGT_P}
+		     , #{ISSUE_FOR_WGT_P}   , #{ISSUE_VOL_Q}        , #{ISSUE_VOL_P}        , #{ISSUE_FOR_VOL_P}
+		     , #{S_USER_ID}         , GETDATE()             , #{S_USER_ID}          , GETDATE()
+		     , #{REMARK_INTER}
+		    )
+	</insert>
+	<update id="s_srq100ukrv_mitServiceImpl.spSalesShipment" parameterType="Map" statementType="CALLABLE">
+		{call SP_SALES_IssueReq (
+			#{KeyValue		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{LangCode		, mode=IN	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{IssueReqNum	, mode=OUT	, jdbcType=VARCHAR	, javaType=java.lang.String},
+			#{ErrorDesc		, mode=OUT	, jdbcType=VARCHAR	, javaType=java.lang.String}
+		)}
+	</update>
+</mapper>

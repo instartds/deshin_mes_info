@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_pms410ukrv_kodiServiceImpl">
+
+	<select id="s_pms410ukrv_kodiServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	BEGIN
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+
+		DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+		      , @UserId			NVARCHAR(100)	/* 사용자ID */
+		      , @LangType		NVARCHAR(2)		/* 언어구분 */
+		      , @RefItem		NVARCHAR(01)
+		      , @DateFormat		NVARCHAR(10)
+
+		SET @CompCode = #{S_COMP_CODE}
+		SET @UserId   = #{S_USER_ID}
+		SET @LangType = N'KR'
+
+		/* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+			FROM BSA300T WITH (NOLOCK)
+			WHERE COMP_CODE = @CompCode
+				AND USER_ID = @UserId
+
+		SET @RefItem = ISNULL(@RefItem, N'0')
+
+		/* 날짜 포맷 유형 설정 */
+		SELECT TOP 1 @DateFormat = CODE_NAME
+			FROM BSA100T WITH (NOLOCK)
+			WHERE COMP_CODE = @CompCode
+			AND MAIN_CODE = N'B044'
+			AND REF_CODE1 = N'Y'
+
+		SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+			SELECT
+				   CONVERT(NVARCHAR(1), 'D') AS DATA_TYPE
+				 , A.DIV_CODE
+				 , A.WORK_SHOP_CODE
+				 , F.TREE_NAME
+				 , (CASE WHEN ISNULL(A.PRODT_DATE, '') = ''
+						 THEN ''
+						 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PRODT_DATE, 1, 4))
+																 , 'MM'  , SUBSTRING(A.PRODT_DATE, 5, 2))
+																 , 'DD'  , SUBSTRING(A.PRODT_DATE, 7, 2))
+					 END)																				AS PRODT_DATE
+			     , A.PRODT_NUM
+				 , Y.ITEM_ACCOUNT
+				 , A.ITEM_CODE
+	    		  , CASE WHEN @RefItem = '1' THEN X.ITEM_NAME1
+						 WHEN @RefItem = '2' THEN X.ITEM_NAME2
+						 ELSE X.ITEM_NAME
+					END                                                     AS ITEM_NAME
+				 , X.SPEC
+				 , A.PRODT_Q
+				 , A.GOOD_PRODT_Q
+				 , A.LOT_NO
+				 , B.MICROBE_DATE
+				 , B.EXPECTED_END_DATE				 
+				 , (CASE WHEN ISNULL(B.RECEIPT_DATE, '') = ''
+						 THEN ''
+						 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.RECEIPT_DATE, 1, 4))
+																 , 'MM'  , SUBSTRING(B.RECEIPT_DATE, 5, 2))
+																 , 'DD'  , SUBSTRING(B.RECEIPT_DATE, 7, 2))
+					 END)																				AS RECEIPT_DATE
+				 , B.RECEIPT_NUM
+				 , B.RECEIPT_SEQ
+				 , (CASE WHEN ISNULL(B.INSPEC_DATE, '') = ''
+						 THEN ''
+						 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.INSPEC_DATE, 1, 4))
+																 , 'MM'  , SUBSTRING(B.INSPEC_DATE, 5, 2))
+																 , 'DD'  , SUBSTRING(B.INSPEC_DATE, 7, 2))
+					 END)																				AS INSPEC_DATE
+				 , B.INSPEC_NUM
+				 , B.INSPEC_SEQ
+				 , B.RECEIPT_PRSN
+				 , B.INSPEC_PRSN
+				 , CASE WHEN ISNULL(B.RECEIPT_Q, 0) <![CDATA[<>]]> 0 THEN A.GOOD_PRODT_Q
+				        ELSE 0
+						END  AS RECEIPT_Q
+
+				 , A.GOOD_PRODT_Q - (CASE WHEN ISNULL(B.RECEIPT_Q, 0) <![CDATA[<>]]> 0 THEN A.GOOD_PRODT_Q
+				                          ELSE 0 END)
+						     AS NORECEIPT_Q				 
+        		 , ISNULL(B.INSPEC_Q, 0) AS INSPEC_Q
+        		 , ISNULL(B.BAD_INSPEC_Q, 0) AS BAD_INSPEC_Q
+				 , ISNULL(B.INSTOCK_Q, 0) AS INSTOCK_Q
+				 , ISNULL(B.BAD_LATE, 0) AS BAD_LATE
+				 , ISNULL(B.RECEIPT_Q, 0) - ISNULL(B.INSPEC_Q, 0)
+						     AS NOINSPEC_Q
+                 , ISNULL(B.GOODBAD_TYPE, '') AS GOODBAD_TYPE
+				 , B.RECEIPT_REMARK
+				 , B.INSPEC_REMARK
+			  FROM                PMR200T A  WITH (NOLOCK)
+			       	   LEFT  JOIN PMR100T A1 WITH (NOLOCK) ON A.COMP_CODE = A1.COMP_CODE
+														  AND A.DIV_CODE  = A1.DIV_CODE
+														  AND A.PRODT_NUM = A1.PRODT_NUM
+                       LEFT JOIN (SELECT X.COMP_CODE
+					                   , X.DIV_CODE
+									   , X.RECEIPT_NUM
+				                       , X.RECEIPT_SEQ
+									   , X.RECEIPT_PRSN	
+									   , X.RECEIPT_DATE	
+									   , X.RECEIPT_Q							   
+									   , Y.INSPEC_NUM
+									   , Y.INSPEC_SEQ
+									   , Y.INSPEC_PRSN
+									   , Y.INSPEC_DATE
+									   , (Y.GOOD_INSPEC_Q + Y.BAD_INSPEC_Q) AS INSPEC_Q
+									   , Y.GOOD_INSPEC_Q
+									   , Y.BAD_INSPEC_Q
+					                   , X.REMARK AS RECEIPT_REMARK
+									   , Y.REMARK AS INSPEC_REMARK
+									   , CONVERT(NUMERIC(10,2),((Y.BAD_INSPEC_Q / Y.INSPEC_Q) * 100)) AS BAD_LATE
+									   , ISNULL(Y.INSTOCK_Q,0) AS INSTOCK_Q
+									   , Y.GOODBAD_TYPE
+				                       , Y.MICROBE_DATE
+				                       , Y.EXPECTED_END_DATE									   
+					                FROM QMS300T X WITH (NOLOCK)
+                                         LEFT  JOIN QMS400T Y WITH (NOLOCK) ON Y.COMP_CODE   = X.COMP_CODE
+                                                                           AND Y.DIV_CODE    = X.DIV_CODE
+                                                                           AND Y.RECEIPT_NUM = X.RECEIPT_NUM
+                                                                           AND Y.RECEIPT_SEQ = X.RECEIPT_SEQ
+									
+									) AS B ON B.COMP_CODE   = A.COMP_CODE
+                                                         AND B.DIV_CODE     = A.DIV_CODE
+                                                         AND B.RECEIPT_NUM  = A.RECEIPT_NUM
+														 AND B.RECEIPT_SEQ  = A.RECEIPT_SEQ
+			           LEFT  JOIN BSA230T F WITH (NOLOCK) ON F.COMP_CODE   = A.COMP_CODE
+			                                             AND F.TYPE_LEVEL  = A.DIV_CODE
+					                                     AND F.TREE_CODE   = A.WORK_SHOP_CODE
+                       INNER JOIN BPR100T X WITH (NOLOCK) ON X.COMP_CODE   = A.COMP_CODE
+                                                         AND X.ITEM_CODE   = A.ITEM_CODE
+                       INNER JOIN BPR200T Y WITH (NOLOCK) ON Y.COMP_CODE   = A.COMP_CODE
+                                                         AND Y.DIV_CODE    = A.DIV_CODE
+                                                         AND Y.ITEM_CODE   = A.ITEM_CODE
+                                                         AND ISNULL(Y.INSPEC_YN, 'N') = 'Y'
+
+			 WHERE A.COMP_CODE      = @CompCode
+			   AND A.DIV_CODE       = #{DIV_CODE}
+
+			<if test="INSPEC_ITEM == &quot;1&quot;">
+			   AND F.INSPEC_TYPE	= #{INSPEC_ITEM}
+			</if>	
+			
+			<if test="INSPEC_ITEM == &quot;2&quot;">
+			   AND F.INSPEC_TYPE	= #{INSPEC_ITEM}
+			</if>	
+			   
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+			   AND A.ITEM_CODE   LIKE #{ITEM_CODE} + '%'
+			</if>
+			
+			<if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+			   AND Y.ITEM_ACCOUNT   = #{ITEM_ACCOUNT}
+			</if>
+						
+			<if test="@foren.Ognl@isNotEmpty(WORK_SHOP_CODE)">
+			   AND A.WORK_SHOP_CODE = #{WORK_SHOP_CODE}		/*작업장*/
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(PRODT_DATE_FR)">
+			   AND A.PRODT_DATE    <![CDATA[>=]]> #{PRODT_DATE_FR}	/*생산일자 FR*/
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(PRODT_DATE_TO)">
+			   AND A.PRODT_DATE    <![CDATA[<=]]> #{PRODT_DATE_TO}	/*생산일자 TO*/
+			</if>
+
+			<if test="@foren.Ognl@isNotEmpty(RECEIPT_DATE_FR)">
+			   AND B.RECEIPT_DATE     <![CDATA[>=]]> #{RECEIPT_DATE_FR}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(RECEIPT_DATE_TO)">
+			   AND B.RECEIPT_DATE    <![CDATA[<=]]> #{RECEIPT_DATE_TO}
+			</if>
+
+			<if test="@foren.Ognl@isNotEmpty(INSPEC_DATE_FR)">
+			   AND B.INSPEC_DATE     <![CDATA[>=]]> #{INSPEC_DATE_FR}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(INSPEC_DATE_TO)">
+			   AND B.INSPEC_DATE    <![CDATA[<=]]> #{INSPEC_DATE_TO}
+			</if>
+
+			<if test="TOT_RECEIPT_Q == &quot;N&quot;">
+			     AND A.GOOD_PRODT_Q <![CDATA[>]]> ISNULL(B.RECEIPT_Q,0)
+			</if>
+
+			<if test="TOT_RECEIPT_Q == &quot;Y&quot;">
+			     AND ISNULL(B.RECEIPT_Q,0) <![CDATA[>]]> 0
+			</if>
+			
+			<if test="TOT_INSPEC_Q == &quot;N&quot;">
+			     AND ISNULL(B.RECEIPT_Q,0) <![CDATA[>]]> ISNULL(B.INSPEC_Q,0)
+			</if>
+
+			<if test="TOT_INSPEC_Q == &quot;Y&quot;">
+			     AND ISNULL(B.INSPEC_Q,0) <![CDATA[>]]> 0
+			</if>		
+
+
+	    SET NOCOUNT OFF
+	    SET ARITHABORT OFF
+	END
+	</select>
+	
+	<update id="s_pms410ukrv_kodiServiceImpl.updateQms400t" parameterType="Map">
+        UPDATE QMS400T
+           SET MICROBE_DATE      = #{MICROBE_DATE}
+             , EXPECTED_END_DATE = #{EXPECTED_END_DATE}
+             , UPDATE_DB_USER    = #{USER_ID}
+             , UPDATE_DB_TIME    = GETDATE()
+         WHERE COMP_CODE      = #{COMP_CODE}
+           AND DIV_CODE       = #{DIV_CODE}
+           AND INSPEC_NUM     = #{INSPEC_NUM}
+           AND INSPEC_SEQ     = #{INSPEC_SEQ}
+    </update> 	
+
+
+</mapper>

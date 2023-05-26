@@ -1,0 +1,424 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="afd630skrService">
+	
+	<select id="afd630skrService.selectMasterList" parameterType="Map" resultType="rMap">	    
+	--afd630skr.Cafd630skr[fnAfd630Qstd] QUERY01
+	/*프로그램 ID: afd630skr(연간차입금현황)*/
+	BEGIN
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+	    SET ANSI_WARNINGS OFF
+	
+	    DECLARE         @COMP_CODE          NVARCHAR(08)                -- (필수) 법인코드
+	                  , @BASIS_MONTH        NVARCHAR(06)                -- (필수) 기준년월
+	                  , @ST_MONTH           NVARCHAR(06)                -- (필수) 당기시작년월
+	                  , @QRY_TYPE           NVARCHAR(01)                -- (필수) 구분(A:전체, I:진행, E:마감)
+	                  , @DISP_SUM           NVARCHAR(01)                -- (필수) 소계여부(Y:예, N:아니오)
+	                  , @USER_ID            NVARCHAR(100)                -- (필수) USER ID
+	
+	    --  [ 변수 값 할당 ] --------------------------------------------------------------------------------------------------
+	    SET @COMP_CODE      = #{S_COMP_CODE}
+	    SET @BASIS_MONTH    = #{BASIS_MONTH}
+	    SET @ST_MONTH       = #{ST_DATE}
+	    SET @QRY_TYPE       = #{QRY_TYPE}
+	    SET @DISP_SUM       = #{DISP_SUM}
+	    SET @USER_ID        = #{S_USER_ID}
+	
+	   
+	    --  [ 명칭 참조 유형 ] ------------------------------------------------------------------------------------------------
+        DECLARE         @RefItem            NVARCHAR(01)
+    
+        SELECT TOP 1 @RefItem = REF_ITEM
+        FROM   BSA300T WITH (NOLOCK)
+        WHERE  USER_ID = @USER_ID
+    
+        SET @RefItem = ISNULL(@RefItem, N'0')
+    
+        --  [ 날짜 포맷 유형 설정 ] -------------------------------------------------------------------------------------------
+        DECLARE         @DateFormat         NVARCHAR(10)
+    
+        SELECT TOP 1 @DateFormat = CODE_NAME
+        FROM   BSA100T WITH (NOLOCK)
+        WHERE  COMP_CODE    = @COMP_CODE
+        AND    MAIN_CODE    = N'B044'
+        AND    REF_CODE1    = N'Y'
+    
+        SET @DateFormat = ISNULL(@DateFormat, N'YYYY.MM.DD')
+    
+        --  [ 조회기간 설정 ] -------------------------------------------------------------------------------------------------
+        DECLARE         @FrDate             NVARCHAR(08)                -- 월금액 집계 시작일
+                      , @ToDate             NVARCHAR(08)                -- 월금액 집계 종료일
+                      , @CheckDate          NVARCHAR(06)                -- 마감체크 기준일  
+    
+        SET @FrDate     = SUBSTRING(@BASIS_MONTH, 1, 4) + SUBSTRING(@ST_MONTH, 5, 2) + '01'
+        SET @ToDate     = @BASIS_MONTH + '31'
+    
+        IF  @FrDate &gt; @ToDate
+            SET @FrDate = CONVERT(NVARCHAR, DATEADD(YYYY, -1, @FrDate), 112)
+    
+        SET @CheckDate  = SUBSTRING(@FrDate, 1, 6)
+    
+    --  [ 임시 테이블 처리 ] ----------------------------------------------------------------------------------------------
+        DECLARE     @TypeKey                NVARCHAR(20)
+    
+        SET @TypeKey  = REPLACE(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(30), GETDATE(), 121), '-', ''), ':', ''), '.', ''), ' ', '')
+    
+        IF NOT EXISTS   (
+                        SELECT TOP 1 1
+                        FROM   T_AFD630SKR1 WITH (NOLOCK)
+                        WHERE  TYPE_KEY LIKE LEFT(@TypeKey, 8) + '%'
+                        )
+        BEGIN
+            TRUNCATE TABLE T_AFD630SKR1
+        END
+    
+    ---------------------------------------------------------------------------------------------------------------------------
+    
+    --  [ 데이터 생성 ] --------------------------------------------------------------------------------------------------------
+        -- 1. 차입증감
+        INSERT  INTO T_AFD630SKR1 ( TYPE_KEY    , TYPE_FLAG     , COMP_CODE , ACCNT     , CUSTOM    , LOANNO        , LOAN_NAME , ACCOUNT_NUM
+                                  , LOAN_GUBUN  , PUB_DATE      , EXP_DATE  , REMARK    , MORTGAGE  , LOAN_AMT_I    , INT_RATE
+                                  , MONTH_0     , MONTH_1       , MONTH_2   , MONTH_3   , MONTH_4   , MONTH_5       , MONTH_6
+                                  , MONTH_7     , MONTH_8       , MONTH_9   , MONTH_10  , MONTH_11  , MONTH_12      , TOT_AMT_I
+                                  , JAN_AMT_I   , AVG_INT_RATE  , SORT_FLD )
+        SELECT  @TypeKey , '0'  , A.COMP_CODE   , A.ACCNT       , A.CUSTOM  , A.LOANNO      , A.LOAN_NAME           , uniLITE.fnCipherDecrypt(A.ACCOUNT_NUM, 'B')
+              , A.LOAN_GUBUN    , A.PUB_DATE    , A.EXP_DATE    , A.REMARK  , A.MORTGAGE    , A.AMT_I LOAN_AMT_I    , A.INT_RATE
+              , SUM(CASE WHEN C.TERM_GUBUN = 'P'                                                THEN C.AMT_I ELSE 0 END)    MONTH_0
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 0    THEN C.AMT_I ELSE 0 END)    MONTH_1
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 1    THEN C.AMT_I ELSE 0 END)    MONTH_2
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 2    THEN C.AMT_I ELSE 0 END)    MONTH_3
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 3    THEN C.AMT_I ELSE 0 END)    MONTH_4
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 4    THEN C.AMT_I ELSE 0 END)    MONTH_5
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 5    THEN C.AMT_I ELSE 0 END)    MONTH_6
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 6    THEN C.AMT_I ELSE 0 END)    MONTH_7
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 7    THEN C.AMT_I ELSE 0 END)    MONTH_8
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 8    THEN C.AMT_I ELSE 0 END)    MONTH_9
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 9    THEN C.AMT_I ELSE 0 END)    MONTH_10
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 10   THEN C.AMT_I ELSE 0 END)    MONTH_11
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 11   THEN C.AMT_I ELSE 0 END)    MONTH_12
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N'                                                THEN C.AMT_I ELSE 0 END)    TOT_AMT_I
+              , SUM(ISNULL(C.AMT_I,0))                                                                                      JAN_AMT_I
+              , NULL                                                                                                        AVG_INT_RATE
+              , A.ACCNT + A.CUSTOM + A.LOANNO + '0'                                                                         SORT_FLD
+        FROM                AFN300T   A  WITH (NOLOCK)
+                LEFT  JOIN  (
+                            SELECT  C1.COMP_CODE
+                                  , C1.DIV_CODE
+                                  , C1.ACCNT
+                                  , C1.AC_DATE
+                                  , CASE WHEN C1.AC_DATE   &gt;= @ST_MONTH AND C1.AC_DATE &lt; @FrDate THEN 'P' ELSE 'N' END TERM_GUBUN
+                                  , CASE WHEN C1.BOOK_CODE1 = 'P2' THEN C1.BOOK_DATA1
+                                         WHEN C1.BOOK_CODE2 = 'P2' THEN C1.BOOK_DATA2
+                                    END    AS LOANNO
+                                  , CASE WHEN C2.JAN_DIVI   = '1'  THEN C1.DR_AMT_I - C1.CR_AMT_I
+                                         WHEN C2.JAN_DIVI   = '2'  THEN C1.CR_AMT_I - C1.DR_AMT_I
+                                    END    AS AMT_I
+                            FROM                AGB200T   C1 WITH (NOLOCK)
+                                    INNER JOIN  ABA400T   C2 WITH (NOLOCK) ON C2.COMP_CODE  = C1.COMP_CODE
+                                                                          AND C2.ACCNT      = C1.ACCNT
+                                                                          AND C2.SPEC_DIVI  = N'P'
+                                    LEFT  JOIN  BOR120T   C3 WITH (NOLOCK) ON C3.COMP_CODE  = C1.COMP_CODE
+                                                                          AND C3.DIV_CODE   = C1.DIV_CODE
+                            WHERE   C1.COMP_CODE     = @COMP_CODE
+                            AND     C1.AC_DATE      &gt;= @ST_MONTH
+                            AND     C1.AC_DATE      &lt;= @ToDate
+   							<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+							AND 	C1.DIV_CODE IN
+								<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+								#{item}
+								</foreach>									
+							</if>
+                            ) C ON C.COMP_CODE  = A.COMP_CODE
+                               AND C.LOANNO     = A.LOANNO
+                               AND C.ACCNT      = A.ACCNT
+        WHERE   A.COMP_CODE     = @COMP_CODE
+        --
+        AND   ((@QRY_TYPE       = 'A'                              ) OR
+               (@QRY_TYPE       = 'I' AND A.EXP_DATE &gt;= @CheckDate ) OR
+               (@QRY_TYPE       = 'E' AND A.EXP_DATE &lt;  @CheckDate ))
+        GROUP   BY A.COMP_CODE  , A.ACCNT   , A.CUSTOM  , A.LOANNO      , A.LOAN_NAME   , A.LOAN_GUBUN, A.ACCOUNT_NUM
+                 , A.PUB_DATE   , A.EXP_DATE, A.REMARK  , A.MORTGAGE    , A.AMT_I       , A.INT_RATE
+        ORDER   BY A.LOANNO
+    
+        -- 2. 이자
+        INSERT  INTO T_AFD630SKR1 ( TYPE_KEY    , TYPE_FLAG     , COMP_CODE , ACCNT     , CUSTOM    , LOANNO        , LOAN_NAME , ACCOUNT_NUM
+                                  , LOAN_GUBUN  , PUB_DATE      , EXP_DATE  , REMARK    , MORTGAGE  , LOAN_AMT_I    , INT_RATE
+                                  , MONTH_0     , MONTH_1       , MONTH_2   , MONTH_3   , MONTH_4   , MONTH_5       , MONTH_6
+                                  , MONTH_7     , MONTH_8       , MONTH_9   , MONTH_10  , MONTH_11  , MONTH_12      , TOT_AMT_I
+                                  , JAN_AMT_I   , AVG_INT_RATE  , SORT_FLD )
+        SELECT  @TypeKey , '1'  , A.COMP_CODE   , A.ACCNT       , A.CUSTOM  , A.LOANNO      , A.LOAN_NAME           , uniLITE.fnCipherDecrypt(A.ACCOUNT_NUM, 'B')
+              , A.LOAN_GUBUN    , A.PUB_DATE    , A.EXP_DATE    , A.REMARK  , A.MORTGAGE    , A.AMT_I LOAN_AMT_I    , A.INT_RATE
+              , SUM(CASE WHEN C.TERM_GUBUN = 'P'                                                THEN C.AMT_I ELSE 0 END)    MONTH_0
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 0    THEN C.AMT_I ELSE 0 END)    MONTH_1
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 1    THEN C.AMT_I ELSE 0 END)    MONTH_2
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 2    THEN C.AMT_I ELSE 0 END)    MONTH_3
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 3    THEN C.AMT_I ELSE 0 END)    MONTH_4
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 4    THEN C.AMT_I ELSE 0 END)    MONTH_5
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 5    THEN C.AMT_I ELSE 0 END)    MONTH_6
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 6    THEN C.AMT_I ELSE 0 END)    MONTH_7
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 7    THEN C.AMT_I ELSE 0 END)    MONTH_8
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 8    THEN C.AMT_I ELSE 0 END)    MONTH_9
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 9    THEN C.AMT_I ELSE 0 END)    MONTH_10
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 10   THEN C.AMT_I ELSE 0 END)    MONTH_11
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 11   THEN C.AMT_I ELSE 0 END)    MONTH_12
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N'                                                THEN C.AMT_I ELSE 0 END)    TOT_AMT_I
+              , NULL                                                                                                        JAN_AMT_I
+              , NULL                                                                                                        AVG_INT_RATE
+              , A.ACCNT + A.CUSTOM + A.LOANNO + '1'                                                                         SORT_FLD
+        FROM                AFN300T   A  WITH (NOLOCK)
+                LEFT  JOIN  (
+                            SELECT  C1.COMP_CODE
+                                  , C1.DIV_CODE
+                                  , C1.ACCNT
+                                  , C1.AC_DATE
+                                  , CASE WHEN C1.AC_DATE   &gt;= @ST_MONTH AND C1.AC_DATE &lt; @FrDate THEN 'P' ELSE 'N' END TERM_GUBUN
+                                  , CASE WHEN C1.BOOK_CODE1 = 'P2' THEN C1.BOOK_DATA1
+                                         WHEN C1.BOOK_CODE2 = 'P2' THEN C1.BOOK_DATA2
+                                    END         AS LOANNO
+                                  , C1.DR_AMT_I AS AMT_I
+                            FROM                AGB200T   C1 WITH (NOLOCK)
+                                    INNER JOIN  ABA400T   C2 WITH (NOLOCK) ON C2.COMP_CODE  = C1.COMP_CODE
+                                                                          AND C2.ACCNT      = C1.ACCNT
+                                                                          AND C2.SPEC_DIVI  = N'P2'
+                                    LEFT  JOIN  BOR120T   C3 WITH (NOLOCK) ON C3.COMP_CODE  = C1.COMP_CODE
+                                                                          AND C3.DIV_CODE   = C1.DIV_CODE
+                            WHERE   C1.COMP_CODE     = @COMP_CODE
+                            AND     C1.AC_DATE      &gt;= @ST_MONTH
+                            AND     C1.AC_DATE      &lt;= @ToDate
+   							<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+							AND 	C1.DIV_CODE IN
+								<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+								#{item}
+								</foreach>									
+							</if>
+                            ) C ON C.COMP_CODE  = A.COMP_CODE
+                               AND C.LOANNO     = A.LOANNO
+        WHERE   A.COMP_CODE     = @COMP_CODE
+        --
+        AND   ((@QRY_TYPE       = 'A'                              ) OR
+               (@QRY_TYPE       = 'I' AND A.EXP_DATE &gt;= @CheckDate ) OR
+               (@QRY_TYPE       = 'E' AND A.EXP_DATE &lt;  @CheckDate ))
+        GROUP   BY A.COMP_CODE  , A.ACCNT   , A.CUSTOM  , A.LOANNO      , A.LOAN_NAME   , A.LOAN_GUBUN, A.ACCOUNT_NUM
+                 , A.PUB_DATE   , A.EXP_DATE, A.REMARK  , A.MORTGAGE    , A.AMT_I       , A.INT_RATE
+        ORDER   BY A.LOANNO
+    
+        -- 3. 이자율
+        INSERT  INTO T_AFD630SKR1 ( TYPE_KEY    , TYPE_FLAG     , COMP_CODE , ACCNT     , CUSTOM    , LOANNO        , LOAN_NAME , ACCOUNT_NUM
+                                  , LOAN_GUBUN  , PUB_DATE      , EXP_DATE  , REMARK    , MORTGAGE  , LOAN_AMT_I    , INT_RATE
+                                  , MONTH_0     , MONTH_1       , MONTH_2   , MONTH_3   , MONTH_4   , MONTH_5       , MONTH_6
+                                  , MONTH_7     , MONTH_8       , MONTH_9   , MONTH_10  , MONTH_11  , MONTH_12      , TOT_AMT_I
+                                  , JAN_AMT_I   , AVG_INT_RATE  , SORT_FLD )
+        SELECT  @TypeKey , '2'  , A.COMP_CODE   , A.ACCNT       , A.CUSTOM  , A.LOANNO      , A.LOAN_NAME           , uniLITE.fnCipherDecrypt(A.ACCOUNT_NUM, 'B')
+              , A.LOAN_GUBUN    , A.PUB_DATE    , A.EXP_DATE    , A.REMARK  , A.MORTGAGE    , A.AMT_I LOAN_AMT_I    , A.INT_RATE
+              , SUM(CASE WHEN C.TERM_GUBUN = 'P'                                                THEN C.INT_RATE ELSE 0 END) MONTH_0
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 0    THEN C.INT_RATE ELSE 0 END) MONTH_1
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 1    THEN C.INT_RATE ELSE 0 END) MONTH_2
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 2    THEN C.INT_RATE ELSE 0 END) MONTH_3
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 3    THEN C.INT_RATE ELSE 0 END) MONTH_4
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 4    THEN C.INT_RATE ELSE 0 END) MONTH_5
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 5    THEN C.INT_RATE ELSE 0 END) MONTH_6
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 6    THEN C.INT_RATE ELSE 0 END) MONTH_7
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 7    THEN C.INT_RATE ELSE 0 END) MONTH_8
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 8    THEN C.INT_RATE ELSE 0 END) MONTH_9
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 9    THEN C.INT_RATE ELSE 0 END) MONTH_10
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 10   THEN C.INT_RATE ELSE 0 END) MONTH_11
+              , SUM(CASE WHEN C.TERM_GUBUN = 'N' AND DATEDIFF(MONTH, @FrDate, C.AC_DATE) = 11   THEN C.INT_RATE ELSE 0 END) MONTH_12
+              , NULL                                                                                                        TOT_AMT_I
+              , NULL                                                                                                        JAN_AMT_I
+              , SUM(C.INT_RATE) / COUNT(C.INT_RATE)                                                                         AVG_INT_RATE
+              , A.ACCNT + A.CUSTOM + A.LOANNO + '2'                                                                         SORT_FLD
+        FROM                AFN300T   A  WITH (NOLOCK)
+                LEFT  JOIN  (
+                            SELECT  C1.COMP_CODE
+                                  , C1.DIV_CODE
+                                  , C1.ACCNT
+                                  , LEFT(C1.AC_DATE, 6) + '01' AC_DATE
+                                  , CASE WHEN C1.AC_DATE  &gt;= @ST_MONTH AND C1.AC_DATE &lt; @FrDate THEN 'P' ELSE 'N' END TERM_GUBUN
+                                  , CASE WHEN C1.AC_CODE1 = 'P2' THEN C1.AC_DATA1
+                                         WHEN C1.AC_CODE2 = 'P2' THEN C1.AC_DATA2
+                                         WHEN C1.AC_CODE3 = 'P2' THEN C1.AC_DATA3
+                                         WHEN C1.AC_CODE4 = 'P2' THEN C1.AC_DATA4
+                                         WHEN C1.AC_CODE5 = 'P2' THEN C1.AC_DATA5
+                                         WHEN C1.AC_CODE6 = 'P2' THEN C1.AC_DATA6
+                                    END                 AS LOANNO
+                                  , SUM(CASE WHEN C1.AC_CODE1 = 'K8' THEN CONVERT(NUMERIC(30, 6), C1.AC_DATA1)
+                                             WHEN C1.AC_CODE2 = 'K8' THEN CONVERT(NUMERIC(30, 6), C1.AC_DATA2)
+                                             WHEN C1.AC_CODE3 = 'K8' THEN CONVERT(NUMERIC(30, 6), C1.AC_DATA3)
+                                             WHEN C1.AC_CODE4 = 'K8' THEN CONVERT(NUMERIC(30, 6), C1.AC_DATA4)
+                                             WHEN C1.AC_CODE5 = 'K8' THEN CONVERT(NUMERIC(30, 6), C1.AC_DATA5)
+                                             WHEN C1.AC_CODE6 = 'K8' THEN CONVERT(NUMERIC(30, 6), C1.AC_DATA6)
+                                        END) / COUNT(1) AS INT_RATE
+                            FROM                AGJ210T   C1 WITH (NOLOCK)
+                                    INNER JOIN  ABA400T   C2 WITH (NOLOCK) ON C2.COMP_CODE  = C1.COMP_CODE
+                                                                          AND C2.ACCNT      = C1.ACCNT
+                                                                          AND C2.SPEC_DIVI  = N'P2'
+                                    LEFT  JOIN  BOR120T   C3 WITH (NOLOCK) ON C3.COMP_CODE  = C1.COMP_CODE
+                                                                          AND C3.DIV_CODE   = C1.DIV_CODE
+                            WHERE   C1.COMP_CODE     = @COMP_CODE
+                            AND     C1.AC_DATE      &gt;= @ST_MONTH
+                            AND     C1.AC_DATE      &lt;= @ToDate
+                            AND     C1.MOD_DIVI     IS NULL
+   							<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+							AND 	C1.DIV_CODE IN
+								<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+								#{item}
+								</foreach>									
+							</if>
+                            GROUP   BY  C1.COMP_CODE, C1.DIV_CODE, C1.ACCNT, LEFT(C1.AC_DATE, 6)
+                                      , CASE WHEN C1.AC_DATE   &gt;= @ST_MONTH AND C1.AC_DATE &lt; @FrDate THEN 'P' ELSE 'N' END
+                                      , CASE WHEN C1.AC_CODE1 = 'P2' THEN C1.AC_DATA1
+                                             WHEN C1.AC_CODE2 = 'P2' THEN C1.AC_DATA2
+                                             WHEN C1.AC_CODE3 = 'P2' THEN C1.AC_DATA3
+                                             WHEN C1.AC_CODE4 = 'P2' THEN C1.AC_DATA4
+                                             WHEN C1.AC_CODE5 = 'P2' THEN C1.AC_DATA5
+                                             WHEN C1.AC_CODE6 = 'P2' THEN C1.AC_DATA6
+                                        END
+                            ) C ON C.COMP_CODE  = A.COMP_CODE
+                               AND C.LOANNO     = A.LOANNO
+        WHERE   A.COMP_CODE     = @COMP_CODE
+        --
+        AND   ((@QRY_TYPE       = 'A'                              ) OR
+               (@QRY_TYPE       = 'I' AND A.EXP_DATE &gt;= @CheckDate ) OR
+               (@QRY_TYPE       = 'E' AND A.EXP_DATE &lt;  @CheckDate ))
+        GROUP   BY A.COMP_CODE  , A.ACCNT   , A.CUSTOM  , A.LOANNO      , A.LOAN_NAME   , A.LOAN_GUBUN, A.ACCOUNT_NUM
+                 , A.PUB_DATE   , A.EXP_DATE, A.REMARK  , A.MORTGAGE    , A.AMT_I       , A.INT_RATE
+        ORDER   BY A.LOANNO
+    
+        -- 4. 전년차입잔액 반영
+        UPDATE  A
+        SET     A.MONTH_0  = B.MONTH_0
+        FROM                T_AFD630SKR1   A  WITH (NOLOCK)
+                INNER JOIN  T_AFD630SKR1   B  WITH (NOLOCK) ON B.TYPE_KEY   = A.TYPE_KEY
+                                                           AND B.LOANNO     = A.LOANNO
+                                                           AND B.TYPE_FLAG  = '0'
+        WHERE   A.TYPE_KEY   = @TypeKey
+        AND     A.TYPE_FLAG IN ('1', '2')
+    	
+    	<if test="DISP_SUM == &quot;Y&quot;">
+        -- 5. 계정과목, 차입처별 소계
+        INSERT  INTO T_AFD630SKR1 ( TYPE_KEY    , TYPE_FLAG     , COMP_CODE , ACCNT     , CUSTOM    , LOANNO        , LOAN_NAME
+                                  , ACCOUNT_NUM , PUB_DATE      , EXP_DATE  , REMARK    , MORTGAGE  , LOAN_AMT_I    , INT_RATE
+                                  , MONTH_0     , MONTH_1       , MONTH_2   , MONTH_3   , MONTH_4   , MONTH_5       , MONTH_6
+                                  , MONTH_7     , MONTH_8       , MONTH_9   , MONTH_10  , MONTH_11  , MONTH_12      , TOT_AMT_I
+                                  , JAN_AMT_I   , AVG_INT_RATE  , SORT_FLD )
+        SELECT  @TypeKey        , 'S'           , COMP_CODE     , ACCNT         , CUSTOM        , ' '               , ' '
+              , ' '             , ' '           , ' '           , ' '           , ' '           , SUM(LOAN_AMT_I)   , 0
+              , SUM(MONTH_0)    , SUM(MONTH_1)  , SUM(MONTH_2)  , SUM(MONTH_3)  , SUM(MONTH_4)  , SUM(MONTH_5)      , SUM(MONTH_6)
+              , SUM(MONTH_7)    , SUM(MONTH_8)  , SUM(MONTH_9)  , SUM(MONTH_10) , SUM(MONTH_11) , SUM(MONTH_12)     , SUM(TOT_AMT_I)
+              , SUM(JAN_AMT_I)  , NULL          , ACCNT + CUSTOM + 'zzzzzzzzzz' + 'S' + TYPE_FLAG
+        FROM    T_AFD630SKR1 WITH (NOLOCK)
+        WHERE   TYPE_KEY    = @TypeKey
+        AND     TYPE_FLAG  IN ('0', '1')
+        GROUP   BY COMP_CODE, ACCNT, CUSTOM, TYPE_FLAG
+    	</if>
+    	
+        -- 6. 계정과목별 합계
+        INSERT  INTO T_AFD630SKR1 ( TYPE_KEY    , TYPE_FLAG     , COMP_CODE , ACCNT     , CUSTOM    , LOANNO        , LOAN_NAME
+                                  , ACCOUNT_NUM , PUB_DATE      , EXP_DATE  , REMARK    , MORTGAGE  , LOAN_AMT_I    , INT_RATE
+                                  , MONTH_0     , MONTH_1       , MONTH_2   , MONTH_3   , MONTH_4   , MONTH_5       , MONTH_6
+                                  , MONTH_7     , MONTH_8       , MONTH_9   , MONTH_10  , MONTH_11  , MONTH_12      , TOT_AMT_I
+                                  , JAN_AMT_I   , AVG_INT_RATE  , SORT_FLD )
+        SELECT  @TypeKey        , 'T'           , COMP_CODE     , ACCNT         , ' '           , ' '               , ' '
+              , ' '             , ' '           , ' '           , ' '           , ' '           , SUM(LOAN_AMT_I)   , 0
+              , SUM(MONTH_0)    , SUM(MONTH_1)  , SUM(MONTH_2)  , SUM(MONTH_3)  , SUM(MONTH_4)  , SUM(MONTH_5)      , SUM(MONTH_6)
+              , SUM(MONTH_7)    , SUM(MONTH_8)  , SUM(MONTH_9)  , SUM(MONTH_10) , SUM(MONTH_11) , SUM(MONTH_12)     , SUM(TOT_AMT_I)
+              , SUM(JAN_AMT_I)  , NULL          , ACCNT + 'zzzzzzzz' + 'zzzzzzzzzz' + 'T' + TYPE_FLAG
+        FROM    T_AFD630SKR1 WITH (NOLOCK)
+        WHERE   TYPE_KEY    = @TypeKey
+        AND     TYPE_FLAG  IN ('0', '1')
+        GROUP   BY COMP_CODE, ACCNT, TYPE_FLAG
+    
+        -- 7. 총계
+        INSERT  INTO T_AFD630SKR1 ( TYPE_KEY    , TYPE_FLAG     , COMP_CODE , ACCNT     , CUSTOM    , LOANNO        , LOAN_NAME
+                                  , ACCOUNT_NUM , PUB_DATE      , EXP_DATE  , REMARK    , MORTGAGE  , LOAN_AMT_I    , INT_RATE
+                                  , MONTH_0     , MONTH_1       , MONTH_2   , MONTH_3   , MONTH_4   , MONTH_5       , MONTH_6
+                                  , MONTH_7     , MONTH_8       , MONTH_9   , MONTH_10  , MONTH_11  , MONTH_12      , TOT_AMT_I
+                                  , JAN_AMT_I   , AVG_INT_RATE  , SORT_FLD )
+        SELECT  @TypeKey        , 'U'           , COMP_CODE     , ' '           , ' '           , ' '               , ' '
+              , ' '             , ' '           , ' '           , ' '           , ' '           , SUM(LOAN_AMT_I)   , 0
+              , SUM(MONTH_0)    , SUM(MONTH_1)  , SUM(MONTH_2)  , SUM(MONTH_3)  , SUM(MONTH_4)  , SUM(MONTH_5)      , SUM(MONTH_6)
+              , SUM(MONTH_7)    , SUM(MONTH_8)  , SUM(MONTH_9)  , SUM(MONTH_10) , SUM(MONTH_11) , SUM(MONTH_12)     , SUM(TOT_AMT_I)
+              , SUM(JAN_AMT_I)  , NULL          , 'zzzzzzzz' + 'zzzzzzzzzz' + 'U' + TYPE_FLAG
+        FROM    T_AFD630SKR1 WITH (NOLOCK)
+        WHERE   TYPE_KEY    = @TypeKey
+        AND     TYPE_FLAG  IN ('0', '1')
+        GROUP   BY COMP_CODE, TYPE_FLAG
+    
+    --  [ 데이터 조회 ] --------------------------------------------------------------------------------------------------------
+        SELECT  A.ACCNT                                                                     AS ACCNT
+              , CASE WHEN @RefItem = '0' THEN D1.ACCNT_NAME
+                     WHEN @RefItem = '1' THEN D1.ACCNT_NAME2
+                     WHEN @RefItem = '2' THEN D1.ACCNT_NAME3
+                     ELSE D1.ACCNT_NAME
+                END                                                                         AS ACCNT_NAME
+              , A.CUSTOM                                                                    AS CUSTOM_CODE
+              , CASE WHEN @RefItem = '0' THEN ISNULL(D2.CUSTOM_NAME , ' ')
+                     WHEN @RefItem = '1' THEN ISNULL(D2.CUSTOM_NAME1, ' ')
+                     WHEN @RefItem = '2' THEN ISNULL(D2.CUSTOM_NAME2, ' ')
+                     ELSE ISNULL(D2.CUSTOM_NAME, ' ')
+                END                                                                         AS CUSTOM_NAME
+              , ISNULL(M1.CODE_NAME, ' ')                                                   AS LOAN_GUBUN
+              , A.LOANNO                                                                    AS LOANNO
+              , A.LOAN_NAME                                                                 AS LOAN_NAME
+              , CASE WHEN ISNULL(A.ACCOUNT_NUM, '') = '' THEN ' '
+                     ELSE A.ACCOUNT_NUM
+                END                                                                         AS ACCOUNT_NUM
+              , CASE WHEN ISNULL(A.PUB_DATE   , '') = '' THEN ' '
+                     ELSE REPLACE(
+                          REPLACE(
+                          REPLACE(@DateFormat , 'YYYY', SUBSTRING(A.PUB_DATE, 1, 4))
+                                              , 'MM'  , SUBSTRING(A.PUB_DATE, 5, 2))
+                                              , 'DD'  , SUBSTRING(A.PUB_DATE, 7, 2))
+                END                                                                         AS PUB_DATE
+              , CASE WHEN ISNULL(A.EXP_DATE   , '') = '' THEN ' '
+                     ELSE REPLACE(
+                          REPLACE(
+                          REPLACE(@DateFormat , 'YYYY', SUBSTRING(A.EXP_DATE, 1, 4))
+                                              , 'MM'  , SUBSTRING(A.EXP_DATE, 5, 2))
+                                              , 'DD'  , SUBSTRING(A.EXP_DATE, 7, 2))
+                END                                                                         AS EXP_DATE
+              , ISNULL(A.REMARK  , ' ')                                                     AS REMARK
+              , ISNULL(A.MORTGAGE, ' ')                                                     AS MORTGAGE
+              , A.LOAN_AMT_I                                                                AS LOAN_AMT_I
+              , A.INT_RATE                                                                  AS INT_RATE
+              , A.MONTH_0                                                                   AS MONTH_0
+              , CASE WHEN A.TYPE_FLAG = '0' THEN uniLITE.fnGetTxtLang('KOREAN', 'A0297')
+                     WHEN A.TYPE_FLAG = '1' THEN uniLITE.fnGetTxtLang('KOREAN', 'A0298')
+                     WHEN A.TYPE_FLAG = '2' THEN uniLITE.fnGetTxtLang('KOREAN', 'A0299')
+                     ELSE A.TYPE_FLAG
+                END                                                                         AS TYPE_FLAG
+              , A.MONTH_1
+              , A.MONTH_2
+              , A.MONTH_3
+              , A.MONTH_4
+              , A.MONTH_5
+              , A.MONTH_6
+              , A.MONTH_7
+              , A.MONTH_8
+              , A.MONTH_9
+              , A.MONTH_10
+              , A.MONTH_11
+              , A.MONTH_12
+              , A.TOT_AMT_I
+              , A.JAN_AMT_I
+              , A.AVG_INT_RATE
+              , CONVERT(NVARCHAR(01), '')                                                   AS REMARK2
+        FROM                T_AFD630SKR1   A  WITH (NOLOCK)
+                LEFT  JOIN  ABA400T        D1 WITH (NOLOCK) ON D1.COMP_CODE     = A.COMP_CODE
+                                                           AND D1.ACCNT         = A.ACCNT
+                LEFT  JOIN  BCM100T        D2 WITH (NOLOCK) ON D2.COMP_CODE     = A.COMP_CODE
+                                                           AND D2.CUSTOM_CODE   = A.CUSTOM
+                LEFT  JOIN  BSA100T        M1 WITH (NOLOCK) ON M1.COMP_CODE     = A.COMP_CODE
+                                                           AND M1.MAIN_CODE     = N'A089'
+                                                           AND M1.SUB_CODE      = A.LOAN_GUBUN
+        WHERE   A.TYPE_KEY = @TypeKey
+        ORDER   BY A.SORT_FLD
+    
+        SET NOCOUNT OFF
+        SET ARITHABORT OFF
+        SET ANSI_WARNINGS ON
+    END                                                                                 
+	</select>
+
+</mapper>

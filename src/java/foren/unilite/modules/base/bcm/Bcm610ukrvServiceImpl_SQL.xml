@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="bcm610ukrvServiceImpl">
+	
+	<!--
+	1. result Class 확인(foren.framework.lib.tree.GenericTreeDataMap)!
+	2. SQL의 수행 결과 순서는 parent가 child보더 먼저 나오게 구성 되어야 함.
+	3. id와 parentId는 필수 !
+	4. 최상의 node는 parentId가 root로 지정 되어야 함.
+	-->
+	<select id="bcm610ukrvServiceImpl.selectTreeList" parameterType="Map" resultType="foren.framework.lib.tree.GenericTreeDataMap">
+		SELECT S.ID AS 'id'
+			 , S.PARENT_NODE AS 'parentId'
+	         , PJT_CODE							--TREE_CODE(사업코드)                                     
+	         , PJT_NAME							--TREE_NAME(사업명)                           
+	         , TREE_LEVEL
+		     , DEPT_CODE
+		     , DEPT_NAME    
+		     , PERSON_NUMB
+	         , USE_YN                                        
+	         , '' AS UPLEVE_CODE                              
+	         , COMP_CODE 
+	         , PJT_NAME  as text
+	         , CASE 
+	         		WHEN #{PJT_CODE} = PJT_CODE THEN 'true' 
+	         									ELSE 'false'
+	         									END				AS 'expanded' 
+		FROM (
+			SELECT a.TREE_LEVEL ID
+				,CASE 
+					WHEN LEN(a.TREE_LEVEL) = 1
+						THEN 'root' /*SUBSTRING(a.tree_level, 1, 1)*/
+					ELSE SUBSTRING(a.tree_level, 1, LEN(a.TREE_LEVEL) - 3)
+					END parent_node
+				,a.*
+			FROM 			BCM600T A WITH (NOLOCK)
+				
+			WHERE A.COMP_CODE = #{S_COMP_CODE}
+			<if test="@foren.Ognl@isNotEmpty(USE_YN)">
+				  AND A.USE_YN = #{USE_YN}
+			</if>
+			)  s
+		ORDER BY s.id
+	</select>
+	
+	<select id="bcm610ukrvServiceImpl.selectBasicData" parameterType="Map" resultType="foren.framework.lib.tree.GenericTreeDataMap">
+		SELECT * FROM BOR100T WITH (NOLOCK)
+		 WHERE COMP_CODE = #{COMP_CODE}
+	</select>
+	<update id="bcm610ukrvServiceImpl.insertBasicData" parameterType="Map">
+		INSERT INTO BCM600T
+           (COMP_CODE
+           ,PJT_CODE
+           ,PJT_NAME
+           ,TREE_LEVEL
+		   ,USE_YN 
+		   ,INSERT_DB_USER
+           ,INSERT_DB_TIME
+           ,UPDATE_DB_USER
+           ,UPDATE_DB_TIME)
+     VALUES
+           (#{COMP_CODE}
+           ,'01'
+           ,#{COMP_NAME}
+           ,'1'
+		   ,'Y'
+           ,#{USER_ID}
+           ,GETDATE()
+           ,#{USER_ID}
+           ,GETDATE())
+	</update>		
+	
+	<select id="bcm610ukrvServiceImpl.checkPK" parameterType="Map" resultType="rMap">
+		/* bcm610ukrvServiceImpl.checkPK */
+		SELECT COUNT(PJT_CODE) AS CNT
+		FROM BCM600T  WITH (NOLOCK)
+		WHERE COMP_CODE= #{S_COMP_CODE}
+		  AND PJT_CODE = #{PJT_CODE}
+
+	</select>
+	<update id="bcm610ukrvServiceImpl.insert" parameterType="Map">		
+		DECLARE @UP_TREE_LEVEL NVARCHAR(30),
+				@TREE_LEVEL NVARCHAR(30),
+				@TREE_LEVEL_NUM NUMERIC(30,0),
+				@TMP_NUM NUMERIC(3,0),
+				@TMP_STR NVARCHAR(3)
+		
+		SELECT @UP_TREE_LEVEL = TREE_LEVEL                                
+			FROM BCM600T  WITH (NOLOCK)                                  
+			WHERE PJT_CODE = #{parentId}    
+			AND COMP_CODE = #{S_COMP_CODE}   
+						                
+		                                    
+		SELECT @TREE_LEVEL = ISNULL(MAX(TREE_LEVEL),0)              
+			FROM BCM600T  WITH (NOLOCK)                                                  
+			WHERE TREE_LEVEL LIKE @UP_TREE_LEVEL + '%'          
+			AND LEN(TREE_LEVEL) = LEN(@UP_TREE_LEVEL) + 3
+			AND COMP_CODE = #{S_COMP_CODE}
+		
+		
+		IF LEN(@TREE_LEVEL) = 0 
+			BEGIN
+				SET @TREE_LEVEL = @UP_TREE_LEVEL + '001'
+			END
+		ELSE 
+			BEGIN
+				SET @TREE_LEVEL_NUM = CONVERT(NUMERIC(30,0), @TREE_LEVEL)
+		
+				SET @TMP_NUM =  CONVERT(NUMERIC(3,0), RIGHT(@TREE_LEVEL_NUM,3))+1
+				
+				SET @TMP_STR =   RIGHT('000'+ CONVERT(NVARCHAR(3), @TMP_NUM),3)
+				
+				SET @TREE_LEVEL = @UP_TREE_LEVEL + @TMP_STR
+			END
+		
+		
+			INSERT INTO BCM600T
+			           (COMP_CODE
+			           ,PJT_CODE
+			           ,PJT_NAME
+			           ,TREE_LEVEL
+					   ,DEPT_CODE
+					   ,DEPT_NAME
+					   ,PERSON_NUMB
+					   ,USE_YN 
+					   ,INSERT_DB_USER
+			           ,INSERT_DB_TIME
+			           ,UPDATE_DB_USER
+			           ,UPDATE_DB_TIME)
+			     VALUES
+			           (#{S_COMP_CODE}
+			           ,#{PJT_CODE}
+			           ,#{PJT_NAME}
+			           ,@TREE_LEVEL
+					   ,#{DEPT_CODE}
+					   ,#{DEPT_NAME}
+					   ,#{PERSON_NUMB}
+					   ,#{USE_YN}
+			           ,#{S_USER_ID}
+			           ,GETDATE()
+			           ,#{S_USER_ID}
+			           ,GETDATE())
+	</update>
+	
+	
+	<update id="bcm610ukrvServiceImpl.update" parameterType="Map"> 
+		/* bcm610ukrvServiceImpl.update */
+				UPDATE BCM600T
+				   SET PJT_CODE    		= #{PJT_CODE}
+				      ,PJT_NAME    		= #{PJT_NAME}
+		           <if test="@foren.Ognl@isNotEmpty(TREE_LEVEL)">
+				      ,TREE_LEVEL 		= #{TREE_LEVEL}
+		           </if>
+		           <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+				      ,DEPT_CODE  		= #{DEPT_CODE}
+		           </if>
+		           <if test="@foren.Ognl@isNotEmpty(DEPT_NAME)">
+				      ,DEPT_NAME  		= #{DEPT_NAME}
+		           </if>
+		           <if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+				      ,PERSON_NUMB 		= #{PERSON_NUMB}
+		           </if>
+				      ,USE_YN     		= #{USE_YN}
+				      ,UPDATE_DB_USER 	= #{S_USER_ID}
+				      ,UPDATE_DB_TIME 	= GETDATE()
+				 WHERE COMP_CODE	 	= #{S_COMP_CODE}
+				   AND PJT_CODE 		= #{PJT_CODE}
+	</update>
+
+	<update id="bcm610ukrvServiceImpl.delete" parameterType="Map">
+		DELETE FROM  BCM600T
+		 WHERE COMP_CODE= #{S_COMP_CODE}
+		  AND  TREE_LEVEL = #{TREE_LEVEL}
+	</update>
+</mapper>

@@ -1,0 +1,350 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="gop200ukrvServiceImpl">
+	<select id="gop200ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* gop200ukrvServiceImpl.selectList */
+		DECLARE @I INT, @J INT,
+				@MAX_OPERATION_COUNT INT, @MIN_OPERATION_COUNT INT
+				
+		SELECT   @MAX_OPERATION_COUNT = ISNULL(MAX(CONVERT(INT, OPERATION_COUNT)),0)
+			   , @MIN_OPERATION_COUNT = ISNULL(MIN(CONVERT(INT, OPERATION_COUNT)),0)
+		  FROM GOP100T
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND DIV_CODE = #{S_DIV_CODE}
+		  <if test="@foren.Ognl@isNotEmpty(OPERATION_DATE_FR)">
+		   AND OPERATION_DATE &gt;= #{OPERATION_DATE_FR}
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(OPERATION_DATE_TO)">
+		   AND OPERATION_DATE &lt;= #{OPERATION_DATE_TO}
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(ROUTE_GROUP)">
+		   AND ROUTE_GROUP = #{ROUTE_GROUP}
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+		   AND ROUTE_CODE = #{ROUTE_CODE}
+		  </if>
+		
+		CREATE TABLE #TMP_OPERATION (
+			 COMP_CODE  NVARCHAR(20)
+			,OPERATION_COUNT NVARCHAR(20)
+			,OPERATION_DATE NVARCHAR(8)
+			,ROUTE_CODE NVARCHAR(20)
+			,CONFIRM NVARCHAR(1)
+		)  
+		
+		SET @I = @MIN_OPERATION_COUNT
+		
+		WHILE (@I &lt;=@MAX_OPERATION_COUNT)
+		BEGIN
+			INSERT #TMP_OPERATION (COMP_CODE, OPERATION_COUNT, OPERATION_DATE, ROUTE_CODE, CONFIRM) 
+			SELECT DISTINCT CAL.COMP_CODE, CONVERT(NVARCHAR(20), @I) , CAL_DATE, ROUTE_CODE,'N'
+			  FROM (
+			 	SELECT COMP_CODE, CAL_DATE 
+				  FROM BCM400T 
+			     WHERE COMP_CODE=#{S_COMP_CODE}
+			       AND CAL_TYPE = '4'
+			       <if test="@foren.Ognl@isNotEmpty(OPERATION_DATE_FR)">
+			  	   AND CAL_DATE  &gt;= #{OPERATION_DATE_FR}
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(OPERATION_DATE_TO)">
+				   AND CAL_DATE  &lt;= #{OPERATION_DATE_TO}
+				   </if>
+			  ) CAL
+			  LEFT JOIN (
+			  	SELECT DISTINCT COMP_CODE, ROUTE_CODE 
+			  	FROM GRT110T
+				WHERE COMP_CODE = #{S_COMP_CODE}
+				  AND DIV_CODE = #{S_DIV_CODE}
+				  <if test="@foren.Ognl@isNotEmpty(OPERATION_DATE_FR)">
+				  AND ROUTE_END_DATE &gt;= #{OPERATION_DATE_FR}
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(OPERATION_DATE_TO)">
+				  AND ROUTE_START_DATE &lt;= #{OPERATION_DATE_TO}
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(ROUTE_GROUP)">
+				  AND ROUTE_GROUP = #{ROUTE_GROUP}
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+				  AND ROUTE_CODE = #{ROUTE_CODE}
+				  </if> 
+			  ) GOP ON CAL.COMP_CODE = GOP.COMP_CODE
+			  
+			SET @I=@I+1
+		END
+		
+		UPDATE A
+		   SET CONFIRM = 'Y'
+		  FROM #TMP_OPERATION A
+		  INNER JOIN GOP200T B ON A.OPERATION_DATE = B.OPERATION_DATE
+							   AND A.ROUTE_CODE = B.ROUTE_CODE		
+		  WHERE B.COMP_CODE = #{S_COMP_CODE}
+			AND B.DIV_CODE = #{S_DIV_CODE}
+		   <if test="@foren.Ognl@isNotEmpty(OPERATION_DATE_FR)">
+		    AND B.OPERATION_DATE &gt;= #{OPERATION_DATE_FR}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(OPERATION_DATE_TO)">
+		    AND B.OPERATION_DATE &lt;= #{OPERATION_DATE_TO}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(ROUTE_GROUP)">
+		    AND B.ROUTE_GROUP = #{ROUTE_GROUP}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+		    AND B.ROUTE_CODE = #{ROUTE_CODE}
+		   </if>
+		
+		SELECT 
+				  T.OPERATION_COUNT AS NODE_NUM
+				, MAX(CONVERT(NUMERIC(18,0),T.OPERATION_COUNT))OVER() AS MAX_OPERATION_COUNT
+				, MIN(CONVERT(NUMERIC(18,0),T.OPERATION_COUNT))OVER() AS MIN_OPERATION_COUNT
+				, MAX(A.DT_MAX_OPERATION_COUNT) OVER (PARTITION BY T.OPERATION_DATE, T.ROUTE_CODE) AS DT_MAX_OPERATION_COUNT
+				, ISNULL(MIN(A.FULL_OPERATION) OVER(),'') AS FULL_OPERATION
+				, ISNULL(MIN(A.OPERATION)  OVER (PARTITION BY T.OPERATION_DATE, T.ROUTE_CODE),'') AS OPERATION
+				, T.CONFIRM
+				, A.DIV_CODE
+				, T.OPERATION_DATE
+				, A.OFFICE_CODE
+				, B1.OFFICE_NAME
+				, T.ROUTE_CODE  			
+				, A.TEAM_CODE
+				, MIN(B2.TEAM_NAME)  OVER (PARTITION BY T.OPERATION_DATE, T.ROUTE_CODE) AS TEAM_NAME
+				, isnull(A.OPERATION_COUNT,'') as OPERATION_COUNT
+				, A.DRIVER_CODE
+				, A.VEHICLE_CODE
+				, V.VEHICLE_NAME
+				, R.ROUTE_NUM
+				, R.ROUTE_NAME
+				, H.NAME
+	        	, A.FIRST_DEPARTURE_DATE
+	        	, A.LAST_DEPARTURE_DATE
+	        	, A.DUTY_FR_DATE
+	        	, A.DUTY_TO_DATE        
+				, CASE WHEN ISNULL(A.FIRST_DEPARTURE_TIME, '') !='' THEN left(A.FIRST_DEPARTURE_TIME, 2)+':'+SUBSTRING(A.FIRST_DEPARTURE_TIME,3,2) ELSE '' END FIRST_DEPARTURE_TIME
+				, CASE WHEN ISNULL(A.LAST_DEPARTURE_TIME, '') !='' THEN left(A.LAST_DEPARTURE_TIME, 2)+':'+SUBSTRING(A.LAST_DEPARTURE_TIME,3,2) ELSE '' END LAST_DEPARTURE_TIME
+				, CASE WHEN ISNULL(A.DUTY_FR_TIME, '') !='' THEN left(A.DUTY_FR_TIME, 2)+':'+SUBSTRING(A.DUTY_FR_TIME,3,2) ELSE '' END DUTY_FR_TIME
+				, CASE WHEN ISNULL(A.DUTY_TO_TIME, '') !='' THEN left(A.DUTY_TO_TIME, 2)+':'+SUBSTRING(A.DUTY_TO_TIME,3,2) ELSE '' END DUTY_TO_TIME
+				
+				, A.OTHER_VEHICLE_YN
+				, A.NOTINSERVICE_YN
+				, CASE WHEN A.NOTINSERVICE_YN = 'Y' THEN 'NOTINSERVICE'
+					 WHEN A.OTHER_VEHICLE_YN = 'Y' THEN 'OTHER'
+					 ELSE ''
+				  END AS CHANGE_FLAG
+				, A.CHANGE_REASON
+				, A.CONFIRM_YN
+				, A.REMARK
+			FROM #TMP_OPERATION AS T
+			/* A 테이블은 Ext js View를 구성하기 위한 값 Query*/
+			LEFT JOIN (SELECT 
+							  COMP_CODE
+							, DIV_CODE
+							, OPERATION_DATE
+							, OFFICE_CODE
+							, ROUTE_CODE
+							, OPERATION_COUNT
+							, TEAM_CODE
+							, DRIVER_CODE, VEHICLE_CODE
+							, OFFICE_CODE+'-'+ROUTE_CODE+'-'+OPERATION_DATE+'-'+TEAM_CODE AS OPERATION
+							, MAX(CONVERT(NUMERIC(18,0),OPERATION_COUNT))OVER(PARTITION BY COMP_CODE,
+															DIV_CODE, 
+															OFFICE_CODE,
+															ROUTE_CODE,
+															OPERATION_DATE, 
+															TEAM_CODE) AS DT_MAX_OPERATION_COUNT
+							, CASE WHEN MAX(CONVERT(NUMERIC(18,0),OPERATION_COUNT))OVER()= MAX(CONVERT(NUMERIC(18,0),OPERATION_COUNT))OVER(PARTITION BY COMP_CODE, 
+																							DIV_CODE, 
+																							OFFICE_CODE,
+																							ROUTE_CODE,
+																							OPERATION_DATE, 
+																							TEAM_CODE
+																							) 
+								 THEN OFFICE_CODE+'-'+ROUTE_CODE+'-'+OPERATION_DATE+'-'+TEAM_CODE
+							  END AS FULL_OPERATION 
+							, FIRST_DEPARTURE_DATE
+							, REPLACE(FIRST_DEPARTURE_TIME,':','') AS FIRST_DEPARTURE_TIME
+							, LAST_DEPARTURE_DATE
+							, REPLACE(LAST_DEPARTURE_TIME,':','') AS LAST_DEPARTURE_TIME
+							, DUTY_FR_DATE
+							, REPLACE(DUTY_FR_TIME,':','') AS DUTY_FR_TIME
+							, DUTY_TO_DATE
+							, REPLACE(DUTY_TO_TIME,':','') AS DUTY_TO_TIME
+							, OTHER_VEHICLE_YN
+							, NOTINSERVICE_YN
+							, CHANGE_REASON
+							, CONFIRM_YN
+							, REMARK
+						FROM GOP200T 
+						WHERE COMP_CODE = #{S_COMP_CODE}
+						  AND DIV_CODE = #{S_DIV_CODE}
+						  <if test="@foren.Ognl@isNotEmpty(OPERATION_DATE_FR)">
+						  AND OPERATION_DATE &gt;= #{OPERATION_DATE_FR}
+						  </if>
+						  <if test="@foren.Ognl@isNotEmpty(OPERATION_DATE_TO)">
+						  AND OPERATION_DATE &lt;= #{OPERATION_DATE_TO}
+						  </if>
+						  <if test="@foren.Ognl@isNotEmpty(ROUTE_GROUP)">
+						  AND ROUTE_GROUP = #{ROUTE_GROUP}
+						  </if>
+						  <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+						  AND ROUTE_CODE = #{ROUTE_CODE}
+						  </if>					 
+						) A 	   ON T.OPERATION_DATE = A.OPERATION_DATE
+								  AND T.ROUTE_CODE = A.ROUTE_CODE
+								  AND T.OPERATION_COUNT = A.OPERATION_COUNT
+			LEFT JOIN HUM100T H ON A.COMP_CODE = H.COMP_CODE
+							   AND A.DIV_CODE = H.DIV_CODE
+							   AND A.DRIVER_CODE = H.PERSON_NUMB
+			LEFT JOIN (SELECT ROUTE_CODE, ROUTE_NUM, ROUTE_NAME
+						 FROM GRT100T 
+						WHERE COMP_CODE=#{S_COMP_CODE}
+						  AND DIV_CODE = #{S_DIV_CODE}
+					  ) R 		 ON T.ROUTE_CODE = R.ROUTE_CODE  
+			LEFT JOIN GVE100T V ON A.COMP_CODE = V.COMP_CODE
+			                    AND A.DIV_CODE = V.DIV_CODE
+			                    AND A.VEHICLE_CODE = V.VEHICLE_CODE 
+			LEFT JOIN (SELECT SUB_CODE, CODE_NAME AS OFFICE_NAME
+						 FROM BSA100T  
+						WHERE COMP_CODE = #{S_COMP_CODE}
+						  AND MAIN_CODE = 'GO01'
+					  )		 B1 ON A.OFFICE_CODE = B1.SUB_CODE
+			LEFT JOIN (SELECT SUB_CODE, CODE_NAME AS TEAM_NAME
+						 FROM BSA100T  
+						WHERE COMP_CODE = #{S_COMP_CODE}
+						  AND MAIN_CODE = 'GO02'
+					  )		 B2 ON A.TEAM_CODE = B2.SUB_CODE 
+		
+		ORDER BY T.OPERATION_DATE, R.ROUTE_NUM, CONVERT(NUMERIC(18,0),T.OPERATION_COUNT) 
+		
+	</select>
+	<update id="gop200ukrvServiceImpl.update" parameterType="Map">
+		UPDATE GOP200T
+		SET 
+			  DRIVER_CODE = #{DRIVER_CODE}
+			, VEHICLE_CODE = #{VEHICLE_CODE}
+			
+			<if test="@foren.Ognl@isExists(_parameter, 'FIRST_DEPARTURE_DATE')"> 
+			, FIRST_DEPARTURE_DATE = #{FIRST_DEPARTURE_DATE}
+			</if>
+			<if test="@foren.Ognl@isExists(_parameter, 'FIRST_DEPARTURE_TIME')"> 
+			, FIRST_DEPARTURE_TIME = #{FIRST_DEPARTURE_TIME}
+			</if>
+			
+			<if test="@foren.Ognl@isExists(_parameter, 'LAST_DEPARTURE_DATE')">
+			, LAST_DEPARTURE_DATE = #{LAST_DEPARTURE_DATE}
+			</if>
+			<if test="@foren.Ognl@isExists(_parameter, 'LAST_DEPARTURE_TIME')"> 
+			, LAST_DEPARTURE_TIME = #{LAST_DEPARTURE_TIME}
+			</if>
+			
+			<if test="@foren.Ognl@isExists(_parameter, 'DUTY_FR_DATE')">
+			, DUTY_FR_DATE = #{DUTY_FR_DATE}
+			</if>
+			<if test="@foren.Ognl@isExists(_parameter, 'DUTY_FR_TIME')"> 
+			, DUTY_FR_TIME = #{DUTY_FR_TIME}
+			</if>
+			
+			<if test="@foren.Ognl@isExists(_parameter, 'DUTY_TO_DATE')">
+			, DUTY_TO_DATE = #{DUTY_TO_DATE}
+			</if>
+			<if test="@foren.Ognl@isExists(_parameter, 'DUTY_TO_TIME')"> 
+			, DUTY_TO_TIME = #{DUTY_TO_TIME}
+			</if>
+			
+			<if test="@foren.Ognl@isExists(_parameter, 'NOTINSERVICE_YN')">
+			, NOTINSERVICE_YN = #{NOTINSERVICE_YN}
+			</if>
+			<if test="@foren.Ognl@isExists(_parameter, 'CHANGE_REASON')"> 
+			, CHANGE_REASON = #{CHANGE_REASON}
+			</if>
+			<if test="@foren.Ognl@isExists(_parameter, 'OTHER_VEHICLE_YN')"> 
+			, OTHER_VEHICLE_YN = #{OTHER_VEHICLE_YN}
+			</if>
+			
+			, UPDATE_DB_USER = #{S_USER_ID}
+			, UPDATE_DB_TIME = GETDATE()
+		WHERE COMP_CODE = #{S_COMP_CODE} 
+		  AND DIV_CODE = #{DIV_CODE}  
+		  AND OPERATION_DATE = #{OPERATION_DATE}  		   
+		  AND OFFICE_CODE = #{OFFICE_CODE}
+		  AND ROUTE_CODE = #{ROUTE_CODE}
+		  AND OPERATION_COUNT = #{OPERATION_COUNT} 
+		  
+		UPDATE GOP300T
+		SET 
+			DRIVER_CODE = #{DRIVER_CODE}
+			, PLAN_DRIVER_CODE = #{DRIVER_CODE}
+			, VEHICLE_CODE = #{VEHICLE_CODE}
+			, PLAN_VEHICLE_CODE = #{VEHICLE_CODE}
+			<if test="@foren.Ognl@isExists(_parameter, 'DUTY_FR_DATE')">
+			, DUTY_FR_DATE = #{DUTY_FR_DATE}
+			</if>
+			<if test="@foren.Ognl@isExists(_parameter, 'DUTY_FR_TIME')"> 
+			, DUTY_FR_TIME = #{DUTY_FR_TIME}
+			</if>
+			
+			<if test="@foren.Ognl@isExists(_parameter, 'DUTY_TO_DATE')">
+			, DUTY_TO_DATE = #{DUTY_TO_DATE}
+			</if>
+			<if test="@foren.Ognl@isExists(_parameter, 'DUTY_TO_TIME')"> 
+			, DUTY_TO_TIME = #{DUTY_TO_TIME}
+			</if>
+			<if test="@foren.Ognl@isExists(_parameter, 'NOTINSERVICE_YN')">
+			, NOTINSERVICE_YN = #{NOTINSERVICE_YN}
+			</if>
+			<if test="@foren.Ognl@isExists(_parameter, 'OTHER_VEHICLE_YN')"> 
+			, OTHER_VEHICLE_YN = #{OTHER_VEHICLE_YN}
+			</if>
+			, UPDATE_DB_USER = #{S_USER_ID}
+			, UPDATE_DB_TIME = GETDATE()
+		WHERE COMP_CODE = #{S_COMP_CODE} 
+		  AND DIV_CODE = #{DIV_CODE}  
+		  AND OPERATION_DATE = #{OPERATION_DATE}  	
+		  AND ROUTE_CODE = #{ROUTE_CODE}
+		  AND OPERATION_COUNT = #{OPERATION_COUNT} 
+	</update>
+	<select id="gop200ukrvServiceImpl.selectConfirmList" parameterType="Map" resultType="rMap">
+		/* gop200ukrvServiceImpl.selectConfirmList */
+		SELECT 
+			DIV_CODE,  
+			OPERATION_DATE,  
+			OFFICE_CODE,  
+			ROUTE_GROUP,
+			ROUTE_CODE,  
+			TEAM_CODE,
+			CONFIRM_YN,
+			CASE WHEN CONFIRM_YN = 'Y' THEN '확정' 
+				 ELSE '미확정'
+			END CONFIRM_YN_TEXT
+		FROM GOP200T 
+		WHERE COMP_CODE = #{S_COMP_CODE}
+		  AND DIV_CODE = #{S_DIV_CODE}
+		  <if test="@foren.Ognl@isNotEmpty(OPERATION_DATE_FR)">
+		  AND OPERATION_DATE &gt;= #{OPERATION_DATE_FR}
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(OPERATION_DATE_TO)">
+		  AND OPERATION_DATE &lt;= #{OPERATION_DATE_TO}
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+		  AND ROUTE_CODE = #{ROUTE_CODE}
+		  </if>
+		GROUP BY DIV_CODE, OFFICE_CODE,ROUTE_GROUP, ROUTE_CODE, OPERATION_DATE, TEAM_CODE, CONFIRM_YN
+		ORDER BY DIV_CODE, OFFICE_CODE,ROUTE_GROUP, ROUTE_CODE, OPERATION_DATE, TEAM_CODE 
+	</select>
+	<insert id="gop200ukrvServiceImpl.saveConfirm" parameterType="Map">
+		INSERT INTO GOP260T
+		     (	 KEY_VALUE
+           		,COMP_CODE           ,DIV_CODE           ,OPERATION_DATE           ,ROUTE_CODE
+           		,CONFIRM_YN          ,WORK_USER			 )
+		VALUES
+		     ( #{KEY_VALUE}
+		     , #{S_COMP_CODE} 		, #{DIV_CODE}   	 , #{OPERATION_DATE}  	   ,#{ROUTE_CODE}  
+			 , #{CONFIRM_YN}		, #{S_USER_ID}  )
+	</insert>
+	<update id="gop200ukrvServiceImpl.confirm" parameterType="Map" statementType="CALLABLE">
+	 
+		{call SP_OPERATION_WorkOrderConfirm  (
+			#{KEY_VALUE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ErrorDesc, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String} 
+		)}
+	   
+	 </update>
+</mapper>

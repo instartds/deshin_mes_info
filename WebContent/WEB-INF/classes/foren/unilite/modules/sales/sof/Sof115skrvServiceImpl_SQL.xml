@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sof115skrvServiceImpl">
+	
+	<select id="sof115skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* sof115skrv.Csof115skrv[fnsof115Tnq] Query01 */
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+		
+			DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+			      , @UserId			NVARCHAR(100)	/* 사용자ID */
+			      , @LangType		NVARCHAR(2)		/* 언어구분 */
+		          , @RefItem		NVARCHAR(01)
+		          , @DateFormat		NVARCHAR(10)
+		
+		    SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_ID}
+			SET @LangType = #{S_LANG_CODE}
+		
+			/* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+		
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+		
+			/* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		      FROM BSA100T WITH (NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+		       AND MAIN_CODE = N'B044'
+		       AND REF_CODE1 = N'Y'
+		
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		
+			/* 데이터 조회 */
+		    /* 영업 */
+  
+			    SELECT 
+			
+			           A.CUSTOM_CODE																		AS CUSTOM_CODE
+			         , (CASE WHEN @RefItem = '1' THEN C.CUSTOM_NAME1
+			                 WHEN @RefItem = '2' THEN C.CUSTOM_NAME2
+			                                     ELSE C.CUSTOM_NAME
+			             END)																				AS CUSTOM_NAME     /* 거래처별 */
+			         , (CASE WHEN ISNULL(A.ORDER_DATE, '') = ''
+			                 THEN ''
+			                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.ORDER_DATE, 1, 4))
+			                                                         , 'MM'  , SUBSTRING(A.ORDER_DATE, 5, 2))
+			                                                         , 'DD'  , SUBSTRING(A.ORDER_DATE, 7, 2))
+			             END)																				AS ORDER_DATE
+			         , B.ITEM_CODE
+			         , (CASE WHEN @RefItem = '1' THEN D.ITEM_NAME1
+			                 WHEN @RefItem = '2' THEN D.ITEM_NAME2
+			                                     ELSE D.ITEM_NAME
+			             END)                                                                               AS ITEM_NAME
+			         , D.SPEC   
+			         , D.STOCK_UNIT  
+			         , B.ORDER_P   
+			         , B.ORDER_Q																			   
+			         , B.ORDER_O     
+			         , (CASE WHEN ISNULL(B.DVRY_DATE, '') = ''
+			                 THEN ''
+			                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.DVRY_DATE, 1, 4))
+			                                                         , 'MM'  , SUBSTRING(B.DVRY_DATE, 5, 2))
+			                                                         , 'DD'  , SUBSTRING(B.DVRY_DATE, 7, 2))
+			             END)																				AS DVRY_DATE		 /* 납기일별 */
+			         , E.DVRY_CUST_NM
+			         , B.REMARK
+			      FROM            SOF100T A  WITH (NOLOCK)                                                         
+			           INNER JOIN SOF110T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE                 
+					                                      AND B.DIV_CODE     = A.DIV_CODE                   
+			                                              AND B.ORDER_NUM    = A.ORDER_NUM                 
+			                                              AND B.COMP_CODE    = A.COMP_CODE                 
+			           INNER JOIN BCM100T C  WITH (NOLOCK) ON C.COMP_CODE    = A.COMP_CODE
+					                                      AND C.CUSTOM_CODE  = A.CUSTOM_CODE            
+			           INNER JOIN BPR100T D  WITH (NOLOCK) ON D.COMP_CODE    = B.COMP_CODE            
+			                                              AND D.ITEM_CODE    = B.ITEM_CODE
+			           LEFT  JOIN BPR100T F  WITH (NOLOCK) ON F.COMP_CODE    = D.COMP_CODE
+				                                          AND F.ITEM_CODE    = D.ITEM_GROUP
+			           LEFT  JOIN SCM100T E  WITH (NOLOCK) ON A.COMP_CODE    = E.COMP_CODE
+			                                              AND A.CUSTOM_CODE  = E.CUSTOM_CODE
+			                                              AND B.DVRY_CUST_CD = CONVERT(NVARCHAR, E.DVRY_CUST_SEQ)
+			           INNER JOIN BSA100T C1 WITH (NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE
+			                                              AND C1.MAIN_CODE   = 'S046'
+			                                              AND C1.SUB_CODE    = A.STATUS
+					   INNER JOIN BSA210T G WITH (NOLOCK)  ON G.COMP_CODE 	 = A.COMP_CODE
+          												  AND G.TYPE_LEVEL 	 = A.DIV_CODE
+          												  AND G.TREE_CODE 	 = A.DEPT_CODE			                                              
+			     WHERE A.COMP_CODE       = @CompCode
+			       <if test="ORDER_STATUS == &quot;Y&quot;">
+			       AND ORDER_STATUS = 'Y'
+			       </if>
+			       <if test="ORDER_STATUS == &quot;N&quot;">
+			       AND ORDER_STATUS = 'N'
+			       </if>	       
+			       <if test="@foren.Ognl@isNotEmpty(DVRY_DATE_FR)">
+			       AND B.DVRY_DATE   &gt;= #{DVRY_DATE_FR}				/* 납기일(FR) */
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(DVRY_DATE_TO)">
+			       AND B.DVRY_DATE   &lt;= #{DVRY_DATE_TO}				/* 납기일(TO) */
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(ORDER_PRSN)">					
+			       AND A.ORDER_PRSN IN
+						 <foreach collection="ORDER_PRSN" item="item" separator="," close=")" open="(">
+			              		 #{item}
+			        	</foreach>										/* 담당자 */
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+			       AND A.CUSTOM_CODE LIKE  #{CUSTOM_CODE} + '%'      	/* 거래처코드 */
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(ORDER_DATE_FR)">
+			       AND A.ORDER_DATE  &gt;= #{ORDER_DATE_FR}          	/* 시작 수주일 */
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(ORDER_DATE_TO)">
+			       AND A.ORDER_DATE  &lt;= #{ORDER_DATE_TO}          	/* 종료 수주일 */
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+			       AND B.ITEM_CODE   LIKE #{ITEM_CODE} + '%'				/* 품목*/
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+			       AND A.DIV_CODE       = #{DIV_CODE}					/* 사업장(권한체크필수)	*/
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+			       AND C.AGENT_TYPE     = #{AGENT_TYPE}					/* 거래처분류	*/
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+			       AND C.AREA_TYPE      = #{AREA_TYPE}					/* 지역 */
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+			       AND A.ORDER_TYPE     = #{ORDER_TYPE}					/* 판매유형 */
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(TXTLV_L1)">
+			       AND D.ITEM_LEVEL1    = #{TXTLV_L1}					/* 대분류 */
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(TXTLV_L2)">
+			       AND D.ITEM_LEVEL2    = #{TXTLV_L2}					/* 중분류 */
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(TXTLV_L3)">
+			       AND D.ITEM_LEVEL3    = #{TXTLV_L3}					/* 소분류 */
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(ITEM_GROUP)">
+			       AND D.ITEM_GROUP     = #{ITEM_GROUP}					/* 대표모델 */
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(ITEM_GROUP_NAME)">
+			       AND (CASE WHEN @RefItem = '1' THEN F.ITEM_NAME1
+			                 WHEN @RefItem = '2' THEN F.ITEM_NAME2
+			                                     ELSE F.ITEM_NAME
+			             END)        LIKE #{ITEM_GROUP_NAME} + '%'			/* 대표모델명 */
+			       </if>      
+			       <if test="@foren.Ognl@isNotEmpty(FR_ORDER_QTY)">      
+			       AND B.ORDER_Q       &gt;= #{FR_ORDER_QTY}				/* 시작 수주량 */
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(TO_ORDER_QTY)">
+			       AND B.ORDER_Q       &lt;= #{TO_ORDER_QTY}				/* 종료 수주량 */
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(FR_ORDER_NUM)">
+			       AND A.ORDER_NUM     &gt;= #{FR_ORDER_NUM}			    /* 수주번호(Fr) */
+			       </if>
+			       <if test="@foren.Ognl@isNotEmpty(TO_ORDER_NUM)">
+			       AND A.ORDER_NUM     &lt;= #{TO_ORDER_NUM}			    /* 수주번호(TO) */
+			       </if>
+			       
+				   <if test="rdoSelect2 == &quot;6&quot;">
+		           AND A.STATUS = '6'		/*승인*/
+		           </if>
+		           <if test="rdoSelect2 == &quot;5&quot;">
+		           AND A.STATUS = '5'		/*반려*/
+		           </if>
+		           <if test="rdoSelect2 == &quot;N&quot;">
+		           AND A.STATUS IN ('1', '2', '3', '4')	/*미승인*/
+		           </if>
+		           <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">		/*부서*/
+				    AND    G.TREE_LEVEL          LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =G.COMP_CODE AND TYPE_LEVEL=G.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+				   </if>
+		
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+
+
+    </select>
+	
+	
+</mapper>

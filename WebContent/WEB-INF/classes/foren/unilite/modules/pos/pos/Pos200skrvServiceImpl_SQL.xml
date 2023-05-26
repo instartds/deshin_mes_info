@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="pos200skrvServiceImpl">
+	
+	<select id="pos200skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+				SET NOCOUNT ON
+				SET ARITHABORT ON
+					
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+					
+				DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+				      , @UserId			NVARCHAR(100)	/* 사용자ID */
+				      , @LangType		NVARCHAR(2)		/* 언어구분 */
+				      , @RefItem		NVARCHAR(01)
+				      , @DateFormat		NVARCHAR(10)
+					
+				SET @CompCode = #{S_COMP_CODE}
+				SET @UserId   = #{S_USER_ID}
+				SET @LangType = #{S_LANG_CODE}
+					
+				/* 명칭 참조 유형 */
+				SELECT TOP 1 @RefItem = REF_ITEM
+					FROM BSA300T WITH (NOLOCK)
+					WHERE COMP_CODE = @CompCode
+						AND USER_ID = @UserId
+					
+				SET @RefItem = ISNULL(@RefItem, N'0')
+					
+				/* 날짜 포맷 유형 설정 */
+				SELECT TOP 1 @DateFormat = CODE_NAME
+					FROM BSA100T WITH (NOLOCK)
+					WHERE COMP_CODE = @CompCode
+					AND MAIN_CODE = N'B044'
+					AND REF_CODE1 = N'Y'
+					
+				SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')	
+
+			SELECT A.COMP_CODE
+			     , A.DIV_CODE
+			     , A.POS_NO
+			     , A.POS_NAME
+			     , A.CARD_CODE
+			     , A.CARD_NAME
+			     , SUM(A.SALE_COUNT) AS SALE_ACCOUNT
+			     , SUM(A.COLLECT_AMT) AS COLLECT_AMT
+			     , A.FEE_RATE
+			     , SUM(A.COLLECT_AMT * A.FEE_RATE)/100 AS FEE_P     
+			FROM
+			(
+			   SELECT  
+			       A.COMP_CODE
+			     , A.DIV_CODE        
+			     , A.POS_NO             									   /*POS코드*/
+			     , C.POS_NAME
+			     , B.SUB_CODE       AS CARD_CODE  							   /*카드코드*/
+			     , B.CODE_NAME       AS CARD_NAME  							   /*카드사명*/
+			     , CASE WHEN A.COLLECT_AMT &gt;= 0 THEN 1 ELSE -1 END SALE_COUNT  /*거래건수*/
+			     , A.COLLECT_AMT     AS COLLECT_AMT  						   /*금액 (수금액)*/
+			     , B.REF_CODE1       AS FEE_RATE   							   /*수수료율*/         
+			   FROM    SCO100T 			A WITH(NOLOCK)
+			    LEFT OUTER JOIN BSA100T B WITH(NOLOCK) ON A.COMP_CODE       = B.COMP_CODE
+										              AND B.MAIN_CODE       = 'A028'
+										              AND B.SUB_CODE       != N'$'
+										              AND A.COLLECT_TYPE_DETAIL  = B.SUB_CODE
+			
+			    LEFT OUTER JOIN BSA240T C WITH(NOLOCK) ON A.COMP_CODE       = C.COMP_CODE
+										              AND A.DIV_CODE        = C.DIV_CODE
+										              AND A.POS_NO    		= C.POS_NO
+			                       
+			    INNER JOIN      BSA100T D WITH(NOLOCK) ON A.COMP_CODE    	= D.COMP_CODE
+										              AND A.COLLECT_TYPE    = D.SUB_CODE
+										              AND D.MAIN_CODE       = 'S017'
+										              AND D.SUB_CODE        = '22'
+			                
+			    LEFT OUTER JOIN BSA210T E WITH(NOLOCK) ON C.COMP_CODE   	= E.COMP_CODE
+									                  AND C.DIV_CODE    	= E.TYPE_LEVEL
+									                  AND C.DEPT_CODE     	= E.TREE_CODE      
+			         
+			   WHERE 
+			 	   		   A.COMP_CODE   = @CompCode
+				    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">     
+				    AND    A.DIV_CODE          = #{DIV_CODE}
+				    </if>
+					<if test="@foren.Ognl@isNotEmpty(COLLECT_DATE_FR)">     
+					AND    A.COLLECT_DATE      &gt;= #{COLLECT_DATE_FR}
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(COLLECT_DATE_TO)">     
+					AND    A.COLLECT_DATE      &lt;= #{COLLECT_DATE_TO}
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(POS_CODE)">					
+					        AND A.POS_NO IN
+								 <foreach collection="POS_CODE" item="item" separator="," close=")" open="(">
+					              		 #{item}
+					        	</foreach>									
+			         </if>
+			         <if test="@foren.Ognl@isNotEmpty(SHOP_CLASS)">     
+				    AND    E.SHOP_CLASS          = #{SHOP_CLASS}
+				    </if>            
+			) A 
+				 
+			GROUP BY A.COMP_CODE, A.DIV_CODE, A.POS_NAME, A.CARD_CODE, A.POS_NO, A.CARD_NAME, A.FEE_RATE
+   			ORDER BY A.POS_NO, A.POS_NAME ,A.CARD_CODE	 
+				
+				
+SET @END_TIME   = GETDATE()
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'pos200skrv', 'POS별 신용카드집계표', #{COLLECT_DATE_FR}, #{COLLECT_DATE_TO}, @DIFF_TIME
+
+				 
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+		END
+		
+    </select>	
+</mapper>

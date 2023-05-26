@@ -1,0 +1,1639 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="hpa991skrServiceImpl">
+	<select id="hpa991skrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+   
+    	-- 1) 그리드 초기화
+		--hpa991skr.Chpa991skr[fnHpa991QStd] Query01
+			--  1. (파라메터)변수 선언 ------------------------------------------------------------------------------------    
+			    DECLARE @COMP_CODE              NVARCHAR(20)        --(필수) 법인코드
+			          , @SECT_CODE              NVARCHAR(06)        --(선택) 신고사업장
+			          , @PAY_YYYYMM             NVARCHAR(06)        --(선택) 신고년월
+			          , @PAY_FR_YYYYMM          NVARCHAR(06)        --(선택) 간이세액 신고귀속년월
+			          , @PAY_TO_YYYYMM          NVARCHAR(06)        --(선택) 간이세액 신고귀속년월
+			          , @HALF_FR_YYYYMM         NVARCHAR(06)        --(선택) 중도퇴사 신고귀속년월
+			          , @HALF_TO_YYYYMM         NVARCHAR(06)        --(선택) 중도퇴사 신고귀속년월
+			          , @ONE_FR_YYYYMM          NVARCHAR(06)        --(선택) 일용근로 신고귀속년월
+			          , @ONE_TO_YYYYMM          NVARCHAR(06)        --(선택) 일용근로 신고귀속년월
+			          , @RET_FR_YYYYMM          NVARCHAR(06)        --(선택) 퇴직소득 신고귀속년월
+			          , @RET_TO_YYYYMM          NVARCHAR(06)        --(선택) 퇴직소득 신고귀속년월
+			          , @SAUP_FR_YYYYMM         NVARCHAR(06)        --(선택) 사업소득 신고귀속년월
+			          , @SAUP_TO_YYYYMM         NVARCHAR(06)        --(선택) 사업소득 신고귀속년월
+			          , @SUPP_FR_YYYYMM         NVARCHAR(06)        --(선택) 급여 지급년월
+			          , @SUPP_TO_YYYYMM         NVARCHAR(06)        --(선택) 급여 지급년월
+			          , @RET_SUPP_FR_YYYYMM     NVARCHAR(06)        --(선택) 퇴직금 지급년월
+			          , @RET_SUPP_TO_YYYYMM     NVARCHAR(06)        --(필수) 퇴직금 지급년월
+					  , @END_YEAR_CALC_YN		NVARCHAR(06)        
+			          , @USER_ID                NVARCHAR(100)        --(필수) 사용자ID
+			          , @LAST_YYYYMM            NVARCHAR(06)        --(필수) HBS103T : PAY_YYYYMM
+			          , @PRE_YEAR               NVARCHAR(04)        --(필수) 전년도
+			
+			
+			    SET @COMP_CODE              = #{S_COMP_CODE}
+			    SET @SECT_CODE              = #{DIV_CODE}
+			    SET @PAY_YYYYMM             = #{PAY_YYYYMM}
+			    SET @USER_ID                = #{S_USER_ID}
+			    SET @END_YEAR_CALC_YN       = #{YEAR_TAX_FLAG}
+			
+				--hpa991skr.Chpa991skr[fnGetyyyymm] Query01
+					SELECT @PAY_FR_YYYYMM = PAY_FR_YYYYMM
+						 , @PAY_TO_YYYYMM = PAY_TO_YYYYMM
+						 , @HALF_FR_YYYYMM = HALF_FR_YYYYMM
+						 , @HALF_TO_YYYYMM = HALF_TO_YYYYMM
+						 , @ONE_FR_YYYYMM = ONE_FR_YYYYMM
+						 , @ONE_TO_YYYYMM = ONE_TO_YYYYMM
+						 , @RET_FR_YYYYMM = RET_FR_YYYYMM
+						 , @RET_TO_YYYYMM = RET_TO_YYYYMM
+						 , @SAUP_FR_YYYYMM = SAUP_FR_YYYYMM
+						 , @SAUP_TO_YYYYMM = SAUP_TO_YYYYMM
+						 , @SUPP_FR_YYYYMM = SUPP_FR_YYYYMM
+						 , @SUPP_TO_YYYYMM = SUPP_TO_YYYYMM
+						 , @RET_SUPP_FR_YYYYMM = RET_SUPP_FR_YYYYMM
+						 , @RET_SUPP_TO_YYYYMM = RET_SUPP_TO_YYYYMM
+						 , @END_YEAR_CALC_YN = END_YEAR_CALC_YN
+					  FROM HPA959T WITH(NOLOCK)
+					 WHERE COMP_CODE        = @COMP_CODE
+					   AND SECT_CODE        = @SECT_CODE 
+					   AND PAY_YYYYMM       = @PAY_YYYYMM
+					   AND END_YEAR_CALC_YN = @END_YEAR_CALC_YN
+		
+			    SELECT @LAST_YYYYMM = MAX(TAX_YYYYMM) 
+			      FROM HBS130T WITH(NOLOCK)
+			     WHERE COMP_CODE = @COMP_CODE
+		
+			    SET @PRE_YEAR               = LEFT(CONVERT(NVARCHAR, DATEADD(YEAR, -1, @PAY_FR_YYYYMM + '01'), 112), 4)
+
+			--  [ 날짜 포맷 유형 설정 ] -------------------------------------------------------------------------------------------
+			DECLARE         @DateFormat         NVARCHAR(10)
+			
+			SELECT  TOP 1 @DateFormat = CODE_NAME
+			        FROM    BSA100T WITH (NOLOCK)
+			        WHERE   COMP_CODE = @COMP_CODE
+			        AND     MAIN_CODE = N'B044'
+			        AND     REF_CODE1 = N'Y'
+			
+			  SET @DateFormat = ISNULL(@DateFormat, N'YYYY.MM.DD')
+
+
+	--연말정산 포함여부(1:아니요, Y:예)
+    IF @END_YEAR_CALC_YN = '1'
+    	BEGIN
+			SELECT '1'	AS GUBUN
+				 , D.COMP_CODE
+			     , N'간이소득세액' AS AMOUNT_I_NAME
+			     , N'A01'          AS TYPE_CODE
+			     , CASE WHEN ISNULL(D.SUPP_DATE, '') = '' THEN ''
+			            ELSE REPLACE(
+			                 REPLACE(
+			                 REPLACE(@DateFormat, 'YYYY', SUBSTRING(D.SUPP_DATE, 1, 4))
+			                                    , 'MM',   SUBSTRING(D.SUPP_DATE, 5, 2))
+			                                    , 'DD',   SUBSTRING(D.SUPP_DATE, 7, 2))
+			         END          AS SUPP_DATE
+			
+			     , E.CODE_NAME    AS SUPP_TYPE
+			     , D.PERSON_NUMB  AS PERSON_NUMB
+			     , M.NAME         AS NAME
+			     , CASE WHEN ISNULL(D.PAY_YYYYMM, '') = '' THEN ''
+			            ELSE REPLACE(
+			                 REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(D.PAY_YYYYMM, 1, 4))
+			                                             , 'MM',   SUBSTRING(D.PAY_YYYYMM, 5, 2))
+			         END                                AS PAY_YYYYMM
+			
+			     , (ISNULL(SUM(D.SUPP_TOTAL_I) ,0)     - ISNULL(SUM(N1.LIMIT_PAY_SUPP_I), 0)                                                    
+			     + (ISNULL(SUM(N2.TAX_AMOUNT_I), 0)    )
+			     + (ISNULL(SUM(N4.TAX_EXEMPTION_I), 0) + ISNULL(SUM(N5.TAX_EXEMPTION_I), 0)) 
+			     + (ISNULL(SUM(N6.GIVE_I),0))          - ISNULL(SUM(N7.NON_TAX_I), 0))    AS SUPP_TOT_AMT    --소득지급
+			
+			     , ISNULL(SUM(T1.PAY_TAXAMT), 0)             AS PAY_TAX_AMT                  --소득세
+			     , ISNULL(SUM(T2.LOC_TAXAMT), 0)             AS LOC_TAX_AMT                  --주민세
+			     , ISNULL(SUM(S.SP_TAX_I), 0)                AS SP_TAX_I                     --농특세
+			     , ISNULL(SUM(N1.LIMIT_PAY_SUPP_I), 0)       AS LIMIT_PAY_SUPP_I             --비과세
+			
+			     , ((ISNULL(SUM(D.SUPP_TOTAL_I) ,0)    - ISNULL(SUM(N1.LIMIT_PAY_SUPP_I), 0)
+			     + (ISNULL(SUM(N2.TAX_AMOUNT_I), 0)    )
+			     + (ISNULL(SUM(N4.TAX_EXEMPTION_I), 0) + ISNULL(SUM(N5.TAX_EXEMPTION_I), 0)) 
+			     + (ISNULL(SUM(N6.GIVE_I),0))          - ISNULL(SUM(N7.NON_TAX_I), 0)))
+			     +  ISNULL(SUM(N1.LIMIT_PAY_SUPP_I), 0)      AS SUPP_LIMIT_TOTAL_AMT         --급여총지급
+
+			INTO #HPA991_TEMP_1   
+
+			  FROM      HPA600T D WITH(NOLOCK)
+			 INNER JOIN HUM100T M WITH(NOLOCK) ON M.COMP_CODE   = D.COMP_CODE
+			                                  AND M.PERSON_NUMB = D.PERSON_NUMB
+		    
+			  LEFT JOIN BSA100T E WITH(NOLOCK) ON E.COMP_CODE   = D.COMP_CODE
+			                                  AND E.MAIN_CODE   = N'H032'
+			                                  AND E.SUB_CODE   != N'$'
+			                                  AND E.SUB_CODE    = D.SUPP_TYPE
+		    
+			  LEFT JOIN (SELECT A.COMP_CODE
+			                  , A.PAY_YYYYMM
+			                  , A.PERSON_NUMB
+			                  , SUM(ISNULL(A.LIMIT_PAY_SUPP_I, 0)) AS LIMIT_PAY_SUPP_I
+			                  , A.SUPP_TYPE
+			                FROM      HPA800T A  WITH (NOLOCK) 
+			               INNER JOIN HBS120T B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+			                                                  AND B.TAX_YYYY    = LEFT(A.PAY_YYYYMM, 4)
+			                                                  AND B.NONTAX_CODE = A.NONTAX_CODE
+			               LEFT  JOIN BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE  = A.COMP_CODE
+			                                                  AND M1.MAIN_CODE  = N'H032'
+			                                                  AND M1.SUB_CODE   = A.SUPP_TYPE
+			              WHERE A.COMP_CODE  = @COMP_CODE
+			                AND ISNULL(M1.REF_CODE1, A.SUPP_TYPE)  = N'1'
+			                AND B.SEND_YN    = N'N'
+			              GROUP BY A.COMP_CODE, A.PAY_YYYYMM, A.PERSON_NUMB, A.SUPP_TYPE) N1 ON N1.COMP_CODE   = D.COMP_CODE
+			                                                                                AND N1.PERSON_NUMB = D.PERSON_NUMB
+			                                                                                AND N1.PAY_YYYYMM  = D.PAY_YYYYMM 
+			                                                                                AND N1.SUPP_TYPE   = D.SUPP_TYPE
+			
+			  LEFT  JOIN HPA810T N2 WITH(NOLOCK) ON N2.COMP_CODE   = D.COMP_CODE
+			                                    AND N2.PERSON_NUMB = D.PERSON_NUMB
+			                                    AND N2.PAY_YYYYMM  = D.PAY_YYYYMM 
+			  LEFT  JOIN (SELECT A.COMP_CODE
+			                   , A.PAY_YYYYMM
+			                   , A.PERSON_NUMB
+			                   , ISNULL(A.TAX_EXEMPTION_I, 0) AS TAX_EXEMPTION_I
+			                FROM      HPA810T A WITH(NOLOCK)  
+			               INNER JOIN HBS120T B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+			                                                AND B.TAX_YYYY    = LEFT(A.PAY_YYYYMM, 4)
+			                                                AND B.NONTAX_CODE = A.NONTAX_CODE
+			               WHERE B.SEND_YN  = N'Y') N4 ON N4.COMP_CODE   = D.COMP_CODE
+			                                          AND N4.PERSON_NUMB = D.PERSON_NUMB
+			                                          AND N4.PAY_YYYYMM  = D.PAY_YYYYMM
+			  LEFT  JOIN (SELECT A.COMP_CODE
+			                   , A.PAY_YYYYMM
+			                   , A.PERSON_NUMB
+			                   , ISNULL(A.TAX_EXEMPTION_I, 0) AS TAX_EXEMPTION_I
+			                FROM      HPA820T A WITH(NOLOCK)
+			               INNER JOIN HBS120T B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+			                                                AND B.TAX_YYYY    = LEFT(A.PAY_YYYYMM, 4)
+			                                                AND B.NONTAX_CODE = A.NONTAX_CODE
+			               WHERE B.SEND_YN  = N'Y') N5 ON N5.COMP_CODE   = D.COMP_CODE
+			                                          AND N5.PERSON_NUMB = D.PERSON_NUMB
+			                                          AND N5.PAY_YYYYMM  = D.PAY_YYYYMM
+			  LEFT JOIN (SELECT A.COMP_CODE
+			                  , A.PERSON_NUMB
+			                  , A.SUPP_TYPE
+			                  , A.PAY_YYYYMM
+			                  , ISNULL(A.GIVE_I,0) AS GIVE_I
+			               FROM      HWE010T AS A  WITH (NOLOCK)
+			               LEFT JOIN HWE100T AS B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+			                                                    AND B.WEL_LEVEL1  = A.WEL_LEVEL1
+			                                                    AND B.WEL_LEVEL2  = A.WEL_LEVEL2
+			                                                    AND B.WEL_CODE    = A.WEL_CODE
+			                                                    AND B.APPLY_YYMM  = A.APPLY_YYMM 
+			               LEFT JOIN BSA100T AS M1 WITH (NOLOCK) ON M1.COMP_CODE  = A.COMP_CODE
+			                                                    AND M1.MAIN_CODE  = N'H032'
+			                                                    AND M1.SUB_CODE   = A.SUPP_TYPE
+			              WHERE A.COMP_CODE    = @COMP_CODE
+			                AND ISNULL(M1.REF_CODE1, A.SUPP_TYPE)  = N'1'
+			                AND (B.WAGES_CODE IS NULL OR B.WAGES_CODE = '')
+			                AND A.PAY_APPLY_YN = N'N'
+			                AND B.YEAR_CALCU   = N'Y') N6 ON N6.COMP_CODE   = D.COMP_CODE
+			                                             AND N6.PERSON_NUMB = D.PERSON_NUMB
+			                                             AND N6.SUPP_TYPE   = D.SUPP_TYPE
+			                                             AND N6.PAY_YYYYMM  = D.PAY_YYYYMM
+			  LEFT  JOIN (SELECT A.COMP_CODE
+			                   , A.PERSON_NUMB
+			                   , A.SUPP_TYPE
+			                   , A.PAY_YYYYMM
+			                   , ISNULL(A.NON_TAX_I,0) AS NON_TAX_I
+			                FROM      HWE010T AS A  WITH (NOLOCK)
+			                LEFT JOIN HWE100T AS B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+			                                                     AND B.WEL_LEVEL1  = A.WEL_LEVEL1
+			                                                     AND B.WEL_LEVEL2  = A.WEL_LEVEL2
+			                                                     AND B.WEL_CODE    = A.WEL_CODE
+			                                                     AND B.APPLY_YYMM  = A.APPLY_YYMM 
+			                LEFT JOIN BSA100T AS M1 WITH (NOLOCK) ON M1.COMP_CODE  = A.COMP_CODE
+			                                                     AND M1.MAIN_CODE  = N'H032'
+			                                                     AND M1.SUB_CODE   = A.SUPP_TYPE
+			                LEFT JOIN HBS120T AS C  WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+			                                                     AND C.TAX_YYYY    = LEFT(A.PAY_YYYYMM, 4)
+			                                                     AND C.NONTAX_CODE = B.NON_TAX_CODE
+			               WHERE A.COMP_CODE    = @COMP_CODE
+			                 AND ISNULL(M1.REF_CODE1, A.SUPP_TYPE)  = N'1'
+			                 AND (B.WAGES_CODE IS NULL OR B.WAGES_CODE = '') 
+			                 AND A.PAY_APPLY_YN = N'N'
+			                 AND B.YEAR_CALCU   = N'Y'
+			                 AND C.SEND_YN      = N'N') N7 ON N7.COMP_CODE   = D.COMP_CODE
+			                                              AND N7.PERSON_NUMB = D.PERSON_NUMB
+			                                              AND N7.SUPP_TYPE   = D.SUPP_TYPE
+			                                              AND N7.PAY_YYYYMM  = D.PAY_YYYYMM
+			  LEFT JOIN (SELECT ISNULL(D.DED_AMOUNT_I, 0) AS PAY_TAXAMT
+			                  , M.SUPP_TYPE
+			                  , D.PAY_YYYYMM
+			                  , D.PERSON_NUMB
+			                  , D.COMP_CODE
+			               FROM      HPA600T M WITH(NOLOCK)
+			              INNER JOIN HPA400T D WITH(NOLOCK) ON M.COMP_CODE   = D.COMP_CODE     
+			                                               AND M.PERSON_NUMB = D.PERSON_NUMB   
+			                                               AND M.PAY_YYYYMM  = D.PAY_YYYYMM    
+			                                               AND M.SUPP_TYPE   = D.SUPP_TYPE     
+			              INNER JOIN HUM100T K WITH(NOLOCK) ON M.COMP_CODE   = K.COMP_CODE     
+			                                               AND M.PERSON_NUMB = K.PERSON_NUMB   
+			              WHERE M.COMP_CODE     = @COMP_CODE
+			                AND ((M.PAY_YYYYMM &gt;= @PAY_FR_YYYYMM) AND (M.PAY_YYYYMM &lt;= @PAY_TO_YYYYMM)) 
+			                AND ((LEFT(M.SUPP_DATE, 6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(M.SUPP_DATE, 6) &lt;= @SUPP_TO_YYYYMM))
+			                AND (( M.PAY_GUBUN != N'2') OR (M.PAY_GUBUN = N'2' AND M.PAY_GUBUN2 = N'2'))
+			                AND K.SECT_CODE     = N'01' 
+			                AND D.DED_CODE      = N'INC') T1 ON T1.COMP_CODE   = D.COMP_CODE
+			                                                AND T1.PERSON_NUMB = D.PERSON_NUMB
+			                                                AND T1.PAY_YYYYMM  = D.PAY_YYYYMM
+			                                                AND T1.SUPP_TYPE   = D.SUPP_TYPE
+			  LEFT JOIN (SELECT ISNULL(D.DED_AMOUNT_I, 0) AS LOC_TAXAMT 
+			                  , M.SUPP_TYPE
+			                  , D.PAY_YYYYMM
+			                  , D.PERSON_NUMB
+			                  , D.COMP_CODE
+			               FROM      HPA600T M WITH(NOLOCK)
+			              INNER JOIN HPA400T D WITH(NOLOCK) ON M.COMP_CODE   = D.COMP_CODE     
+			                                               AND M.PERSON_NUMB = D.PERSON_NUMB   
+			                                               AND M.PAY_YYYYMM  = D.PAY_YYYYMM    
+			                                               AND M.SUPP_TYPE   = D.SUPP_TYPE     
+			              INNER JOIN HUM100T K WITH(NOLOCK) ON M.COMP_CODE   = K.COMP_CODE     
+			                                               AND M.PERSON_NUMB = K.PERSON_NUMB   
+			              WHERE M.COMP_CODE     = @COMP_CODE
+			                AND ((M.PAY_YYYYMM &gt;= @PAY_FR_YYYYMM) AND (M.PAY_YYYYMM &lt;= @PAY_TO_YYYYMM)) 
+			                AND ((LEFT(M.SUPP_DATE, 6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(M.SUPP_DATE, 6) &lt;= @SUPP_TO_YYYYMM))
+			                AND (( M.PAY_GUBUN != N'2') OR (M.PAY_GUBUN = N'2' AND M.PAY_GUBUN2 = N'2'))
+			                AND K.SECT_CODE     = @SECT_CODE
+			                AND D.DED_CODE      = N'LOC') T2 ON T2.COMP_CODE   = D.COMP_CODE
+			                                                AND T2.PERSON_NUMB = D.PERSON_NUMB
+			                                                AND T2.PAY_YYYYMM  = D.PAY_YYYYMM
+			                                                AND T2.SUPP_TYPE  = D.SUPP_TYPE
+			  LEFT JOIN (SELECT M.PERSON_NUMB
+			                  , M.COMP_CODE
+			                  , M.PAY_YYYYMM
+			                  , ISNULL(M.SP_TAX_I, 0) AS SP_TAX_I
+			               FROM      HPB200T M WITH(NOLOCK)
+			              INNER JOIN HPB100T F WITH(NOLOCK) ON M.COMP_CODE   = F.COMP_CODE
+			                                               AND M.PERSON_NUMB = F.PERSON_NUMB
+			                                               AND M.DED_TYPE    = F.DED_TYPE
+			              WHERE M.COMP_CODE      = @COMP_CODE
+			                AND ((M.PAY_YYYYMM  &gt;= @PAY_FR_YYYYMM) AND (M.PAY_YYYYMM  &lt;= @PAY_TO_YYYYMM))
+			                AND F.BUSINESS_TYPE  = N'1'
+			                AND ((LEFT(M.SUPP_DATE,6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(M.SUPP_DATE,6) &lt;= @SUPP_TO_YYYYMM))
+			                AND F.SECT_CODE      = @SECT_CODE) S ON S.COMP_CODE   = D.COMP_CODE
+			                                                    AND S.PERSON_NUMB = D.PERSON_NUMB
+			                                                    AND S.PAY_YYYYMM  = D.PAY_YYYYMM
+			 WHERE D.COMP_CODE     = @COMP_CODE
+			   AND D.SECT_CODE     = @SECT_CODE
+			   AND ((D.PAY_YYYYMM &gt;= @PAY_FR_YYYYMM) AND (D.PAY_YYYYMM &lt;= @PAY_TO_YYYYMM))
+			   AND ((LEFT(D.SUPP_DATE, 6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(D.SUPP_DATE, 6) &lt;= @SUPP_TO_YYYYMM))
+			   AND (( D.PAY_GUBUN != N'2') OR (D.PAY_GUBUN = N'2' AND D.PAY_GUBUN2 = N'2')) 
+			
+			 GROUP BY D.COMP_CODE, D.SUPP_DATE, E.CODE_NAME, D.PERSON_NUMB, M.NAME
+			        , D.PAY_YYYYMM, T1.PAY_TAXAMT, T2.LOC_TAXAMT, S.SP_TAX_I, N1.LIMIT_PAY_SUPP_I
+		    
+		UNION ALL
+			
+			
+			SELECT '1'	AS GUBUN
+				 , N3.COMP_CODE
+			     , N'간이소득세액' AS AMOUNT_I_NAME
+			     , N'A01'          AS TYPE_CODE
+			     , CASE WHEN ISNULL(N3.SUPP_DATE, '') = '' THEN ''
+			            ELSE REPLACE(
+			                 REPLACE(
+			                 REPLACE(@DateFormat, 'YYYY', SUBSTRING(N3.SUPP_DATE, 1, 4))
+			                                    , 'MM',   SUBSTRING(N3.SUPP_DATE, 5, 2))
+			                                    , 'DD',   SUBSTRING(N3.SUPP_DATE, 7, 2))
+			         END          AS SUPP_DATE
+			
+			     , N'우리사주'    AS SUPP_TYPE
+			     , N3.PERSON_NUMB  AS PERSON_NUMB
+			     , M.NAME         AS NAME
+			     , CASE WHEN ISNULL(N3.PAY_YYYYMM, '') = '' THEN ''
+			            ELSE REPLACE(
+			                 REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(N3.PAY_YYYYMM, 1, 4))
+			                                             , 'MM',   SUBSTRING(N3.PAY_YYYYMM, 5, 2))
+			         END                                AS PAY_YYYYMM
+			
+			        , PAY_TOTAL_I       
+			        , IN_TAX_I  --소득세
+			        , LOC_TAX_I     --주민세
+			        , 0 AS SP_TAX_I
+			        , TAX_EXEMPTION_I    --비과세
+			        , PAY_TOTAL_I + TAX_EXEMPTION_I
+					--, IN_TAX_I
+					--, LOC_TAX_I
+					--, HIR_TAX_I
+					--, NONTAX_CODE
+			  FROM  HPA820T N3 WITH(NOLOCK) 
+			 INNER JOIN HUM100T M WITH(NOLOCK) ON M.COMP_CODE   = N3.COMP_CODE
+			                                  AND M.PERSON_NUMB = N3.PERSON_NUMB
+			    WHERE N3.COMP_CODE     = @COMP_CODE
+			   AND M.SECT_CODE      = @SECT_CODE
+			   AND ((N3.PAY_YYYYMM &gt;= @PAY_FR_YYYYMM) AND (N3.PAY_YYYYMM &lt;= @PAY_TO_YYYYMM))
+			   AND ((LEFT(N3.SUPP_DATE, 6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(N3.SUPP_DATE, 6) &lt;= @SUPP_TO_YYYYMM))
+		
+		    
+			        
+			----------------------------------------------간이소득세액-------------------------------------------------
+		UNION ALL
+			-----------------------------------------------------------------------------------------------------------
+			
+			SELECT '1'	AS GUBUN
+				 , I.COMP_CODE
+			     , N'근로소득중도퇴사'             AS AMOUNT_I_NAME
+			     , N'A02'                          AS TYPE_CODE
+			     , CASE WHEN ISNULL(I.RETR_DATE, '') = '' THEN ''
+			            ELSE REPLACE(
+			                 REPLACE(
+			                 REPLACE(@DateFormat, 'YYYY', SUBSTRING(I.RETR_DATE, 1, 4))
+			                                    , 'MM',   SUBSTRING(I.RETR_DATE, 5, 2))
+			                                    , 'DD',   SUBSTRING(I.RETR_DATE, 7, 2))
+			         END                              AS SUPP_DATE
+			     , N'중도퇴사'                        AS SUPP_TYPE
+			     , I.PERSON_NUMB
+			     , F.NAME
+			     , CONVERT(NVARCHAR(07), I.YEAR_YYYY) AS PAY_YYYYMM
+			     , ISNULL(I.INCOME_SUPP_TOTAL_I, 0) 
+			     +  ISNULL(X.NON_TAX_EMPTION_I, 0)    AS SUPP_TOT_AMT                   --소득지급
+			     , I.IN_TAX_I                         AS PAY_TAXAMT                     --소득세
+			     , I.LOCAL_TAX_I                      AS LOC_TAXAMT                     --주민세
+			     , I.SP_TAX_I                         AS SP_TAX_I                       --농특세
+			     , ISNULL(Y.NON_TAX_EMPTION_I, 0)     AS LIMIT_PAY_SUPP_I               --비과세
+			     , (ISNULL(I.INCOME_SUPP_TOTAL_I, 0) +  ISNULL(X.NON_TAX_EMPTION_I, 0)) 
+			     + ISNULL(Y.NON_TAX_EMPTION_I, 0)     AS SUPP_LIMIT_TOTAL_AMT           --급여총지급
+			
+			  FROM      HAD600T I WITH(NOLOCK)
+			 INNER JOIN HUM100T F WITH(NOLOCK) ON I.COMP_CODE   = F.COMP_CODE
+			                                  AND I.PERSON_NUMB = F.PERSON_NUMB
+			  LEFT JOIN (SELECT S1.COMP_CODE
+			                  , S1.YEAR_YYYY
+			                  , S1.PERSON_NUMB
+			                  , SUM(ISNULL(S1.NON_TAX_EMPTION_I, 0)) AS NON_TAX_EMPTION_I
+			               FROM      HAD610T AS S1 WITH (NOLOCK)
+			              INNER JOIN HBS120T AS S2 WITH (NOLOCK) ON S2.COMP_CODE = S1.COMP_CODE
+			                                                    AND S2.TAX_YYYY  = S1.YEAR_YYYY
+			                                                    AND S2.NONTAX_CODE = S1.NONTAX_CODE
+			                                                    AND S2.SEND_YN = N'Y'
+			              WHERE S1.COMP_CODE = @COMP_CODE
+			                AND S1.YEAR_YYYY = LEFT(@RET_FR_YYYYMM, 4)
+			              GROUP BY S1.COMP_CODE, S1.YEAR_YYYY, S1.PERSON_NUMB) X ON X.COMP_CODE   = I.COMP_CODE
+			                                                                    AND X.YEAR_YYYY   = I.YEAR_YYYY
+			                                                                    AND X.PERSON_NUMB = I.PERSON_NUMB
+			
+			  LEFT JOIN (SELECT I.COMP_CODE
+			                   , LEFT(I.RETR_DATE,6)            AS YEAR_YYYY
+			                   , I.PERSON_NUMB
+			                   , ISNULL(X.NON_TAX_EMPTION_I, 0) AS NON_TAX_EMPTION_I
+			               FROM      HAD600T I WITH(NOLOCK) 
+			              INNER JOIN HUM100T F WITH(NOLOCK) ON I.COMP_CODE   = F.COMP_CODE
+			                                               AND I.PERSON_NUMB = F.PERSON_NUMB 
+			              LEFT JOIN (SELECT S1.COMP_CODE
+			                              , S1.YEAR_YYYY
+			                              , S1.PERSON_NUMB
+			                              , SUM(S1.NON_TAX_EMPTION_I)  AS NON_TAX_EMPTION_I
+			                           FROM      HAD610T AS S1 WITH (NOLOCK)
+			                          INNER JOIN HBS120T AS S2 WITH (NOLOCK) ON S2.COMP_CODE   = S1.COMP_CODE
+			                                                                AND S2.TAX_YYYY    = S1.YEAR_YYYY
+			                                                                AND S2.NONTAX_CODE = S1.NONTAX_CODE
+			                                                                AND S2.SEND_YN     = N'Y'
+			                          WHERE S1.COMP_CODE = @COMP_CODE
+			                            AND S1.YEAR_YYYY = LEFT(@RET_FR_YYYYMM, 4)
+			                          GROUP BY S1.COMP_CODE, S1.YEAR_YYYY, S1.PERSON_NUMB) X ON X.COMP_CODE   = I.COMP_CODE
+			                                                                                AND X.YEAR_YYYY   = I.YEAR_YYYY
+			                                                                                AND X.PERSON_NUMB = I.PERSON_NUMB
+			             WHERE I.COMP_CODE    = @COMP_CODE
+			               AND I.YEAR_YYYY    = LEFT(@RET_FR_YYYYMM, 4)
+			               AND I.HALFWAY_TYPE = N'Y'
+			               AND ((LEFT(I.RETR_DATE,6) &gt;= @RET_FR_YYYYMM) AND (LEFT(I.RETR_DATE,6) &lt;= @RET_TO_YYYYMM))
+			               AND F.SECT_CODE    = @SECT_CODE) Y ON Y.COMP_CODE   = I.COMP_CODE
+			                                                 AND Y.YEAR_YYYY   = I.YEAR_YYYY
+			                                                 AND Y.PERSON_NUMB = I.PERSON_NUMB
+			
+			 WHERE I.COMP_CODE    = @COMP_CODE
+			   AND F.SECT_CODE    = @SECT_CODE
+			   AND I.YEAR_YYYY    = LEFT(@RET_FR_YYYYMM, 4)
+			   AND I.HALFWAY_TYPE = N'Y'
+			   AND ((LEFT(I.RETR_DATE,6) &gt;= @RET_FR_YYYYMM) AND (LEFT(I.RETR_DATE,6) &lt;= @RET_TO_YYYYMM))
+			   AND F.SECT_CODE    = @SECT_CODE
+			
+			----------------------------------------------근로소득중도퇴사-------------------------------------------------
+		UNION ALL
+			---------------------------------------------------------------------------------------------------------------
+			
+			SELECT '1'	AS GUBUN
+				 , A.COMP_CODE
+			     , N'근로소득 일용근로'                  AS AMOUNT_I_NAME
+			     , N'A03'                                AS TYPE_CODE
+			     , CASE WHEN ISNULL(A.SUPP_DATE, '') = '' THEN ''
+			            ELSE REPLACE(
+			                 REPLACE(
+			                 REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.SUPP_DATE, 1, 4))
+			                                    , 'MM',   SUBSTRING(A.SUPP_DATE, 5, 2))
+			                                    , 'DD',   SUBSTRING(A.SUPP_DATE, 7, 2))
+			         END                                AS SUPP_DATE
+			     , CASE WHEN A.SUPP_TYPE = '1' THEN N'급여'
+			            WHEN A.SUPP_TYPE = '2' THEN N'정기상여'
+			        END                                 AS SUPP_TYPE
+			     , A.PERSON_NUMB                        AS PERSON_NUMB
+			     , B.NAME                               AS NAME
+			     , CASE WHEN ISNULL(A.PAY_YYYYMM, '') = '' THEN ''
+			            ELSE REPLACE(
+			                 REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(A.PAY_YYYYMM, 1, 4))
+			                                             , 'MM',   SUBSTRING(A.PAY_YYYYMM, 5, 2))
+			         END                                AS PAY_YYYYMM
+			     , SUM(ISNULL(A.SUPP_TOTAL_I, 0))       AS SUPP_TOT_AMT          --소득지급
+			     , SUM(ISNULL(C.DED_AMOUNT_I, 0))       AS PAY_TAX_AMT           --소득세
+			     , SUM(ISNULL(D.DED_AMOUNT_I, 0))       AS LOC_TAX_AMT           --주민세
+			     , 0                                    AS SP_TAX_I              --농특세
+			     , SUM(ISNULL(N1.LIMIT_PAY_SUPP_I, 0))  AS LIMIT_PAY_SUPP_I      --비과세
+			     , SUM(ISNULL(A.SUPP_TOTAL_I, 0)) 
+			     + SUM(ISNULL(N1.LIMIT_PAY_SUPP_I, 0))  AS SUPP_LIMIT_TOTAL_AMT  --급여총지급
+			
+			  FROM      HPA600T A WITH(NOLOCK) 
+			 INNER JOIN HUM100T B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+			                                  AND B.PERSON_NUMB = A.PERSON_NUMB
+			  LEFT JOIN HPA400T C WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+			                                  AND C.PERSON_NUMB = A.PERSON_NUMB
+			                                  AND C.PAY_YYYYMM  = A.PAY_YYYYMM
+			                                  AND C.SUPP_TYPE   = A.SUPP_TYPE
+			                                  AND C.DED_CODE    = N'INC'
+              LEFT JOIN HPA400T D WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                              AND C.PERSON_NUMB = A.PERSON_NUMB
+                                              AND C.PAY_YYYYMM  = A.PAY_YYYYMM
+                                              AND C.SUPP_TYPE   = A.SUPP_TYPE
+                                              AND C.DED_CODE    = N'LOC'			                                  
+			  LEFT JOIN (SELECT A.COMP_CODE
+			                  , A.PAY_YYYYMM
+			                  , A.PERSON_NUMB
+			                  , SUM(ISNULL(A.LIMIT_PAY_SUPP_I, 0)) AS LIMIT_PAY_SUPP_I
+			                  , A.SUPP_TYPE
+			                FROM      HPA800T A  WITH (NOLOCK) 
+			               INNER JOIN HBS120T B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+			                                                  AND B.TAX_YYYY    = LEFT(A.PAY_YYYYMM, 4)
+			                                                  AND B.NONTAX_CODE = A.NONTAX_CODE
+			               LEFT  JOIN BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE  = A.COMP_CODE
+			                                                  AND M1.MAIN_CODE  = N'H032'
+			                                                  AND M1.SUB_CODE   = A.SUPP_TYPE
+			              WHERE A.COMP_CODE  = @COMP_CODE
+			                AND ISNULL(M1.REF_CODE1, A.SUPP_TYPE)  = N'1'
+			                AND B.SEND_YN    = N'N'
+			              GROUP BY A.COMP_CODE, A.PAY_YYYYMM, A.PERSON_NUMB, A.SUPP_TYPE) N1 ON N1.COMP_CODE   = A.COMP_CODE
+			                                                                                AND N1.PERSON_NUMB = A.PERSON_NUMB
+			                                                                                AND N1.PAY_YYYYMM  = A.PAY_YYYYMM 
+			                                                                                AND N1.SUPP_TYPE   = A.SUPP_TYPE 
+			 WHERE A.COMP_CODE     = @COMP_CODE
+			   AND ((A.PAY_YYYYMM &gt;= @PAY_FR_YYYYMM) AND (A.PAY_YYYYMM &lt;= @PAY_TO_YYYYMM))
+			   AND A.PAY_GUBUN     = N'2'
+			   AND A.PAY_GUBUN2    = N'1'
+			   AND ((LEFT(A.SUPP_DATE, 6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(A.SUPP_DATE, 6) &lt;= @SUPP_TO_YYYYMM))
+			   AND B.SECT_CODE     = @SECT_CODE
+			 GROUP BY  A.COMP_CODE, A.SUPP_DATE, A.SUPP_TYPE, A.PERSON_NUMB, B.NAME, A.PAY_YYYYMM
+			
+			----------------------------------------------근로소득 일용근로--------------------------------------------
+		UNION ALL 
+			-----------------------------------------------------------------------------------------------------------
+		
+
+			SELECT '1'	AS GUBUN
+				, H.COMP_CODE
+			    , N'퇴직소득 그외'                           AS AMOUNT_I_NAME
+			    , N'A22'                                     AS TYPE_CODE
+			    , CASE WHEN ISNULL(H.SUPP_DATE, '') = '' THEN ''
+			           ELSE REPLACE(
+			                REPLACE(
+			                REPLACE(@DateFormat, 'YYYY', SUBSTRING(H.SUPP_DATE, 1, 4))
+			                                   , 'MM',   SUBSTRING(H.SUPP_DATE, 5, 2))
+			                                   , 'DD',   SUBSTRING(H.SUPP_DATE, 7, 2))
+			       END                                      AS SUPP_DATE
+			     , N'퇴직소득'                              AS SUPP_TYPE
+			     , H.PERSON_NUMB
+			     , F.NAME
+			     , LEFT(H.RETR_DATE, 6)                     AS PAY_YYYYMM
+			
+			    , ISNULL(SUM(H.SUPP_TOTAL_I), 0) - ISNULL(SUM(M.SUPP_TOTAL_I),0)    AS SUPP_TOT_AMT 
+			    , ISNULL(SUM(H.IN_TAX_I), 0)     - ISNULL(SUM(M.IN_TAX_I),0)        AS PAY_TAXAMT
+			
+			    , ISNULL(SUM(H.LOCAL_TAX_I), 0) - ISNULL(SUM(M.LOCAL_TAX_I),0)      AS LOC_TAXAMT
+			    , ISNULL(SUM(H.SP_TAX_I), 0)    - ISNULL(SUM(M.SP_TAX_I),0)         AS SP_TAX_I
+			    , 0 AS LIMIT_PAY_SUPP_I
+			    , ISNULL(SUM(H.SUPP_TOTAL_I), 0) - ISNULL(SUM(M.SUPP_TOTAL_I),0)    AS SUPP_LIMIT_TOTAL_AMT 
+			
+			          FROM HRT500T H WITH(NOLOCK)
+			                      INNER JOIN HUM100T F WITH(NOLOCK)
+			                              ON H.COMP_CODE   = F.COMP_CODE
+			                             AND H.PERSON_NUMB = F.PERSON_NUMB
+			                      LEFT JOIN ( SELECT A.SUPP_TOTAL_I
+			                                       , A.IN_TAX_I
+			                                       , A.COMP_CODE
+			                                       , A.PERSON_NUMB
+			                                       , A.LOCAL_TAX_I
+			                                       , A.SP_TAX_I
+			                                    FROM            HRT500T A WITH(NOLOCK)
+			                                         INNER JOIN HUM100T Q WITH(NOLOCK) ON A.COMP_CODE   = Q.COMP_CODE
+			                                                                          AND A.PERSON_NUMB = Q.PERSON_NUMB 
+			                                         INNER JOIN (
+			                                                        SELECT B.PERSON_NUMB
+			                                                             , B.RETR_DATE
+			                                                             , B.COMP_CODE
+			                                                          FROM      HRT500T B WITH(NOLOCK)
+			                                                         INNER JOIN HUM100T C WITH(NOLOCK)
+			                                                                               ON B.COMP_CODE   = C.COMP_CODE
+			                                                                              AND B.PERSON_NUMB = C.PERSON_NUMB
+			                                                         WHERE B.COMP_CODE              = @COMP_CODE
+			                                                           AND ((LEFT(B.RETR_DATE, 6)  &gt;= @RET_FR_YYYYMM)  AND (LEFT(B.RETR_DATE, 6) &lt;= @RET_TO_YYYYMM))
+			                                                           AND ((LEFT(B.SUPP_DATE, 6)  &gt;= @SUPP_FR_YYYYMM) AND (LEFT(B.SUPP_DATE, 6) &lt;= @SUPP_TO_YYYYMM))
+			                                                           AND B.RETR_TYPE = N'R'
+			                                                           AND C.SECT_CODE = @SECT_CODE
+			                                                                                        ) R ON R.COMP_CODE         = A.COMP_CODE
+			                                                                                           AND R.PERSON_NUMB       = A.PERSON_NUMB
+			                                                                                           AND LEFT(R.RETR_DATE,4) = LEFT(A.SUPP_DATE,4)
+			                                   WHERE A.COMP_CODE    =  @COMP_CODE
+			                                     AND A.RETR_TYPE    = N'M'       
+			                                     AND Q.SECT_CODE    = @SECT_CODE) AS M ON M.COMP_CODE   = H.COMP_CODE
+			                                                                          AND M.PERSON_NUMB = H.PERSON_NUMB
+			        WHERE H.COMP_CODE             = @COMP_CODE
+			          AND ((LEFT(H.RETR_DATE, 6)  &gt;= @RET_FR_YYYYMM)  AND (LEFT(H.RETR_DATE, 6) &lt;= @RET_TO_YYYYMM))
+			          AND ((LEFT(H.SUPP_DATE, 6)  &gt;= @SUPP_FR_YYYYMM) AND (LEFT(H.SUPP_DATE, 6) &lt;= @SUPP_TO_YYYYMM))
+			          AND H.RETR_TYPE != N'S'
+			          AND F.RETR_PENSION_KIND != N'DC'
+			          AND F.SECT_CODE = @SECT_CODE
+			GROUP BY H.COMP_CODE, H.SUPP_DATE, H.PERSON_NUMB, F.NAME, LEFT(H.RETR_DATE, 6)
+			
+			----------------------------------------------퇴직소득 그외-------------------------------------------------
+		UNION ALL
+			------------------------------------------------------------------------------------------------------------
+						
+			SELECT '1'	AS GUBUN
+				 , K.COMP_CODE
+			     , N'사업소득 매월징수'            AS AMOUNT_I_NAME
+			     , N'A25'                          AS TYPE_CODE
+			     , CASE WHEN ISNULL(K.SUPP_DATE, '') = '' THEN ''
+			            ELSE REPLACE(
+			                 REPLACE(
+			                 REPLACE(@DateFormat, 'YYYY', SUBSTRING(K.SUPP_DATE, 1, 4))
+			                                    , 'MM',   SUBSTRING(K.SUPP_DATE, 5, 2))
+			                                    , 'DD',   SUBSTRING(K.SUPP_DATE, 7, 2))
+			         END                          AS SUPP_DATE
+			     , N'사업소득'                    AS SUPP_TYPE
+			     , K.PERSON_NUMB                  AS PERSON_NUMB
+			     , F.NAME                         AS NAME
+			     , CASE WHEN ISNULL(K.PAY_YYYYMM, '') = '' THEN ''
+			            ELSE REPLACE(
+			                 REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(K.PAY_YYYYMM, 1, 4))
+			                                             , 'MM',   SUBSTRING(K.PAY_YYYYMM, 5, 2))
+			        END                           AS PAY_YYYYMM
+			     , SUM(K.SUPP_TOTAL_I)            AS SUPP_TOT_AMT           --소득지급
+			     , SUM(K.IN_TAX_I)                AS PAY_TAX_AMT            --소득세
+			     , SUM(K.LOCAL_TAX_I)             AS LOC_TAX_AMT           --주민세
+			     , SUM(K.SP_TAX_I)                AS SP_TAX_I               --농특세
+			     , 0                              AS LIMIT_PAY_SUPP_I       --비과세
+			     , SUM(K.PAY_AMOUNT_I) + 0        AS SUPP_LIMIT_TOTAL_AMT   --급여총지급 
+			  FROM      HPB200T K WITH(NOLOCK)
+			 INNER JOIN HPB100T F WITH(NOLOCK) ON K.COMP_CODE   = F.COMP_CODE
+			                                  AND K.PERSON_NUMB = F.PERSON_NUMB
+			                                  AND K.DED_TYPE    = F.DED_TYPE
+			  LEFT JOIN (SELECT A.COMP_CODE
+			                  , A.PAY_YYYYMM
+			                  , A.PERSON_NUMB
+			                  , SUM(ISNULL(A.LIMIT_PAY_SUPP_I, 0)) AS LIMIT_PAY_SUPP_I
+			                  , A.SUPP_TYPE
+			                FROM      HPA800T A  WITH (NOLOCK) 
+			               INNER JOIN HBS120T B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+			                                                  AND B.TAX_YYYY    = LEFT(A.PAY_YYYYMM, 4)
+			                                                  AND B.NONTAX_CODE = A.NONTAX_CODE
+			               LEFT  JOIN BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE  = A.COMP_CODE
+			                                                  AND M1.MAIN_CODE  = N'H032'
+			                                                  AND M1.SUB_CODE   = A.SUPP_TYPE
+			              WHERE A.COMP_CODE  = @COMP_CODE
+			                AND ISNULL(M1.REF_CODE1, A.SUPP_TYPE)  = N'1'
+			                AND B.SEND_YN    = N'N'
+			              GROUP BY A.COMP_CODE, A.PAY_YYYYMM, A.PERSON_NUMB, A.SUPP_TYPE) N1 ON N1.COMP_CODE   = K.COMP_CODE
+			                                                                                AND N1.PERSON_NUMB = K.PERSON_NUMB
+			                                                                                AND N1.PAY_YYYYMM  = K.PAY_YYYYMM
+			                                                                                AND N1.SUPP_TYPE   = K.SUPP_TYPE
+			 WHERE K.COMP_CODE      = @COMP_CODE
+			   AND K.DED_TYPE       = N'1'
+			   AND F.BUSINESS_TYPE != N'1'
+			   AND ((K.PAY_YYYYMM  &gt;= @PAY_FR_YYYYMM) AND (K.PAY_YYYYMM  &lt;= @PAY_TO_YYYYMM))
+			   AND ((LEFT(K.SUPP_DATE,6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(K.SUPP_DATE,6) &lt;= @SUPP_TO_YYYYMM))
+			   AND F.SECT_CODE      = @SECT_CODE
+			 GROUP BY K.COMP_CODE, K.SUPP_DATE, K.SUPP_TYPE, K.PERSON_NUMB, F.NAME, K.PAY_YYYYMM, N1.LIMIT_PAY_SUPP_I
+			
+			-----------------------------------------------사업소득 매월징수-----------------------------------------------
+		UNION ALL
+			---------------------------------------------------------------------------------------------------------------
+			
+			 SELECT '1'	AS GUBUN
+				  , A.COMP_CODE
+			      , N'기타소득 그외'                     AS AMOUNT_I_NAME
+			      , N'A42'                               AS TYPE_CODE
+			      , CASE WHEN ISNULL(A.SUPP_DATE, '') = '' THEN ''
+			             ELSE REPLACE(
+			                  REPLACE(
+			                  REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.SUPP_DATE, 1, 4))
+			                                     , 'MM',   SUBSTRING(A.SUPP_DATE, 5, 2))
+			                                     , 'DD',   SUBSTRING(A.SUPP_DATE, 7, 2))
+			          END                               AS SUPP_DATE
+			      , N'기타소득'                         AS SUPP_TYPE
+			      , A.PERSON_NUMB                       AS PERSON_NUMB
+			      , B.NAME                              AS NAME
+			      , CASE WHEN ISNULL(A.PAY_YYYYMM, '') = '' THEN ''
+			             ELSE REPLACE(
+			                  REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(A.PAY_YYYYMM, 1, 4))
+			                                              , 'MM',   SUBSTRING(A.PAY_YYYYMM, 5, 2))
+			         END                                AS PAY_YYYYMM
+			      , SUM(ISNULL(A.SUPP_TOTAL_I, 0))      AS SUPP_TOT_AMT             --소득지급
+			      , SUM(ISNULL(A.IN_TAX_I, 0))          AS PAY_TAXAMT               --소득세
+			      , SUM(ISNULL(A.LOCAL_TAX_I, 0))       AS LOC_TAXAMT               --주민세
+			      , SUM(ISNULL(A.SP_TAX_I, 0))          AS SP_TAX_I                 --농특세
+			      , 0                                   AS LIMIT_PAY_SUPP_I         --비과세
+			      , SUM(ISNULL(A.PAY_AMOUNT_I, 0)) + 0  AS SUPP_LIMIT_TOTAL_AMT     --급여총지급
+			        
+			   FROM      HPB200T A WITH(NOLOCK) 
+			  INNER JOIN HPB100T B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+			                                   AND B.PERSON_NUMB = A.PERSON_NUMB
+			                                   AND B.DED_TYPE    = A.DED_TYPE
+			
+			 WHERE A.COMP_CODE      = @COMP_CODE
+			   AND A.DED_TYPE       = N'2'
+			   AND B.BUSINESS_TYPE != N'1'
+			   AND ((A.PAY_YYYYMM  &gt;= @PAY_FR_YYYYMM) AND (A.PAY_YYYYMM  &lt;= @PAY_TO_YYYYMM))
+			   AND ((LEFT(A.SUPP_DATE,6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(A.SUPP_DATE,6) &lt;= @SUPP_TO_YYYYMM))
+			   AND B.SECT_CODE      = @SECT_CODE
+			 GROUP BY A.COMP_CODE, A.SUPP_DATE, A.SUPP_TYPE, A.PERSON_NUMB, B.NAME, A.PAY_YYYYMM
+			
+			----------------------------------------------기타소득 그외-------------------------------------------------
+		UNION ALL
+			------------------------------------------------------------------------------------------------------------
+			SELECT '1'	AS GUBUN
+				 , M.COMP_CODE
+			     , N'이자소득'                           AS AMOUNT_I_NAME
+			     , N'A50'                                AS TYPE_CODE
+			     , CASE WHEN ISNULL(M.SUPP_DATE, '') = '' THEN ''
+			            ELSE REPLACE(
+			                 REPLACE(
+			                 REPLACE(@DateFormat, 'YYYY', SUBSTRING(M.SUPP_DATE, 1, 4))
+			                                    , 'MM',   SUBSTRING(M.SUPP_DATE, 5, 2))
+			                                    , 'DD',   SUBSTRING(M.SUPP_DATE, 7, 2))
+			         END                                AS SUPP_DATE
+			     , N'이자소득'                          AS SUPP_TYPE
+			     , M.PERSON_NUMB                        AS PERSON_NUMB
+			     , F.NAME                               AS NAME
+			     , CASE WHEN ISNULL(M.PAY_YYYYMM, '') = '' THEN ''
+			            ELSE REPLACE(
+			                 REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(M.PAY_YYYYMM, 1, 4))
+			                                             , 'MM',   SUBSTRING(M.PAY_YYYYMM, 5, 2))
+			         END                                AS PAY_YYYYMM
+			    , SUM(ISNULL(M.SUPP_TOTAL_I, 0))        AS SUPP_TOT_AMT             --소득지급
+			    , SUM(ISNULL(M.IN_TAX_I, 0))            AS PAY_TAXAMT               --소득세
+			    , SUM(ISNULL(M.LOCAL_TAX_I, 0))         AS LOC_TAXAMT               --주민세     
+			    , SUM(ISNULL(M.SP_TAX_I, 0))            AS SP_TAX_I                 --농특세
+			    , 0                                     AS LIMIT_PAY_SUPP_I         --비과세
+			    , SUM(ISNULL(M.PAY_AMOUNT_I, 0)) + 0    AS SUPP_LIMIT_TOTAL_AMT     --급여총지급
+			  FROM      HPB200T M WITH(NOLOCK) 
+			 INNER JOIN HPB100T F WITH(NOLOCK) ON M.COMP_CODE   = F.COMP_CODE
+			                                  AND M.PERSON_NUMB = F.PERSON_NUMB
+			                                  AND M.DED_TYPE    = F.DED_TYPE
+			 INNER JOIN HBS130T T WITH(NOLOCK) ON M.COMP_CODE   = T.COMP_CODE
+			                                  AND M.BU_CODE     = T.TAX_CODE 
+			 WHERE M.COMP_CODE      = @COMP_CODE
+			   AND M.DED_TYPE       = N'10'
+			   AND ((M.PAY_YYYYMM  &gt;= @PAY_FR_YYYYMM) AND (M.PAY_YYYYMM  &lt;= @PAY_TO_YYYYMM))
+			   AND T.TAX_YYYYMM     = @LAST_YYYYMM
+			   AND F.BUSINESS_TYPE != N'1'
+			   AND T.REF_CODE1  IN ('1', '10')
+			   AND ((LEFT(M.SUPP_DATE,6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(M.SUPP_DATE,6) &lt;= @SUPP_TO_YYYYMM))
+			   AND F.SECT_CODE     = @SECT_CODE
+			 GROUP BY M.COMP_CODE, M.SUPP_DATE, M.SUPP_TYPE, M.PERSON_NUMB, F.NAME, M.PAY_YYYYMM
+			----------------------------------------------이자소득----------------------------------------------------
+		UNION ALL
+			----------------------------------------------------------------------------------------------------------
+			SELECT '1'	AS GUBUN
+				 , M.COMP_CODE
+			     , N'배당소득'                           AS AMOUNT_I_NAME
+			     , N'A60'                                AS TYPE_CODE
+			     , CASE WHEN ISNULL(M.SUPP_DATE, '') = '' THEN ''
+			            ELSE REPLACE(
+			                 REPLACE(
+			                 REPLACE(@DateFormat, 'YYYY', SUBSTRING(M.SUPP_DATE, 1, 4))
+			                                    , 'MM',   SUBSTRING(M.SUPP_DATE, 5, 2))
+			                                    , 'DD',   SUBSTRING(M.SUPP_DATE, 7, 2))
+			         END                                AS SUPP_DATE
+			     , N'배당소득'                          AS SUPP_TYPE
+			     , M.PERSON_NUMB                        AS PERSON_NUMB
+			     , F.NAME                               AS NAME
+			     , CASE WHEN ISNULL(M.PAY_YYYYMM, '') = '' THEN ''
+			            ELSE REPLACE(
+			                 REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(M.PAY_YYYYMM, 1, 4))
+			                                             , 'MM',   SUBSTRING(M.PAY_YYYYMM, 5, 2))
+			         END                                AS PAY_YYYYMM
+			    , SUM(ISNULL(M.SUPP_TOTAL_I, 0))        AS SUPP_TOT_AMT             --소득지급
+			    , SUM(ISNULL(M.IN_TAX_I, 0))            AS PAY_TAXAMT               --소득세
+			    , SUM(ISNULL(M.LOCAL_TAX_I, 0))         AS LOC_TAXAMT               --주민세  
+			    , SUM(ISNULL(M.SP_TAX_I, 0))            AS SP_TAX_I                 --농특세
+			    , 0                                     AS LIMIT_PAY_SUPP_I         --비과세
+			    , SUM(ISNULL(M.PAY_AMOUNT_I, 0)) + 0    AS SUPP_LIMIT_TOTAL_AMT     --급여총지급
+			  FROM      HPB200T M WITH(NOLOCK) 
+			 INNER JOIN HPB100T F WITH(NOLOCK) ON M.COMP_CODE   = F.COMP_CODE
+			                                  AND M.PERSON_NUMB = F.PERSON_NUMB 
+			                                  AND M.DED_TYPE    = F.DED_TYPE
+			 INNER JOIN HBS130T T WITH(NOLOCK) ON M.COMP_CODE   = T.COMP_CODE
+			                                  AND M.BU_CODE     = T.TAX_CODE 
+			 WHERE M.COMP_CODE      = @COMP_CODE
+			   AND M.DED_TYPE       = N'20'
+			   AND ((M.PAY_YYYYMM  &gt;= @PAY_FR_YYYYMM) AND (M.PAY_YYYYMM  &lt;= @PAY_TO_YYYYMM))
+			   AND T.TAX_YYYYMM     = @LAST_YYYYMM
+			   AND F.BUSINESS_TYPE  != N'1'
+			   AND T.REF_CODE1   IN (N'1',N'20')
+			   AND ((LEFT(M.SUPP_DATE,6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(M.SUPP_DATE,6) &lt;= @SUPP_TO_YYYYMM))
+			   AND F.SECT_CODE      = @SECT_CODE
+			 GROUP BY M.COMP_CODE, M.SUPP_DATE, M.SUPP_TYPE, M.PERSON_NUMB, F.NAME, M.PAY_YYYYMM
+			----------------------------------------------배당소득----------------------------------------------------
+		UNION ALL
+			----------------------------------------------------------------------------------------------------------
+			SELECT '1'	AS GUBUN
+				 , M.COMP_CODE
+			     , N'내.외국인법인원천'                      AS AMOUNT_I_NAME
+			     , N'A80'                                    AS TYPE_CODE
+			     , CASE WHEN ISNULL(M.SUPP_DATE, '') = '' THEN ''
+			            ELSE REPLACE(
+			                 REPLACE(
+			                 REPLACE(@DateFormat, 'YYYY', SUBSTRING(M.SUPP_DATE, 1, 4))
+			                                    , 'MM',   SUBSTRING(M.SUPP_DATE, 5, 2))
+			                                    , 'DD',   SUBSTRING(M.SUPP_DATE, 7, 2))
+			         END                                    AS SUPP_DATE
+			     , N'내.외국인법인원천'                     AS SUPP_TYPE
+			     , M.PERSON_NUMB                            AS PERSON_NUMB
+			     , F.NAME                                   AS NAME
+			     , CASE WHEN ISNULL(M.PAY_YYYYMM, '') = '' THEN ''
+			            ELSE REPLACE(
+			                 REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(M.PAY_YYYYMM, 1, 4))
+			                                             , 'MM',   SUBSTRING(M.PAY_YYYYMM, 5, 2))
+			         END                                    AS PAY_YYYYMM     
+			     , SUM(ISNULL(M.SUPP_TOTAL_I, 0))           AS SUPP_TOT_AMT             --소득지급
+			     , SUM(ISNULL(M.CP_TAX_I, 0))               AS PAY_TAXAMT               --소득세
+			     , SUM(ISNULL(M.LOCAL_TAX_I, 0))            AS LOC_TAXAMT               --주민세
+			     , SUM(ISNULL(M.SP_TAX_I, 0))               AS SP_TAX_I                 --농특세
+			     , 0                                        AS LIMIT_PAY_SUPP_I         --비과세
+			     , SUM(ISNULL(M.PAY_AMOUNT_I, 0)) + 0       AS SUPP_LIMIT_TOTAL_AMT     --급여총지급
+			  FROM      HPB200T M WITH(NOLOCK) 
+			 INNER JOIN HPB100T F WITH(NOLOCK) ON M.COMP_CODE   = F.COMP_CODE
+			                                  AND M.PERSON_NUMB = F.PERSON_NUMB 
+			                                  AND M.DED_TYPE    = F.DED_TYPE
+			 WHERE M.COMP_CODE      = @COMP_CODE
+			   AND ((M.PAY_YYYYMM  &gt;= @PAY_FR_YYYYMM) AND (M.PAY_YYYYMM  &lt;= @PAY_TO_YYYYMM))
+			   AND F.BUSINESS_TYPE  = N'1'
+			   AND ((LEFT(M.SUPP_DATE,6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(M.SUPP_DATE,6) &lt;= @SUPP_TO_YYYYMM))
+			   AND F.SECT_CODE      = @SECT_CODE
+			 GROUP BY M.COMP_CODE, M.SUPP_DATE, M.SUPP_TYPE, M.PERSON_NUMB, F.NAME, M.PAY_YYYYMM
+			ORDER BY D.COMP_CODE, TYPE_CODE, PAY_YYYYMM, PERSON_NUMB, SUPP_DATE, SUPP_TYPE
+		--총계  INSERT	
+		INSERT #HPA991_TEMP_1 
+				(GUBUN, COMP_CODE, AMOUNT_I_NAME, TYPE_CODE, SUPP_DATE, SUPP_TYPE, PERSON_NUMB, NAME, PAY_YYYYMM, SUPP_TOT_AMT, PAY_TAX_AMT, LOC_TAX_AMT, SP_TAX_I, LIMIT_PAY_SUPP_I, SUPP_LIMIT_TOTAL_AMT)
+		SELECT
+				   '2' AS GUBUN
+				 , COMP_CODE
+			     , AMOUNT_I_NAME
+			     , TYPE_CODE
+			     , '총계'         AS SUPP_DATE
+			
+			     , ''	AS SUPP_TYPE
+			     , CONVERT(NVARCHAR(05),COUNT(PERSON_NUMB)) + ' 명'	AS PERSON_NUMB
+			     , ''	AS NAME
+			     , ''	AS PAY_YYYYMM
+			
+			     , ISNULL(SUM(SUPP_TOT_AMT) ,0)			AS SUPP_TOT_AMT					--소득지급
+			     , ISNULL(SUM(PAY_TAX_AMT), 0)			AS PAY_TAX_AMT                  --소득세
+			     , ISNULL(SUM(LOC_TAX_AMT), 0)			AS LOC_TAX_AMT                  --주민세
+			     , ISNULL(SUM(SP_TAX_I), 0)				AS SP_TAX_I                     --농특세
+			     , ISNULL(SUM(LIMIT_PAY_SUPP_I), 0)		AS LIMIT_PAY_SUPP_I             --비과세
+			     , ISNULL(SUM(SUPP_LIMIT_TOTAL_AMT) ,0) AS SUPP_LIMIT_TOTAL_AMT        --급여총지급
+		FROM     #HPA991_TEMP_1 
+		GROUP BY COMP_CODE, AMOUNT_I_NAME, TYPE_CODE
+		ORDER BY COMP_CODE, AMOUNT_I_NAME, TYPE_CODE
+		
+		--데이터 조회
+		SELECT	*
+		  FROM	#HPA991_TEMP_1
+		 ORDER	BY COMP_CODE, TYPE_CODE, GUBUN
+		 
+		 DROP TABLE #HPA991_TEMP_1
+		END
+
+	ELSE
+		
+		BEGIN
+            SELECT '3'  AS GUBUN
+                 , D.COMP_CODE
+                 , N'간이소득세액'      AS AMOUNT_I_NAME
+                 , N'A01'          AS TYPE_CODE
+                 , CASE WHEN ISNULL(D.SUPP_DATE, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(
+                             REPLACE(@DateFormat, 'YYYY', SUBSTRING(D.SUPP_DATE, 1, 4))
+                                                , 'MM',   SUBSTRING(D.SUPP_DATE, 5, 2))
+                                                , 'DD',   SUBSTRING(D.SUPP_DATE, 7, 2))
+                     END          AS SUPP_DATE
+            
+                 , E.CODE_NAME    AS SUPP_TYPE
+                 , D.PERSON_NUMB  AS PERSON_NUMB
+                 , M.NAME         AS NAME
+                 , CASE WHEN ISNULL(D.PAY_YYYYMM, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(D.PAY_YYYYMM, 1, 4))
+                                                         , 'MM',   SUBSTRING(D.PAY_YYYYMM, 5, 2))
+                     END                                AS PAY_YYYYMM
+            
+                 , (ISNULL(SUM(D.SUPP_TOTAL_I) ,0)     - ISNULL(SUM(N1.LIMIT_PAY_SUPP_I), 0)                                                    
+                 + (ISNULL(SUM(N2.TAX_AMOUNT_I), 0)    )
+                 + (ISNULL(SUM(N4.TAX_EXEMPTION_I), 0) + ISNULL(SUM(N5.TAX_EXEMPTION_I), 0)) 
+                 + (ISNULL(SUM(N6.GIVE_I),0))          - ISNULL(SUM(N7.NON_TAX_I), 0))    AS SUPP_TOT_AMT    --소득지급
+            
+                 , ISNULL(SUM(T1.PAY_TAXAMT), 0)             AS PAY_TAX_AMT                  --소득세
+                 , ISNULL(SUM(T2.LOC_TAXAMT), 0)             AS LOC_TAX_AMT                  --주민세
+                 , ISNULL(SUM(S.SP_TAX_I), 0)                AS SP_TAX_I                     --농특세
+                 , ISNULL(SUM(N1.LIMIT_PAY_SUPP_I), 0)       AS LIMIT_PAY_SUPP_I             --비과세
+            
+                 , ((ISNULL(SUM(D.SUPP_TOTAL_I) ,0)    - ISNULL(SUM(N1.LIMIT_PAY_SUPP_I), 0)
+                 + (ISNULL(SUM(N2.TAX_AMOUNT_I), 0)    )
+                 + (ISNULL(SUM(N4.TAX_EXEMPTION_I), 0) + ISNULL(SUM(N5.TAX_EXEMPTION_I), 0)) 
+                 + (ISNULL(SUM(N6.GIVE_I),0))          - ISNULL(SUM(N7.NON_TAX_I), 0)))
+                 +  ISNULL(SUM(N1.LIMIT_PAY_SUPP_I), 0)      AS SUPP_LIMIT_TOTAL_AMT         --급여총지급
+
+            INTO #HPA991_TEMP_2   
+
+              FROM      HPA600T D WITH(NOLOCK)
+             INNER JOIN HUM100T M WITH(NOLOCK) ON M.COMP_CODE   = D.COMP_CODE
+                                              AND M.PERSON_NUMB = D.PERSON_NUMB
+            
+              LEFT JOIN BSA100T E WITH(NOLOCK) ON E.COMP_CODE   = D.COMP_CODE
+                                              AND E.MAIN_CODE   = N'H032'
+                                              AND E.SUB_CODE   != N'$'
+                                              AND E.SUB_CODE    = D.SUPP_TYPE
+            
+              LEFT JOIN (SELECT A.COMP_CODE
+                              , A.PAY_YYYYMM
+                              , A.PERSON_NUMB
+                              , SUM(ISNULL(A.LIMIT_PAY_SUPP_I, 0)) AS LIMIT_PAY_SUPP_I
+                              , A.SUPP_TYPE
+                            FROM      HPA800T A  WITH (NOLOCK) 
+                           INNER JOIN HBS120T B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                              AND B.TAX_YYYY    = LEFT(A.PAY_YYYYMM, 4)
+                                                              AND B.NONTAX_CODE = A.NONTAX_CODE
+                           LEFT  JOIN BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE  = A.COMP_CODE
+                                                              AND M1.MAIN_CODE  = N'H032'
+                                                              AND M1.SUB_CODE   = A.SUPP_TYPE
+                          WHERE A.COMP_CODE  = @COMP_CODE
+                            AND ISNULL(M1.REF_CODE1, A.SUPP_TYPE)  = N'1'
+                            AND B.SEND_YN    = N'N'
+                          GROUP BY A.COMP_CODE, A.PAY_YYYYMM, A.PERSON_NUMB, A.SUPP_TYPE) N1 ON N1.COMP_CODE   = D.COMP_CODE
+                                                                                            AND N1.PERSON_NUMB = D.PERSON_NUMB
+                                                                                            AND N1.PAY_YYYYMM  = D.PAY_YYYYMM 
+                                                                                            AND N1.SUPP_TYPE   = D.SUPP_TYPE
+            
+              LEFT  JOIN HPA810T N2 WITH(NOLOCK) ON N2.COMP_CODE   = D.COMP_CODE
+                                                AND N2.PERSON_NUMB = D.PERSON_NUMB
+                                                AND N2.PAY_YYYYMM  = D.PAY_YYYYMM 
+              LEFT  JOIN (SELECT A.COMP_CODE
+                               , A.PAY_YYYYMM
+                               , A.PERSON_NUMB
+                               , ISNULL(A.TAX_EXEMPTION_I, 0) AS TAX_EXEMPTION_I
+                            FROM      HPA810T A WITH(NOLOCK)  
+                           INNER JOIN HBS120T B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                            AND B.TAX_YYYY    = LEFT(A.PAY_YYYYMM, 4)
+                                                            AND B.NONTAX_CODE = A.NONTAX_CODE
+                           WHERE B.SEND_YN  = N'Y') N4 ON N4.COMP_CODE   = D.COMP_CODE
+                                                      AND N4.PERSON_NUMB = D.PERSON_NUMB
+                                                      AND N4.PAY_YYYYMM  = D.PAY_YYYYMM
+              LEFT  JOIN (SELECT A.COMP_CODE
+                               , A.PAY_YYYYMM
+                               , A.PERSON_NUMB
+                               , ISNULL(A.TAX_EXEMPTION_I, 0) AS TAX_EXEMPTION_I
+                            FROM      HPA820T A WITH(NOLOCK)
+                           INNER JOIN HBS120T B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                            AND B.TAX_YYYY    = LEFT(A.PAY_YYYYMM, 4)
+                                                            AND B.NONTAX_CODE = A.NONTAX_CODE
+                           WHERE B.SEND_YN  = N'Y') N5 ON N5.COMP_CODE   = D.COMP_CODE
+                                                      AND N5.PERSON_NUMB = D.PERSON_NUMB
+                                                      AND N5.PAY_YYYYMM  = D.PAY_YYYYMM
+              LEFT JOIN (SELECT A.COMP_CODE
+                              , A.PERSON_NUMB
+                              , A.SUPP_TYPE
+                              , A.PAY_YYYYMM
+                              , ISNULL(A.GIVE_I,0) AS GIVE_I
+                           FROM      HWE010T AS A  WITH (NOLOCK)
+                           LEFT JOIN HWE100T AS B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                                AND B.WEL_LEVEL1  = A.WEL_LEVEL1
+                                                                AND B.WEL_LEVEL2  = A.WEL_LEVEL2
+                                                                AND B.WEL_CODE    = A.WEL_CODE
+                                                                AND B.APPLY_YYMM  = A.APPLY_YYMM 
+                           LEFT JOIN BSA100T AS M1 WITH (NOLOCK) ON M1.COMP_CODE  = A.COMP_CODE
+                                                                AND M1.MAIN_CODE  = N'H032'
+                                                                AND M1.SUB_CODE   = A.SUPP_TYPE
+                          WHERE A.COMP_CODE    = @COMP_CODE
+                            AND ISNULL(M1.REF_CODE1, A.SUPP_TYPE)  = N'1'
+                            AND (B.WAGES_CODE IS NULL OR B.WAGES_CODE = '')
+                            AND A.PAY_APPLY_YN = N'N'
+                            AND B.YEAR_CALCU   = N'Y') N6 ON N6.COMP_CODE   = D.COMP_CODE
+                                                         AND N6.PERSON_NUMB = D.PERSON_NUMB
+                                                         AND N6.SUPP_TYPE   = D.SUPP_TYPE
+                                                         AND N6.PAY_YYYYMM  = D.PAY_YYYYMM
+              LEFT  JOIN (SELECT A.COMP_CODE
+                               , A.PERSON_NUMB
+                               , A.SUPP_TYPE
+                               , A.PAY_YYYYMM
+                               , ISNULL(A.NON_TAX_I,0) AS NON_TAX_I
+                            FROM      HWE010T AS A  WITH (NOLOCK)
+                            LEFT JOIN HWE100T AS B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                                 AND B.WEL_LEVEL1  = A.WEL_LEVEL1
+                                                                 AND B.WEL_LEVEL2  = A.WEL_LEVEL2
+                                                                 AND B.WEL_CODE    = A.WEL_CODE
+                                                                 AND B.APPLY_YYMM  = A.APPLY_YYMM 
+                            LEFT JOIN BSA100T AS M1 WITH (NOLOCK) ON M1.COMP_CODE  = A.COMP_CODE
+                                                                 AND M1.MAIN_CODE  = N'H032'
+                                                                 AND M1.SUB_CODE   = A.SUPP_TYPE
+                            LEFT JOIN HBS120T AS C  WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                                 AND C.TAX_YYYY    = LEFT(A.PAY_YYYYMM, 4)
+                                                                 AND C.NONTAX_CODE = B.NON_TAX_CODE
+                           WHERE A.COMP_CODE    = @COMP_CODE
+                             AND ISNULL(M1.REF_CODE1, A.SUPP_TYPE)  = N'1'
+                             AND (B.WAGES_CODE IS NULL OR B.WAGES_CODE = '') 
+                             AND A.PAY_APPLY_YN = N'N'
+                             AND B.YEAR_CALCU   = N'Y'
+                             AND C.SEND_YN      = N'N') N7 ON N7.COMP_CODE   = D.COMP_CODE
+                                                          AND N7.PERSON_NUMB = D.PERSON_NUMB
+                                                          AND N7.SUPP_TYPE   = D.SUPP_TYPE
+                                                          AND N7.PAY_YYYYMM  = D.PAY_YYYYMM
+              LEFT JOIN (SELECT ISNULL(D.DED_AMOUNT_I, 0) AS PAY_TAXAMT
+                              , M.SUPP_TYPE
+                              , D.PAY_YYYYMM
+                              , D.PERSON_NUMB
+                              , D.COMP_CODE
+                           FROM      HPA600T M WITH(NOLOCK)
+                          INNER JOIN HPA400T D WITH(NOLOCK) ON M.COMP_CODE   = D.COMP_CODE     
+                                                           AND M.PERSON_NUMB = D.PERSON_NUMB   
+                                                           AND M.PAY_YYYYMM  = D.PAY_YYYYMM    
+                                                           AND M.SUPP_TYPE   = D.SUPP_TYPE     
+                          INNER JOIN HUM100T K WITH(NOLOCK) ON M.COMP_CODE   = K.COMP_CODE     
+                                                           AND M.PERSON_NUMB = K.PERSON_NUMB   
+                          WHERE M.COMP_CODE     = @COMP_CODE
+                            AND ((M.PAY_YYYYMM &gt;= @PAY_FR_YYYYMM) AND (M.PAY_YYYYMM &lt;= @PAY_TO_YYYYMM)) 
+                            AND ((LEFT(M.SUPP_DATE, 6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(M.SUPP_DATE, 6) &lt;= @SUPP_TO_YYYYMM))
+                            AND (( M.PAY_GUBUN != N'2') OR (M.PAY_GUBUN = N'2' AND M.PAY_GUBUN2 = N'2'))
+                            AND K.SECT_CODE     = N'01' 
+                            AND D.DED_CODE      = N'INC') T1 ON T1.COMP_CODE   = D.COMP_CODE
+                                                            AND T1.PERSON_NUMB = D.PERSON_NUMB
+                                                            AND T1.PAY_YYYYMM  = D.PAY_YYYYMM
+                                                            AND T1.SUPP_TYPE   = D.SUPP_TYPE
+              LEFT JOIN (SELECT ISNULL(D.DED_AMOUNT_I, 0) AS LOC_TAXAMT 
+                              , M.SUPP_TYPE
+                              , D.PAY_YYYYMM
+                              , D.PERSON_NUMB
+                              , D.COMP_CODE
+                           FROM      HPA600T M WITH(NOLOCK)
+                          INNER JOIN HPA400T D WITH(NOLOCK) ON M.COMP_CODE   = D.COMP_CODE     
+                                                           AND M.PERSON_NUMB = D.PERSON_NUMB   
+                                                           AND M.PAY_YYYYMM  = D.PAY_YYYYMM    
+                                                           AND M.SUPP_TYPE   = D.SUPP_TYPE     
+                          INNER JOIN HUM100T K WITH(NOLOCK) ON M.COMP_CODE   = K.COMP_CODE     
+                                                           AND M.PERSON_NUMB = K.PERSON_NUMB   
+                          WHERE M.COMP_CODE     = @COMP_CODE
+                            AND ((M.PAY_YYYYMM &gt;= @PAY_FR_YYYYMM) AND (M.PAY_YYYYMM &lt;= @PAY_TO_YYYYMM)) 
+                            AND ((LEFT(M.SUPP_DATE, 6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(M.SUPP_DATE, 6) &lt;= @SUPP_TO_YYYYMM))
+                            AND (( M.PAY_GUBUN != N'2') OR (M.PAY_GUBUN = N'2' AND M.PAY_GUBUN2 = N'2'))
+                            AND K.SECT_CODE     = @SECT_CODE
+                            AND D.DED_CODE      = N'LOC') T2 ON T2.COMP_CODE   = D.COMP_CODE
+                                                            AND T2.PERSON_NUMB = D.PERSON_NUMB
+                                                            AND T2.PAY_YYYYMM  = D.PAY_YYYYMM
+                                                            AND T2.SUPP_TYPE  = D.SUPP_TYPE
+              LEFT JOIN (SELECT M.PERSON_NUMB
+                              , M.COMP_CODE
+                              , M.PAY_YYYYMM
+                              , ISNULL(M.SP_TAX_I, 0) AS SP_TAX_I
+                           FROM      HPB200T M WITH(NOLOCK)
+                          INNER JOIN HPB100T F WITH(NOLOCK) ON M.COMP_CODE   = F.COMP_CODE
+                                                           AND M.PERSON_NUMB = F.PERSON_NUMB
+                                                           AND M.DED_TYPE    = F.DED_TYPE
+                          WHERE M.COMP_CODE      = @COMP_CODE
+                            AND ((M.PAY_YYYYMM  &gt;= @PAY_FR_YYYYMM) AND (M.PAY_YYYYMM  &lt;= @PAY_TO_YYYYMM))
+                            AND F.BUSINESS_TYPE  = N'1'
+                            AND ((LEFT(M.SUPP_DATE,6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(M.SUPP_DATE,6) &lt;= @SUPP_TO_YYYYMM))
+                            AND F.SECT_CODE      = @SECT_CODE) S ON S.COMP_CODE   = D.COMP_CODE
+                                                                AND S.PERSON_NUMB = D.PERSON_NUMB
+                                                                AND S.PAY_YYYYMM  = D.PAY_YYYYMM
+             WHERE D.COMP_CODE     = @COMP_CODE
+               AND D.SECT_CODE     = @SECT_CODE
+               AND ((D.PAY_YYYYMM &gt;= @PAY_FR_YYYYMM) AND (D.PAY_YYYYMM &lt;= @PAY_TO_YYYYMM))
+               AND ((LEFT(D.SUPP_DATE, 6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(D.SUPP_DATE, 6) &lt;= @SUPP_TO_YYYYMM))
+               AND (( D.PAY_GUBUN != N'2') OR (D.PAY_GUBUN = N'2' AND D.PAY_GUBUN2 = N'2')) 
+            
+             GROUP BY D.COMP_CODE, D.SUPP_DATE, E.CODE_NAME, D.PERSON_NUMB, M.NAME
+                    , D.PAY_YYYYMM, T1.PAY_TAXAMT, T2.LOC_TAXAMT, S.SP_TAX_I, N1.LIMIT_PAY_SUPP_I
+            
+        UNION ALL
+            
+            
+            SELECT '3'  AS GUBUN
+                 , N3.COMP_CODE
+                 , N'간이소득세액' AS AMOUNT_I_NAME
+                 , N'A01'          AS TYPE_CODE
+                 , CASE WHEN ISNULL(N3.SUPP_DATE, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(
+                             REPLACE(@DateFormat, 'YYYY', SUBSTRING(N3.SUPP_DATE, 1, 4))
+                                                , 'MM',   SUBSTRING(N3.SUPP_DATE, 5, 2))
+                                                , 'DD',   SUBSTRING(N3.SUPP_DATE, 7, 2))
+                     END          AS SUPP_DATE
+            
+                 , N'우리사주'    AS SUPP_TYPE
+                 , N3.PERSON_NUMB  AS PERSON_NUMB
+                 , M.NAME         AS NAME
+                 , CASE WHEN ISNULL(N3.PAY_YYYYMM, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(N3.PAY_YYYYMM, 1, 4))
+                                                         , 'MM',   SUBSTRING(N3.PAY_YYYYMM, 5, 2))
+                     END                                AS PAY_YYYYMM
+            
+                    , PAY_TOTAL_I       
+                    , IN_TAX_I  --소득세
+                    , LOC_TAX_I     --주민세
+                    , 0 AS SP_TAX_I
+                    , TAX_EXEMPTION_I    --비과세
+                    , PAY_TOTAL_I + TAX_EXEMPTION_I
+                    --, IN_TAX_I
+                    --, LOC_TAX_I
+                    --, HIR_TAX_I
+                    --, NONTAX_CODE
+              FROM  HPA820T N3 WITH(NOLOCK) 
+             INNER JOIN HUM100T M WITH(NOLOCK) ON M.COMP_CODE   = N3.COMP_CODE
+                                              AND M.PERSON_NUMB = N3.PERSON_NUMB
+                WHERE N3.COMP_CODE     = @COMP_CODE
+               AND M.SECT_CODE      = @SECT_CODE
+               AND ((N3.PAY_YYYYMM &gt;= @PAY_FR_YYYYMM) AND (N3.PAY_YYYYMM &lt;= @PAY_TO_YYYYMM))
+               AND ((LEFT(N3.SUPP_DATE, 6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(N3.SUPP_DATE, 6) &lt;= @SUPP_TO_YYYYMM))
+        
+            
+                    
+            ----------------------------------------------간이소득세액-------------------------------------------------
+        UNION ALL
+            -----------------------------------------------------------------------------------------------------------
+            
+            SELECT '3'  AS GUBUN
+                 , I.COMP_CODE
+                 , N'근로소득중도퇴사'             AS AMOUNT_I_NAME
+                 , N'A02'                          AS TYPE_CODE
+                 , CASE WHEN ISNULL(I.RETR_DATE, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(
+                             REPLACE(@DateFormat, 'YYYY', SUBSTRING(I.RETR_DATE, 1, 4))
+                                                , 'MM',   SUBSTRING(I.RETR_DATE, 5, 2))
+                                                , 'DD',   SUBSTRING(I.RETR_DATE, 7, 2))
+                     END                              AS SUPP_DATE
+                 , N'중도퇴사'                        AS SUPP_TYPE
+                 , I.PERSON_NUMB
+                 , F.NAME
+                 , CONVERT(NVARCHAR(07), I.YEAR_YYYY) AS PAY_YYYYMM
+                 , ISNULL(I.INCOME_SUPP_TOTAL_I, 0) 
+                 +  ISNULL(X.NON_TAX_EMPTION_I, 0)    AS SUPP_TOT_AMT                   --소득지급
+                 , I.IN_TAX_I                         AS PAY_TAXAMT                     --소득세
+                 , I.LOCAL_TAX_I                      AS LOC_TAXAMT                     --주민세
+                 , I.SP_TAX_I                         AS SP_TAX_I                       --농특세
+                 , ISNULL(Y.NON_TAX_EMPTION_I, 0)     AS LIMIT_PAY_SUPP_I               --비과세
+                 , (ISNULL(I.INCOME_SUPP_TOTAL_I, 0) +  ISNULL(X.NON_TAX_EMPTION_I, 0)) 
+                 + ISNULL(Y.NON_TAX_EMPTION_I, 0)     AS SUPP_LIMIT_TOTAL_AMT           --급여총지급
+            
+              FROM      HAD600T I WITH(NOLOCK)
+             INNER JOIN HUM100T F WITH(NOLOCK) ON I.COMP_CODE   = F.COMP_CODE
+                                              AND I.PERSON_NUMB = F.PERSON_NUMB
+              LEFT JOIN (SELECT S1.COMP_CODE
+                              , S1.YEAR_YYYY
+                              , S1.PERSON_NUMB
+                              , SUM(ISNULL(S1.NON_TAX_EMPTION_I, 0)) AS NON_TAX_EMPTION_I
+                           FROM      HAD610T AS S1 WITH (NOLOCK)
+                          INNER JOIN HBS120T AS S2 WITH (NOLOCK) ON S2.COMP_CODE = S1.COMP_CODE
+                                                                AND S2.TAX_YYYY  = S1.YEAR_YYYY
+                                                                AND S2.NONTAX_CODE = S1.NONTAX_CODE
+                                                                AND S2.SEND_YN = N'Y'
+                          WHERE S1.COMP_CODE = @COMP_CODE
+                            AND S1.YEAR_YYYY = LEFT(@RET_FR_YYYYMM, 4)
+                          GROUP BY S1.COMP_CODE, S1.YEAR_YYYY, S1.PERSON_NUMB) X ON X.COMP_CODE   = I.COMP_CODE
+                                                                                AND X.YEAR_YYYY   = I.YEAR_YYYY
+                                                                                AND X.PERSON_NUMB = I.PERSON_NUMB
+            
+              LEFT JOIN (SELECT I.COMP_CODE
+                               , LEFT(I.RETR_DATE,6)            AS YEAR_YYYY
+                               , I.PERSON_NUMB
+                               , ISNULL(X.NON_TAX_EMPTION_I, 0) AS NON_TAX_EMPTION_I
+                           FROM      HAD600T I WITH(NOLOCK) 
+                          INNER JOIN HUM100T F WITH(NOLOCK) ON I.COMP_CODE   = F.COMP_CODE
+                                                           AND I.PERSON_NUMB = F.PERSON_NUMB 
+                          LEFT JOIN (SELECT S1.COMP_CODE
+                                          , S1.YEAR_YYYY
+                                          , S1.PERSON_NUMB
+                                          , SUM(S1.NON_TAX_EMPTION_I)  AS NON_TAX_EMPTION_I
+                                       FROM      HAD610T AS S1 WITH (NOLOCK)
+                                      INNER JOIN HBS120T AS S2 WITH (NOLOCK) ON S2.COMP_CODE   = S1.COMP_CODE
+                                                                            AND S2.TAX_YYYY    = S1.YEAR_YYYY
+                                                                            AND S2.NONTAX_CODE = S1.NONTAX_CODE
+                                                                            AND S2.SEND_YN     = N'Y'
+                                      WHERE S1.COMP_CODE = @COMP_CODE
+                                        AND S1.YEAR_YYYY = LEFT(@RET_FR_YYYYMM, 4)
+                                      GROUP BY S1.COMP_CODE, S1.YEAR_YYYY, S1.PERSON_NUMB) X ON X.COMP_CODE   = I.COMP_CODE
+                                                                                            AND X.YEAR_YYYY   = I.YEAR_YYYY
+                                                                                            AND X.PERSON_NUMB = I.PERSON_NUMB
+                         WHERE I.COMP_CODE    = @COMP_CODE
+                           AND I.YEAR_YYYY    = LEFT(@RET_FR_YYYYMM, 4)
+                           AND I.HALFWAY_TYPE = N'Y'
+                           AND ((LEFT(I.RETR_DATE,6) &gt;= @RET_FR_YYYYMM) AND (LEFT(I.RETR_DATE,6) &lt;= @RET_TO_YYYYMM))
+                           AND F.SECT_CODE    = @SECT_CODE) Y ON Y.COMP_CODE   = I.COMP_CODE
+                                                             AND Y.YEAR_YYYY   = I.YEAR_YYYY
+                                                             AND Y.PERSON_NUMB = I.PERSON_NUMB
+            
+             WHERE I.COMP_CODE    = @COMP_CODE
+               AND F.SECT_CODE    = @SECT_CODE
+               AND I.YEAR_YYYY    = LEFT(@RET_FR_YYYYMM, 4)
+               AND I.HALFWAY_TYPE = N'Y'
+               AND ((LEFT(I.RETR_DATE,6) &gt;= @RET_FR_YYYYMM) AND (LEFT(I.RETR_DATE,6) &lt;= @RET_TO_YYYYMM))
+               AND F.SECT_CODE    = @SECT_CODE
+            
+            ----------------------------------------------근로소득중도퇴사-------------------------------------------------
+        UNION ALL
+            ---------------------------------------------------------------------------------------------------------------
+            
+            SELECT '3'  AS GUBUN
+                 , A.COMP_CODE
+                 , N'근로소득 일용근로'                  AS AMOUNT_I_NAME
+                 , N'A03'                                AS TYPE_CODE
+                 , CASE WHEN ISNULL(A.SUPP_DATE, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(
+                             REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.SUPP_DATE, 1, 4))
+                                                , 'MM',   SUBSTRING(A.SUPP_DATE, 5, 2))
+                                                , 'DD',   SUBSTRING(A.SUPP_DATE, 7, 2))
+                     END                                AS SUPP_DATE
+                 , CASE WHEN A.SUPP_TYPE = '1' THEN N'급여'
+                        WHEN A.SUPP_TYPE = '2' THEN N'정기상여'
+                    END                                 AS SUPP_TYPE
+                 , A.PERSON_NUMB                        AS PERSON_NUMB
+                 , B.NAME                               AS NAME
+                 , CASE WHEN ISNULL(A.PAY_YYYYMM, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(A.PAY_YYYYMM, 1, 4))
+                                                         , 'MM',   SUBSTRING(A.PAY_YYYYMM, 5, 2))
+                     END                                AS PAY_YYYYMM
+                 , SUM(ISNULL(A.SUPP_TOTAL_I, 0))       AS SUPP_TOT_AMT          --소득지급
+                 , SUM(ISNULL(C.DED_AMOUNT_I, 0))       AS PAY_TAX_AMT           --소득세
+                 , SUM(ISNULL(D.DED_AMOUNT_I, 0))       AS LOC_TAX_AMT           --주민세
+                 , 0                                    AS SP_TAX_I              --농특세
+                 , SUM(ISNULL(N1.LIMIT_PAY_SUPP_I, 0))  AS LIMIT_PAY_SUPP_I      --비과세
+                 , SUM(ISNULL(A.SUPP_TOTAL_I, 0)) 
+                 + SUM(ISNULL(N1.LIMIT_PAY_SUPP_I, 0))  AS SUPP_LIMIT_TOTAL_AMT  --급여총지급
+            
+              FROM      HPA600T A WITH(NOLOCK) 
+             INNER JOIN HUM100T B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                              AND B.PERSON_NUMB = A.PERSON_NUMB
+              LEFT JOIN HPA400T C WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                              AND C.PERSON_NUMB = A.PERSON_NUMB
+                                              AND C.PAY_YYYYMM  = A.PAY_YYYYMM
+                                              AND C.SUPP_TYPE   = A.SUPP_TYPE
+                                              AND C.DED_CODE    = N'INC'
+              LEFT JOIN HPA400T D WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                              AND C.PERSON_NUMB = A.PERSON_NUMB
+                                              AND C.PAY_YYYYMM  = A.PAY_YYYYMM
+                                              AND C.SUPP_TYPE   = A.SUPP_TYPE
+                                              AND C.DED_CODE    = N'LOC'                                              
+              LEFT JOIN (SELECT A.COMP_CODE
+                              , A.PAY_YYYYMM
+                              , A.PERSON_NUMB
+                              , SUM(ISNULL(A.LIMIT_PAY_SUPP_I, 0)) AS LIMIT_PAY_SUPP_I
+                              , A.SUPP_TYPE
+                            FROM      HPA800T A  WITH (NOLOCK) 
+                           INNER JOIN HBS120T B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                              AND B.TAX_YYYY    = LEFT(A.PAY_YYYYMM, 4)
+                                                              AND B.NONTAX_CODE = A.NONTAX_CODE
+                           LEFT  JOIN BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE  = A.COMP_CODE
+                                                              AND M1.MAIN_CODE  = N'H032'
+                                                              AND M1.SUB_CODE   = A.SUPP_TYPE
+                          WHERE A.COMP_CODE  = @COMP_CODE
+                            AND ISNULL(M1.REF_CODE1, A.SUPP_TYPE)  = N'1'
+                            AND B.SEND_YN    = N'N'
+                          GROUP BY A.COMP_CODE, A.PAY_YYYYMM, A.PERSON_NUMB, A.SUPP_TYPE) N1 ON N1.COMP_CODE   = A.COMP_CODE
+                                                                                            AND N1.PERSON_NUMB = A.PERSON_NUMB
+                                                                                            AND N1.PAY_YYYYMM  = A.PAY_YYYYMM 
+                                                                                            AND N1.SUPP_TYPE   = A.SUPP_TYPE 
+             WHERE A.COMP_CODE     = @COMP_CODE
+               AND ((A.PAY_YYYYMM &gt;= @PAY_FR_YYYYMM) AND (A.PAY_YYYYMM &lt;= @PAY_TO_YYYYMM))
+               AND A.PAY_GUBUN     = N'2'
+               AND A.PAY_GUBUN2    = N'1'
+               AND ((LEFT(A.SUPP_DATE, 6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(A.SUPP_DATE, 6) &lt;= @SUPP_TO_YYYYMM))
+               AND B.SECT_CODE     = @SECT_CODE
+             GROUP BY  A.COMP_CODE, A.SUPP_DATE, A.SUPP_TYPE, A.PERSON_NUMB, B.NAME, A.PAY_YYYYMM
+            
+            ----------------------------------------------근로소득 일용근로--------------------------------------------
+        UNION ALL 
+            -----------------------------------------------------------------------------------------------------------
+            
+            SELECT  '3'  AS GUBUN
+                 , I.COMP_CODE
+                 , N'근로소득 연말정산'            AS AMOUNT_I_NAME
+                 , N'A04'                          AS TYPE_CODE
+                 , CASE WHEN ISNULL(I.RETR_DATE, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(
+                             REPLACE(@DateFormat, 'YYYY', SUBSTRING(I.RETR_DATE, 1, 4))
+                                                , 'MM',   SUBSTRING(I.RETR_DATE, 5, 2))
+                                                , 'DD',   SUBSTRING(I.RETR_DATE, 7, 2))
+                     END                              AS SUPP_DATE
+                 , N'연말정산'                        AS SUPP_TYPE
+                 , I.PERSON_NUMB
+                 , F.NAME
+                 , CONVERT(NVARCHAR(07), I.YEAR_YYYY) AS PAY_YYYYMM
+                 , ISNULL(I.INCOME_SUPP_TOTAL_I, 0) 
+                 + ISNULL(X.NON_TAX_EMPTION_I, 0)     AS SUPP_TOT_AMT           --소득지급
+                 , I.IN_TAX_I                         AS PAY_TAXAMT             --소득세
+                 , I.LOCAL_TAX_I                      AS LOC_TAXAMT             --주민세
+                 , I.SP_TAX_I                         AS SP_TAX_I               --농특세 
+                 , ISNULL(Y.NON_TAX_EMPTION_I, 0)     AS LIMIT_PAY_SUPP_I       --비과세
+                 , (ISNULL(I.INCOME_SUPP_TOTAL_I, 0) +  ISNULL(X.NON_TAX_EMPTION_I, 0)) 
+                 + ISNULL(Y.NON_TAX_EMPTION_I, 0)     AS SUPP_LIMIT_TOTAL_AMT   --급여총지급
+            
+              FROM      HAD600T I WITH(NOLOCK)
+             INNER JOIN HUM100T F WITH(NOLOCK) ON I.COMP_CODE   = F.COMP_CODE
+                                              AND I.PERSON_NUMB = F.PERSON_NUMB
+              LEFT JOIN (SELECT S1.COMP_CODE
+                              , S1.YEAR_YYYY
+                              , S1.PERSON_NUMB
+                              , SUM(S1.NON_TAX_EMPTION_I)  AS NON_TAX_EMPTION_I
+                           FROM      HAD610T AS S1 WITH (NOLOCK)
+                          INNER JOIN HBS120T AS S2 WITH (NOLOCK) ON S2.COMP_CODE   = S1.COMP_CODE
+                                                                AND S2.TAX_YYYY    = S1.YEAR_YYYY
+                                                                AND S2.NONTAX_CODE = S1.NONTAX_CODE
+                                                                AND S2.SEND_YN     = N'Y'
+                          WHERE S1.COMP_CODE = @COMP_CODE
+                            AND S1.YEAR_YYYY = @PRE_YEAR
+                          GROUP BY S1.COMP_CODE, S1.YEAR_YYYY, S1.PERSON_NUMB) X ON X.COMP_CODE   = I.COMP_CODE
+                                                                                AND X.YEAR_YYYY   = I.YEAR_YYYY
+                                                                                AND X.PERSON_NUMB = I.PERSON_NUMB
+            
+              LEFT JOIN (SELECT I.COMP_CODE
+                               , LEFT(I.RETR_DATE,6)            AS YEAR_YYYY
+                               , I.PERSON_NUMB
+                               , ISNULL(X.NON_TAX_EMPTION_I, 0) AS NON_TAX_EMPTION_I
+                           FROM      HAD600T I WITH(NOLOCK)  
+                          INNER JOIN HUM100T F WITH(NOLOCK) ON I.COMP_CODE   = F.COMP_CODE
+                                                           AND I.PERSON_NUMB = F.PERSON_NUMB 
+                          LEFT JOIN (SELECT S1.COMP_CODE
+                                          , S1.YEAR_YYYY
+                                          , S1.PERSON_NUMB
+                                          , SUM(ISNULL(S1.NON_TAX_EMPTION_I, 0)) AS NON_TAX_EMPTION_I
+                                       FROM      HAD610T AS S1 WITH (NOLOCK)
+                                      INNER JOIN HBS120T AS S2 WITH (NOLOCK) ON S2.COMP_CODE   = S1.COMP_CODE
+                                                                            AND S2.TAX_YYYY    = S1.YEAR_YYYY
+                                                                            AND S2.NONTAX_CODE = S1.NONTAX_CODE
+                                                                            AND S2.SEND_YN = 'Y'
+                                      WHERE S1.COMP_CODE = @COMP_CODE
+                                        AND S1.YEAR_YYYY = @PRE_YEAR
+                                      GROUP BY S1.COMP_CODE, S1.YEAR_YYYY, S1.PERSON_NUMB) X ON X.COMP_CODE   = I.COMP_CODE
+                                                                                            AND X.YEAR_YYYY   = I.YEAR_YYYY
+                                                                                            AND X.PERSON_NUMB = I.PERSON_NUMB
+                         WHERE I.COMP_CODE    = @COMP_CODE
+                           AND I.YEAR_YYYY    = LEFT(@PAY_YYYYMM, 4)
+                           AND I.HALFWAY_TYPE = N'Y'                           
+                           AND ((LEFT(I.RETR_DATE,6) &gt;= @RET_FR_YYYYMM) AND (LEFT(I.RETR_DATE,6) &lt;= @RET_TO_YYYYMM))
+                           AND F.SECT_CODE = @SECT_CODE) Y ON Y.COMP_CODE   = I.COMP_CODE
+                                                          AND Y.YEAR_YYYY   = I.YEAR_YYYY
+                                                          AND Y.PERSON_NUMB = I.PERSON_NUMB
+            
+                    WHERE I.COMP_CODE    = @COMP_CODE
+                      AND I.YEAR_YYYY    = @PRE_YEAR
+                      AND I.HALFWAY_TYPE = N'N'
+                      AND F.SECT_CODE    = @SECT_CODE
+
+----------------------------------------------'근로소득 연말정산'--------------------------------------------------------
+UNION ALL
+------------------------------------------------------------------------------------------------------------------
+
+            SELECT '3'  AS GUBUN
+                , H.COMP_CODE
+                , N'퇴직소득 그외'                           AS AMOUNT_I_NAME
+                , N'A22'                                     AS TYPE_CODE
+                , CASE WHEN ISNULL(H.SUPP_DATE, '') = '' THEN ''
+                       ELSE REPLACE(
+                            REPLACE(
+                            REPLACE(@DateFormat, 'YYYY', SUBSTRING(H.SUPP_DATE, 1, 4))
+                                               , 'MM',   SUBSTRING(H.SUPP_DATE, 5, 2))
+                                               , 'DD',   SUBSTRING(H.SUPP_DATE, 7, 2))
+                   END                                      AS SUPP_DATE
+                 , N'퇴직소득'                              AS SUPP_TYPE
+                 , H.PERSON_NUMB
+                 , F.NAME
+                 , LEFT(H.RETR_DATE, 6)                     AS PAY_YYYYMM
+            
+                , ISNULL(SUM(H.SUPP_TOTAL_I), 0) - ISNULL(SUM(M.SUPP_TOTAL_I),0)    AS SUPP_TOT_AMT 
+                , ISNULL(SUM(H.IN_TAX_I), 0)     - ISNULL(SUM(M.IN_TAX_I),0)        AS PAY_TAXAMT
+            
+                , ISNULL(SUM(H.LOCAL_TAX_I), 0) - ISNULL(SUM(M.LOCAL_TAX_I),0)      AS LOC_TAXAMT
+                , ISNULL(SUM(H.SP_TAX_I), 0)    - ISNULL(SUM(M.SP_TAX_I),0)         AS SP_TAX_I
+                , 0 AS LIMIT_PAY_SUPP_I
+                , ISNULL(SUM(H.SUPP_TOTAL_I), 0) - ISNULL(SUM(M.SUPP_TOTAL_I),0)    AS SUPP_LIMIT_TOTAL_AMT 
+            
+                      FROM HRT500T H WITH(NOLOCK)
+                                  INNER JOIN HUM100T F WITH(NOLOCK)
+                                          ON H.COMP_CODE   = F.COMP_CODE
+                                         AND H.PERSON_NUMB = F.PERSON_NUMB
+                                  LEFT JOIN ( SELECT A.SUPP_TOTAL_I
+                                                   , A.IN_TAX_I
+                                                   , A.COMP_CODE
+                                                   , A.PERSON_NUMB
+                                                   , A.LOCAL_TAX_I
+                                                   , A.SP_TAX_I
+                                                FROM            HRT500T A WITH(NOLOCK)
+                                                     INNER JOIN HUM100T Q WITH(NOLOCK) ON A.COMP_CODE   = Q.COMP_CODE
+                                                                                      AND A.PERSON_NUMB = Q.PERSON_NUMB 
+                                                     INNER JOIN (
+                                                                    SELECT B.PERSON_NUMB
+                                                                         , B.RETR_DATE
+                                                                         , B.COMP_CODE
+                                                                      FROM      HRT500T B WITH(NOLOCK)
+                                                                     INNER JOIN HUM100T C WITH(NOLOCK)
+                                                                                           ON B.COMP_CODE   = C.COMP_CODE
+                                                                                          AND B.PERSON_NUMB = C.PERSON_NUMB
+                                                                     WHERE B.COMP_CODE              = @COMP_CODE
+                                                                       AND ((LEFT(B.RETR_DATE, 6)  &gt;= @RET_FR_YYYYMM)  AND (LEFT(B.RETR_DATE, 6) &lt;= @RET_TO_YYYYMM))
+                                                                       AND ((LEFT(B.SUPP_DATE, 6)  &gt;= @SUPP_FR_YYYYMM) AND (LEFT(B.SUPP_DATE, 6) &lt;= @SUPP_TO_YYYYMM))
+                                                                       AND B.RETR_TYPE = N'R'
+                                                                       AND C.SECT_CODE = @SECT_CODE
+                                                                                                    ) R ON R.COMP_CODE         = A.COMP_CODE
+                                                                                                       AND R.PERSON_NUMB       = A.PERSON_NUMB
+                                                                                                       AND LEFT(R.RETR_DATE,4) = LEFT(A.SUPP_DATE,4)
+                                               WHERE A.COMP_CODE    =  @COMP_CODE
+                                                 AND A.RETR_TYPE    = N'M'       
+                                                 AND Q.SECT_CODE    = @SECT_CODE) AS M ON M.COMP_CODE   = H.COMP_CODE
+                                                                                      AND M.PERSON_NUMB = H.PERSON_NUMB
+                    WHERE H.COMP_CODE             = @COMP_CODE
+                      AND ((LEFT(H.RETR_DATE, 6)  &gt;= @RET_FR_YYYYMM)  AND (LEFT(H.RETR_DATE, 6) &lt;= @RET_TO_YYYYMM))
+                      AND ((LEFT(H.SUPP_DATE, 6)  &gt;= @SUPP_FR_YYYYMM) AND (LEFT(H.SUPP_DATE, 6) &lt;= @SUPP_TO_YYYYMM))
+                      AND H.RETR_TYPE != N'S'
+                      AND F.RETR_PENSION_KIND != N'DC'
+                      AND F.SECT_CODE = @SECT_CODE
+            GROUP BY H.COMP_CODE, H.SUPP_DATE, H.PERSON_NUMB, F.NAME, LEFT(H.RETR_DATE, 6)
+            
+            ----------------------------------------------퇴직소득 그외-------------------------------------------------
+        UNION ALL
+            ------------------------------------------------------------------------------------------------------------
+                        
+            SELECT '3'  AS GUBUN
+                 , K.COMP_CODE
+                 , N'사업소득 매월징수'            AS AMOUNT_I_NAME
+                 , N'A25'                          AS TYPE_CODE
+                 , CASE WHEN ISNULL(K.SUPP_DATE, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(
+                             REPLACE(@DateFormat, 'YYYY', SUBSTRING(K.SUPP_DATE, 1, 4))
+                                                , 'MM',   SUBSTRING(K.SUPP_DATE, 5, 2))
+                                                , 'DD',   SUBSTRING(K.SUPP_DATE, 7, 2))
+                     END                          AS SUPP_DATE
+                 , N'사업소득'                    AS SUPP_TYPE
+                 , K.PERSON_NUMB                  AS PERSON_NUMB
+                 , F.NAME                         AS NAME
+                 , CASE WHEN ISNULL(K.PAY_YYYYMM, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(K.PAY_YYYYMM, 1, 4))
+                                                         , 'MM',   SUBSTRING(K.PAY_YYYYMM, 5, 2))
+                    END                           AS PAY_YYYYMM
+                 , SUM(K.SUPP_TOTAL_I)            AS SUPP_TOT_AMT           --소득지급
+                 , SUM(K.IN_TAX_I)                AS PAY_TAX_AMT            --소득세
+                 , SUM(K.LOCAL_TAX_I)             AS LOC_TAX_AMT           --주민세
+                 , SUM(K.SP_TAX_I)                AS SP_TAX_I               --농특세
+                 , 0                              AS LIMIT_PAY_SUPP_I       --비과세
+                 , SUM(K.PAY_AMOUNT_I) + 0        AS SUPP_LIMIT_TOTAL_AMT   --급여총지급 
+              FROM      HPB200T K WITH(NOLOCK)
+             INNER JOIN HPB100T F WITH(NOLOCK) ON K.COMP_CODE   = F.COMP_CODE
+                                              AND K.PERSON_NUMB = F.PERSON_NUMB
+                                              AND K.DED_TYPE    = F.DED_TYPE
+              LEFT JOIN (SELECT A.COMP_CODE
+                              , A.PAY_YYYYMM
+                              , A.PERSON_NUMB
+                              , SUM(ISNULL(A.LIMIT_PAY_SUPP_I, 0)) AS LIMIT_PAY_SUPP_I
+                              , A.SUPP_TYPE
+                            FROM      HPA800T A  WITH (NOLOCK) 
+                           INNER JOIN HBS120T B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                              AND B.TAX_YYYY    = LEFT(A.PAY_YYYYMM, 4)
+                                                              AND B.NONTAX_CODE = A.NONTAX_CODE
+                           LEFT  JOIN BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE  = A.COMP_CODE
+                                                              AND M1.MAIN_CODE  = N'H032'
+                                                              AND M1.SUB_CODE   = A.SUPP_TYPE
+                          WHERE A.COMP_CODE  = @COMP_CODE
+                            AND ISNULL(M1.REF_CODE1, A.SUPP_TYPE)  = N'1'
+                            AND B.SEND_YN    = N'N'
+                          GROUP BY A.COMP_CODE, A.PAY_YYYYMM, A.PERSON_NUMB, A.SUPP_TYPE) N1 ON N1.COMP_CODE   = K.COMP_CODE
+                                                                                            AND N1.PERSON_NUMB = K.PERSON_NUMB
+                                                                                            AND N1.PAY_YYYYMM  = K.PAY_YYYYMM
+                                                                                            AND N1.SUPP_TYPE   = K.SUPP_TYPE
+             WHERE K.COMP_CODE      = @COMP_CODE
+               AND K.DED_TYPE       = N'1'
+               AND F.BUSINESS_TYPE != N'1'
+               AND ((K.PAY_YYYYMM  &gt;= @PAY_FR_YYYYMM) AND (K.PAY_YYYYMM  &lt;= @PAY_TO_YYYYMM))
+               AND ((LEFT(K.SUPP_DATE,6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(K.SUPP_DATE,6) &lt;= @SUPP_TO_YYYYMM))
+               AND F.SECT_CODE      = @SECT_CODE
+             GROUP BY K.COMP_CODE, K.SUPP_DATE, K.SUPP_TYPE, K.PERSON_NUMB, F.NAME, K.PAY_YYYYMM, N1.LIMIT_PAY_SUPP_I
+            
+            -----------------------------------------------사업소득 매월징수-----------------------------------------------
+        UNION ALL
+            ---------------------------------------------------------------------------------------------------------------
+            
+             SELECT '3' AS GUBUN
+                  , A.COMP_CODE
+                  , N'기타소득 그외'                     AS AMOUNT_I_NAME
+                  , N'A42'                               AS TYPE_CODE
+                  , CASE WHEN ISNULL(A.SUPP_DATE, '') = '' THEN ''
+                         ELSE REPLACE(
+                              REPLACE(
+                              REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.SUPP_DATE, 1, 4))
+                                                 , 'MM',   SUBSTRING(A.SUPP_DATE, 5, 2))
+                                                 , 'DD',   SUBSTRING(A.SUPP_DATE, 7, 2))
+                      END                               AS SUPP_DATE
+                  , N'기타소득'                         AS SUPP_TYPE
+                  , A.PERSON_NUMB                       AS PERSON_NUMB
+                  , B.NAME                              AS NAME
+                  , CASE WHEN ISNULL(A.PAY_YYYYMM, '') = '' THEN ''
+                         ELSE REPLACE(
+                              REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(A.PAY_YYYYMM, 1, 4))
+                                                          , 'MM',   SUBSTRING(A.PAY_YYYYMM, 5, 2))
+                     END                                AS PAY_YYYYMM
+                  , SUM(ISNULL(A.SUPP_TOTAL_I, 0))      AS SUPP_TOT_AMT             --소득지급
+                  , SUM(ISNULL(A.IN_TAX_I, 0))          AS PAY_TAXAMT               --소득세
+                  , SUM(ISNULL(A.LOCAL_TAX_I, 0))       AS LOC_TAXAMT               --주민세
+                  , SUM(ISNULL(A.SP_TAX_I, 0))          AS SP_TAX_I                 --농특세
+                  , 0                                   AS LIMIT_PAY_SUPP_I         --비과세
+                  , SUM(ISNULL(A.PAY_AMOUNT_I, 0)) + 0  AS SUPP_LIMIT_TOTAL_AMT     --급여총지급
+                    
+               FROM      HPB200T A WITH(NOLOCK) 
+              INNER JOIN HPB100T B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                               AND B.PERSON_NUMB = A.PERSON_NUMB
+                                               AND B.DED_TYPE    = A.DED_TYPE
+            
+             WHERE A.COMP_CODE      = @COMP_CODE
+               AND A.DED_TYPE       = N'2'
+               AND B.BUSINESS_TYPE != N'1'
+               AND ((A.PAY_YYYYMM  &gt;= @PAY_FR_YYYYMM) AND (A.PAY_YYYYMM  &lt;= @PAY_TO_YYYYMM))
+               AND ((LEFT(A.SUPP_DATE,6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(A.SUPP_DATE,6) &lt;= @SUPP_TO_YYYYMM))
+               AND B.SECT_CODE      = @SECT_CODE
+             GROUP BY A.COMP_CODE, A.SUPP_DATE, A.SUPP_TYPE, A.PERSON_NUMB, B.NAME, A.PAY_YYYYMM
+            
+            ----------------------------------------------기타소득 그외-------------------------------------------------
+        UNION ALL
+            ------------------------------------------------------------------------------------------------------------
+            SELECT '3'  AS GUBUN
+                 , M.COMP_CODE
+                 , N'이자소득'                           AS AMOUNT_I_NAME
+                 , N'A50'                                AS TYPE_CODE
+                 , CASE WHEN ISNULL(M.SUPP_DATE, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(
+                             REPLACE(@DateFormat, 'YYYY', SUBSTRING(M.SUPP_DATE, 1, 4))
+                                                , 'MM',   SUBSTRING(M.SUPP_DATE, 5, 2))
+                                                , 'DD',   SUBSTRING(M.SUPP_DATE, 7, 2))
+                     END                                AS SUPP_DATE
+                 , N'이자소득'                          AS SUPP_TYPE
+                 , M.PERSON_NUMB                        AS PERSON_NUMB
+                 , F.NAME                               AS NAME
+                 , CASE WHEN ISNULL(M.PAY_YYYYMM, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(M.PAY_YYYYMM, 1, 4))
+                                                         , 'MM',   SUBSTRING(M.PAY_YYYYMM, 5, 2))
+                     END                                AS PAY_YYYYMM
+                , SUM(ISNULL(M.SUPP_TOTAL_I, 0))        AS SUPP_TOT_AMT             --소득지급
+                , SUM(ISNULL(M.IN_TAX_I, 0))            AS PAY_TAXAMT               --소득세
+                , SUM(ISNULL(M.LOCAL_TAX_I, 0))         AS LOC_TAXAMT               --주민세     
+                , SUM(ISNULL(M.SP_TAX_I, 0))            AS SP_TAX_I                 --농특세
+                , 0                                     AS LIMIT_PAY_SUPP_I         --비과세
+                , SUM(ISNULL(M.PAY_AMOUNT_I, 0)) + 0    AS SUPP_LIMIT_TOTAL_AMT     --급여총지급
+              FROM      HPB200T M WITH(NOLOCK) 
+             INNER JOIN HPB100T F WITH(NOLOCK) ON M.COMP_CODE   = F.COMP_CODE
+                                              AND M.PERSON_NUMB = F.PERSON_NUMB
+                                              AND M.DED_TYPE    = F.DED_TYPE
+             INNER JOIN HBS130T T WITH(NOLOCK) ON M.COMP_CODE   = T.COMP_CODE
+                                              AND M.BU_CODE     = T.TAX_CODE 
+             WHERE M.COMP_CODE      = @COMP_CODE
+               AND M.DED_TYPE       = N'10'
+               AND ((M.PAY_YYYYMM  &gt;= @PAY_FR_YYYYMM) AND (M.PAY_YYYYMM  &lt;= @PAY_TO_YYYYMM))
+               AND T.TAX_YYYYMM     = @LAST_YYYYMM
+               AND F.BUSINESS_TYPE != N'1'
+               AND T.REF_CODE1  IN ('1', '10')
+               AND ((LEFT(M.SUPP_DATE,6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(M.SUPP_DATE,6) &lt;= @SUPP_TO_YYYYMM))
+               AND F.SECT_CODE     = @SECT_CODE
+             GROUP BY M.COMP_CODE, M.SUPP_DATE, M.SUPP_TYPE, M.PERSON_NUMB, F.NAME, M.PAY_YYYYMM
+            ----------------------------------------------이자소득----------------------------------------------------
+        UNION ALL
+            ----------------------------------------------------------------------------------------------------------
+            SELECT '3'  AS GUBUN
+                 , M.COMP_CODE
+                 , N'배당소득'                           AS AMOUNT_I_NAME
+                 , N'A60'                                AS TYPE_CODE
+                 , CASE WHEN ISNULL(M.SUPP_DATE, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(
+                             REPLACE(@DateFormat, 'YYYY', SUBSTRING(M.SUPP_DATE, 1, 4))
+                                                , 'MM',   SUBSTRING(M.SUPP_DATE, 5, 2))
+                                                , 'DD',   SUBSTRING(M.SUPP_DATE, 7, 2))
+                     END                                AS SUPP_DATE
+                 , N'배당소득'                          AS SUPP_TYPE
+                 , M.PERSON_NUMB                        AS PERSON_NUMB
+                 , F.NAME                               AS NAME
+                 , CASE WHEN ISNULL(M.PAY_YYYYMM, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(M.PAY_YYYYMM, 1, 4))
+                                                         , 'MM',   SUBSTRING(M.PAY_YYYYMM, 5, 2))
+                     END                                AS PAY_YYYYMM
+                , SUM(ISNULL(M.SUPP_TOTAL_I, 0))        AS SUPP_TOT_AMT             --소득지급
+                , SUM(ISNULL(M.IN_TAX_I, 0))            AS PAY_TAXAMT               --소득세
+                , SUM(ISNULL(M.LOCAL_TAX_I, 0))         AS LOC_TAXAMT               --주민세  
+                , SUM(ISNULL(M.SP_TAX_I, 0))            AS SP_TAX_I                 --농특세
+                , 0                                     AS LIMIT_PAY_SUPP_I         --비과세
+                , SUM(ISNULL(M.PAY_AMOUNT_I, 0)) + 0    AS SUPP_LIMIT_TOTAL_AMT     --급여총지급
+              FROM      HPB200T M WITH(NOLOCK) 
+             INNER JOIN HPB100T F WITH(NOLOCK) ON M.COMP_CODE   = F.COMP_CODE
+                                              AND M.PERSON_NUMB = F.PERSON_NUMB 
+                                              AND M.DED_TYPE    = F.DED_TYPE
+             INNER JOIN HBS130T T WITH(NOLOCK) ON M.COMP_CODE   = T.COMP_CODE
+                                              AND M.BU_CODE     = T.TAX_CODE 
+             WHERE M.COMP_CODE      = @COMP_CODE
+               AND M.DED_TYPE       = N'20'
+               AND ((M.PAY_YYYYMM  &gt;= @PAY_FR_YYYYMM) AND (M.PAY_YYYYMM  &lt;= @PAY_TO_YYYYMM))
+               AND T.TAX_YYYYMM     = @LAST_YYYYMM
+               AND F.BUSINESS_TYPE  != N'1'
+               AND T.REF_CODE1   IN (N'1',N'20')
+               AND ((LEFT(M.SUPP_DATE,6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(M.SUPP_DATE,6) &lt;= @SUPP_TO_YYYYMM))
+               AND F.SECT_CODE      = @SECT_CODE
+             GROUP BY M.COMP_CODE, M.SUPP_DATE, M.SUPP_TYPE, M.PERSON_NUMB, F.NAME, M.PAY_YYYYMM
+            ----------------------------------------------배당소득----------------------------------------------------
+        UNION ALL
+            ----------------------------------------------------------------------------------------------------------
+            SELECT '3'  AS GUBUN
+                 , M.COMP_CODE
+                 , N'내.외국인법인원천'                      AS AMOUNT_I_NAME
+                 , N'A80'                                    AS TYPE_CODE
+                 , CASE WHEN ISNULL(M.SUPP_DATE, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(
+                             REPLACE(@DateFormat, 'YYYY', SUBSTRING(M.SUPP_DATE, 1, 4))
+                                                , 'MM',   SUBSTRING(M.SUPP_DATE, 5, 2))
+                                                , 'DD',   SUBSTRING(M.SUPP_DATE, 7, 2))
+                     END                                    AS SUPP_DATE
+                 , N'내.외국인법인원천'                     AS SUPP_TYPE
+                 , M.PERSON_NUMB                            AS PERSON_NUMB
+                 , F.NAME                                   AS NAME
+                 , CASE WHEN ISNULL(M.PAY_YYYYMM, '') = '' THEN ''
+                        ELSE REPLACE(
+                             REPLACE(LEFT(@DateFormat, 7), 'YYYY', SUBSTRING(M.PAY_YYYYMM, 1, 4))
+                                                         , 'MM',   SUBSTRING(M.PAY_YYYYMM, 5, 2))
+                     END                                    AS PAY_YYYYMM     
+                 , SUM(ISNULL(M.SUPP_TOTAL_I, 0))           AS SUPP_TOT_AMT             --소득지급
+                 , SUM(ISNULL(M.CP_TAX_I, 0))               AS PAY_TAXAMT               --소득세
+                 , SUM(ISNULL(M.LOCAL_TAX_I, 0))            AS LOC_TAXAMT               --주민세
+                 , SUM(ISNULL(M.SP_TAX_I, 0))               AS SP_TAX_I                 --농특세
+                 , 0                                        AS LIMIT_PAY_SUPP_I         --비과세
+                 , SUM(ISNULL(M.PAY_AMOUNT_I, 0)) + 0       AS SUPP_LIMIT_TOTAL_AMT     --급여총지급
+              FROM      HPB200T M WITH(NOLOCK) 
+             INNER JOIN HPB100T F WITH(NOLOCK) ON M.COMP_CODE   = F.COMP_CODE
+                                              AND M.PERSON_NUMB = F.PERSON_NUMB 
+                                              AND M.DED_TYPE    = F.DED_TYPE
+             WHERE M.COMP_CODE      = @COMP_CODE
+               AND ((M.PAY_YYYYMM  &gt;= @PAY_FR_YYYYMM) AND (M.PAY_YYYYMM  &lt;= @PAY_TO_YYYYMM))
+               AND F.BUSINESS_TYPE  = N'1'
+               AND ((LEFT(M.SUPP_DATE,6) &gt;= @SUPP_FR_YYYYMM) AND (LEFT(M.SUPP_DATE,6) &lt;= @SUPP_TO_YYYYMM))
+               AND F.SECT_CODE      = @SECT_CODE
+             GROUP BY M.COMP_CODE, M.SUPP_DATE, M.SUPP_TYPE, M.PERSON_NUMB, F.NAME, M.PAY_YYYYMM
+            ORDER BY D.COMP_CODE, TYPE_CODE, PAY_YYYYMM, PERSON_NUMB, SUPP_DATE, SUPP_TYPE
+		--------------------------------------------------------------------------------------------------------
+		--총계  INSERT	
+		INSERT INTO #HPA991_TEMP_2
+				(GUBUN, COMP_CODE, AMOUNT_I_NAME, TYPE_CODE, SUPP_DATE, SUPP_TYPE, PERSON_NUMB, NAME, PAY_YYYYMM, SUPP_TOT_AMT, PAY_TAX_AMT, LOC_TAX_AMT, SP_TAX_I, LIMIT_PAY_SUPP_I, SUPP_LIMIT_TOTAL_AMT)
+		SELECT
+				   '4' AS GUBUN
+				 , COMP_CODE
+			     , AMOUNT_I_NAME
+			     , TYPE_CODE
+			     , '총계'         AS SUPP_DATE
+			
+			     , ''	AS SUPP_TYPE
+			     , CONVERT(NVARCHAR(05),COUNT(PERSON_NUMB)) + ' 명'   AS PERSON_NUMB
+			     , ''	AS NAME
+			     , ''	AS PAY_YYYYMM
+			
+			     , ISNULL(SUM(SUPP_TOT_AMT) ,0)			AS SUPP_TOT_AMT					--소득지급
+			     , ISNULL(SUM(PAY_TAX_AMT), 0)			AS PAY_TAX_AMT                  --소득세
+			     , ISNULL(SUM(LOC_TAX_AMT), 0)			AS LOC_TAX_AMT                  --주민세
+			     , ISNULL(SUM(SP_TAX_I), 0)				AS SP_TAX_I                     --농특세
+			     , ISNULL(SUM(LIMIT_PAY_SUPP_I), 0)		AS LIMIT_PAY_SUPP_I             --비과세
+			     , ISNULL(SUM(SUPP_LIMIT_TOTAL_AMT) ,0) AS SUPP_LIMIT_TOTAL_AMT        --급여총지급
+		FROM     #HPA991_TEMP_2
+		GROUP BY COMP_CODE, AMOUNT_I_NAME, TYPE_CODE
+		ORDER BY COMP_CODE, AMOUNT_I_NAME, TYPE_CODE
+		
+		--데이터 조회
+		SELECT	*
+		  FROM	#HPA991_TEMP_2
+		 ORDER	BY COMP_CODE, TYPE_CODE, GUBUN
+		 
+		 DROP TABLE #HPA991_TEMP_2
+	END
+
+	</select>
+</mapper>

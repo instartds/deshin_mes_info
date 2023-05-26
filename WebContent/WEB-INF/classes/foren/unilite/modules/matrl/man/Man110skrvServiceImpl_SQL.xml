@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="man110skrvServiceImpl">
+	<select id="man110skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* man110skrvServiceImpl.selectList */
+		DECLARE @CompCode       NVARCHAR(08)   /* 법인코드                 */
+		      , @DivCode        NVARCHAR(02)   /* 사업장                   */
+		      , @BasisYYYY      NVARCHAR(04)   /* 기준년도                 */
+		      , @LastYYYY       NVARCHAR(04)   /* 전년도                   */
+		      , @AmtUnit        NVARCHAR(01)   /* 금액단위(B042)           */
+		      , @AmtUnitN       NUMERIC        /* 금액단위(B042.REF_CODE1) */
+		      , @AvgVar         NUMERIC        /* 평균값 구할 변수) */
+		      , @UserId         NVARCHAR(100)  /* 사용자ID                 */
+		      , @LangType       NVARCHAR(02)   /* 언어구분                 */
+		      , @RefItem        NVARCHAR(01)   /* 명칭 참조 유형           */
+
+		    SET @CompCode  = #{S_COMP_CODE}
+		    SET @DivCode   = #{DIV_CODE}
+		    SET @BasisYYYY = #{BASIS_YYYY}
+		    SET @LastYYYY  = #{BASIS_YYYY} - 1
+		    SET @AmtUnit   = #{AMOUNT_UNIT}
+		    SET @AvgVar    = 12
+		    SET @UserId    = #{S_USER_ID}
+		    SET @LangType  = #{S_LANG_CODE}
+
+/*		    SET @CompCode  = 'MASTER'
+		    SET @DivCode   = '01'
+		    SET @BasisYYYY = '2020'
+		    SET @LastYYYY  = @BasisYYYY - 1
+		    SET @AmtUnit   = '1'
+		    SET @AvgVar    = 12
+		    SET @UserId    = 'OMEGA+'
+		    SET @LangType  = 'KR'
+*/
+
+		/* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+		  FROM BSA300T WITH(NOLOCK)
+		 WHERE USER_ID = @UserId
+
+		/* 표시화폐 단위 */
+		SELECT @AmtUnitN = REF_CODE1
+		  FROM BSA100T WITH(NOLOCK)
+		 WHERE COMP_CODE = @CompCode
+		   AND MAIN_CODE = 'B042'
+		   AND SUB_CODE  = @AmtUnit
+
+		    SET @AmtUnitN = ISNULL(@AmtUnitN, 1000)
+
+		IF(@BasisYYYY = SUBSTRING(CONVERT(NVARCHAR(08), GETDATE(), 112), 1, 4))
+		BEGIN
+		    SET @AvgVar = SUBSTRING(CONVERT(NVARCHAR(08), GETDATE(), 112), 5, 2)
+		END
+
+		-- 1. 반제품 제외한 데이터
+		SELECT Z.COMP_CODE
+		     , Z.DIV_CODE
+		     , ''                                                              AS CUSTOM_CODE
+		     , ''                                                              AS CUSTOM_NAME
+		     , Z.ITEM_ACCOUNT
+		     , Z.PRE_AVERAGE
+		     , (SUM(Z.AMOUNT_I1) + SUM(Z.AMOUNT_I2) + SUM(Z.AMOUNT_I3) 
+		     + SUM(Z.AMOUNT_I4) + SUM(Z.AMOUNT_I5) + SUM(Z.AMOUNT_I6)
+		     + SUM(Z.AMOUNT_I7) + SUM(Z.AMOUNT_I8) + SUM(Z.AMOUNT_I9)
+		     + SUM(Z.AMOUNT_I10) + SUM(Z.AMOUNT_I11) + SUM(Z.AMOUNT_I12))      AS TOTAL_AMOUNT
+		     , (SUM(Z.AMOUNT_I1) + SUM(Z.AMOUNT_I2) + SUM(Z.AMOUNT_I3)
+		     + SUM(Z.AMOUNT_I4) + SUM(Z.AMOUNT_I5) + SUM(Z.AMOUNT_I6)
+		     + SUM(Z.AMOUNT_I7) + SUM(Z.AMOUNT_I8) + SUM(Z.AMOUNT_I9)
+		     + SUM(Z.AMOUNT_I10) + SUM(Z.AMOUNT_I11) + SUM(Z.AMOUNT_I12))/ @AvgVar  AS AVG_AMOUNT
+		     , SUM(Z.AMOUNT_I1)                                                 AS AMOUNT_I1
+		     , SUM(Z.AMOUNT_I2)                                                 AS AMOUNT_I2
+		     , SUM(Z.AMOUNT_I3)                                                 AS AMOUNT_I3
+		     , SUM(Z.AMOUNT_I4)                                                 AS AMOUNT_I4
+		     , SUM(Z.AMOUNT_I5)                                                 AS AMOUNT_I5
+		     , SUM(Z.AMOUNT_I6)                                                 AS AMOUNT_I6
+		     , SUM(Z.AMOUNT_I7)                                                 AS AMOUNT_I7
+		     , SUM(Z.AMOUNT_I8)                                                 AS AMOUNT_I8
+		     , SUM(Z.AMOUNT_I9)                                                 AS AMOUNT_I9
+		     , SUM(Z.AMOUNT_I10)                                                AS AMOUNT_I10
+		     , SUM(Z.AMOUNT_I11)                                                AS AMOUNT_I11
+		     , SUM(Z.AMOUNT_I12)                                                AS AMOUNT_I12
+		  FROM (
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , C4.CODE_NAME                                        AS ITEM_ACCOUNT
+		              , ISNULL(B.PRE_AVERAGE, 0)                            AS PRE_AVERAGE
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '01' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN		-- + A.EXPENSE_I
+		                      ELSE 0                                                                                                                                --
+		                END                                                 AS AMOUNT_I1                                                                            --
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '02' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN       -- + A.EXPENSE_I
+		                      ELSE 0                                                                                                                                --
+		                END                                                 AS AMOUNT_I2                                                                            --
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '03' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN       -- + A.EXPENSE_I
+		                      ELSE 0                                                                                                                                --
+		                END                                                 AS AMOUNT_I3                                                                            --
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '04' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN       -- + A.EXPENSE_I
+		                      ELSE 0                                                                                                                                --
+		                END                                                 AS AMOUNT_I4                                                                            --
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '05' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN       -- + A.EXPENSE_I
+		                      ELSE 0                                                                                                                                --
+		                END                                                 AS AMOUNT_I5                                                                            --
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '06' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN       -- + A.EXPENSE_I
+		                      ELSE 0                                                                                                                                --
+		                END                                                 AS AMOUNT_I6                                                                            --
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '07' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN       -- + A.EXPENSE_I
+		                      ELSE 0                                                                                                                                --
+		                END                                                 AS AMOUNT_I7                                                                            --
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '08' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN       -- + A.EXPENSE_I
+		                      ELSE 0                                                                                                                                --
+		                END                                                 AS AMOUNT_I8                                                                            --
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '09' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN       -- + A.EXPENSE_I
+		                      ELSE 0                                                                                                                                --
+		                END                                                 AS AMOUNT_I9                                                                            --
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '10' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN       -- + A.EXPENSE_I
+		                      ELSE 0                                                                                                                                --
+		                END                                                 AS AMOUNT_I10                                                                           --
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '11' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN       -- + A.EXPENSE_I
+		                      ELSE 0                                                                                                                                --
+		                END                                                 AS AMOUNT_I11                                                                           --
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '12' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN       -- + A.EXPENSE_I
+		                      ELSE 0
+		                END                                                 AS AMOUNT_I12
+		          FROM       BTR100T A  WITH(NOLOCK)
+		          INNER JOIN BPR200T C3 WITH(NOLOCK) ON C3.COMP_CODE    = A.COMP_CODE
+		                                            AND C3.DIV_CODE     = A.DIV_CODE
+		                                            AND C3.ITEM_CODE    = A.ITEM_CODE
+		          INNER JOIN BSA100T C4 WITH(NOLOCK) ON C4.COMP_CODE    = A.COMP_CODE
+		                                            AND C4.MAIN_CODE    = 'B020'
+		                                            AND C4.SUB_CODE     = C3.ITEM_ACCOUNT
+		          LEFT  JOIN (SELECT R1.COMP_CODE
+		                           , R1.DIV_CODE
+		                          -- , R1.INOUT_CODE
+		                           , RC1.ITEM_ACCOUNT
+		                           , SUM(R1.INOUT_I + R1.EXPENSE_I) / @AmtUnitN / 12     AS PRE_AVERAGE
+		                        FROM       BTR100T R1  WITH(NOLOCK)
+		                        INNER JOIN BPR200T RC1 WITH(NOLOCK) ON RC1.COMP_CODE = R1.COMP_CODE
+		                                                           AND RC1.DIV_CODE  = R1.DIV_CODE
+		                                                           AND RC1.ITEM_CODE = R1.ITEM_CODE
+		                       WHERE R1.COMP_CODE      = @CompCode
+		                         AND R1.DIV_CODE       = @DivCode
+		                         AND SUBSTRING(R1.INOUT_DATE, 1, 4) = @LastYYYY
+		                         AND R1.INOUT_TYPE     = '1'
+		                         AND R1.CREATE_LOC     IN ('2', '6')
+								 AND R1.INOUT_CODE_TYPE='4'
+		                         AND RC1.ITEM_ACCOUNT != '20'    --반제품 제외
+		                       GROUP BY R1.COMP_CODE, R1.DIV_CODE, RC1.ITEM_ACCOUNT) B ON B.COMP_CODE  = A.COMP_CODE
+		                                                                              AND B.DIV_CODE   = A.DIV_CODE
+		                                                                               --AND B.INOUT_CODE = A.INOUT_CODE
+		                                                                              AND B.ITEM_ACCOUNT = C3.ITEM_ACCOUNT
+		          WHERE A.COMP_CODE      = @CompCode
+		            AND A.DIV_CODE       = @DivCode
+		            AND SUBSTRING(A.INOUT_DATE, 1, 4) = @BasisYYYY
+		            AND A.INOUT_TYPE     = '1'
+		            AND A.CREATE_LOC     IN ('2', '6')
+					AND A.INOUT_CODE_TYPE='4'
+		            AND C3.ITEM_ACCOUNT != '20'    --반제품 제외
+<!-- 20200410 추가: 조회조건 "창고(멀티)" 추가 -->
+			<if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+		            AND  A.WH_CODE IN
+				<foreach collection="WH_CODE" item="item" separator="," close=")" open="(">
+		                  #{item}
+				</foreach>
+			</if>
+		          GROUP BY A.COMP_CODE, A.DIV_CODE, A.INOUT_CODE, SUBSTRING(A.INOUT_DATE, 5, 2)
+		                 , B.PRE_AVERAGE
+		                 , C3.ITEM_ACCOUNT, C4.CODE_NAME
+		  ) Z
+		 GROUP BY Z.COMP_CODE
+		        , Z.DIV_CODE
+		        , Z.ITEM_ACCOUNT
+		        , Z.PRE_AVERAGE
+
+		UNION ALL
+
+		-- 2. 반제품 데이터
+		SELECT Z.COMP_CODE
+		     , Z.DIV_CODE
+		     , Z.INOUT_CODE                                                    AS CUSTOM_CODE
+		     , Z.CUSTOM_NAME                                                   AS CUSTOM_NAME
+		     --, Z.ITEM_LEVEL3
+		     --, Z.ITEM_ACCOUNT
+		     , Z2.LEVEL_NAME                                                   AS ITEM_ACCOUNT
+		     , Z.PRE_AVERAGE
+		     , (SUM(Z.AMOUNT_I1) + SUM(Z.AMOUNT_I2) + SUM(Z.AMOUNT_I3) 
+		     + SUM(Z.AMOUNT_I4) + SUM(Z.AMOUNT_I5) + SUM(Z.AMOUNT_I6)
+		     + SUM(Z.AMOUNT_I7) + SUM(Z.AMOUNT_I8) + SUM(Z.AMOUNT_I9)
+		     + SUM(Z.AMOUNT_I10) + SUM(Z.AMOUNT_I11) + SUM(Z.AMOUNT_I12))      AS TOTAL_AMOUNT
+		     , (SUM(Z.AMOUNT_I1) + SUM(Z.AMOUNT_I2) + SUM(Z.AMOUNT_I3)
+		     + SUM(Z.AMOUNT_I4) + SUM(Z.AMOUNT_I5) + SUM(Z.AMOUNT_I6)
+		     + SUM(Z.AMOUNT_I7) + SUM(Z.AMOUNT_I8) + SUM(Z.AMOUNT_I9)
+		     + SUM(Z.AMOUNT_I10) + SUM(Z.AMOUNT_I11) + SUM(Z.AMOUNT_I12))/ @AvgVar  AS AVG_AMOUNT
+		     , SUM(Z.AMOUNT_I1)                                                 AS AMOUNT_I1
+		     , SUM(Z.AMOUNT_I2)                                                 AS AMOUNT_I2
+		     , SUM(Z.AMOUNT_I3)                                                 AS AMOUNT_I3
+		     , SUM(Z.AMOUNT_I4)                                                 AS AMOUNT_I4
+		     , SUM(Z.AMOUNT_I5)                                                 AS AMOUNT_I5
+		     , SUM(Z.AMOUNT_I6)                                                 AS AMOUNT_I6
+		     , SUM(Z.AMOUNT_I7)                                                 AS AMOUNT_I7
+		     , SUM(Z.AMOUNT_I8)                                                 AS AMOUNT_I8
+		     , SUM(Z.AMOUNT_I9)                                                 AS AMOUNT_I9
+		     , SUM(Z.AMOUNT_I10)                                                AS AMOUNT_I10
+		     , SUM(Z.AMOUNT_I11)                                                AS AMOUNT_I11
+		     , SUM(Z.AMOUNT_I12)                                                AS AMOUNT_I12
+		  FROM (
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , A.INOUT_CODE
+		              , CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+		                     WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+		                     ELSE C1.CUSTOM_NAME
+		                END                                                 AS CUSTOM_NAME
+		              , C2.ITEM_LEVEL3                                      AS ITEM_LEVEL3
+		              --, C4.CODE_NAME                                        AS ITEM_ACCOUNT
+		              , ISNULL(B.PRE_AVERAGE, 0)                            AS PRE_AVERAGE
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '01' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN
+		                      ELSE 0
+		                END                                                 AS AMOUNT_I1
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '02' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN
+		                      ELSE 0
+		                END                                                 AS AMOUNT_I2
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '03' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN
+		                      ELSE 0
+		                END                                                 AS AMOUNT_I3
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '04' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN
+		                      ELSE 0
+		                END                                                 AS AMOUNT_I4
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '05' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN
+		                      ELSE 0
+		                END                                                 AS AMOUNT_I5
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '06' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN
+		                      ELSE 0
+		                END                                                 AS AMOUNT_I6
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '07' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN
+		                      ELSE 0
+		                END                                                 AS AMOUNT_I7
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '08' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN
+		                      ELSE 0
+		                END                                                 AS AMOUNT_I8
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '09' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN
+		                      ELSE 0
+		                END                                                 AS AMOUNT_I9
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '10' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN
+		                      ELSE 0
+		                END                                                 AS AMOUNT_I10
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '11' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN
+		                      ELSE 0
+		                END                                                 AS AMOUNT_I11
+		              , CASE WHEN SUBSTRING(A.INOUT_DATE, 5, 2) = '12' THEN SUM(A.INOUT_I+A.EXPENSE_I) / @AmtUnitN
+		                      ELSE 0
+		                END                                                 AS AMOUNT_I12
+		          FROM       BTR100T A  WITH(NOLOCK)
+		          INNER JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE    = A.COMP_CODE
+		                                            AND C1.CUSTOM_CODE  = A.INOUT_CODE
+		          INNER JOIN BPR100T C2 WITH(NOLOCK) ON C2.COMP_CODE    = A.COMP_CODE
+		                                            AND C2.ITEM_CODE    = A.ITEM_CODE
+		          INNER JOIN BPR200T C3 WITH(NOLOCK) ON C3.COMP_CODE    = A.COMP_CODE
+		                                            AND C3.DIV_CODE     = A.DIV_CODE
+		                                            AND C3.ITEM_CODE    = A.ITEM_CODE
+		          --INNER JOIN BSA100T C4 WITH(NOLOCK) ON C4.COMP_CODE    = A.COMP_CODE
+		          --                                  AND C4.MAIN_CODE    = 'B020'
+		          --                                  AND C4.SUB_CODE     = C3.ITEM_ACCOUNT
+		          LEFT  JOIN (SELECT R1.COMP_CODE
+		                           , R1.DIV_CODE
+		                           , R1.INOUT_CODE
+		                           , RC2.ITEM_LEVEL3
+		                           , RC3.ITEM_ACCOUNT
+		                           , SUM(R1.INOUT_I+R1.EXPENSE_I) / @AmtUnitN / 12     AS PRE_AVERAGE
+		                        FROM       BTR100T R1  WITH(NOLOCK)
+		                        INNER JOIN BPR100T RC2 WITH(NOLOCK) ON RC2.COMP_CODE = R1.COMP_CODE
+		                                                           AND RC2.ITEM_CODE = R1.ITEM_CODE
+		                        INNER JOIN BPR200T RC3 WITH(NOLOCK) ON RC3.COMP_CODE = R1.COMP_CODE
+		                                                           AND RC3.DIV_CODE  = R1.DIV_CODE
+		                                                           AND RC3.ITEM_CODE = R1.ITEM_CODE
+		                       WHERE R1.COMP_CODE      = @CompCode
+		                         AND R1.DIV_CODE       = @DivCode
+		                         AND SUBSTRING(R1.INOUT_DATE, 1, 4) = @LastYYYY
+		                         AND R1.INOUT_TYPE     = '1'
+		                         AND R1.CREATE_LOC     IN ('2', '6')
+								 AND R1.INOUT_CODE_TYPE IN ('4','5')
+		                         AND RC3.ITEM_ACCOUNT  = '20'    --반제품
+		                       GROUP BY R1.COMP_CODE, R1.INOUT_CODE, R1.DIV_CODE, RC2.ITEM_LEVEL3, RC3.ITEM_ACCOUNT) B ON B.COMP_CODE    = A.COMP_CODE
+		                                                                                                              AND B.DIV_CODE     = A.DIV_CODE
+		                                                                                                              AND B.INOUT_CODE   = A.INOUT_CODE
+		                                                                                                              AND B.ITEM_LEVEL3  = C2.ITEM_LEVEL3
+		                                                                                                              AND B.ITEM_ACCOUNT = C3.ITEM_ACCOUNT
+		          WHERE A.COMP_CODE      = @CompCode
+		            AND A.DIV_CODE       = @DivCode
+		            AND SUBSTRING(A.INOUT_DATE, 1, 4) = @BasisYYYY
+		            AND A.INOUT_TYPE     = '1'
+		            AND A.CREATE_LOC     IN ('2', '6')
+					AND A.INOUT_CODE_TYPE IN ('4','5')
+		            AND C3.ITEM_ACCOUNT  = '20'    --반제품
+<!-- 20200410 추가: 조회조건 "창고(멀티)" 추가 -->
+			<if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+		            AND  A.WH_CODE IN
+				<foreach collection="WH_CODE" item="item" separator="," close=")" open="(">
+		                  #{item}
+				</foreach>
+			</if>
+		          GROUP BY A.COMP_CODE, A.DIV_CODE, A.INOUT_CODE, SUBSTRING(A.INOUT_DATE, 5, 2)
+		                 , B.PRE_AVERAGE
+		                 , C2.ITEM_LEVEL3
+		                 , C3.ITEM_ACCOUNT         --, C4.CODE_NAME
+		                 , C1.CUSTOM_NAME
+		                 , C1.CUSTOM_NAME1
+		                 , C1.CUSTOM_NAME2
+		  ) Z
+		  LEFT JOIN BPR000T Z2 ON Z2.COMP_CODE = Z.COMP_CODE
+		                      AND Z2.LEVEL3    = Z.ITEM_LEVEL3
+		 GROUP BY Z.COMP_CODE
+		        , Z.DIV_CODE
+		        , Z.INOUT_CODE
+		        , Z.CUSTOM_NAME
+		        --, Z.ITEM_LEVEL3
+		        --, Z.ITEM_ACCOUNT
+		        , Z2.LEVEL_NAME
+		        , Z.PRE_AVERAGE
+		 ORDER BY 1, 2, 4      --COMP_CODE, DIV_CODE, CUSTOM_NAME
+	</select>
+</mapper>

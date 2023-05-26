@@ -1,0 +1,767 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_afs100skrServiceImpl_KOCIS">
+<select id="s_afs100skrServiceImpl_KOCIS.selectBudgName" parameterType="Map" resultType="rMap">		/* BUDG_NAME 컬럼수*/
+--UAccntPopupKrv.CAccntPopupKR[fnGetBudgCode] Query02
+BEGIN
+    DECLARE         @COMP_CODE          NVARCHAR(08)
+
+--  [ 변수 값 할당 ] ------------------------------------------------------------------------------------------
+    SET @COMP_CODE  = #{S_COMP_CODE}
+
+--  [ 데이터 조회 ] -------------------------------------------------------------------------------------------
+    SELECT  CODE_NAME
+    FROM    uniLITE.fnGetBudgLevelName(@COMP_CODE, '')
+END	
+</select>	
+	
+<select id="s_afs100skrServiceImpl_KOCIS.selectList" parameterType="Map" resultType="rMap">		/* 메인*/
+--afs100skr.Cafs100skr[fnAfb710QStd] Query02
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+--  0. 변수 선언 ----------------------------------------------------------------------------------------------------    
+    DECLARE   @COMP_CODE           NVARCHAR(08)   --법인코드
+            , @FR_DATE             NVARCHAR(08)   --시작일
+            , @TO_DATE             NVARCHAR(08)   --종료일
+            , @ST_DATE             NVARCHAR(08)
+            , @DIV_CODE            NVARCHAR(08)   --사업장 
+            , @PJT_CODE            NVARCHAR(08)   --프로젝트코드
+            , @BUDG_CODE           NVARCHAR(30)   --예산코드
+           /* , @FR_DEPT_CODE        NVARCHAR(08)   --시작부서 */
+           /* , @TO_DEPT_CODE        NVARCHAR(08)   --종료부서 */
+            , @BUDG_TYPE           NVARCHAR(08)   --수지구분
+            , @SEND_CHK            NVARCHAR(01)   --자금이체등록건 체크
+            , @APPEND_CHK          NVARCHAR(01)   --완결건 체크
+            , @DATE_OPT            NVARCHAR(01)   --일자기준(1:전표일, 2:지급일)
+            , @DRAFTER_PN          NVARCHAR(10)   --추산작성자
+            , @DRAFTER_NM          NVARCHAR(40)   --추산작성자명
+            , @PAYDRAFTER_PN       NVARCHAR(10)   --지출작성자
+            , @PAYDRAFTER_NM       NVARCHAR(40)   --지출자성자명
+
+    SET       @COMP_CODE    = #{S_COMP_CODE}
+    SET       @FR_DATE      = #{FR_AC_DATE}
+    SET       @TO_DATE      = #{TO_AC_DATE}
+    SET       @ST_DATE      = LEFT(@FR_DATE, 4) + '0101'
+    SET       @PJT_CODE     = #{AC_PROJECT_CODE}
+    SET       @BUDG_CODE    = #{BUDG_CODE}
+  /* SET      @FR_DEPT_CODE = N'' */
+  /* SET      @TO_DEPT_CODE = N'' */
+    SET       @BUDG_TYPE    = #{BUDG_TYPE}
+    SET       @SEND_CHK     = #{SEND_CHK}
+    SET       @APPEND_CHK   = #{APPEND_CHK}
+    SET       @DATE_OPT     = #{DATE_OPT}
+    SET       @DRAFTER_PN   = #{DRAFTER_PN}
+    SET       @DRAFTER_NM   = #{DRAFTER_NM}
+    SET       @PAYDRAFTER_PN   = #{PAYDRAFTER_PN}
+    SET       @PAYDRAFTER_NM   = #{PAYDRAFTER_NM}
+
+--  1. 날짜 포맷 유형 설정 ------------------------------------------------------------------------------------------    
+    DECLARE @DateFormat         NVARCHAR(01)
+          , @TimeFormat         NVARCHAR(01)    
+
+    SELECT TOP 1 @DateFormat = SUBSTRING(CODE_NAME, 5, 1)
+    FROM   BSA100T WITH (NOLOCK)
+    WHERE  COMP_CODE  = @COMP_CODE
+    AND    MAIN_CODE  = 'B044'
+    AND    REF_CODE1  = 'Y'
+
+    SET @DateFormat = ISNULL(@DateFormat, '.')
+    SET @TimeFormat = ISNULL(@TimeFormat, ':')
+
+----  2.1 수입/지출 이월금액 임시 테이블 선언 ---------------------------------------------------------------------------------------------    
+    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects  WHERE id = OBJECT_ID('tempdb..#afs100skr_bal'))
+       DROP TABLE #afs100skr_bal
+
+    CREATE TABLE #afs100skr_bal
+    (
+    --     기본정보
+           COMP_CODE            NVARCHAR(10)                -- 법인코드
+         , SORT_DATE            NVARCHAR(20)                -- 일계/누계일자
+         , GUBUN                NVARCHAR(02)                -- 구분
+         , SLIP_DATE            NVARCHAR(10)                -- 전표일
+         , DRAFT_NO             NVARCHAR(20)                -- 수입/지출번호
+         , IN_I                 NUMERIC(30,6)   DEFAULT 0   -- 수금액
+         , OUT_I                NUMERIC(30,6)   DEFAULT 0   -- 지출액
+         , ACCRUE_I             NUMERIC(30,6)   DEFAULT 0   -- 잔액
+    )
+
+----  2.2 수입/지출내역 임시 테이블 선언 ---------------------------------------------------------------------------------------------    
+    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects  WHERE id = OBJECT_ID('tempdb..#afs100skr'))
+       DROP TABLE #afs100skr
+
+    CREATE TABLE #afs100skr
+    (
+    --     기본정보
+           COMP_CODE            NVARCHAR(10)                -- 법인코드
+         , SORT_DATE            NVARCHAR(20)                -- 일계/누계일자
+         , GUBUN                NVARCHAR(02)                -- 구분
+         , SLIP_DATE            NVARCHAR(10)                -- 전표일
+         , APP_DATE             NVARCHAR(10)                -- 결재완결일
+         , TRANS_DATE           NVARCHAR(10)                -- 자금이체일
+         , DRAFT_NO             NVARCHAR(20)                -- 수입/지출번호
+         , TITLE                NVARCHAR(100)               -- 수입/지출건명
+         , CUSTOM_NAME          NVARCHAR(100)               -- 거래처명
+         , BANKBOOK_NUM         NVARCHAR(50)                -- 거래처 계좌번호
+         , IN_I                 NUMERIC(30,6)   DEFAULT 0   -- 수금액
+         , OUT_I                NUMERIC(30,6)   DEFAULT 0   -- 지출액
+         , ACCRUE_I             NUMERIC(30,6)   DEFAULT 0   -- 잔액
+         , PJT_CODE             NVARCHAR(08)                -- 프로젝트코드
+         , PJT_NAME             NVARCHAR(50)                -- 프로젝트명
+         , BUDG_CODE            NVARCHAR(50)                -- 예산코드
+         , IF_CODE              NVARCHAR(50)                -- 예산Mapping
+         , DEPT_CODE            NVARCHAR(08)                -- 부서코드
+         , DEPT_NAME            NVARCHAR(30)                -- 부서명
+         , EX_DATE              NVARCHAR(10)                -- 결의일자
+         , EX_NUM               NUMERIC(7,0)                -- 결의번호
+         , AC_DATE              NVARCHAR(10)                -- 회계일자
+         , SLIP_NUM             NUMERIC(7,0)                -- 회계번호
+         , DRAFTER              NVARCHAR(40)                -- 추산작성자
+         , PAY_DRAFTER          NVARCHAR(40)                -- 지출작성자
+         , BUDG_TYPE            NVARCHAR(01)                -- 수지구분(1:수입,2:지출)
+         , BUDG_TYPE_NM         NVARCHAR(20)                -- 수지구분(1:수입,2:지출)
+
+    --     기타정보
+         , SORT_KEY             AS RTRIM(COMP_CODE) + RTRIM(SORT_DATE) + RTRIM(GUBUN) + RTRIM(DRAFT_NO)
+    )
+    CREATE INDEX #afs100skr_IDX01 ON #afs100skr(SORT_KEY) 
+
+    IF (@BUDG_TYPE = '' OR @BUDG_TYPE = '1')
+    BEGIN
+--  3.1. 전월이월_수입액 데이터 생성-----------------------------------------------------------------------------------------    
+       INSERT INTO #afs100skr_bal
+            ( COMP_CODE   , SORT_DATE   , GUBUN     , SLIP_DATE    , DRAFT_NO
+            , IN_I        , OUT_I       , ACCRUE_I)
+       SELECT A.COMP_CODE                                 AS COMP_CODE
+            , @ST_DATE                                    AS SORT_DATE
+            , '1'                                         AS GUBUN
+            , ''                                          AS SLIP_DATE
+            , '이월금액'                                  AS DRAFT_NO
+            , SUM(ISNULL(B.IN_AMT_I, 0))                  AS IN_I
+            , 0                                           AS OUT_I
+            , SUM(ISNULL(B.IN_AMT_I, 0))                  AS ACCRUE_I
+       FROM              AFB800T A  WITH (NOLOCK)
+              INNER JOIN AFB810T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+                                                 AND B.IN_DRAFT_NO  = A.IN_DRAFT_NO
+              LEFT  JOIN T_GWIF  C  WITH (NOLOCK) ON C.GWIF_KEY1    = A.COMP_CODE
+                                                 AND C.GWIF_KEY2    = N'79'
+                                                 AND C.GWIF_KEY3    = A.IN_DRAFT_NO
+              LEFT  JOIN HUM100T D1 WITH (NOLOCK) ON D1.COMP_CODE   = A.COMP_CODE
+                                                 AND D1.PERSON_NUMB = A.DRAFTER
+       WHERE  A.COMP_CODE  = @COMP_CODE
+       AND    A.SLIP_DATE &gt;= @ST_DATE
+       AND    A.SLIP_DATE &lt;  @FR_DATE
+       <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+	   		AND     A.DIV_CODE IN 
+			<foreach collection="DIV_CODE" item="item" separator="," close=")" open="(">
+				#{item}
+			</foreach>
+	   </if>
+       
+       AND  ((B.PJT_CODE     = @PJT_CODE           AND @PJT_CODE        != '')  OR (@PJT_CODE        = ''))
+       AND  ((B.BUDG_CODE LIKE @BUDG_CODE + '%'    AND @BUDG_CODE       != '')  OR (@BUDG_CODE       = ''))
+       
+		<if test="@foren.Ognl@isNotEmpty(DEPTS)">
+	   		AND  A.DEPT_CODE	 IN
+			<foreach collection="DEPTS" item="item" separator="," close=")" open="(">
+				#{item}
+			</foreach>
+		</if>
+      /* AND  ((A.DEPT_CODE   &gt;= @FR_DEPT_CODE       AND @FR_DEPT_CODE    != '')  OR (@FR_DEPT_CODE    = '')) */
+      /* AND  ((A.DEPT_CODE   &lt;= @TO_DEPT_CODE       AND @TO_DEPT_CODE    != '')  OR (@TO_DEPT_CODE    = '')) */
+       AND  ((A.DRAFTER      = @DRAFTER_PN         AND @DRAFTER_PN      != '')  OR (@DRAFTER_PN      = ''))
+       AND  ((D1.NAME        = @DRAFTER_NM         AND @DRAFTER_NM      != '')  OR (@DRAFTER_NM      = ''))
+       AND  ((A.DRAFTER      = @PAYDRAFTER_PN      AND @PAYDRAFTER_PN   != '')  OR (@PAYDRAFTER_PN   = ''))
+       AND  ((D1.NAME        = @PAYDRAFTER_NM      AND @PAYDRAFTER_NM   != '')  OR (@PAYDRAFTER_NM   = ''))
+      
+        <if test="APPEND_CHK == &quot;Y&quot;">
+		     AND   ISNULL(C.GW_STATUS, '0')  = N'9'
+        </if>
+        <if test="APPEND_CHK != &quot;Y&quot;">
+		      AND  ISNULL(C.GW_STATUS, '0')  IN ('0', '1', '9')
+		</if>
+       
+       GROUP BY A.COMP_CODE
+    END
+
+    IF (@BUDG_TYPE = '' OR @BUDG_TYPE = '2')
+    BEGIN
+--  3.1. 전월이월_지출액 데이터 생성 -----------------------------------------------------------------------------------------    
+       INSERT INTO #afs100skr_bal
+            ( COMP_CODE   , SORT_DATE   , GUBUN     , SLIP_DATE    , DRAFT_NO
+            , IN_I        , OUT_I       , ACCRUE_I)
+       SELECT A.COMP_CODE                                 AS COMP_CODE
+            , @ST_DATE                                    AS SORT_DATE
+            , '1'                                         AS GUBUN
+            , ''                                          AS SLIP_DATE
+            , '이월금액'                                  AS DRAFT_NO
+            , 0                                           AS IN_I
+            , SUM(ISNULL(B.REAL_AMT_I, 0))                AS OUT_I
+            , SUM(ISNULL(B.REAL_AMT_I, 0))                AS ACCRUE_I
+       FROM              AFB700T A  WITH (NOLOCK)
+              INNER JOIN AFB710T B  WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+                                                 AND B.PAY_DRAFT_NO   = A.PAY_DRAFT_NO
+              LEFT  JOIN T_GWIF  C  WITH (NOLOCK) ON C.GWIF_KEY1      = A.COMP_CODE
+                                                 AND C.GWIF_KEY2      = N'80'
+                                                 AND C.GWIF_KEY3      = A.PAY_DRAFT_NO
+              LEFT  JOIN AFB900T D  WITH (NOLOCK) ON D.COMP_CODE      = A.COMP_CODE
+                                                 AND D.PROV_DRAFT_NO  = B.PAY_DRAFT_NO
+                                                 AND D.PROV_DRAFT_SEQ = B.SEQ
+              LEFT  JOIN AFB600T E  WITH (NOLOCK) ON E.COMP_CODE      = A.COMP_CODE
+                                                 AND E.DRAFT_NO       = A.DRAFT_NO
+              LEFT  JOIN HUM100T D1 WITH (NOLOCK) ON D1.COMP_CODE     = A.COMP_CODE
+                                                 AND D1.PERSON_NUMB   = A.DRAFTER
+              LEFT  JOIN HUM100T D2 WITH (NOLOCK) ON D2.COMP_CODE     = E.COMP_CODE
+                                                 AND D2.PERSON_NUMB   = E.DRAFTER
+       WHERE  A.COMP_CODE  = @COMP_CODE
+       
+        <choose>
+			<when test="DATE_OPT == 1">
+		       AND    A.SLIP_DATE &gt;= @ST_DATE
+      		   AND    A.SLIP_DATE &lt;  @FR_DATE
+		    </when>
+		    <otherwise>
+		      AND    D.TRANS_DATE &gt;= @ST_DATE
+    		  AND    D.TRANS_DATE &lt;  @FR_DATE
+		    </otherwise>
+	  	</choose>
+    
+        <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+	   		AND     A.DIV_CODE IN 
+			<foreach collection="DIV_CODE" item="item" separator="," close=")" open="(">
+				#{item}
+			</foreach>
+	    </if>
+	    
+       AND  ((B.PJT_CODE     = @PJT_CODE           AND @PJT_CODE        != '')  OR (@PJT_CODE        = ''))
+       AND  ((B.BUDG_CODE LIKE @BUDG_CODE + '%'    AND @BUDG_CODE       != '')  OR (@BUDG_CODE       = ''))
+		<if test="@foren.Ognl@isNotEmpty(DEPTS)">
+	   		AND  A.DEPT_CODE	 IN
+			<foreach collection="DEPTS" item="item" separator="," close=")" open="(">
+				#{item}
+			</foreach>
+		</if>
+      /* AND  ((A.DEPT_CODE   &gt;= @FR_DEPT_CODE       AND @FR_DEPT_CODE    != '')  OR (@FR_DEPT_CODE    = '')) */
+      /* AND  ((A.DEPT_CODE   &lt;= @TO_DEPT_CODE       AND @TO_DEPT_CODE    != '')  OR (@TO_DEPT_CODE    = '')) */
+       AND  ((A.DRAFTER      = @DRAFTER_PN         AND @DRAFTER_PN      != '')  OR (@DRAFTER_PN      = ''))
+       AND  ((D1.NAME        = @DRAFTER_NM         AND @DRAFTER_NM      != '')  OR (@DRAFTER_NM      = ''))
+       AND  ((E.DRAFTER      = @PAYDRAFTER_PN      AND @PAYDRAFTER_PN   != '')  OR (@PAYDRAFTER_PN   = ''))
+       AND  ((D2.NAME        = @PAYDRAFTER_NM      AND @PAYDRAFTER_NM   != '')  OR (@PAYDRAFTER_NM   = ''))
+      
+      <if test="SEND_CHK == &quot;Y&quot;">
+       AND    ISNULL(B.TRANS_SEQ, 0) != 0
+      </if>
+       
+     <if test="APPEND_CHK == &quot;Y&quot;">
+		     AND   ISNULL(C.GW_STATUS, '0')  = N'9'
+        </if>
+        <if test="APPEND_CHK != &quot;Y&quot;">
+		      AND  ISNULL(C.GW_STATUS, '0')  IN ('0', '1', '9')
+		</if>
+       
+       
+       
+       GROUP BY A.COMP_CODE
+    END
+
+    IF (@BUDG_TYPE = '' OR @BUDG_TYPE = '1')
+    BEGIN
+--  3. 수입액 데이터 생성 -----------------------------------------------------------------------------------------    
+       INSERT INTO #afs100skr
+            ( COMP_CODE   , SORT_DATE   , GUBUN        , SLIP_DATE  , APP_DATE   , TRANS_DATE  , DRAFT_NO
+            , TITLE       , CUSTOM_NAME , BANKBOOK_NUM , IN_I       , OUT_I      , ACCRUE_I    , PJT_CODE    , PJT_NAME
+            , BUDG_CODE   , IF_CODE     , DEPT_CODE    , DEPT_NAME  , EX_DATE    , EX_NUM      , AC_DATE     , SLIP_NUM
+            , DRAFTER     , PAY_DRAFTER , BUDG_TYPE    , BUDG_TYPE_NM)
+       SELECT A.COMP_CODE
+            , A.SLIP_DATE                                 AS SORT_DATE
+            , '2'                                         AS GUBUN
+            , SUBSTRING(A.SLIP_DATE, 1, 4) + @DateFormat + 
+              SUBSTRING(A.SLIP_DATE, 5, 2) + @DateFormat + 
+              SUBSTRING(A.SLIP_DATE, 7, 2)                AS SLIP_DATE
+            , CASE WHEN ISNULL(C.APP_DATE, '') = '' THEN NULL
+                   ELSE SUBSTRING(CONVERT(NVARCHAR(8), C.APP_DATE, 112), 1, 4) + @DateFormat + 
+                        SUBSTRING(CONVERT(NVARCHAR(8), C.APP_DATE, 112), 5, 2) + @DateFormat + 
+                        SUBSTRING(CONVERT(NVARCHAR(8), C.APP_DATE, 112), 7, 2)
+              END                                         AS APP_DATE
+            , SUBSTRING(A.SLIP_DATE, 1, 4) + @DateFormat + 
+              SUBSTRING(A.SLIP_DATE, 5, 2) + @DateFormat + 
+              SUBSTRING(A.SLIP_DATE, 7, 2)                AS TRNAS_DATE
+            , A.IN_DRAFT_NO                               AS DRAFT_NO
+            , ISNULL(A.TITLE       , '')                  AS TITLE
+            , MAX(ISNULL(D3.CUSTOM_NAME, ''))             AS CUSTOM_NAME
+            , MAX(ISNULL(uniLITE.fnCipherDecrypt(D4.BANK_ACCOUNT, ''), ''))            AS BANKBOOK_NUM
+            , SUM(ISNULL(B.IN_AMT_I, 0))                  AS IN_I
+            , 0                                           AS OUT_I
+            , 0                                           AS ACCRUE_I
+            , ISNULL(B.PJT_CODE    , '')                  AS PJT_CODE
+            , ISNULL(M1.PJT_NAME   , '')                  AS PJT_NAME
+            , ISNULL(B.BUDG_CODE   , '')                  AS BUDG_CODE
+            , ISNULL(M6.CODE_NAME  , '')                  AS IF_CODE
+            , ISNULL(A.DEPT_CODE   , '')                  AS DEPT_CODE
+            , ISNULL(M2.TREE_NAME  , '')                  AS DEPT_NAME
+            , CASE WHEN ISNULL(A.EX_DATE, '') = '' THEN NULL
+                   ELSE SUBSTRING(A.EX_DATE, 1, 4) + @DateFormat + 
+                        SUBSTRING(A.EX_DATE, 5, 2) + @DateFormat + 
+                        SUBSTRING(A.EX_DATE, 7, 2)
+              END                                         AS EX_DATE
+            , CASE WHEN ISNULL(A.EX_NUM, 0) = 0 THEN NULL
+                   ELSE A.EX_NUM
+              END                                         AS EX_NUM
+            , CASE WHEN ISNULL(E.AC_DATE, '') = '' THEN NULL
+                   ELSE SUBSTRING(E.AC_DATE, 1, 4) + @DateFormat + 
+                        SUBSTRING(E.AC_DATE, 5, 2) + @DateFormat + 
+                        SUBSTRING(E.AC_DATE, 7, 2)
+              END                                         AS AC_DATE
+            , CASE WHEN ISNULL(E.SLIP_NUM, 0) = 0 THEN NULL
+                   ELSE E.SLIP_NUM
+              END                                         AS SLIP_NUM
+            , ISNULL(D1.NAME       , '')                  AS DRAFTER
+            , ISNULL(D1.NAME       , '')                  AS PAY_DRAFTER
+            , '1'                                         AS BUDG_TYPE
+            , ISNULL(M4.CODE_NAME  , '')                  AS BUDG_TYPE_NM
+       FROM              AFB800T A  WITH (NOLOCK)
+              INNER JOIN AFB810T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+                                                 AND B.IN_DRAFT_NO  = A.IN_DRAFT_NO
+              LEFT  JOIN T_GWIF  C  WITH (NOLOCK) ON C.GWIF_KEY1    = A.COMP_CODE
+                                                 AND C.GWIF_KEY2    = N'79'
+                                                 AND C.GWIF_KEY3    = A.IN_DRAFT_NO
+              LEFT  JOIN HUM100T D1 WITH (NOLOCK) ON D1.COMP_CODE   = A.COMP_CODE
+                                                 AND D1.PERSON_NUMB = A.DRAFTER
+              LEFT  JOIN BCM100T D3 WITH (NOLOCK) ON D3.COMP_CODE   = B.COMP_CODE
+                                                 AND D3.CUSTOM_CODE = B.CUSTOM_CODE
+                                                 AND D3.CUSTOM_TYPE != '4'
+              LEFT  JOIN AFS100T D4 WITH (NOLOCK) ON D4.COMP_CODE   = A.COMP_CODE
+                                                 AND D4.SAVE_CODE   = B.SAVE_CODE
+              LEFT  JOIN (SELECT COMP_CODE
+                               , EX_DATE
+                               , EX_NUM
+                               , AC_DATE
+                               , SLIP_NUM
+                               , INPUT_PATH
+                          FROM   AGJ110T WITH (NOLOCK)
+                          WHERE  COMP_CODE  = @COMP_CODE
+                          AND    EX_DATE   &gt;= @FR_DATE
+                          AND    EX_DATE   &lt;= @TO_DATE
+                          AND    (MOD_DIVI  = '' OR MOD_DIVI IS NULL)
+                          AND    INPUT_PATH = '79'
+                          GROUP BY COMP_CODE, EX_DATE, EX_NUM, AC_DATE, SLIP_NUM, INPUT_PATH
+                          )      E                ON E.COMP_CODE    = A.COMP_CODE
+                                                 AND E.EX_DATE      = A.EX_DATE
+                                                 AND E.EX_NUM       = A.EX_NUM
+                                                 AND E.INPUT_PATH   = N'79'
+              LEFT  JOIN BCM600T M1 WITH (NOLOCK) ON M1.COMP_CODE   = B.COMP_CODE
+                                                 AND M1.PJT_CODE    = B.PJT_CODE
+              LEFT  JOIN BSA210T M2 WITH (NOLOCK) ON M2.COMP_CODE   = A.COMP_CODE
+                                                 AND M2.TREE_CODE   = A.DEPT_CODE
+              LEFT  JOIN BSA100T M4 WITH (NOLOCK) ON M4.COMP_CODE   = A.COMP_CODE
+                                                 AND M4.MAIN_CODE   = N'A132'
+                                                 AND M4.SUB_CODE    = N'1'
+              LEFT  JOIN AFB400T M5 WITH (NOLOCK) ON M5.COMP_CODE   = B.COMP_CODE
+                                                 AND M5.BUDG_CODE   = B.BUDG_CODE
+                                                 AND M5.AC_YYYY     = LEFT(@FR_DATE, 4)
+              LEFT  JOIN BSA100T M6 WITH (NOLOCK) ON M6.COMP_CODE   = M5.COMP_CODE
+                                                 AND M6.MAIN_CODE   = N'A199'
+                                                 AND M6.SUB_CODE    = M5.IF_CODE
+       WHERE  A.COMP_CODE  = @COMP_CODE
+       AND    A.SLIP_DATE &gt;= @FR_DATE
+       AND    A.SLIP_DATE &lt;= @TO_DATE
+       
+       <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+	   		AND     A.DIV_CODE IN 
+			<foreach collection="DIV_CODE" item="item" separator="," close=")" open="(">
+				#{item}
+			</foreach>
+	   </if>
+       
+       
+       AND  ((B.PJT_CODE     = @PJT_CODE           AND @PJT_CODE        != '')  OR (@PJT_CODE        = ''))
+       AND  ((B.BUDG_CODE LIKE @BUDG_CODE + '%'    AND @BUDG_CODE       != '')  OR (@BUDG_CODE       = ''))
+		<if test="@foren.Ognl@isNotEmpty(DEPTS)">
+	   		AND  A.DEPT_CODE	 IN
+			<foreach collection="DEPTS" item="item" separator="," close=")" open="(">
+				#{item}
+			</foreach>
+		</if>
+       /* AND  ((A.DEPT_CODE   &gt;= @FR_DEPT_CODE       AND @FR_DEPT_CODE    != '')  OR (@FR_DEPT_CODE    = '')) */
+       /* AND  ((A.DEPT_CODE   &lt;= @TO_DEPT_CODE       AND @TO_DEPT_CODE    != '')  OR (@TO_DEPT_CODE    = '')) */
+       AND  ((A.DRAFTER      = @DRAFTER_PN         AND @DRAFTER_PN      != '')  OR (@DRAFTER_PN      = ''))
+       AND  ((D1.NAME        = @DRAFTER_NM         AND @DRAFTER_NM      != '')  OR (@DRAFTER_NM      = ''))
+       AND  ((A.DRAFTER      = @PAYDRAFTER_PN      AND @PAYDRAFTER_PN   != '')  OR (@PAYDRAFTER_PN   = ''))
+       AND  ((D1.NAME        = @PAYDRAFTER_NM      AND @PAYDRAFTER_NM   != '')  OR (@PAYDRAFTER_NM   = ''))
+       
+       <if test="APPEND_CHK == &quot;Y&quot;">
+		     AND   ISNULL(C.GW_STATUS, '0')  = N'9'
+        </if>
+        <if test="APPEND_CHK != &quot;Y&quot;">
+		      AND  ISNULL(C.GW_STATUS, '0')  IN ('0', '1', '9')
+		</if>
+	   
+       GROUP BY A.COMP_CODE, A.SLIP_DATE, A.IN_DRAFT_NO, A.TITLE, B.PJT_CODE, M1.PJT_NAME, B.BUDG_CODE, A.DEPT_CODE, M2.TREE_NAME
+              , D1.NAME, M4.CODE_NAME, M6.CODE_NAME
+              , CASE WHEN ISNULL(C.APP_DATE, '') = '' THEN NULL
+                     ELSE SUBSTRING(CONVERT(NVARCHAR(8), C.APP_DATE, 112), 1, 4) + @DateFormat + 
+                          SUBSTRING(CONVERT(NVARCHAR(8), C.APP_DATE, 112), 5, 2) + @DateFormat + 
+                          SUBSTRING(CONVERT(NVARCHAR(8), C.APP_DATE, 112), 7, 2)
+                END
+              , CASE WHEN ISNULL(A.EX_DATE, '') = '' THEN NULL
+                     ELSE SUBSTRING(A.EX_DATE, 1, 4) + @DateFormat + 
+                          SUBSTRING(A.EX_DATE, 5, 2) + @DateFormat + 
+                          SUBSTRING(A.EX_DATE, 7, 2)
+                END
+              , CASE WHEN ISNULL(A.EX_NUM, 0) = 0 THEN NULL
+                     ELSE A.EX_NUM
+                END
+              , CASE WHEN ISNULL(E.AC_DATE, '') = '' THEN NULL
+                     ELSE SUBSTRING(E.AC_DATE, 1, 4) + @DateFormat + 
+                          SUBSTRING(E.AC_DATE, 5, 2) + @DateFormat + 
+                          SUBSTRING(E.AC_DATE, 7, 2)
+                END
+              , CASE WHEN ISNULL(E.SLIP_NUM, 0) = 0 THEN NULL
+                     ELSE E.SLIP_NUM
+                END
+    END
+
+    IF (@BUDG_TYPE = '' OR @BUDG_TYPE = '2')
+    BEGIN
+--  4. 지출액 데이터 생성 -----------------------------------------------------------------------------------------    
+       INSERT INTO #afs100skr
+            ( COMP_CODE   , SORT_DATE   , GUBUN        , SLIP_DATE  , APP_DATE   , TRANS_DATE  , DRAFT_NO
+            , TITLE       , CUSTOM_NAME , BANKBOOK_NUM , IN_I       , OUT_I      , ACCRUE_I    , PJT_CODE    , PJT_NAME
+            , BUDG_CODE   , IF_CODE     , DEPT_CODE    , DEPT_NAME  , EX_DATE    , EX_NUM      , AC_DATE     , SLIP_NUM
+            , DRAFTER     , PAY_DRAFTER , BUDG_TYPE    , BUDG_TYPE_NM)
+       SELECT A.COMP_CODE
+            , CASE WHEN @DATE_OPT = '1' THEN A.SLIP_DATE ELSE D.TRANS_DATE END AS SORT_DATE
+            , '2'                                         AS GUBUN
+            , SUBSTRING(A.SLIP_DATE, 1, 4) + @DateFormat + 
+              SUBSTRING(A.SLIP_DATE, 5, 2) + @DateFormat + 
+              SUBSTRING(A.SLIP_DATE, 7, 2)                AS SLIP_DATE
+            , CASE WHEN ISNULL(C.APP_DATE, '') = '' THEN NULL
+                   ELSE SUBSTRING(CONVERT(NVARCHAR(8), C.APP_DATE, 112), 1, 4) + @DateFormat + 
+                        SUBSTRING(CONVERT(NVARCHAR(8), C.APP_DATE, 112), 5, 2) + @DateFormat + 
+                        SUBSTRING(CONVERT(NVARCHAR(8), C.APP_DATE, 112), 7, 2)
+              END                                         AS APP_DATE
+            , CASE WHEN ISNULL(D.TRANS_DATE, '') = '' THEN NULL
+                   ELSE SUBSTRING(D.TRANS_DATE, 1, 4) + @DateFormat + 
+                        SUBSTRING(D.TRANS_DATE, 5, 2) + @DateFormat + 
+                        SUBSTRING(D.TRANS_DATE, 7, 2)
+              END                                         AS TRANS_DATE
+            , A.PAY_DRAFT_NO                              AS DRAFT_NO
+            , ISNULL(A.TITLE       , '')                  AS TITLE
+            , MAX(ISNULL(D3.CUSTOM_NAME, ''))             AS CUSTOM_NAME
+            , MAX(ISNULL(uniLITE.fnCipherDecrypt(B.IN_BANKBOOK_NUM, ''), ''))          AS BANKBOOK_NUM
+            , 0                                           AS IN_I
+            , SUM(ISNULL(B.REAL_AMT_I, 0))                AS OUT_I
+            , 0                                           AS ACCRUE_I
+            , ISNULL(B.PJT_CODE    , '')                  AS PJT_CODE
+            , ISNULL(M1.PJT_NAME   , '')                  AS PJT_NAME
+            , ISNULL(B.BUDG_CODE   , '')                  AS BUDG_CODE
+            , ISNULL(M6.CODE_NAME  , '')                  AS IF_CODE
+            , ISNULL(A.DEPT_CODE   , '')                  AS DEPT_CODE
+            , ISNULL(M2.TREE_NAME  , '')                  AS DEPT_NAME
+            , CASE WHEN ISNULL(A.EX_DATE, '') = '' THEN NULL
+                   ELSE SUBSTRING(A.EX_DATE, 1, 4) + @DateFormat + 
+                        SUBSTRING(A.EX_DATE, 5, 2) + @DateFormat + 
+                        SUBSTRING(A.EX_DATE, 7, 2)
+              END                                         AS EX_DATE
+            , CASE WHEN ISNULL(A.EX_NUM, 0) = 0 THEN NULL
+                   ELSE A.EX_NUM
+              END                                         AS EX_NUM
+            , CASE WHEN ISNULL(F.AC_DATE, '') = '' THEN NULL
+                   ELSE SUBSTRING(F.AC_DATE, 1, 4) + @DateFormat + 
+                        SUBSTRING(F.AC_DATE, 5, 2) + @DateFormat + 
+                        SUBSTRING(F.AC_DATE, 7, 2)
+              END                                         AS AC_DATE
+            , CASE WHEN ISNULL(F.SLIP_NUM, 0) = 0 THEN NULL
+                   ELSE F.SLIP_NUM
+              END                                         AS SLIP_NUM
+            , ISNULL(D1.NAME       , '')                  AS DRAFTER
+            , ISNULL(D2.NAME       , '')                  AS PAY_DRAFTER
+            , '2'                                         AS BUDG_TYPE
+            , ISNULL(M4.CODE_NAME  , '')                  AS BUDG_TYPE_NM
+       FROM              AFB700T A  WITH (NOLOCK)
+              INNER JOIN AFB710T B  WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+                                                 AND B.PAY_DRAFT_NO   = A.PAY_DRAFT_NO
+              LEFT  JOIN T_GWIF  C  WITH (NOLOCK) ON C.GWIF_KEY1      = A.COMP_CODE
+                                                 AND C.GWIF_KEY2      = N'80'
+                                                 AND C.GWIF_KEY3      = A.PAY_DRAFT_NO
+              LEFT  JOIN AFB900T D  WITH (NOLOCK) ON D.COMP_CODE      = A.COMP_CODE
+                                                 AND D.PROV_DRAFT_NO  = B.PAY_DRAFT_NO
+                                                 AND D.PROV_DRAFT_SEQ = B.SEQ
+              LEFT  JOIN AFB600T E  WITH (NOLOCK) ON E.COMP_CODE      = A.COMP_CODE
+                                                 AND E.DRAFT_NO       = A.DRAFT_NO
+              LEFT  JOIN HUM100T D1 WITH (NOLOCK) ON D1.COMP_CODE     = A.COMP_CODE
+                                                 AND D1.PERSON_NUMB   = A.DRAFTER
+              LEFT  JOIN HUM100T D2 WITH (NOLOCK) ON D2.COMP_CODE     = E.COMP_CODE
+                                                 AND D2.PERSON_NUMB   = E.DRAFTER
+              LEFT  JOIN BCM100T D3 WITH (NOLOCK) ON D3.COMP_CODE   = B.COMP_CODE
+                                                 AND D3.CUSTOM_CODE = B.CUSTOM_CODE
+                                                 AND D3.CUSTOM_TYPE != '4'
+              LEFT  JOIN (SELECT COMP_CODE
+                               , EX_DATE
+                               , EX_NUM
+                               , AC_DATE
+                               , SLIP_NUM
+                               , INPUT_PATH
+                          FROM   AGJ110T WITH (NOLOCK)
+                          WHERE  COMP_CODE  = @COMP_CODE
+                          AND    EX_DATE   &gt;= @FR_DATE
+                          AND    EX_DATE   &lt;= @TO_DATE
+                          AND    (MOD_DIVI = '' OR MOD_DIVI IS NULL)
+                          AND    INPUT_PATH = '80'
+                          GROUP BY COMP_CODE, EX_DATE, EX_NUM, AC_DATE, SLIP_NUM, INPUT_PATH
+                          )      F                ON F.COMP_CODE    = A.COMP_CODE
+                                                 AND F.EX_DATE      = A.EX_DATE
+                                                 AND F.EX_NUM       = A.EX_NUM
+                                                 AND F.INPUT_PATH   = N'80'
+              LEFT  JOIN BCM600T M1 WITH (NOLOCK) ON M1.COMP_CODE   = B.COMP_CODE
+                                                 AND M1.PJT_CODE    = B.PJT_CODE
+              LEFT  JOIN BSA210T M2 WITH (NOLOCK) ON M2.COMP_CODE   = A.COMP_CODE
+                                                 AND M2.TREE_CODE   = A.DEPT_CODE
+              LEFT  JOIN BSA100T M4 WITH (NOLOCK) ON M4.COMP_CODE   = A.COMP_CODE
+                                                 AND M4.MAIN_CODE   = N'A132'
+                                                 AND M4.SUB_CODE    = N'2'
+              LEFT  JOIN AFB400T M5 WITH (NOLOCK) ON M5.COMP_CODE   = B.COMP_CODE
+                                                 AND M5.BUDG_CODE   = B.BUDG_CODE
+                                                 AND M5.AC_YYYY     = LEFT(@FR_DATE, 4)
+              LEFT  JOIN BSA100T M6 WITH (NOLOCK) ON M6.COMP_CODE   = M5.COMP_CODE
+                                                 AND M6.MAIN_CODE   = N'A199'
+                                                 AND M6.SUB_CODE    = M5.IF_CODE
+       WHERE  A.COMP_CODE   = @COMP_CODE
+       
+       <choose>
+			<when test="DATE_OPT == 1">
+		       AND    A.SLIP_DATE &gt;= @FR_DATE
+      		   AND    A.SLIP_DATE &lt;=  @TO_DATE
+		    </when>
+		    <otherwise>
+		      AND    D.TRANS_DATE &gt;= @FR_DATE
+    		  AND    D.TRANS_DATE &lt;=  @TO_DATE
+		    </otherwise>
+	  	</choose>
+       
+       <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+	   		AND     A.DIV_CODE IN 
+			<foreach collection="DIV_CODE" item="item" separator="," close=")" open="(">
+				#{item}
+			</foreach>
+	   </if>
+       AND  ((B.PJT_CODE     = @PJT_CODE           AND @PJT_CODE        != '')  OR (@PJT_CODE        = ''))
+       AND  ((B.BUDG_CODE LIKE @BUDG_CODE + '%'    AND @BUDG_CODE       != '')  OR (@BUDG_CODE       = ''))
+		<if test="@foren.Ognl@isNotEmpty(DEPTS)">
+	   		AND  A.DEPT_CODE	 IN
+			<foreach collection="DEPTS" item="item" separator="," close=")" open="(">
+				#{item}
+			</foreach>
+		</if>
+      /* AND  ((A.DEPT_CODE   &gt;= @FR_DEPT_CODE       AND @FR_DEPT_CODE    != '')  OR (@FR_DEPT_CODE    = '')) */
+      /* AND  ((A.DEPT_CODE   &lt;= @TO_DEPT_CODE       AND @TO_DEPT_CODE    != '')  OR (@TO_DEPT_CODE    = '')) */
+       AND  ((A.DRAFTER      = @DRAFTER_PN         AND @DRAFTER_PN      != '')  OR (@DRAFTER_PN      = ''))
+       AND  ((D1.NAME        = @DRAFTER_NM         AND @DRAFTER_NM      != '')  OR (@DRAFTER_NM      = ''))
+       AND  ((E.DRAFTER      = @PAYDRAFTER_PN      AND @PAYDRAFTER_PN   != '')  OR (@PAYDRAFTER_PN   = ''))
+       AND  ((D2.NAME        = @PAYDRAFTER_NM      AND @PAYDRAFTER_NM   != '')  OR (@PAYDRAFTER_NM   = ''))
+       
+       <if test="SEND_CHK == &quot;Y&quot;">
+       AND    ISNULL(B.TRANS_SEQ, 0) != 0
+      </if>
+       
+       <if test="APPEND_CHK == &quot;Y&quot;">
+		     AND   ISNULL(C.GW_STATUS, '0')  = N'9'
+        </if>
+        <if test="APPEND_CHK != &quot;Y&quot;">
+		      AND  ISNULL(C.GW_STATUS, '0')  IN ('0', '1', '9')
+		</if>
+       
+       GROUP BY A.COMP_CODE, A.SLIP_DATE, D.TRANS_DATE
+              , A.PAY_DRAFT_NO, A.TITLE, B.PJT_CODE, M1.PJT_NAME, B.BUDG_CODE, A.DEPT_CODE, M2.TREE_NAME
+              , D1.NAME, D2.NAME, M4.CODE_NAME, M6.CODE_NAME
+              , CASE WHEN ISNULL(C.APP_DATE, '') = '' THEN NULL
+                     ELSE SUBSTRING(CONVERT(NVARCHAR(8), C.APP_DATE, 112), 1, 4) + @DateFormat + 
+                          SUBSTRING(CONVERT(NVARCHAR(8), C.APP_DATE, 112), 5, 2) + @DateFormat + 
+                          SUBSTRING(CONVERT(NVARCHAR(8), C.APP_DATE, 112), 7, 2)
+                END
+              , CASE WHEN ISNULL(A.EX_DATE, '') = '' THEN NULL
+                     ELSE SUBSTRING(A.EX_DATE, 1, 4) + @DateFormat + 
+                          SUBSTRING(A.EX_DATE, 5, 2) + @DateFormat + 
+                          SUBSTRING(A.EX_DATE, 7, 2)
+                END
+              , CASE WHEN ISNULL(A.EX_NUM, 0) = 0 THEN NULL
+                     ELSE A.EX_NUM
+                END
+              , CASE WHEN ISNULL(F.AC_DATE, '') = '' THEN NULL
+                     ELSE SUBSTRING(F.AC_DATE, 1, 4) + @DateFormat + 
+                          SUBSTRING(F.AC_DATE, 5, 2) + @DateFormat + 
+                          SUBSTRING(F.AC_DATE, 7, 2)
+                END
+              , CASE WHEN ISNULL(F.SLIP_NUM, 0) = 0 THEN NULL
+                     ELSE F.SLIP_NUM
+                END
+    END
+
+--  5. 이월금액 생성 --------------------------------------------------------------------------------------------------    
+    INSERT INTO #afs100skr
+         ( COMP_CODE   , SORT_DATE   , GUBUN     , SLIP_DATE    , DRAFT_NO
+         , IN_I        , OUT_I       , ACCRUE_I)
+    SELECT COMP_CODE
+         , LEFT(@FR_DATE, 6) + '01'                    AS SORT_DATE
+         , '1'                                         AS GUBUN
+         , ''                                          AS SLIP_DATE
+         , '이월금액'                                  AS DRAFT_NO
+         , SUM(IN_I)                                   AS IN_I
+         , SUM(OUT_I)                                  AS OUT_I
+         , SUM(IN_I) - SUM(OUT_I)                      AS ACCRUE_I
+    FROM   #afs100skr_bal  WITH (NOLOCK)
+    GROUP BY COMP_CODE
+
+    IF @@ROWCOUNT = 0
+    BEGIN
+        INSERT INTO #afs100skr
+             ( COMP_CODE   , SORT_DATE   , GUBUN     , SLIP_DATE    , DRAFT_NO
+             , IN_I        , OUT_I       , ACCRUE_I)
+        SELECT COMP_CODE                                   AS COMP_CODE
+             , LEFT(@FR_DATE, 6) + '01'                    AS SORT_DATE
+             , '1'                                         AS GUBUN
+             , ''                                          AS SLIP_DATE
+             , '이월금액'                                  AS DRAFT_NO
+             , 0                                           AS IN_I
+             , 0                                           AS OUT_I
+             , 0                                           AS ACCRUE_I
+        FROM   BOR100T  WITH (NOLOCK)
+        WHERE  COMP_CODE = @COMP_CODE
+     END
+
+--  6. 누적금액 계산 ------------------------------------------------------------------------------------------------    
+    DECLARE         @AccrueI            NUMERIC(30,6)               -- 누적금액
+
+    SET @AccrueI         = 0
+
+    UPDATE A
+       SET @AccrueI   = ISNULL(@AccrueI, 0) + A.IN_I - A.OUT_I
+         , A.ACCRUE_I = @AccrueI
+      FROM #afs100skr  A WITH (NOLOCK, INDEX(#afs100skr_IDX01))
+
+--  7-1. 일계 생성 --------------------------------------------------------------------------------------------------    
+    INSERT INTO #afs100skr
+         ( COMP_CODE   , SORT_DATE   , GUBUN     , SLIP_DATE    , DRAFT_NO
+         , IN_I        , OUT_I       , ACCRUE_I)
+    SELECT COMP_CODE
+         , MAX(SORT_DATE)                              AS SORT_DATE
+         , '3'                                         AS GUBUN
+         , ''                                          AS SLIP_DATE
+         , '소계(일)'                                  AS DRAFT_NO
+         , SUM(IN_I)                                   AS IN_I
+         , SUM(OUT_I)                                  AS OUT_I
+         , 0                                           AS ACCRUE_I
+      FROM #afs100skr  WITH (NOLOCK)
+     WHERE GUBUN      = '2'
+     GROUP BY COMP_CODE, SORT_DATE
+
+--  7-2. 월계 생성 --------------------------------------------------------------------------------------------------    
+    INSERT INTO #afs100skr
+         ( COMP_CODE   , SORT_DATE   , GUBUN     , SLIP_DATE    , DRAFT_NO
+         , IN_I        , OUT_I       , ACCRUE_I)
+    SELECT COMP_CODE
+         , MAX(SORT_DATE)                              AS SORT_DATE
+         , '4'                                         AS GUBUN
+         , ''                                          AS SLIP_DATE
+         , '소계(월)'                                  AS DRAFT_NO
+         , SUM(IN_I)                                   AS IN_I
+         , SUM(OUT_I)                                  AS OUT_I
+         , 0                                           AS ACCRUE_I
+      FROM #afs100skr  WITH (NOLOCK)
+     WHERE GUBUN      = '2'
+     GROUP BY COMP_CODE, LEFT(SORT_DATE, 6)
+
+--  8. 누계 생성 --------------------------------------------------------------------------------------------------    
+    INSERT INTO #afs100skr
+         ( COMP_CODE   , SORT_DATE   , GUBUN     , SLIP_DATE    , DRAFT_NO
+         , IN_I        , OUT_I       , ACCRUE_I)
+    SELECT COMP_CODE
+         , MAX(SORT_DATE)                              AS SORT_DATE
+         , '5'                                         AS GUBUN
+         , ''                                          AS SLIP_DATE
+         , '누   계'                                   AS DRAFT_NO
+         , SUM(IN_I)                                   AS IN_I
+         , SUM(OUT_I)                                  AS OUT_I
+         , SUM(IN_I) - SUM(OUT_I)                      AS ACCRUE_I
+    FROM   #afs100skr  WITH (NOLOCK)
+    WHERE  (GUBUN = '1' OR GUBUN = '2')
+    GROUP BY COMP_CODE, LEFT(SORT_DATE, 6) + '32'
+
+--  9. 누계의 누적금액 계산 ------------------------------------------------------------------------------------------------    
+    DECLARE         @5_AccrueI            NUMERIC(30,6)               -- 누계의 누적금액
+                  , @5_IN_I               NUMERIC(30,6)               -- 수입액의 누적금액
+                  , @5_OUT_I              NUMERIC(30,6)               -- 지출액의 누적금액
+
+    SET @5_AccrueI         = 0
+    SET @5_IN_I            = 0
+    SET @5_OUT_I           = 0
+
+    UPDATE A
+       SET @5_AccrueI   = ISNULL(@5_AccrueI, 0) + A.IN_I - A.OUT_I 
+         , A.ACCRUE_I   = @5_AccrueI
+         , @5_IN_I      = ISNULL(@5_IN_I, 0)  + A.IN_I
+         , @5_OUT_I     = ISNULL(@5_OUT_I, 0) + A.OUT_I
+         , A.IN_I       = @5_IN_I
+         , A.OUT_I      = @5_OUT_I
+      FROM #afs100skr  A WITH (NOLOCK, INDEX(#afs100skr_IDX01))
+     WHERE GUBUN = '5'
+
+--  9. 지출부 조회 -------------------------------------------------------------------------------------------    
+    SELECT 
+           A.COMP_CODE
+         , A.GUBUN
+         , ROW_NUMBER() OVER (ORDER BY A.SORT_KEY) AS SEQ
+         , A.SLIP_DATE
+         , A.APP_DATE
+         , A.TRANS_DATE
+         , A.DRAFT_NO
+         , A.TITLE
+         , A.CUSTOM_NAME
+         , A.BANKBOOK_NUM
+         , A.IN_I
+         , A.OUT_I
+         , A.ACCRUE_I
+         , A.PJT_CODE
+         , A.PJT_NAME
+         , A.BUDG_CODE
+          <foreach collection="budgNameInfoList" item="budgNameInfo" index="index" >
+          , C${index+1}.BUDG_NAME                                                           AS BUDG_NAME_${index+1}
+          </foreach>
+         , A.IF_CODE
+         , A.DEPT_CODE
+         , A.DEPT_NAME
+         , A.SORT_DATE
+         , A.EX_DATE
+         , A.EX_NUM
+         , A.AC_DATE
+         , A.SLIP_NUM
+         , A.DRAFTER
+         , A.PAY_DRAFTER
+         , A.BUDG_TYPE
+         , A.BUDG_TYPE_NM
+    FROM   #afs100skr A  WITH (NOLOCK)
+    
+    
+    LEFT  JOIN  AFB400T   C${budgNameInfoList.size}  ON C${budgNameInfoList.size}.COMP_CODE  = A.COMP_CODE
+                                          						 AND C${budgNameInfoList.size}.AC_YYYY    = uniLITE.fnGetBudgAcYyyy(A.COMP_CODE, A.SORT_DATE)
+                                      	  						 AND C${budgNameInfoList.size}.BUDG_CODE  = A.BUDG_CODE
+    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index">
+   		<if test="index+1 != budgNameInfoList.size">
+    	LEFT  JOIN  AFB400T   C${budgNameInfoList.size-(index+1)}  ON C${budgNameInfoList.size-(index+1)}.COMP_CODE  = C${budgNameInfoList.size-(index)}.COMP_CODE    
+                                                       						   AND C${budgNameInfoList.size-(index+1)}.AC_YYYY    = C${budgNameInfoList.size-(index)}.AC_YYYY      
+                                                       						   AND C${budgNameInfoList.size-(index+1)}.BUDG_CODE  = C${budgNameInfoList.size-(index)}.TREE_LEVEL 
+    	</if>
+    </foreach>
+    WHERE   A.SORT_DATE  &gt;= @ST_DATE
+    AND     A.SORT_DATE  &lt;= @TO_DATE
+    ORDER BY A.SORT_KEY
+
+    SET NOCOUNT OFF
+    SET ARITHABORT OFF
+END
+
+DROP TABLE #afs100skr
+DROP TABLE #afs100skr_bal
+</select>
+</mapper>

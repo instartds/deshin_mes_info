@@ -1,0 +1,1563 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="salesCommonServiceImpl">
+	<select id="salesCommonServiceImpl.fnStockQ" parameterType="Map" resultType="rMap">
+		/* salesCommonServiceImpl.fnStockQ */
+		SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+		DECLARE @SHOW_PSTOCK NVARCHAR(01)
+
+		SET @SHOW_PSTOCK = #{SHOW_PSTOCK}
+
+		IF ISNULL(@SHOW_PSTOCK, 'N') = 'Y'
+			BEGIN
+				DECLARE @SAFE_STOCK_Q	NUMERIC(18, 6)
+					  , @STOCK_Q		NUMERIC(18, 6)
+
+				--20190625 fnGetPABStock 함수 사용하여 재고(pab_stock_q) 가져오는 로직 수행
+				SELECT @SAFE_STOCK_Q = safety_stock_q
+				<if test="@foren.Ognl@isNotEmpty(bParam3)">
+					<if test="bParam3 == 1">
+		 			 , @STOCK_Q = good_stock_q
+					</if>
+					<if test="bParam3 != 1">
+		 			 , @STOCK_Q = bad_stock_q
+					</if>
+				</if>
+				<if test="@foren.Ognl@isEmpty(bParam3)">
+		 			 , @STOCK_Q = pab_stock_q
+				</if>
+				  FROM unilite.fnGetPABStock(
+												#{COMP_CODE}
+											  , #{DIV_CODE}
+											  , #{BASIS_DATE}
+											  , #{ITEM_CODE}
+											  , #{ITEM_CODE}
+											  , ''
+					)
+
+				SELECT ISNULL(@SAFE_STOCK_Q , 0)	AS SAFE_STOCK_Q
+					 , ISNULL(@STOCK_Q , 0)			AS STOCK_Q
+			END
+		ELSE
+			BEGIN
+				SELECT 
+						ISNULL((SELECT ISNULL(SAFE_STOCK_Q, 0)
+								FROM BPR200T WITH(NOLOCK)
+						 		WHERE COMP_CODE = #{COMP_CODE}
+								  AND DIV_CODE  = #{DIV_CODE}
+								  AND ITEM_CODE = #{ITEM_CODE}), 0) AS SAFE_STOCK_Q 
+				<if test="@foren.Ognl@isNotEmpty(bParam3)">
+					<if test="bParam3 == 1">
+		             	,ISNULL(MAX(A.GOOD_STOCK_Q), 0) AS STOCK_Q
+					</if>
+					<if test="bParam3 != 1">
+			            ,ISNULL(MAX(A.BAD_STOCK_Q) , 0) AS STOCK_Q
+					</if>
+		       </if>
+		       <if test="@foren.Ognl@isEmpty(bParam3)">
+			        ,ISNULL(SUM(A.STOCK_Q),0) STOCK_Q
+		       </if>
+				FROM BIV100T A WITH(NOLOCK)
+				WHERE A.COMP_CODE = #{COMP_CODE}
+				  AND A.DIV_CODE  = #{DIV_CODE}
+		    	<if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+		    	  AND A.WH_CODE   = #{WH_CODE}
+		    	</if>
+			      AND A.ITEM_CODE = #{ITEM_CODE}
+			END
+	</select>
+	<select id="salesCommonServiceImpl.fnGetPriceInfo" parameterType="Map" resultType="rMap">
+	/* salesCommonServiceImpl.fnGetPriceInfo */
+	BEGIN
+	    DECLARE     @COMP_CODE          NVARCHAR(08)            /* 법인코드 */
+	              , @CUSTOM_CODE        NVARCHAR(08)            /* 거래처코드*/
+	              , @AGENT_TYPE         NVARCHAR(08)            /* 거래처분류*/
+	              , @ITEM_CODE          NVARCHAR(20)            /* 품목코드*/
+	              , @MONEY_UNIT         NVARCHAR(03)            /* 화폐단위*/
+	              , @ORDER_UNIT         NVARCHAR(03)            /* 판매단위*/
+	              , @STOCK_UNIT         NVARCHAR(03)            /* 재고단위*/
+	              , @TRANS_RATE         NUMERIC(12, 6)          /* 변환계수*/
+	              , @BASIS_DATE         NVARCHAR(08)            /* 기준일자*/
+	
+	
+	        SET     @COMP_CODE          = #{COMP_CODE}
+	        SET     @CUSTOM_CODE        = #{CUSTOM_CODE}
+	        SET     @AGENT_TYPE         = #{AGENT_TYPE}
+	        SET     @ITEM_CODE          = #{ITEM_CODE}
+	        SET     @MONEY_UNIT         = #{MONEY_UNIT}
+	        SET     @ORDER_UNIT         = #{ORDER_UNIT}
+	        SET     @STOCK_UNIT         = #{STOCK_UNIT}
+	        SET     @TRANS_RATE         = #{TRANS_RATE}
+	        SET     @BASIS_DATE         = #{BASIS_DATE}
+	
+	        /*  1. DC율     : 고객별 할인정보(SDC100T) -&gt; 고객분류별 할인정보(SDC100T)*/
+	        /*  2. 판매단가 : 고객별 할인정보(SDC100T) -&gt; 고객분류별 할인정보(SDC100T)*/
+	        /*             -&gt; 고객품목(BPR300T) -&gt; 고객단가(BPR400T) -&gt; 품목정보(BPR100T)*/
+	        /*  3. 입수     : 고객품목(BPR300T) -&gt; 품목정보(BPR100T) -&gt; 단위환산정보(BPR600T)*/
+	
+	        SELECT  CASE WHEN ISNULL(B.DC_RATE, 0.0) != 0.0 THEN B.DC_RATE
+	                     ELSE CASE WHEN ISNULL(C.DC_RATE, 0.0) != 0.0 THEN C.DC_RATE
+	                               ELSE 0.0
+	                          END
+	                END                                                                     AS DC_RATE
+	              , CASE WHEN ISNULL(B.DC_PRICE, 0.0) != 0.0 THEN B.DC_PRICE
+	                     ELSE CASE WHEN ISNULL(C.DC_PRICE, 0.0) != 0.0 THEN C.DC_PRICE
+	                               ELSE CASE WHEN ISNULL(D.ORDER_P, 0.0) != 0.0 THEN D.ORDER_P
+	                                         ELSE CASE WHEN ISNULL(E.ITEM_P, 0.0) != 0.0 THEN E.ITEM_P
+	                                                   ELSE CASE WHEN ISNULL(M1.MONEY_UNIT, '') = @MONEY_UNIT THEN A.SALE_BASIS_P
+	                                                             ELSE 0.0
+	                                                        END
+	                                              END
+	                                    END
+	                          END
+	                END                                                                     AS SALE_PRICE
+	              , ISNULL(E.PRICE_TYPE, '2')                                               AS PRICE_TYPE  
+	              , CASE WHEN ISNULL(D.TRNS_RATE, 0.0) != 0.0 THEN D.TRNS_RATE
+	                     ELSE CASE WHEN ISNULL(A.TRNS_RATE, 0.0) != 0.0 AND A.STOCK_UNIT = @STOCK_UNIT
+	                                                                    AND A.SALE_UNIT  = @ORDER_UNIT THEN A.TRNS_RATE
+	                               ELSE CASE WHEN ISNULL(F.TRNS_RATE, 0.0) != 0.0 THEN F.TRNS_RATE
+	                                          ELSE 1.0
+	                                    END
+	                          END
+	                END                                                                     AS SALE_TRANS_RATE
+	              , CASE WHEN ISNULL(G.ITEM_P, 0.0) != 0.0 THEN G.ITEM_P
+	                     ELSE 0.0
+	                END                                                                     AS WGT_PRICE
+	              , CASE WHEN ISNULL(H.ITEM_P, 0.0) != 0.0 THEN H.ITEM_P
+	                     ELSE 0.0
+	                END                                                                     AS VOL_PRICE
+	        FROM                BPR100T     A  WITH (NOLOCK)
+	                LEFT  JOIN  ( /* 할인정보(고객별) 조회 */
+	                            SELECT  S1.COMP_CODE, S1.ITEM_CODE
+	                                  , MAX(ISNULL(S1.DC_RATE , 0.0)) AS DC_RATE
+	                                  , MAX(ISNULL(S1.DC_PRICE, 0.0)) AS DC_PRICE
+	                            FROM                SDC100T     S1 WITH (NOLOCK)
+	                                    INNER JOIN  (
+	                                                SELECT  COMP_CODE, AGENT_TYPE, CUSTOM_CODE, ITEM_CODE, MONEY_UNIT
+	                                                      , MAX(DC_START_DT) AS DC_START_DT
+	                                                FROM    SDC100T     WITH (NOLOCK)
+	                                                WHERE   COMP_CODE   =  @COMP_CODE
+	                                                AND     AGENT_TYPE  =  N'*'
+	                                                AND     CUSTOM_CODE =  @CUSTOM_CODE
+	                                                AND     ITEM_CODE   =  @ITEM_CODE
+	                                                AND     MONEY_UNIT  =  @MONEY_UNIT
+	                                                AND     ORDER_UNIT  =  @ORDER_UNIT
+	                                                AND     DC_END_DT  &gt;=  @BASIS_DATE
+	                                                GROUP   BY
+	                                                        COMP_CODE, AGENT_TYPE, CUSTOM_CODE, ITEM_CODE, MONEY_UNIT
+	                                                ) S2                         ON S2.COMP_CODE        = S1.COMP_CODE
+	                                                                            AND S2.AGENT_TYPE       = S1.AGENT_TYPE
+	                                                                            AND S2.CUSTOM_CODE      = S1.CUSTOM_CODE
+	                                                                            AND S2.ITEM_CODE        = S1.ITEM_CODE
+	                                                                            AND S2.MONEY_UNIT       = S1.MONEY_UNIT
+	                                                                            AND S2.DC_START_DT      = S1.DC_START_DT
+	                            WHERE   S1.COMP_CODE        =  @COMP_CODE
+	                            AND     S1.AGENT_TYPE       =  N'*'
+	                            AND     S1.CUSTOM_CODE      =  @CUSTOM_CODE
+	                            AND     S1.ITEM_CODE        =  @ITEM_CODE
+	                            AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+	                            AND     S1.ORDER_UNIT       =  @ORDER_UNIT
+	                            AND     S1.DC_START_DT     &lt;=  @BASIS_DATE
+	                            AND     S1.DC_END_DT       &gt;=  @BASIS_DATE
+	                            GROUP   BY
+	                                    S1.COMP_CODE, S1.ITEM_CODE
+	                            ) B                          ON  B.COMP_CODE        =  A.COMP_CODE
+	                                                        AND  B.ITEM_CODE        =  A.ITEM_CODE
+	                LEFT  JOIN  (/* 할인정보(고객분류별) 조회 */
+	                            SELECT  S1.COMP_CODE, S1.ITEM_CODE
+	                                  , MAX(ISNULL(S1.DC_RATE , 0.0)) AS DC_RATE
+	                                  , MAX(ISNULL(S1.DC_PRICE, 0.0)) AS DC_PRICE
+	                            FROM                SDC100T     S1 WITH (NOLOCK)
+	                                    INNER JOIN  (
+	                                                SELECT  COMP_CODE, AGENT_TYPE, CUSTOM_CODE, ITEM_CODE, MONEY_UNIT
+	                                                      , MAX(DC_START_DT) AS DC_START_DT
+	                                                FROM    SDC100T     WITH (NOLOCK)
+	                                                WHERE   COMP_CODE   =  @COMP_CODE
+	                                                AND     AGENT_TYPE  =  @AGENT_TYPE
+	                                                AND     CUSTOM_CODE =  N'*'
+	                                                AND     ITEM_CODE   =  @ITEM_CODE
+	                                                AND     MONEY_UNIT  =  @MONEY_UNIT
+	                                                AND     ORDER_UNIT  =  @ORDER_UNIT
+	                                                AND     DC_END_DT  &gt;=  @BASIS_DATE
+	                                                GROUP   BY
+	                                                        COMP_CODE, AGENT_TYPE, CUSTOM_CODE, ITEM_CODE, MONEY_UNIT
+	                                                ) S2                         ON S2.COMP_CODE        = S1.COMP_CODE
+	                                                                            AND S2.AGENT_TYPE       = S1.AGENT_TYPE
+	                                                                            AND S2.CUSTOM_CODE      = S1.CUSTOM_CODE
+	                                                                            AND S2.ITEM_CODE        = S1.ITEM_CODE
+	                                                                            AND S2.MONEY_UNIT       = S1.MONEY_UNIT
+	                                                                            AND S2.DC_START_DT      = S1.DC_START_DT
+	                            WHERE   S1.COMP_CODE        =  @COMP_CODE
+	                            AND     S1.AGENT_TYPE       =  @AGENT_TYPE
+	                            AND     S1.CUSTOM_CODE      =  N'*'
+	                            AND     S1.ITEM_CODE        =  @ITEM_CODE
+	                            AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+	                            AND     S1.ORDER_UNIT       =  @ORDER_UNIT
+	                            AND     S1.DC_START_DT     &lt;=  @BASIS_DATE
+	                            AND     S1.DC_END_DT       &gt;=  @BASIS_DATE
+	                            GROUP   BY
+	                                    S1.COMP_CODE, S1.ITEM_CODE
+	                            ) C                          ON  C.COMP_CODE        =  A.COMP_CODE
+	                                                        AND  C.ITEM_CODE        =  A.ITEM_CODE
+	                LEFT  JOIN  (/* 거래처별 품목정보 조회 */
+	                            SELECT  S1.COMP_CODE, S1.ITEM_CODE
+	                                  , MAX(ISNULL(S1.ORDER_P  , 0.0)) AS ORDER_P
+	                                  , MAX(ISNULL(S1.TRNS_RATE, 1.0)) AS TRNS_RATE
+	                            FROM    BPR300T     S1 WITH (NOLOCK)
+	                            WHERE   S1.COMP_CODE        =  @COMP_CODE
+	                            AND     S1.TYPE             =  N'2'
+	                            AND     S1.DIV_CODE         &gt;  N''
+	                            AND     S1.ITEM_CODE        =  @ITEM_CODE
+	                            AND     S1.CUSTOM_CODE      =  @CUSTOM_CODE
+	                            AND     S1.ORDER_UNIT       =  @ORDER_UNIT
+	                            AND     S1.APLY_START_DATE  =  (SELECT  MAX(APLY_START_DATE)
+	                                                            FROM    BPR300T     WITH (NOLOCK)
+	                                                            WHERE   COMP_CODE           =  @COMP_CODE
+	                                                            AND     TYPE                =  N'2'
+	                                                            AND     DIV_CODE            &gt;  N''
+	                                                            AND     ITEM_CODE           =  @ITEM_CODE
+	                                                            AND     CUSTOM_CODE         =  @CUSTOM_CODE
+	                                                            AND     ORDER_UNIT          =  @ORDER_UNIT
+	                                                            AND     APLY_START_DATE    &lt;=  @BASIS_DATE)
+	                            GROUP   BY
+	                                    S1.COMP_CODE, S1.ITEM_CODE
+	                            ) D                          ON  D.COMP_CODE        =  A.COMP_CODE
+	                                                        AND  D.ITEM_CODE        =  A.ITEM_CODE
+	                LEFT  JOIN  (/* 거래처별 품목단가정보(판매단위 기준) 조회 */
+	                            SELECT  S1.COMP_CODE, S1.ITEM_CODE
+	                                  , MAX(ISNULL(S1.ITEM_P, 0.0)) AS ITEM_P, PRICE_TYPE
+	                            FROM    BPR400T     S1 WITH (NOLOCK)
+	                            WHERE   S1.COMP_CODE        =  @COMP_CODE
+	                            AND     S1.TYPE             =  N'2'
+	                            AND     S1.DIV_CODE         &gt;  N''
+	                            AND     S1.ITEM_CODE        =  @ITEM_CODE
+	                            AND     S1.CUSTOM_CODE      =  @CUSTOM_CODE
+	                            AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+	                            AND     S1.ORDER_UNIT       =  @ORDER_UNIT
+	                            AND     S1.APLY_START_DATE  =  (SELECT  MAX(APLY_START_DATE)
+	                                                            FROM    BPR400T     WITH (NOLOCK)
+	                                                            WHERE   COMP_CODE           =  @COMP_CODE
+	                                                            AND     TYPE                =  N'2'
+	                                                            AND     DIV_CODE            &gt;  N''
+	                                                            AND     ITEM_CODE           =  @ITEM_CODE
+	                                                            AND     CUSTOM_CODE         =  @CUSTOM_CODE
+	                                                            AND     MONEY_UNIT          =  @MONEY_UNIT
+	                                                            AND     ORDER_UNIT          =  @ORDER_UNIT
+	                                                            AND     APLY_START_DATE    &lt;=  @BASIS_DATE)
+	                            GROUP   BY
+	                                    S1.COMP_CODE, S1.ITEM_CODE, PRICE_TYPE
+	                            ) E                          ON  E.COMP_CODE        =  A.COMP_CODE
+	                                                        AND  E.ITEM_CODE        =  A.ITEM_CODE
+	                LEFT  JOIN  (/* 단위환산정보 조회*/
+	                            SELECT  COMP_CODE, TRNS_RATE
+	                            FROM    BPR600T     WITH (NOLOCK)
+	                            WHERE   COMP_CODE           =  @COMP_CODE
+	                            AND     STOCK_UNIT          =  @STOCK_UNIT
+	                            AND     ORDER_UNIT          =  @ORDER_UNIT
+	                            ) F                          ON  F.COMP_CODE        =  A.COMP_CODE
+	                LEFT  JOIN  (/* 거래처별 품목단가정보(중량단위 기준) 조회*/
+	                            SELECT  S1.COMP_CODE, S1.ITEM_CODE
+	                                  , MAX(ISNULL(S1.ITEM_P, 0.0)) AS ITEM_P
+	                            FROM    BPR400T     S1 WITH (NOLOCK)
+	                            WHERE   S1.COMP_CODE        =  @COMP_CODE
+	                            AND     S1.TYPE             =  N'2'
+	                            AND     S1.DIV_CODE         &gt;  N''
+	                            AND     S1.ITEM_CODE        =  @ITEM_CODE
+	                            AND     S1.CUSTOM_CODE      =  @CUSTOM_CODE
+	                            AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+	                            AND     S1.APLY_START_DATE  =  (SELECT  MAX(APLY_START_DATE)
+	                                                            FROM    BPR400T     WITH (NOLOCK)
+	                                                            WHERE   COMP_CODE           =  @COMP_CODE
+	                                                            AND     TYPE                =  N'2'
+	                                                            AND     DIV_CODE            &gt;  N''
+	                                                            AND     ITEM_CODE           =  @ITEM_CODE
+	                                                            AND     CUSTOM_CODE         =  @CUSTOM_CODE
+	                                                            AND     MONEY_UNIT          =  @MONEY_UNIT
+	                                                            AND     APLY_START_DATE    &lt;=  @BASIS_DATE)
+	                            GROUP   BY
+	                                    S1.COMP_CODE, S1.ITEM_CODE
+	                            ) G                          ON  G.COMP_CODE        =  A.COMP_CODE
+	                                                        AND  G.ITEM_CODE        =  A.ITEM_CODE
+	                LEFT  JOIN  ( /* 거래처별 품목단가정보(부피단위 기준) 조회 */
+	                            SELECT  S1.COMP_CODE, S1.ITEM_CODE
+	                                  , MAX(ISNULL(S1.ITEM_P, 0.0)) AS ITEM_P
+	                            FROM    BPR400T     S1 WITH (NOLOCK)
+	                            WHERE   S1.COMP_CODE        =  @COMP_CODE
+	                            AND     S1.TYPE             =  N'2'
+	                            AND     S1.DIV_CODE         &gt;  N''
+	                            AND     S1.ITEM_CODE        =  @ITEM_CODE
+	                            AND     S1.CUSTOM_CODE      =  @CUSTOM_CODE
+	                            AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+	                            AND     S1.APLY_START_DATE  =  (SELECT  MAX(APLY_START_DATE)
+	                                                            FROM    BPR400T     WITH (NOLOCK)
+	                                                            WHERE   COMP_CODE           =  @COMP_CODE
+	                                                            AND     TYPE                =  N'2'
+	                                                            AND     DIV_CODE            &gt;  N''
+	                                                            AND     ITEM_CODE           =  @ITEM_CODE
+	                                                            AND     CUSTOM_CODE         =  @CUSTOM_CODE
+	                                                            AND     MONEY_UNIT          =  @MONEY_UNIT
+	                                                            AND     APLY_START_DATE    &lt;=  @BASIS_DATE)
+	                            GROUP   BY
+	                                    S1.COMP_CODE, S1.ITEM_CODE
+	                            ) H                          ON  H.COMP_CODE        =  A.COMP_CODE
+	                                                        AND  H.ITEM_CODE        =  A.ITEM_CODE
+	                LEFT  JOIN  (
+	                            SELECT  TOP 1 COMP_CODE, SUB_CODE AS MONEY_UNIT
+	                            FROM    BSA100T     WITH (NOLOCK)
+	                            WHERE   COMP_CODE           =  @COMP_CODE
+	                            AND     MAIN_CODE           =  N'B004'
+	                            AND     SUB_CODE           !=  N'$'
+	                            AND     ISNULL(REF_CODE1,'')=  N'Y'
+	                            ) M1                         ON M1.COMP_CODE        =  A.COMP_CODE
+	        WHERE    A.COMP_CODE        =  @COMP_CODE
+	        AND      A.ITEM_CODE        =  @ITEM_CODE
+	END
+	</select>
+	<select id="salesCommonServiceImpl.fnGetPriceInfo2" parameterType="Map" resultType="rMap">
+	/* salesCommonServiceImpl.fnGetPriceInfo2 */
+	BEGIN
+    DECLARE     @COMP_CODE          NVARCHAR(08)            /* 법인코드 */
+              , @CUSTOM_CODE        NVARCHAR(08)            /* 거래처코드*/
+              , @AGENT_TYPE         NVARCHAR(08)            /* 거래처분류*/
+              , @ITEM_CODE          NVARCHAR(20)            /* 품목코드*/
+              , @MONEY_UNIT         NVARCHAR(03)            /* 화폐단위*/
+              , @ORDER_UNIT         NVARCHAR(03)            /* 판매단위*/
+              , @STOCK_UNIT         NVARCHAR(03)            /* 재고단위*/
+              , @TRANS_RATE         NUMERIC(12, 6)          /* 변환계수*/
+              , @BASIS_DATE         NVARCHAR(08)            /* 기준일자*/
+              , @WGT_UNIT           NVARCHAR(03)            /* 중량단위*/
+              , @VOL_UNIT           NVARCHAR(03)            /* 부피단위*/
+
+
+        SET     @COMP_CODE          = #{COMP_CODE}
+        SET     @CUSTOM_CODE        = #{CUSTOM_CODE}
+        SET     @AGENT_TYPE         = #{AGENT_TYPE}
+        SET     @ITEM_CODE          = #{ITEM_CODE}
+        SET     @MONEY_UNIT         = #{MONEY_UNIT}
+        SET     @ORDER_UNIT         = #{ORDER_UNIT}
+        SET     @STOCK_UNIT         = #{STOCK_UNIT}
+        SET     @TRANS_RATE         = #{TRANS_RATE}
+        SET     @BASIS_DATE         = #{BASIS_DATE}
+		SET     @WGT_UNIT           = #{WGT_UNIT}
+        SET     @VOL_UNIT           = #{VOL_UNIT}
+
+        /*  1. DC율     : 고객별 할인정보(SDC100T) -&gt; 고객분류별 할인정보(SDC100T)*/
+        /*  2. 판매단가 : 고객별 할인정보(SDC100T) -&gt; 고객분류별 할인정보(SDC100T)*/
+        /*             -&gt; 고객품목(BPR300T) -&gt; 고객단가(BPR400T) -&gt; 품목정보(BPR100T)*/
+        /*  3. 입수     : 고객품목(BPR300T) -&gt; 품목정보(BPR100T) -&gt; 단위환산정보(BPR600T)*/
+
+        SELECT  CASE WHEN ISNULL(B.DC_RATE, 0.0) != 0.0 THEN B.DC_RATE
+                     ELSE CASE WHEN ISNULL(C.DC_RATE, 0.0) != 0.0 THEN C.DC_RATE
+                               ELSE 0.0
+                          END
+                END                                                                     AS DC_RATE
+              , CASE WHEN ISNULL(B.DC_PRICE, 0.0) != 0.0 THEN B.DC_PRICE
+                     ELSE CASE WHEN ISNULL(C.DC_PRICE, 0.0) != 0.0 THEN C.DC_PRICE
+                               ELSE CASE WHEN ISNULL(D.ORDER_P, 0.0) != 0.0 THEN D.ORDER_P
+                                         ELSE CASE WHEN ISNULL(E.ITEM_P, 0.0) != 0.0 THEN E.ITEM_P
+                                                <if test="USE_DEFAULT_PRICE != &quot;N&quot;">
+                                                 ELSE CASE WHEN ISNULL(E1.ITEM_P, 0.0) != 0.0 THEN E1.ITEM_P
+                                                </if>
+												   ELSE CASE WHEN ISNULL(M1.MONEY_UNIT, '') = @MONEY_UNIT THEN A.SALE_BASIS_P
+                                                             ELSE 0.0
+                                                        END
+                                                <if test="USE_DEFAULT_PRICE != &quot;N&quot;">
+												 END
+                                                </if>
+                                              END
+                                    END
+                          END
+                END                                                                     AS SALE_PRICE
+              , ISNULL(E.PRICE_TYPE, '2')                                               AS PRICE_TYPE
+              , CASE WHEN ISNULL(D.TRNS_RATE, 0.0) != 0.0 THEN D.TRNS_RATE
+                     ELSE CASE WHEN ISNULL(A.TRNS_RATE, 0.0) != 0.0 AND A.STOCK_UNIT = @STOCK_UNIT
+                                                                    AND A.SALE_UNIT  = @ORDER_UNIT THEN A.TRNS_RATE
+                               ELSE CASE WHEN ISNULL(F.TRNS_RATE, 0.0) != 0.0 THEN F.TRNS_RATE
+                                          ELSE 1.0
+                                    END
+                          END
+                END                                                                     AS SALE_TRANS_RATE
+              , CASE WHEN ISNULL(G.ITEM_P, 0.0) != 0.0 THEN G.ITEM_P
+                     ELSE 0.0
+                END                                                                     AS WGT_PRICE
+              , CASE WHEN ISNULL(H.ITEM_P, 0.0) != 0.0 THEN H.ITEM_P
+                     ELSE 0.0
+                END                                                                     AS VOL_PRICE
+        FROM                BPR100T     A  WITH (NOLOCK)
+                LEFT  JOIN  ( /* 할인정보(고객별) 조회 */
+                            SELECT  S1.COMP_CODE, S1.ITEM_CODE
+                                  , MAX(ISNULL(S1.DC_RATE , 0.0)) AS DC_RATE
+                                  , MAX(ISNULL(S1.DC_PRICE, 0.0)) AS DC_PRICE
+                            FROM                SDC100T     S1 WITH (NOLOCK)
+                                    INNER JOIN  (
+                                                SELECT  COMP_CODE, AGENT_TYPE, CUSTOM_CODE, ITEM_CODE, MONEY_UNIT
+                                                      , MAX(DC_START_DT) AS DC_START_DT
+                                                FROM    SDC100T     WITH (NOLOCK)
+                                                WHERE   COMP_CODE   =  @COMP_CODE
+                                                AND     AGENT_TYPE  =  N'*'
+                                                AND     CUSTOM_CODE =  @CUSTOM_CODE
+                                                AND     ITEM_CODE   =  @ITEM_CODE
+                                                AND     MONEY_UNIT  =  @MONEY_UNIT
+                                                AND     ORDER_UNIT  =  @ORDER_UNIT
+                                                AND     DC_END_DT  &gt;=  @BASIS_DATE
+                                                GROUP   BY
+                                                        COMP_CODE, AGENT_TYPE, CUSTOM_CODE, ITEM_CODE, MONEY_UNIT
+                                                ) S2                         ON S2.COMP_CODE        = S1.COMP_CODE
+                                                                            AND S2.AGENT_TYPE       = S1.AGENT_TYPE
+                                                                            AND S2.CUSTOM_CODE      = S1.CUSTOM_CODE
+                                                                            AND S2.ITEM_CODE        = S1.ITEM_CODE
+                                                                            AND S2.MONEY_UNIT       = S1.MONEY_UNIT
+                                                                            AND S2.DC_START_DT      = S1.DC_START_DT
+                            WHERE   S1.COMP_CODE        =  @COMP_CODE
+                            AND     S1.AGENT_TYPE       =  N'*'
+                            AND     S1.CUSTOM_CODE      =  @CUSTOM_CODE
+                            AND     S1.ITEM_CODE        =  @ITEM_CODE
+                            AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+                            AND     S1.ORDER_UNIT       =  @ORDER_UNIT
+                            AND     S1.DC_START_DT     &lt;=  @BASIS_DATE
+                            AND     S1.DC_END_DT       &gt;=  @BASIS_DATE
+                            GROUP   BY
+                                    S1.COMP_CODE, S1.ITEM_CODE
+                            ) B                          ON  B.COMP_CODE        =  A.COMP_CODE
+                                                        AND  B.ITEM_CODE        =  A.ITEM_CODE
+                LEFT  JOIN  (/* 할인정보(고객분류별) 조회 */
+                            SELECT  S1.COMP_CODE, S1.ITEM_CODE
+                                  , MAX(ISNULL(S1.DC_RATE , 0.0)) AS DC_RATE
+                                  , MAX(ISNULL(S1.DC_PRICE, 0.0)) AS DC_PRICE
+                            FROM                SDC100T     S1 WITH (NOLOCK)
+                                    INNER JOIN  (
+                                                SELECT  COMP_CODE, AGENT_TYPE, CUSTOM_CODE, ITEM_CODE, MONEY_UNIT
+                                                      , MAX(DC_START_DT) AS DC_START_DT
+                                                FROM    SDC100T     WITH (NOLOCK)
+                                                WHERE   COMP_CODE   =  @COMP_CODE
+                                                AND     AGENT_TYPE  =  @AGENT_TYPE
+                                                AND     CUSTOM_CODE =  N'*'
+                                                AND     ITEM_CODE   =  @ITEM_CODE
+                                                AND     MONEY_UNIT  =  @MONEY_UNIT
+                                                AND     ORDER_UNIT  =  @ORDER_UNIT
+                                                AND     DC_END_DT  &gt;=  @BASIS_DATE
+                                                GROUP   BY
+                                                        COMP_CODE, AGENT_TYPE, CUSTOM_CODE, ITEM_CODE, MONEY_UNIT
+                                                ) S2                         ON S2.COMP_CODE        = S1.COMP_CODE
+                                                                            AND S2.AGENT_TYPE       = S1.AGENT_TYPE
+                                                                            AND S2.CUSTOM_CODE      = S1.CUSTOM_CODE
+                                                                            AND S2.ITEM_CODE        = S1.ITEM_CODE
+                                                                            AND S2.MONEY_UNIT       = S1.MONEY_UNIT
+                                                                            AND S2.DC_START_DT      = S1.DC_START_DT
+                            WHERE   S1.COMP_CODE        =  @COMP_CODE
+                            AND     S1.AGENT_TYPE       =  @AGENT_TYPE
+                            AND     S1.CUSTOM_CODE      =  N'*'
+                            AND     S1.ITEM_CODE        =  @ITEM_CODE
+                            AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+                            AND     S1.ORDER_UNIT       =  @ORDER_UNIT
+                            AND     S1.DC_START_DT     &lt;=  @BASIS_DATE
+                            AND     S1.DC_END_DT       &gt;=  @BASIS_DATE
+                            GROUP   BY
+                                    S1.COMP_CODE, S1.ITEM_CODE
+                            ) C                          ON  C.COMP_CODE        =  A.COMP_CODE
+                                                        AND  C.ITEM_CODE        =  A.ITEM_CODE
+                LEFT  JOIN  (/* 거래처별 품목정보 조회 */
+                            SELECT  S1.COMP_CODE, S1.ITEM_CODE
+                                  , MAX(ISNULL(S1.ORDER_P  , 0.0)) AS ORDER_P
+                                  , MAX(ISNULL(S1.TRNS_RATE, 1.0)) AS TRNS_RATE
+                            FROM    BPR300T     S1 WITH (NOLOCK)
+                            WHERE   S1.COMP_CODE        =  @COMP_CODE
+                            AND     S1.TYPE             =  N'2'
+                            AND     S1.DIV_CODE         &gt;  N''
+                            AND     S1.ITEM_CODE        =  @ITEM_CODE
+                            AND     S1.CUSTOM_CODE      =  @CUSTOM_CODE
+                            AND     S1.ORDER_UNIT       =  @ORDER_UNIT
+                            AND     S1.APLY_START_DATE  =  (SELECT  MAX(APLY_START_DATE)
+                                                            FROM    BPR300T     WITH (NOLOCK)
+                                                            WHERE   COMP_CODE           =  @COMP_CODE
+                                                            AND     TYPE                =  N'2'
+                                                            AND     DIV_CODE            &gt;  N''
+                                                            AND     ITEM_CODE           =  @ITEM_CODE
+                                                            AND     CUSTOM_CODE         =  @CUSTOM_CODE
+                                                            AND     ORDER_UNIT          =  @ORDER_UNIT
+                                                            AND     APLY_START_DATE    &lt;=  @BASIS_DATE)
+                            GROUP   BY
+                                    S1.COMP_CODE, S1.ITEM_CODE
+                            ) D                          ON  D.COMP_CODE        =  A.COMP_CODE
+                                                        AND  D.ITEM_CODE        =  A.ITEM_CODE
+                LEFT  JOIN  (/* 거래처별 품목단가정보(판매단위 기준) 조회 */
+                            SELECT  S1.COMP_CODE, S1.ITEM_CODE
+                                  , MAX(ISNULL(S1.ITEM_P, 0.0)) AS ITEM_P, PRICE_TYPE
+                            FROM    BPR400T     S1 WITH (NOLOCK)
+                            WHERE   S1.COMP_CODE        =  @COMP_CODE
+                            AND     S1.TYPE             =  N'2'
+                            AND     S1.DIV_CODE         &gt;  N''
+                            AND     S1.ITEM_CODE        =  @ITEM_CODE
+                            AND     S1.CUSTOM_CODE      =  @CUSTOM_CODE
+                            AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+                            AND     S1.ORDER_UNIT       =  @ORDER_UNIT
+                            AND     S1.APLY_START_DATE  =  (SELECT  MAX(APLY_START_DATE)
+                                                            FROM    BPR400T     WITH (NOLOCK)
+                                                            WHERE   COMP_CODE           =  @COMP_CODE
+                                                            AND     TYPE                =  N'2'
+                                                            AND     DIV_CODE            &gt;  N''
+                                                            AND     ITEM_CODE           =  @ITEM_CODE
+                                                            AND     CUSTOM_CODE         =  @CUSTOM_CODE
+                                                            AND     MONEY_UNIT          =  @MONEY_UNIT
+                                                            AND     ORDER_UNIT          =  @ORDER_UNIT
+                                                            AND     APLY_START_DATE    &lt;=  @BASIS_DATE)
+                            GROUP   BY
+                                    S1.COMP_CODE, S1.ITEM_CODE, PRICE_TYPE
+                            ) E                          ON  E.COMP_CODE        =  A.COMP_CODE
+                                                        AND  E.ITEM_CODE        =  A.ITEM_CODE
+
+                <if test="USE_DEFAULT_PRICE != &quot;N&quot;">
+                LEFT  JOIN  (/* 거래처별 품목단가정보(판매단위 기준) 조회 */
+                            SELECT  S1.COMP_CODE, S1.ITEM_CODE
+                                  , MAX(ISNULL(S1.ITEM_P, 0.0)) AS ITEM_P, PRICE_TYPE
+                            FROM    BPR400T     S1 WITH (NOLOCK)
+                            WHERE   S1.COMP_CODE        =  @COMP_CODE
+                            AND     S1.TYPE             =  N'2'
+                            AND     S1.DIV_CODE         &gt;  N''
+                            AND     S1.ITEM_CODE        =  @ITEM_CODE
+                            AND     S1.CUSTOM_CODE      =  '*'
+                            AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+                            AND     S1.ORDER_UNIT       =  @ORDER_UNIT
+                            AND     S1.APLY_START_DATE  =  (SELECT  MAX(APLY_START_DATE)
+                                                            FROM    BPR400T     WITH (NOLOCK)
+                                                            WHERE   COMP_CODE           =  @COMP_CODE
+                                                            AND     TYPE                =  N'2'
+                                                            AND     DIV_CODE            &gt;  N''
+                                                            AND     ITEM_CODE           =  @ITEM_CODE
+                                                            AND     CUSTOM_CODE         =  '*'
+                                                            AND     MONEY_UNIT          =  @MONEY_UNIT
+                                                            AND     ORDER_UNIT          =  @ORDER_UNIT
+                                                            AND     APLY_START_DATE    &lt;=  @BASIS_DATE)
+                            GROUP   BY
+                                    S1.COMP_CODE, S1.ITEM_CODE, PRICE_TYPE
+                            ) E1                          ON  E1.COMP_CODE        =  A.COMP_CODE
+                                                        AND  E1.ITEM_CODE        =  A.ITEM_CODE
+                </if>
+                LEFT  JOIN  (/* 단위환산정보 조회*/
+                            SELECT  COMP_CODE, TRNS_RATE
+                            FROM    BPR600T     WITH (NOLOCK)
+                            WHERE   COMP_CODE           =  @COMP_CODE
+                            AND     STOCK_UNIT          =  @STOCK_UNIT
+                            AND     ORDER_UNIT          =  @ORDER_UNIT
+                            ) F                          ON  F.COMP_CODE        =  A.COMP_CODE
+                LEFT  JOIN  (/* 거래처별 품목단가정보(중량단위 기준) 조회*/
+                            SELECT  S1.COMP_CODE, S1.ITEM_CODE
+                                  , MAX(ISNULL(S1.ITEM_P, 0.0)) AS ITEM_P
+                            FROM    BPR400T     S1 WITH (NOLOCK)
+                            WHERE   S1.COMP_CODE        =  @COMP_CODE
+                            AND     S1.TYPE             =  N'2'
+                            AND     S1.DIV_CODE         &gt;  N''
+                            AND     S1.ITEM_CODE        =  @ITEM_CODE
+                            AND     S1.CUSTOM_CODE      =  @CUSTOM_CODE
+                            AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+                            AND     S1.ORDER_UNIT       =  @WGT_UNIT
+                            AND     S1.APLY_START_DATE  =  (SELECT  MAX(APLY_START_DATE)
+                                                            FROM    BPR400T     WITH (NOLOCK)
+                                                            WHERE   COMP_CODE           =  @COMP_CODE
+                                                            AND     TYPE                =  N'2'
+                                                            AND     DIV_CODE            &gt;  N''
+                                                            AND     ITEM_CODE           =  @ITEM_CODE
+                                                            AND     CUSTOM_CODE         =  @CUSTOM_CODE
+                                                            AND     MONEY_UNIT          =  @MONEY_UNIT
+                                                            AND     ORDER_UNIT          =  @WGT_UNIT
+                                                            AND     APLY_START_DATE    &lt;=  @BASIS_DATE)
+                            GROUP   BY
+                                    S1.COMP_CODE, S1.ITEM_CODE
+                            ) G                          ON  G.COMP_CODE        =  A.COMP_CODE
+                                                        AND  G.ITEM_CODE        =  A.ITEM_CODE
+                LEFT  JOIN  ( /* 거래처별 품목단가정보(부피단위 기준) 조회 */
+                            SELECT  S1.COMP_CODE, S1.ITEM_CODE
+                                  , MAX(ISNULL(S1.ITEM_P, 0.0)) AS ITEM_P
+                            FROM    BPR400T     S1 WITH (NOLOCK)
+                            WHERE   S1.COMP_CODE        =  @COMP_CODE
+                            AND     S1.TYPE             =  N'2'
+                            AND     S1.DIV_CODE         &gt;  N''
+                            AND     S1.ITEM_CODE        =  @ITEM_CODE
+                            AND     S1.CUSTOM_CODE      =  @CUSTOM_CODE
+                            AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+                            AND     S1.ORDER_UNIT       =  @VOL_UNIT
+                            AND     S1.APLY_START_DATE  =  (SELECT  MAX(APLY_START_DATE)
+                                                            FROM    BPR400T     WITH (NOLOCK)
+                                                            WHERE   COMP_CODE           =  @COMP_CODE
+                                                            AND     TYPE                =  N'2'
+                                                            AND     DIV_CODE            &gt;  N''
+                                                            AND     ITEM_CODE           =  @ITEM_CODE
+                                                            AND     CUSTOM_CODE         =  @CUSTOM_CODE
+                                                            AND     MONEY_UNIT          =  @MONEY_UNIT
+                                                            AND     ORDER_UNIT          =  @VOL_UNIT
+                                                            AND     APLY_START_DATE    &lt;=  @BASIS_DATE)
+                            GROUP   BY
+                                    S1.COMP_CODE, S1.ITEM_CODE
+                            ) H                          ON  H.COMP_CODE        =  A.COMP_CODE
+                                                        AND  H.ITEM_CODE        =  A.ITEM_CODE
+                LEFT  JOIN  (
+                            SELECT  TOP 1 COMP_CODE, SUB_CODE AS MONEY_UNIT
+                            FROM    BSA100T     WITH (NOLOCK)
+                            WHERE   COMP_CODE           =  @COMP_CODE
+                            AND     MAIN_CODE           =  N'B004'
+                            AND     SUB_CODE           !=  N'$'
+                            AND     ISNULL(REF_CODE1,'')=  N'Y'
+                            ) M1                         ON M1.COMP_CODE        =  A.COMP_CODE
+        WHERE    A.COMP_CODE        =  @COMP_CODE
+        AND      A.ITEM_CODE        =  @ITEM_CODE
+END
+	</select>
+	<select id="salesCommonServiceImpl.fnGetDivPriceInfo" parameterType="Map" resultType="rMap">
+		/* salesCommonServiceImpl.fnGetPriceInfo2 */
+		 BEGIN
+	        DECLARE     @COMP_CODE          NVARCHAR(08)            /* 법인코드 */
+	                  , @DIV_CODE           NVARCHAR(08)            /* 사업장코드 */
+	                  , @CUSTOM_CODE        NVARCHAR(08)            /* 거래처코드 */
+	                  , @AGENT_TYPE         NVARCHAR(08)            /* 거래처분류 */
+	                  , @ITEM_CODE          NVARCHAR(20)            /* 품목코드 */
+	                  , @MONEY_UNIT         NVARCHAR(03)            /* 화폐단위 */
+	                  , @ORDER_UNIT         NVARCHAR(03)            /* 판매단위 */
+	                  , @STOCK_UNIT         NVARCHAR(03)            /* 재고단위 */
+	                  , @TRANS_RATE         NUMERIC(12, 6)          /* 변환계수 */
+	                  , @BASIS_DATE         NVARCHAR(08)            /* 기준일자 */
+	                  , @WGT_UNIT           NVARCHAR(03)            /* 중량단위 */
+	                  , @VOL_UNIT           NVARCHAR(03)            /* 부피단위 */
+	    
+	            SET     @COMP_CODE          = #{COMP_CODE}
+	            SET     @DIV_CODE           = #{DIV_CODE}
+	            SET     @CUSTOM_CODE        = #{CUSTOM_CODE}
+	            SET     @AGENT_TYPE         = #{AGENT_TYPE}
+	            SET     @ITEM_CODE          = #{ITEM_CODE}
+	            SET     @MONEY_UNIT         = #{MONEY_UNIT}
+	            SET     @ORDER_UNIT         = #{ORDER_UNIT}
+	            SET     @STOCK_UNIT         = #{STOCK_UNIT}
+	            SET     @TRANS_RATE         = #{TRANS_RATE}
+	            SET     @BASIS_DATE         = #{BASIS_DATE}
+	            SET     @WGT_UNIT           = #{WGT_UNIT}
+	            SET     @VOL_UNIT           = #{VOL_UNIT}
+	    
+	            /*
+	              1. DC율     : 고객별 할인정보(SDC100T) -&gt; 고객분류별 할인정보(SDC100T)
+	              2. 판매단가 : 고객별 할인정보(SDC100T) -&gt; 고객분류별 할인정보(SDC100T)
+	                         -; 고객품목(BPR300T) -; 고객단가(BPR400T) -; 품목정보(BPR100T)
+	              3. 입수     : 고객품목(BPR300T) -; 품목정보(BPR100T) -; 단위환산정보(BPR600T)
+	              4. 중량단가 : 고객단가(BPR400T)
+	              5. 부피단가 : 고객단가(BPR400T)
+	            */
+	
+	            SELECT  CASE WHEN ISNULL(B.DC_RATE, 0.0) != 0.0 THEN B.DC_RATE
+	                         ELSE CASE WHEN ISNULL(C.DC_RATE, 0.0) != 0.0 THEN C.DC_RATE
+	                                   ELSE 0.0
+	                              END
+	                    END                                                                     AS DC_RATE
+	                  , CASE WHEN ISNULL(B.DC_PRICE, 0.0) != 0.0 THEN B.DC_PRICE
+	                         ELSE CASE WHEN ISNULL(C.DC_PRICE, 0.0) != 0.0 THEN C.DC_PRICE
+	                                   ELSE CASE WHEN ISNULL(D.ORDER_P, 0.0) != 0.0 THEN D.ORDER_P
+	                                             ELSE CASE WHEN ISNULL(E.ITEM_P, 0.0) != 0.0 THEN E.ITEM_P
+	                                                       ELSE CASE WHEN ISNULL(M1.MONEY_UNIT, '') = @MONEY_UNIT THEN A.SALE_BASIS_P
+	                                                                 ELSE 0.0
+	                                                            END
+	                                                  END
+	                                        END
+	                              END
+	                    END                                                                     AS SALE_PRICE
+	                  , CASE WHEN ISNULL(D.TRNS_RATE, 0.0) != 0.0 THEN D.TRNS_RATE
+	                         ELSE CASE WHEN ISNULL(A.TRNS_RATE, 0.0) != 0.0 AND A.STOCK_UNIT = @STOCK_UNIT
+	                                                                        AND A.SALE_UNIT  = @ORDER_UNIT THEN A.TRNS_RATE
+	                                   ELSE CASE WHEN ISNULL(F.TRNS_RATE, 0.0) != 0.0 THEN F.TRNS_RATE
+	                                              ELSE 1.0
+	                                        END
+	                              END
+	                    END                                                                     AS SALE_TRANS_RATE
+	                  , CASE WHEN ISNULL(G.ITEM_P, 0.0) != 0.0 THEN G.ITEM_P
+	                         ELSE 0.0
+	                    END                                                                     AS WGT_PRICE
+	                  , CASE WHEN ISNULL(H.ITEM_P, 0.0) != 0.0 THEN H.ITEM_P
+	                         ELSE 0.0
+	                    END                                                                     AS VOL_PRICE
+	            FROM                BPR100T     A  WITH (NOLOCK)
+	                    LEFT  JOIN  (/* 할인정보(고객별) 조회  */
+	                                SELECT  S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+	                                      , MAX(ISNULL(S1.DC_RATE , 0.0)) AS DC_RATE
+	                                      , MAX(ISNULL(S1.DC_PRICE, 0.0)) AS DC_PRICE
+	                                FROM                SDC100T     S1 WITH (NOLOCK)
+	                                        INNER JOIN  (
+	                                                    SELECT  COMP_CODE, DIV_CODE, AGENT_TYPE, CUSTOM_CODE, ITEM_CODE, MONEY_UNIT
+	                                                          , MAX(DC_START_DT) AS DC_START_DT
+	                                                    FROM    SDC100T     WITH (NOLOCK)
+	                                                    WHERE   COMP_CODE   =  @COMP_CODE
+	                                                    AND     DIV_CODE    =  @DIV_CODE
+	                                                    AND     AGENT_TYPE  =  N'*'
+	                                                    AND     CUSTOM_CODE =  @CUSTOM_CODE
+	                                                    AND     ITEM_CODE   =  @ITEM_CODE
+	                                                    AND     MONEY_UNIT  =  @MONEY_UNIT
+	                                                    AND     ORDER_UNIT  =  @ORDER_UNIT
+	                                                    AND     DC_END_DT  &gt;=  @BASIS_DATE
+	                                                    GROUP   BY
+	                                                            COMP_CODE, DIV_CODE, AGENT_TYPE, CUSTOM_CODE, ITEM_CODE, MONEY_UNIT
+	                                                    ) S2                         ON S2.COMP_CODE        = S1.COMP_CODE
+	                                                                                AND S2.DIV_CODE         = S1.DIV_CODE
+	                                                                                AND S2.AGENT_TYPE       = S1.AGENT_TYPE
+	                                                                                AND S2.CUSTOM_CODE      = S1.CUSTOM_CODE
+	                                                                                AND S2.ITEM_CODE        = S1.ITEM_CODE
+	                                                                                AND S2.MONEY_UNIT       = S1.MONEY_UNIT
+	                                                                                AND S2.DC_START_DT      = S1.DC_START_DT
+	                                WHERE   S1.COMP_CODE        =  @COMP_CODE
+	                                AND     S1.DIV_CODE         =  @DIV_CODE
+	                                AND     S1.AGENT_TYPE       =  N'*'
+	                                AND     S1.CUSTOM_CODE      =  @CUSTOM_CODE
+	                                AND     S1.ITEM_CODE        =  @ITEM_CODE
+	                                AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+	                                AND     S1.ORDER_UNIT       =  @ORDER_UNIT
+	                                AND     S1.DC_START_DT     &lt;=  @BASIS_DATE
+	                                AND     S1.DC_END_DT       &gt;=  @BASIS_DATE
+	                                GROUP   BY
+	                                        S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+	                                ) B                          ON  B.COMP_CODE        =  A.COMP_CODE
+	                                                            AND  B.DIV_CODE         =  @DIV_CODE
+	                                                            AND  B.ITEM_CODE        =  A.ITEM_CODE
+	                    LEFT  JOIN  (/* 할인정보(고객분류별) 조회 */
+	                                SELECT  S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+	                                      , MAX(ISNULL(S1.DC_RATE , 0.0)) AS DC_RATE
+	                                      , MAX(ISNULL(S1.DC_PRICE, 0.0)) AS DC_PRICE
+	                                FROM                SDC100T     S1 WITH (NOLOCK)
+	                                        INNER JOIN  (
+	                                                    SELECT  COMP_CODE, DIV_CODE, AGENT_TYPE, CUSTOM_CODE, ITEM_CODE, MONEY_UNIT
+	                                                          , MAX(DC_START_DT) AS DC_START_DT
+	                                                    FROM    SDC100T     WITH (NOLOCK)
+	                                                    WHERE   COMP_CODE   =  @COMP_CODE
+	                                                    AND     DIV_CODE    =  @DIV_CODE
+	                                                    AND     AGENT_TYPE  =  @AGENT_TYPE
+	                                                    AND     CUSTOM_CODE =  N'*'
+	                                                    AND     ITEM_CODE   =  @ITEM_CODE
+	                                                    AND     MONEY_UNIT  =  @MONEY_UNIT
+	                                                    AND     ORDER_UNIT  =  @ORDER_UNIT
+	                                                    AND     DC_END_DT  &gt;=  @BASIS_DATE
+	                                                    GROUP   BY
+	                                                            COMP_CODE, DIV_CODE, AGENT_TYPE, CUSTOM_CODE, ITEM_CODE, MONEY_UNIT
+	                                                    ) S2                         ON S2.COMP_CODE        = S1.COMP_CODE
+	                                                                                AND S2.DIV_CODE         = S1.DIV_CODE
+	                                                                                AND S2.AGENT_TYPE       = S1.AGENT_TYPE
+	                                                                                AND S2.CUSTOM_CODE      = S1.CUSTOM_CODE
+	                                                                                AND S2.ITEM_CODE        = S1.ITEM_CODE
+	                                                                                AND S2.MONEY_UNIT       = S1.MONEY_UNIT
+	                                                                                AND S2.DC_START_DT      = S1.DC_START_DT
+	                                WHERE   S1.COMP_CODE        =  @COMP_CODE
+	                                AND     S1.DIV_CODE         =  @DIV_CODE
+	                                AND     S1.AGENT_TYPE       =  @AGENT_TYPE
+	                                AND     S1.CUSTOM_CODE      =  N'*'
+	                                AND     S1.ITEM_CODE        =  @ITEM_CODE
+	                                AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+	                                AND     S1.ORDER_UNIT       =  @ORDER_UNIT
+	                                AND     S1.DC_START_DT     &lt;=  @BASIS_DATE
+	                                AND     S1.DC_END_DT       &gt;=  @BASIS_DATE
+	                                GROUP   BY
+	                                        S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+	                                ) C                          ON  C.COMP_CODE        =  A.COMP_CODE
+	                                                            AND  C.DIV_CODE         =  @DIV_CODE
+	                                                            AND  C.ITEM_CODE        =  A.ITEM_CODE
+	                    LEFT  JOIN  (/* 거래처별 품목정보 조회*/
+	                                SELECT  S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+	                                      , MAX(ISNULL(S1.ORDER_P  , 0.0)) AS ORDER_P
+	                                      , MAX(ISNULL(S1.TRNS_RATE, 1.0)) AS TRNS_RATE
+	                                FROM    BPR300T     S1 WITH (NOLOCK)
+	                                WHERE   S1.COMP_CODE        =  @COMP_CODE
+	                                AND     S1.TYPE             =  N'2'
+	                                AND     S1.DIV_CODE         =  @DIV_CODE
+	                                AND     S1.ITEM_CODE        =  @ITEM_CODE
+	                                AND     S1.CUSTOM_CODE      =  @CUSTOM_CODE
+	                                AND     S1.ORDER_UNIT       =  @ORDER_UNIT
+	                                AND     S1.APLY_START_DATE  =  (SELECT  MAX(APLY_START_DATE)
+	                                                                FROM    BPR300T     WITH (NOLOCK)
+	                                                                WHERE   COMP_CODE           =  @COMP_CODE
+	                                                                AND     TYPE                =  N'2'
+	                                                                AND     DIV_CODE            =  @DIV_CODE
+	                                                                AND     ITEM_CODE           =  @ITEM_CODE
+	                                                                AND     CUSTOM_CODE         =  @CUSTOM_CODE
+	                                                                AND     ORDER_UNIT          =  @ORDER_UNIT
+	                                                                AND     APLY_START_DATE    &lt;=  @BASIS_DATE)
+	                                GROUP   BY
+	                                        S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+	                                ) D                          ON  D.COMP_CODE        =  A.COMP_CODE
+	                                                            AND  D.DIV_CODE         =  @DIV_CODE
+	                                                            AND  D.ITEM_CODE        =  A.ITEM_CODE
+	                    LEFT  JOIN  (/* 거래처별 품목단가정보(판매단위 기준) 조회  */
+	                                SELECT  S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+	                                      , MAX(ISNULL(S1.ITEM_P, 0.0)) AS ITEM_P
+	                                FROM    BPR400T     S1 WITH (NOLOCK)
+	                                WHERE   S1.COMP_CODE        =  @COMP_CODE
+	                                AND     S1.TYPE             =  N'2'
+	                                AND     S1.DIV_CODE         =  @DIV_CODE
+	                                AND     S1.ITEM_CODE        =  @ITEM_CODE
+	                                AND     S1.CUSTOM_CODE      =  @CUSTOM_CODE
+	                                AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+	                                AND     S1.ORDER_UNIT       =  @ORDER_UNIT
+	                                AND     S1.APLY_START_DATE  =  (SELECT  MAX(APLY_START_DATE)
+	                                                                FROM    BPR400T     WITH (NOLOCK)
+	                                                                WHERE   COMP_CODE           =  @COMP_CODE
+	                                                                AND     TYPE                =  N'2'
+	                                                                AND     DIV_CODE            =  @DIV_CODE
+	                                                                AND     ITEM_CODE           =  @ITEM_CODE
+	                                                                AND     CUSTOM_CODE         =  @CUSTOM_CODE
+	                                                                AND     MONEY_UNIT          =  @MONEY_UNIT
+	                                                                AND     ORDER_UNIT          =  @ORDER_UNIT
+	                                                                AND     APLY_START_DATE    &lt;=  @BASIS_DATE)
+	                                GROUP   BY
+	                                        S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+	                                ) E                          ON  E.COMP_CODE        =  A.COMP_CODE
+	                                                            AND  E.DIV_CODE         =  @DIV_CODE
+	                                                            AND  E.ITEM_CODE        =  A.ITEM_CODE
+	                    LEFT  JOIN  (/* 단위환산정보 조회 */
+	                                SELECT  COMP_CODE, TRNS_RATE
+	                                FROM    BPR600T     WITH (NOLOCK)
+	                                WHERE   COMP_CODE           =  @COMP_CODE
+	                                AND     STOCK_UNIT          =  @STOCK_UNIT
+	                                AND     ORDER_UNIT          =  @ORDER_UNIT
+	                                ) F                          ON  F.COMP_CODE        =  A.COMP_CODE
+	                    LEFT  JOIN  (/* 거래처별 품목단가정보(중량단위 기준) 조회 */
+	                                SELECT  S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+	                                      , MAX(ISNULL(S1.ITEM_P, 0.0)) AS ITEM_P
+	                                FROM    BPR400T     S1 WITH (NOLOCK)
+	                                WHERE   S1.COMP_CODE        =  @COMP_CODE
+	                                AND     S1.TYPE             =  N'2'
+	                                AND     S1.DIV_CODE         =  @DIV_CODE
+	                                AND     S1.ITEM_CODE        =  @ITEM_CODE
+	                                AND     S1.CUSTOM_CODE      =  @CUSTOM_CODE
+	                                AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+	                                AND     S1.ORDER_UNIT       =  @WGT_UNIT
+	                                AND     S1.APLY_START_DATE  =  (SELECT  MAX(APLY_START_DATE)
+	                                                                FROM    BPR400T     WITH (NOLOCK)
+	                                                                WHERE   COMP_CODE           =  @COMP_CODE
+	                                                                AND     TYPE                =  N'2'
+	                                                                AND     DIV_CODE            =  @DIV_CODE
+	                                                                AND     ITEM_CODE           =  @ITEM_CODE
+	                                                                AND     CUSTOM_CODE         =  @CUSTOM_CODE
+	                                                                AND     MONEY_UNIT          =  @MONEY_UNIT
+	                                                                AND     ORDER_UNIT          =  @WGT_UNIT
+	                                                                AND     APLY_START_DATE    &lt;=  @BASIS_DATE)
+	                                GROUP   BY
+	                                        S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+	                                ) G                          ON  G.COMP_CODE        =  A.COMP_CODE
+	                                                            AND  G.DIV_CODE         =  @DIV_CODE
+	                                                            AND  G.ITEM_CODE        =  A.ITEM_CODE
+	                    LEFT  JOIN  (/* 거래처별 품목단가정보(부피단위 기준) 조회 */
+	                                SELECT  S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+	                                      , MAX(ISNULL(S1.ITEM_P, 0.0)) AS ITEM_P
+	                                FROM    BPR400T     S1 WITH (NOLOCK)
+	                                WHERE   S1.COMP_CODE        =  @COMP_CODE
+	                                AND     S1.TYPE             =  N'2'
+	                                AND     S1.DIV_CODE         =  @DIV_CODE
+	                                AND     S1.ITEM_CODE        =  @ITEM_CODE
+	                                AND     S1.CUSTOM_CODE      =  @CUSTOM_CODE
+	                                AND     S1.MONEY_UNIT       =  @MONEY_UNIT
+	                                AND     S1.ORDER_UNIT       =  @VOL_UNIT
+	                                AND     S1.APLY_START_DATE  =  (SELECT  MAX(APLY_START_DATE)
+	                                                                FROM    BPR400T     WITH (NOLOCK)
+	                                                                WHERE   COMP_CODE           =  @COMP_CODE
+	                                                                AND     TYPE                =  N'2'
+	                                                                AND     DIV_CODE            =  @DIV_CODE
+	                                                                AND     ITEM_CODE           =  @ITEM_CODE
+	                                                                AND     CUSTOM_CODE         =  @CUSTOM_CODE
+	                                                                AND     MONEY_UNIT          =  @MONEY_UNIT
+	                                                                AND     ORDER_UNIT          =  @VOL_UNIT
+	                                                                AND     APLY_START_DATE    &lt;=  @BASIS_DATE)
+	                                GROUP   BY
+	                                        S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+	                                ) H                          ON  H.COMP_CODE        =  A.COMP_CODE
+	                                                            AND  H.DIV_CODE         =  @DIV_CODE
+	                                                            AND  H.ITEM_CODE        =  A.ITEM_CODE
+	                    LEFT  JOIN  (
+	                                SELECT  TOP 1 COMP_CODE, SUB_CODE AS MONEY_UNIT
+	                                FROM    BSA100T     WITH (NOLOCK)
+	                                WHERE   COMP_CODE           =  @COMP_CODE
+	                                AND     MAIN_CODE           =  N'B004'
+	                                AND     SUB_CODE           !=  N'$'
+	                                AND     ISNULL(REF_CODE1,'')=  N'Y'
+	                                ) M1                         ON M1.COMP_CODE        =  A.COMP_CODE
+	            WHERE    A.COMP_CODE        =  @COMP_CODE
+	            AND      A.ITEM_CODE        =  @ITEM_CODE
+	    END
+	</select>
+	<select id="salesCommonServiceImpl.fnRecordComBo" parameterType="Map" resultType="rMap">
+		/* salesCommonServiceImpl.fnRecordComBo */
+		<if test="TYPE == &quot;AUTHO_USER&quot;">
+			SELECT SUB_CODE    			   AS 'value'
+			     , CODE_NAME${sBwrLangFld}  AS 'text'
+			     ,'' AS 'option'
+			  FROM BSA100T WITH (NOLOCK)
+			 WHERE COMP_CODE = #{COMP_CODE}
+			   AND MAIN_CODE = #{MAIN_CODE}
+			   AND SUB_CODE != '$'
+			  <if test="@foren.Ognl@isNotEmpty(SUB_CODE)">
+			   AND SUB_CODE &gt;= #{SUB_CODE}
+			  </if>
+		</if>
+		<if test="TYPE == &quot;BSA220T&quot;">
+			/*사업장별 창고*/
+			SELECT TREE_CODE   AS 'value'
+			     , TREE_NAME   AS 'text'
+			     , '' AS 'option'
+			  FROM BSA220T WITH (NOLOCK)
+			 WHERE COMP_CODE  = #{COMP_CODE}
+			   AND TYPE_LEVEL = #{TYPE_LEVEL}
+			   AND USE_YN     = 'Y'      
+		</if>
+		<if test="TYPE == &quot;BSA225T&quot;">
+			/* 사업장/창고별 창고Cell */			
+			SELECT WH_CELL_CODE    AS 'value'
+			     , WH_CELL_NAME    AS 'text'
+			     , WH_CELL_CODE + WH_CELL_NAME AS 'search'
+			  FROM BSA225T WITH (NOLOCK)
+			 WHERE COMP_CODE  = #{COMP_CODE}
+			   AND DIV_CODE   = #{DIV_CODE}
+			   <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+			   AND WH_CODE    = #{WH_CODE}
+			   </if>
+			   AND USE_YN     = 'Y'
+		</if>
+		<if test="TYPE == &quot;BSA230T&quot;">
+			/* 사업장별 작업장 */
+			SELECT TREE_CODE   AS 'value'
+			     , TREE_NAME   AS 'text'
+			     , '' AS 'option'
+			  FROM BSA230T WITH (NOLOCK)
+			 WHERE COMP_CODE  = #{COMP_CODE}
+			   AND TYPE_LEVEL = #{TYPE_LEVEL}
+			 <if test="@foren.Ognl@isNotEmpty(SUB_CODE)">
+			   AND ${SUB_CODE}
+			 </if>
+			   AND USE_YN     = 'Y'
+		</if>
+		<if test="TYPE == &quot;BILL_DIV&quot;">
+			/* 사업장별 신고사업장 */
+			SELECT BILL_DIV_CODE                 AS 'value'
+			     , (SELECT DIV_NAME
+			          FROM BOR120T WITH (NOLOCK)
+			         WHERE COMP_CODE = A.COMP_CODE
+			           AND DIV_CODE  = A.BILL_DIV_CODE) AS 'text'
+			      , '' AS 'option'
+			  FROM (SELECT DISTINCT BILL_DIV_CODE
+			             , COMP_CODE
+			          FROM BOR120T WITH (NOLOCK)
+			         WHERE COMP_CODE = #{COMP_CODE}
+			           AND DIV_CODE  = #{DIV_CODE}) A
+			 ORDER BY BILL_DIV_CODE      
+		</if>
+		<if test="TYPE == &quot;DIV&quot;">
+			/* 신고사업장별 사업장 */
+			SELECT DIV_CODE   AS 'value'
+			     , DIV_NAME   AS 'text'
+			     , '' AS 'option'
+			  FROM BOR120T WITH (NOLOCK)
+			 WHERE COMP_CODE     = #{COMP_CODE}
+			   AND BILL_DIV_CODE = #{BILL_DIV_CODE}
+		</if>
+		<if test="TYPE == &quot;DIV_PRSN&quot;">
+			/* 사업장별 담당자 */
+			SELECT SUB_CODE  			   AS 'value'
+			     , CODE_NAME${sBwrLangFld}  AS 'text'
+			     , '' AS 'option' 
+			  FROM BSA100T WITH (NOLOCK)
+			 WHERE COMP_CODE = #{COMP_CODE}
+			   AND MAIN_CODE = #{MAIN_CODE}
+			   AND SUB_CODE != '$'
+			   AND REF_CODE1 = #{DIV_CODE}
+		</if>
+		<if test="TYPE == &quot;PBS200T&quot;">
+			/* 작업장별 공정 */
+			SELECT PROG_WORK_CODE  AS 'value'
+			     , PROG_WORK_NAME  AS 'text'
+			     , '' AS 'option'
+			  FROM PBS200T WITH (NOLOCK)
+			 WHERE COMP_CODE      = #{COMP_CODE}
+			   AND DIV_CODE       = #{DIV_CODE}
+			   AND WORK_SHOP_CODE = #{WORK_SHOP_CODE}
+			   AND USE_YN         = 'Y'
+		</if>
+		<if test="TYPE == &quot;ITEM_LEVEL1&quot;">
+			/* 품목 대분류 */
+			SELECT LEVEL1		AS 'value'
+			     , LEVEL_NAME	AS 'text' 
+			     , '' AS 'option' 
+			  FROM BPR000T WITH (NOLOCK)
+			 WHERE COMP_CODE = #{COMP_CODE}
+			   AND LEVEL2    = '*'
+			   AND LEVEL3    = '*'
+		</if>
+		<if test="TYPE == &quot;WH_CODE&quot;">
+			/* 작업장 정보의 가공창고만 보이도록 */
+			SELECT A.WH_CODE	AS 'value'
+			     , B.TREE_NAME 	AS 'text'
+			     , '' AS 'option'
+			  FROM           BSA230T A WITH (NOLOCK)
+			       LEFT JOIN BSA220T B WITH (NOLOCK)
+			              ON B.COMP_CODE  = A.COMP_CODE
+			             AND B.TYPE_LEVEL = A.TYPE_LEVEL
+			             AND B.TREE_CODE  = A.WH_CODE
+			 WHERE A.COMP_CODE = #{COMP_CODE}
+			   AND A.TYPE_LEVEL = #{TYPE_LEVEL}
+			   AND A.USE_YN     = 'Y'
+			   AND A.WH_CODE  != '' 
+		</if>
+		<if test="TYPE == &quot;DIV_VEHICLE&quot;">
+			/* 사업장별 배송차량 */
+			SELECT SUB_CODE		AS 'value'
+			     , CODE_NAME${sBwrLangFld}  AS 'text'
+			     , '' AS 'option'
+			  FROM BSA100T WITH (NOLOCK)
+			 WHERE COMP_CODE = #{COMP_CODE}
+			   AND MAIN_CODE = #{MAIN_CODE}
+			   AND SUB_CODE != '$'
+			   AND REF_CODE3 =#{REF_CODE3}      /* 사업장 */
+			<if test="@foren.Ognl@isNotEmpty(REF_CODE2)">
+			   AND REF_CODE2 = #{REF_CODE2}     /* 주거래처 */
+			</if>
+		</if>		
+	</select>
+	<select id="salesCommonServiceImpl.fnGetCRedit" parameterType="Map" resultType="rMap">
+		/* salesCommonServiceImpl.fnGetCRedit */
+		/* USFuncKrv.CSFuncKr[fnGetCRedit] Query01 */
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+    SELECT uniLITE.fnGetCredit( #{COMP_CODE}
+                              , #{DIV_CODE}
+                              , #{CUSTOM_CODE}
+                              , #{S_DATE}
+                              , #{CURRENCY} ) AS CREDIT
+	</select>
+	<select id="salesCommonServiceImpl.fnExchangeRate" parameterType="Map" resultType="rMap">
+		/* salesCommonServiceImpl.fnExchangeRate */
+		 DECLARE @EXCHANGE_RATE  TABLE (AC_DATE NVARCHAR(08)
+                                  , BASE_EXCHG  NUMERIC(30,4))
+     
+	     INSERT INTO @EXCHANGE_RATE (AC_DATE, BASE_EXCHG)
+	     EXEC unilite.SP_GetExchangeRate #{S_COMP_CODE}, #{MONEY_UNIT},#{S_DATE}
+	        
+	     SELECT  AC_DATE, BASE_EXCHG
+	     FROM @EXCHANGE_RATE
+
+	     SET NOCOUNT OFF
+	</select>
+	<select id="salesCommonServiceImpl.fnOrgCd" parameterType="Map" resultType="rMap">
+		/* salesCommonServiceImpl.fnOrgCd */
+		SELECT TYPE_LEVEL
+	      FROM BSA200T WITH(NOLOCK)
+	     WHERE COMP_CODE = #{COMP_CODE}
+	       AND TYPE      = #{TYPE}
+	       AND TREE_CODE = #{TREE_CODE}
+	</select>
+	<select id="salesCommonServiceImpl.fnGetOrgInfo" parameterType="Map" resultType="rMap">
+		/* salesCommonServiceImpl.fnGetOrgInfo */
+		SELECT ISNULL(DIV_NAME   , '')  AS DIV_NAME
+         	 , ISNULL(COMPANY_NUM, '')  AS COMPANY_NUM
+	         , ISNULL(REPRE_NAME , '')  AS REPRE_NAME
+	         , ISNULL(COMP_CLASS , '')  AS COMP_CLASS
+	         , ISNULL(COMP_TYPE  , '')  AS COMP_TYPE
+	         , ISNULL(ADDR       , '')  AS ADDR
+	         , ISNULL(SUB_DIV_NUM, '')  AS SUB_DIV_NUM
+	      FROM BOR120T WITH(NOLOCK)
+	     WHERE DIV_CODE  = #{DIV_CODE}
+	       AND COMP_CODE = #{COMP_CODE}
+	</select>
+	<select id="salesCommonServiceImpl.fnCloseCheck" parameterType="Map" resultType="rMap">
+		/*salesCommonServiceImpl.fnCloseCheck*/
+		 SELECT ISNULL(MAX(LAST_YYYYMM), '000000') AS LAST_YYYYMM
+	      FROM BIV900T WITH(NOLOCK)
+	     WHERE COMP_CODE = #{COMP_CODE}
+	       AND DIV_CODE  = #{DIV_CODE}
+	       AND WH_CODE   = #{WH_CODE}
+	</select>
+	<select id="salesCommonServiceImpl.fnGetPrevNextNoForEstimate" parameterType="Map" resultType="rMap">
+		/* salesCommonServiceImpl.fnGetPrevNextNoForEstimate */
+        /* 견적정보 */
+    	<if test="MOVE == &quot;P&quot;">
+                SELECT A.ESTI_NUM AS JOB_NO
+                  FROM SES100T A WITH(NOLOCK)
+                 WHERE A.COMP_CODE = #{COMP_CODE}
+                   AND A.ESTI_NUM  = (SELECT MAX(ESTI_NUM)
+                                        FROM SES100T WITH(NOLOCK)
+                                       WHERE DIV_CODE  = #{DIV_CODE}
+                                         AND COMP_CODE = #{COMP_CODE}
+                                         <if test="@foren.Ognl@isNotEmpty(ESTI_NUM)">
+                                         AND ESTI_NUM  &lt; #{ESTI_NUM}
+                                         </if>
+                                         )
+    	</if>
+    	<if test="MOVE != &quot;P&quot;">
+            SELECT A.ESTI_NUM AS JOB_NO
+              FROM SES100T A WITH(NOLOCK)
+             WHERE A.COMP_CODE = #{COMP_CODE}
+               AND A.ESTI_NUM  = (SELECT MIN(ESTI_NUM)
+                                    FROM SES100T WITH(NOLOCK) 
+                                   WHERE DIV_CODE  = #{DIV_CODE}
+                                     AND COMP_CODE = #{COMP_CODE}
+                                     <if test="@foren.Ognl@isNotEmpty(ESTI_NUM)">
+                                     AND ESTI_NUM  &gt;  #{ESTI_NUM}
+                                     </if> )
+    	</if>
+	</select>
+	<select id="salesCommonServiceImpl.fnGetPrevNextNoForOrder" parameterType="Map" resultType="rMap">
+		/*salesCommonServiceImpl.fnGetPrevNextNoForOrder*/
+        /* 수주정보 */
+            <if test="MOVE == &quot;P&quot;">
+                    /* USFuncKrv.CSFuncKr[fnGetPrevNextNo] Query01 */
+                    SELECT A.ORDER_NUM AS JOB_NO
+                      FROM SOF100T A WITH(NOLOCK)
+                     WHERE A.COMP_CODE = #{COMP_CODE}
+                       AND A.ORDER_NUM = (SELECT MAX(ORDER_NUM)
+                                            FROM SOF100T WITH(NOLOCK) 
+                                           WHERE DIV_CODE  = #{DIV_CODE}
+                                             AND COMP_CODE = #{COMP_CODE}
+                                              <if test="@foren.Ognl@isNotEmpty(ORDER_NUM)">
+                                             AND ORDER_NUM &lt; #{ORDER_NUM}
+                                              </if>
+                                             )
+            </if>
+            <if test="MOVE != &quot;P&quot;">
+                /* USFuncKrv.CSFuncKr[fnGetPrevNextNo] Query01 */
+                SELECT A.ORDER_NUM AS JOB_NO
+                  FROM SOF100T A WITH(NOLOCK)
+                 WHERE A.COMP_CODE = #{COMP_CODE}
+                   AND A.ORDER_NUM = (SELECT MIN(ORDER_NUM)
+                                        FROM SOF100T WITH(NOLOCK) 
+                                       WHERE DIV_CODE  = #{DIV_CODE}
+                                     	AND COMP_CODE = #{COMP_CODE}
+                                     <if test="@foren.Ognl@isNotEmpty(ORDER_NUM)">
+                                     	AND ORDER_NUM  &gt;  #{ORDER_NUM}
+                                     </if> )
+            </if>
+	</select>
+    <select id="salesCommonServiceImpl.fnGetPrevNextNoForIssue" parameterType="Map" resultType="rMap">
+    	/* salesCommonServiceImpl.fnGetPrevNextNoForIssue */
+        /* 출하지시정보 */
+       <if test="MOVE == &quot;P&quot;">
+                
+                    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+                    SELECT A.ISSUE_REQ_NUM AS JOB_NO
+                      FROM SRQ100T A WITH(NOLOCK)
+                     WHERE A.COMP_CODE = #{COMP_CODE}
+                       AND A.ISSUE_REQ_NUM = (SELECT MAX(ISSUE_REQ_NUM)
+                                                FROM SRQ100T WITH(NOLOCK) 
+                                               WHERE DIV_CODE  = #{DIV_CODE}
+                                             	AND COMP_CODE = #{COMP_CODE}
+                                              <if test="@foren.Ognl@isNotEmpty(ISSUE_REQ_NUM)">
+                                             	AND ISSUE_REQ_NUM &lt; #{ISSUE_REQ_NUM}
+                                              </if>)
+       </if>
+       <if test="MOVE != &quot;P&quot;">
+                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+                SELECT A.ISSUE_REQ_NUM AS JOB_NO
+                  FROM SRQ100T A WITH(NOLOCK)
+                 WHERE A.COMP_CODE = #{COMP_CODE}
+                   AND A.ISSUE_REQ_NUM = (SELECT MIN(ISSUE_REQ_NUM)
+                                            FROM SRQ100T WITH(NOLOCK) 
+                                           WHERE DIV_CODE      = #{DIV_CODE}
+                                             AND COMP_CODE     = #{COMP_CODE}
+                                             <if test="@foren.Ognl@isNotEmpty(ISSUE_REQ_NUM)">
+                                             AND  ISSUE_REQ_NUM &gt; #{ISSUE_REQ_NUM}
+                                             </if>
+                                             )
+       </if>
+    </select>
+    <select id="salesCommonServiceImpl.fnGetPrevNextNoForInOut" parameterType="Map" resultType="rMap">
+    	/* salesCommonServiceImpl.fnGetPrevNextNoForInOut */
+        /* 수불(출고)정보 */
+        <if test="MOVE == &quot;P&quot;">
+              
+                    SELECT A.INOUT_NUM AS JOB_NO
+                      FROM BTR100T A WITH(NOLOCK)
+                     WHERE A.COMP_CODE = #{COMP_CODE}
+                       AND A.INOUT_NUM = (SELECT MAX(INOUT_NUM)
+                                            FROM BTR100T WITH(NOLOCK)
+                                           WHERE DIV_CODE           = #{DIV_CODE}
+                                             AND COMP_CODE          = #{COMP_CODE}
+                                             <if test="@foren.Ognl@isNotEmpty(INOUT_NUM)">
+                                             AND INOUT_NUM          &lt; #{INOUT_NUM}
+                                             </if>
+                                             AND CREATE_LOC         = '1'
+                                             AND INOUT_TYPE         = '2'
+                                             AND INOUT_TYPE_DETAIL != '98')
+        </if>
+        <if test="MOVE != &quot;P&quot;">
+                SELECT A.INOUT_NUM AS JOB_NO
+                  FROM BTR100T A WITH(NOLOCK)
+                 WHERE A.COMP_CODE = #{COMP_CODE}
+                   AND A.INOUT_NUM = (SELECT MIN(INOUT_NUM)
+                                        FROM BTR100T WITH(NOLOCK)
+                                       WHERE DIV_CODE           = #{DIV_CODE}
+                                         AND COMP_CODE          = #{COMP_CODE}
+                                        <if test="@foren.Ognl@isNotEmpty(INOUT_NUM)">
+                                         AND INOUT_NUM          &gt; #{INOUT_NUM}
+                                        </if>
+                                         AND CREATE_LOC         = '1'
+                                         AND INOUT_TYPE         = '2'
+                                         AND INOUT_TYPE_DETAIL != '98')
+        </if>
+    </select>
+    <select id="salesCommonServiceImpl.fnGetPrevNextNoForIn" parameterType="Map" resultType="rMap">
+		/* salesCommonServiceImpl.fnGetPrevNextNoForIn */
+        /* 수불(입고)정보 */
+       <if test="MOVE == &quot;P&quot;">
+                    SELECT A.INOUT_NUM AS JOB_NO
+                      FROM BTR100T A WITH(NOLOCK)
+                     WHERE A.COMP_CODE = #{COMP_CODE}
+                       AND A.INOUT_NUM = (SELECT MAX(INOUT_NUM)
+                                            FROM BTR100T WITH(NOLOCK)
+                                           WHERE DIV_CODE          = #{DIV_CODE}
+                                             AND COMP_CODE         = #{COMP_CODE}
+                                            <if test="@foren.Ognl@isNotEmpty(INOUT_NUM)">
+	                                         AND INOUT_NUM          &lt; #{INOUT_NUM}
+	                                        </if>
+                                             AND CREATE_LOC        = '1'
+                                             AND INOUT_TYPE        = '1'
+                                             AND INOUT_TYPE_DETAIL = '11')
+       </if>
+       <if test="MOVE != &quot;P&quot;">
+                /* USFuncKrv.CSFuncKr[fnGetPrevNextNo] Query01 */
+                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+                SELECT A.INOUT_NUM AS JOB_NO
+                  FROM BTR100T A WITH(NOLOCK)
+                 WHERE A.COMP_CODE = #{COMP_CODE}
+                   AND A.INOUT_NUM = (SELECT MIN(INOUT_NUM)
+                                        FROM BTR100T WITH(NOLOCK) 
+                                       WHERE DIV_CODE          = #{DIV_CODE}
+                                         AND COMP_CODE         = #{COMP_CODE}
+                                         <if test="@foren.Ognl@isNotEmpty(INOUT_NUM)">
+	                                     AND INOUT_NUM          &gt; #{INOUT_NUM}
+	                                     </if>
+                                         AND CREATE_LOC        = '1'
+                                         AND INOUT_TYPE        = '1'
+                                         AND INOUT_TYPE_DETAIL = '11')
+       </if>
+    </select>
+    <select id="salesCommonServiceImpl.fnGetPrevNextNoForReturn" parameterType="Map" resultType="rMap">
+		/* salesCommonServiceImpl.fnGetPrevNextNoForReturn */
+        /* 수불(반품)정보 */
+        <if test="MOVE == &quot;P&quot;">
+                    SELECT A.INOUT_NUM AS JOB_NO
+                      FROM BTR100T A WITH(NOLOCK)
+                     WHERE A.COMP_CODE = #{COMP_CODE}
+                       AND A.INOUT_NUM = (SELECT MAX(INOUT_NUM)
+                                            FROM BTR100T WITH(NOLOCK)
+                                           WHERE DIV_CODE   = #{DIV_CODE}
+                                             AND COMP_CODE  = #{COMP_CODE}
+                                             <if test="@foren.Ognl@isNotEmpty(INOUT_NUM)">
+	                                         AND INOUT_NUM          &lt; #{INOUT_NUM}
+	                                        </if>
+                                             AND CREATE_LOC = '1'
+                                             AND INOUT_TYPE = '3')
+                
+        </if>
+        <if test="MOVE != &quot;P&quot;">
+                /* USFuncKrv.CSFuncKr[fnGetPrevNextNo] Query01 */
+                SELECT A.INOUT_NUM AS JOB_NO
+                  FROM BTR100T A WITH(NOLOCK)
+                 WHERE A.COMP_CODE = #{COMP_CODE}
+                   AND A.INOUT_NUM = (SELECT MIN(INOUT_NUM)
+                                        FROM BTR100T WITH(NOLOCK)
+                                       WHERE DIV_CODE   = #{DIV_CODE}
+                                         AND COMP_CODE  = #{COMP_CODE}
+                                         <if test="@foren.Ognl@isNotEmpty(INOUT_NUM)">
+	                                     AND INOUT_NUM          &gt; #{INOUT_NUM}
+	                                     </if>
+                                         AND CREATE_LOC = '1'
+                                         AND INOUT_TYPE = '3')
+        </if>
+    </select>
+    <select id="salesCommonServiceImpl.fnGetPrevNextNoForSales" parameterType="Map" resultType="rMap">
+		/* salesCommonServiceImpl.fnGetPrevNextNoForSales */
+        /* 매출정보 */
+        <if test="MOVE == &quot;P&quot;">
+                    SELECT A.BILL_NUM AS JOB_NO
+                      FROM SSA100T A WITH(NOLOCK)
+                     WHERE A.COMP_CODE = #{COMP_CODE}
+                       AND A.BILL_NUM  = (SELECT MAX(BILL_NUM)
+                                            FROM SSA100T WITH(NOLOCK)
+                                           WHERE DIV_CODE  = #{DIV_CODE}
+                                             AND COMP_CODE = #{COMP_CODE}
+                                            <if test="@foren.Ognl@isNotEmpty(BILL_NUM)">
+	                                     	 AND BILL_NUM          &lt; #{BILL_NUM}
+	                                        </if>
+	                                     )
+        </if>
+        <if test="MOVE != &quot;P&quot;">
+                SELECT A.BILL_NUM AS JOB_NO
+                  FROM SSA100T A WITH(NOLOCK)
+                 WHERE A.COMP_CODE = #{COMP_CODE}
+                   AND A.BILL_NUM  = (SELECT MIN(BILL_NUM)
+                                        FROM SSA100T WITH(NOLOCK)
+                                       WHERE DIV_CODE  = #{DIV_CODE}
+                                         AND COMP_CODE = #{COMP_CODE}
+                                         <if test="@foren.Ognl@isNotEmpty(BILL_NUM)">
+	                                     	 AND BILL_NUM   &gt; #{BILL_NUM}
+	                                     </if>
+	                                    )
+        </if>
+        
+    </select>
+    <select id="salesCommonServiceImpl.fnGetPrevNextNoForInvoce" parameterType="Map" resultType="rMap">
+		/* salesCommonServiceImpl.fnGetPrevNextNoForInvoce */
+        /* 계산서정보 */
+         <if test="MOVE == &quot;P&quot;">
+                    /* USFuncKrv.CSFuncKr[fnGetPrevNextNo] Query01 */
+                    SELECT A.PUB_NUM AS JOB_NO
+                      FROM STB100T A WITH(NOLOCK)
+                     WHERE A.COMP_CODE = #{COMP_CODE}
+                       AND A.PUB_NUM   = (SELECT MAX(PUB_NUM)
+                                            FROM STB100T WITH(NOLOCK)
+                                           WHERE SALE_DIV_CODE = #{DIV_CODE}
+                                             AND COMP_CODE     = #{COMP_CODE}
+                                          <if test="@foren.Ognl@isNotEmpty(PUB_NUM)">
+	                                     	 AND PUB_NUM   &lt; #{PUB_NUM}
+	                                     </if>
+                                             )
+         </if>
+          <if test="MOVE != &quot;P&quot;">
+                /* USFuncKrv.CSFuncKr[fnGetPrevNextNo] Query01 */
+                SELECT A.PUB_NUM AS JOB_NO
+                  FROM STB100T A WITH(NOLOCK)
+                 WHERE A.COMP_CODE = #{COMP_CODE}
+                   AND A.PUB_NUM   = (SELECT MIN(PUB_NUM)
+                                        FROM STB100T WITH(NOLOCK)
+                                       WHERE SALE_DIV_CODE = #{DIV_CODE}
+                                         AND COMP_CODE     = #{COMP_CODE}
+                                         <if test="@foren.Ognl@isNotEmpty(PUB_NUM)">
+	                                     	 AND PUB_NUM   &gt; #{PUB_NUM}
+	                                     </if>
+	                                     )
+          </if>
+    </select>
+    <select id="salesCommonServiceImpl.fnGetPrevNextNoForCollect" parameterType="Map" resultType="rMap">
+		/* salesCommonServiceImpl.fnGetPrevNextNoForCollect */
+        /* 수금정보 */
+        <if test="MOVE == &quot;P&quot;">
+                    SELECT TOP 1 A.COLLECT_NUM AS JOB_NO
+                         , A.DIV_CODE
+                         , A.COLLECT_DATE
+                         , A.CUSTOM_CODE
+                      FROM SCO100T A WITH(NOLOCK)
+                     WHERE A.COMP_CODE   = #{COMP_CODE}
+                       AND A.COLLECT_NUM = (SELECT MAX(COLLECT_NUM)
+                                              FROM SCO100T WITH(NOLOCK)
+                                             WHERE DIV_CODE  = #{DIV_CODE}
+                                               AND COMP_CODE = #{COMP_CODE}
+                                             <if test="@foren.Ognl@isNotEmpty(COLLECT_NUM)">
+	                                     	 	AND COLLECT_NUM   &lt; #{COLLECT_NUM}
+	                                     	 </if>
+                                               AND (DISHONOR_DATE IS NULL OR DISHONOR_DATE = '')
+                   							<if test="@foren.Ognl@isEmpty(sCollectMoneyFlag)">
+                                               AND (PUB_NUM IS NULL OR PUB_NUM = '') )		/* 세금계산서 참조하지 않고 등록한 건 */                    
+                   							</if>
+                   							<if test="@foren.Ognl@isNotEmpty(sCollectMoneyFlag)">
+                                               AND (ISNULL(PUB_NUM,'') != '') )				/* 세금계산서 참조하여 등록한 건 */
+                   							</if>
+        </if>
+        <if test="MOVE != &quot;P&quot;">
+                /* USFuncKrv.CSFuncKr[fnGetPrevNextNo] Query01 */
+                SELECT TOP 1 A.COLLECT_NUM AS JOB_NO
+                     , A.DIV_CODE
+                     , A.COLLECT_DATE
+                     , A.CUSTOM_CODE
+                  FROM SCO100T A WITH(NOLOCK)
+                 WHERE A.COMP_CODE   = #{COMP_CODE}
+                   AND A.COLLECT_NUM = (SELECT MIN(COLLECT_NUM)
+                                          FROM SCO100T WITH(NOLOCK)
+                                         WHERE COLLECT_NUM &gt; 'bParam(2)'
+                                           AND DIV_CODE    = #{DIV_CODE}
+                                           AND COMP_CODE   = #{COMP_CODE}
+                                           <if test="@foren.Ognl@isNotEmpty(COLLECT_NUM)">
+	                                     	 	AND COLLECT_NUM   &gt; #{COLLECT_NUM}
+	                                     	 </if>
+                                               AND (DISHONOR_DATE IS NULL OR DISHONOR_DATE = '')
+                   							<if test="@foren.Ognl@isEmpty(sCollectMoneyFlag)">
+                                               AND (PUB_NUM IS NULL OR PUB_NUM = '') )		/* 세금계산서 참조하지 않고 등록한 건 */                    
+                   							</if>
+                   							<if test="@foren.Ognl@isNotEmpty(sCollectMoneyFlag)">
+                                               AND (ISNULL(PUB_NUM,'') != '') )				/* 세금계산서 참조하여 등록한 건 */
+                   							</if>
+        </if>
+    
+    </select>	
+    
+    <select id="salesCommonServiceImpl.getMonClosing" parameterType="Map" resultType="rMap">
+		/* USFuncKrv.CSFuncKr[fnGetCloseInfo] Query01 */
+		SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+		SELECT ISNULL(MAX(LAST_YYYYMM), '000000') AS AR_CLOSING 
+		  FROM SAR000T WITH(NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND DIV_CODE  = #{DIV_CODE}
+    </select>
+    
+    <select id="salesCommonServiceImpl.getDayClosing" parameterType="Map" resultType="rMap">
+    	/* USFuncKrv.CSFuncKr[fnGetCloseInfo] Query02 */
+		<if test="S_JOB_TYPE == &quot;I&quot;">
+			SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+	        SELECT ISSUE_FIN_YN AS JOB_CLOSING
+		</if>
+		
+		<if test="S_JOB_TYPE == &quot;S&quot;">
+			SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+	        SELECT SALE_FIN_YN AS JOB_CLOSING 
+		</if>
+		
+		<if test="S_JOB_TYPE != &quot;I&quot; and S_JOB_TYPE != &quot;S&quot;">
+			SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+	        SELECT COLLECT_YN AS JOB_CLOSING 
+		</if>	
+      	FROM SFN100T WITH(NOLOCK)
+	    WHERE COMP_CODE = #{S_COMP_CODE}
+	      AND DIV_CODE  = #{DIV_CODE}
+	      AND FIN_DATE  = #{SALE_DATE}	
+    </select>
+    
+    <select id="salesCommonServiceImpl.getDayClosing2" parameterType="Map" resultType="rMap">
+    	/* USFuncKrv.CSFuncKr[fnGetCloseInfo] Query03 */
+		SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+		SELECT ISNULL(MAX(FIN_DATE), '00000000') AS JOB_CLOSING
+		FROM SFN100T WITH(NOLOCK)
+		
+		<if test="S_JOB_TYPE == &quot;I&quot;">
+			WHERE ISSUE_FIN_YN = 'Y'
+	        AND COMP_CODE    = #{S_COMP_CODE}
+	        AND DIV_CODE     = #{DIV_CODE}
+		</if>
+		
+		<if test="S_JOB_TYPE == &quot;S&quot;">
+			WHERE SALE_FIN_YN  = 'Y'
+	        AND COMP_CODE    = #{S_COMP_CODE}
+	        AND DIV_CODE     = #{DIV_CODE}	
+		</if>
+		
+		<if test="S_JOB_TYPE != &quot;I&quot; and S_JOB_TYPE != &quot;S&quot;">			
+			WHERE COLLECT_YN   = 'Y'
+	        AND COMP_CODE    = #{S_COMP_CODE}
+	        AND DIV_CODE     = #{DIV_CODE}	
+		</if>	
+    </select>
+    
+    <select id="salesCommonServiceImpl.getRemainderInfo1" parameterType="Map" resultType="rMap">
+    	/* USFuncKrv.CSFuncKr[fnGetRemainder] Query01 */
+		SELECT ISNULL(uniLITE.fnGetBalanceT( #{S_COMP_CODE}
+		                                   , #{DIV_CODE}
+		                                   , #{CUSTOM_CODE}
+		                                   , #{COLL_DATE}
+		                                   , #{MONEY_UNIT}
+		                                   , '4'), 0) AS UN_COLL_AMT
+    </select>
+    
+    <select id="salesCommonServiceImpl.getRemainderInfo2" parameterType="Map" resultType="rMap">
+    	/* USFuncKrv.CSFuncKr[fnGetRemainder] Query01 */
+		SELECT ISNULL(PRE_COLET_AMT_WON,0) - ISNULL(PRE_RETN_AMT_WON ,0) AS UN_PRE_COLL_AMT
+		  FROM SCO200T WITH(NOLOCK)
+		 WHERE COMP_CODE   = #{S_COMP_CODE}
+		   AND DIV_CODE    = #{DIV_CODE}
+		   AND CUSTOM_CODE = #{CUSTOM_CODE}
+		   AND MONEY_UNIT  = #{MONEY_UNIT}
+    </select>
+    
+    <select id="salesCommonServiceImpl.fnExchgRateO" parameterType="Map" resultType="rMap">
+        --zfa_popupZ.fnExchgRateO 
+        BEGIN    
+            SET NOCOUNT ON    
+            SET ARITHABORT ON    
+            
+            DECLARE @COMP_CODE              NVARCHAR(20)        --(필수) 법인코드
+                  , @AC_DATE                NVARCHAR(20)        --(필수) 기준일자/기준월
+                  , @MONEY_UNIT             NVARCHAR(20)        --(필수) 화폐단위
+                  
+            SET @COMP_CODE       = #{S_COMP_CODE}
+            SET @AC_DATE         = #{AC_DATE}
+            SET @MONEY_UNIT      = #{MONEY_UNIT}
+        
+            SELECT CASE WHEN A.EXCHG_BASE = '1' THEN (CASE WHEN ISNULL(B.BASE_EXCHG, 1) = 0 THEN 1 ELSE ISNULL(B.BASE_EXCHG, 1) END)
+                        WHEN A.EXCHG_BASE = '2' THEN (CASE WHEN ISNULL(C.BASE_EXCHG, 1) = 0 THEN 1 ELSE ISNULL(C.BASE_EXCHG, 1) END)
+                                                ELSE 1
+                    END AS BASE_EXCHG
+              FROM           ABA100T AS A WITH(NOLOCK)
+                   LEFT JOIN (
+                              SELECT B.COMP_CODE
+                                   , B.BASE_EXCHG
+                                FROM BCM510T AS B WITH (NOLOCK)
+                               WHERE B.COMP_CODE  = @COMP_CODE
+                                 AND B.AC_DATE    = @AC_DATE
+                                 AND B.MONEY_UNIT = @MONEY_UNIT
+                             ) AS B ON B.COMP_CODE = A.COMP_CODE
+                   LEFT JOIN (
+                              SELECT C.COMP_CODE
+                                   , C.BASE_EXCHG
+                                FROM BCM510T AS C WITH (NOLOCK)
+                               WHERE C.COMP_CODE  = @COMP_CODE
+                                 AND C.AC_DATE    = SUBSTRING(@AC_DATE, 1, 6)
+                                 AND C.MONEY_UNIT = @MONEY_UNIT
+                             ) AS C ON C.COMP_CODE = A.COMP_CODE
+             WHERE A.COMP_CODE = @COMP_CODE
+             
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END
+    </select>
+    <select id="salesCommonServiceImpl.fnGetLastPriceInfo" parameterType="Map" resultType="rMap">
+    	BEGIN    
+            SET NOCOUNT ON    
+            SET ARITHABORT ON    
+            
+            DECLARE @COMP_CODE              NVARCHAR(20)        --(필수) 법인코드
+                  , @APLY_START_DATE        NVARCHAR(20)        --(필수) 기준일자/기준월
+                  , @MONEY_UNIT             NVARCHAR(20)        --(필수) 화폐단위
+                  
+            SET @COMP_CODE          = #{S_COMP_CODE}
+            SET @APLY_START_DATE    = #{APLY_START_DATE}
+            SET @MONEY_UNIT         = #{MONEY_UNIT}
+                
+            SELECT TOP 1      ISNULL(A.ITEM_P, 0)       AS ITEM_P       -- 최근단가
+              FROM BPR400T  A WITH(NOLOCK)
+             WHERE A.TYPE            = #{TYPE}              -- 구분
+               AND A.COMP_CODE       = @COMP_CODE       -- 법인
+               AND A.CUSTOM_CODE     = #{CUSTOM_CODE}       -- 거래처
+               AND A.ITEM_CODE       = #{ITEM_CODE}         -- 품목
+               AND A.MONEY_UNIT      = @MONEY_UNIT        -- 화폐
+               AND A.ORDER_UNIT      = #{ORDER_UNIT}        -- 단위
+               AND A.APLY_START_DATE = (SELECT MAX(APLY_START_DATE)
+                                          FROM BPR400T  B WITH(NOLOCK)
+                                         WHERE B.TYPE                 = A.TYPE           
+                                           AND B.APLY_START_DATE  &lt;= @APLY_START_DATE       -- 일자
+                                           AND B.COMP_CODE            = A.COMP_CODE      
+                                           AND B.CUSTOM_CODE          = A.CUSTOM_CODE    
+                                           AND B.ITEM_CODE            = A.ITEM_CODE      
+                                           AND B.MONEY_UNIT           = A.MONEY_UNIT     
+                                           AND B.ORDER_UNIT           = A.ORDER_UNIT)    
+             
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END	
+    </select>
+    <select id="salesCommonServiceImpl.fnGetPriceTypeInfo" parameterType="Map" resultType="rMap">
+        BEGIN    
+            SET NOCOUNT ON    
+            SET ARITHABORT ON    
+            
+            DECLARE @COMP_CODE              NVARCHAR(20)        --(필수) 법인코드
+                  , @APLY_START_DATE        NVARCHAR(20)        --(필수) 기준일자/기준월
+                  , @MONEY_UNIT             NVARCHAR(20)        --(필수) 화폐단위
+                  
+            SET @COMP_CODE          = #{S_COMP_CODE}
+            SET @APLY_START_DATE    = #{APLY_START_DATE}
+            SET @MONEY_UNIT         = #{MONEY_UNIT}
+                
+            SELECT TOP 1      PRICE_TYPE                AS PRICE_TYPE   -- 단가유형
+              FROM BPR400T  A WITH(NOLOCK)
+             WHERE A.TYPE            = #{TYPE}              -- 구분
+               AND A.COMP_CODE       = @COMP_CODE       -- 법인
+               AND A.CUSTOM_CODE     = #{CUSTOM_CODE}       -- 거래처
+               AND A.ITEM_CODE       = #{ITEM_CODE}         -- 품목
+               AND A.MONEY_UNIT      = @MONEY_UNIT        -- 화폐
+               AND A.ORDER_UNIT      = #{ORDER_UNIT}        -- 단위
+               AND A.APLY_START_DATE = (SELECT MAX(APLY_START_DATE)
+                                          FROM BPR400T  B WITH(NOLOCK)
+                                         WHERE B.TYPE                 = A.TYPE           
+                                           AND B.APLY_START_DATE  &lt;= @APLY_START_DATE       -- 일자
+                                           AND B.COMP_CODE            = A.COMP_CODE      
+                                           AND B.CUSTOM_CODE          = A.CUSTOM_CODE    
+                                           AND B.ITEM_CODE            = A.ITEM_CODE      
+                                           AND B.MONEY_UNIT           = A.MONEY_UNIT     
+                                           AND B.ORDER_UNIT           = A.ORDER_UNIT)    
+             
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END 
+    </select>
+</mapper>

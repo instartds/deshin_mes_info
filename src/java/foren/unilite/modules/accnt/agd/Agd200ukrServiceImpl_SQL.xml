@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="agd200ukrServiceImpl">
+	<select id="agd200ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+	    SET NOCOUNT    ON
+		SET ARITHABORT ON
+	
+		DECLARE @COMP_CODE              NVARCHAR(08)        --(필수) 법인코드
+		      , @FR_DATE_SHIPPING       NVARCHAR(08)        --(필수) 선적일FR
+		      , @TO_DATE_SHIPPING       NVARCHAR(08)        --(필수) 선적일TO
+		      , @WORK                   NVARCHAR(04)        --(필수) 작업구분
+	
+	    SET @COMP_CODE        = #{S_COMP_CODE}
+		SET @FR_DATE_SHIPPING = #{FR_DATE_SHIPPING}
+		SET @TO_DATE_SHIPPING = #{TO_DATE_SHIPPING}
+		SET @WORK             = 'PROC'
+		<if test="WORK_DIVI == &quot;1&quot;"> 
+			    SET     @WORK               = 'PROC'		--Proc:자동기표, Canc:기표취소
+		</if>
+		<if test="WORK_DIVI == &quot;2&quot;"> 
+			    SET     @WORK               = 'CANC'		--Proc:자동기표, Canc:기표취소
+		</if>
+
+		    SELECT A.COMP_CODE
+		         , A.DIV_CODE                                                   -- 사업장
+		         , A.BL_SER_NO                                                  -- B/L관리번호
+		         , A.SO_SER_NO                                                  -- S/O관리번호
+		         , ISNULL(MAX(M1.REF_CODE2),'')         AS DEPT_CODE            -- 부서
+		         , ISNULL(MAX(D1.TREE_NAME),'')         AS DEPT_NAME            -- 부서명
+		         , MAX(F.BILL_DIV_CODE)                 AS BILL_DIV_CODE        -- 매출사업장
+		         , A.IMPORTER                           AS CUSTOM_CODE          -- 거래처
+		         , MAX(D2.CUSTOM_NAME)                  AS CUSTOM_NAME          -- 거래처명
+		         , A.DATE_SHIPPING                                              -- 선적일
+		         , A.BL_NO                                                      -- B/L번호
+		         , ISNULL(MAX(E.LC_NO),'')              AS LC_NO                -- L/C번호
+		         , A.PROJECT_NO                                                 -- 관리번호
+		         , MAX(D3.PJT_NAME)                     AS PROJECT_NM           -- 관리명
+		         , A.EXCHANGE_RATE                      AS EXCHG_RATE_O         -- 환율
+		         , A.AMT_UNIT                           AS MONEY_UNIT           -- 화폐단위
+		         , SUM(C.BL_AMT)                        AS FOR_AMT_I            -- 외화금액
+		         , SUM(C.BL_AMT_WON)                    AS AMT_I                -- 원화금액
+		         , (SELECT LEFT(ITEM_NAME,20) 
+		              FROM BPR100T WITH (NOLOCK)
+		             WHERE COMP_CODE = A.COMP_CODE
+		               AND ITEM_CODE = (SELECT TOP 1 ITEM_CODE 
+		                                  FROM TED110T WITH (NOLOCK)
+		                                 WHERE COMP_CODE = A.COMP_CODE
+		                                   AND BL_SER_NO = A.BL_SER_NO 
+		                                   AND DIV_CODE  = A.DIV_CODE)) AS REMARK_ITEM  -- 주요품목
+		         , ISNULL(A.RECEIPT_PLAN_DATE,'')       AS RECEIPT_PLAN_DATE    -- 수금예정일
+                 , ISNULL(A.EX_DATE,'') AS EX_DATE
+                 , ISNULL(A.EX_NUM , 0) AS EX_NUM
+		      FROM            TED100T A  WITH (NOLOCK) 
+		           LEFT  JOIN TEA100T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+		                                              AND B.DIV_CODE     = A.DIV_CODE
+		                                              AND B.SO_SER_NO    = A.SO_SER_NO
+		           INNER JOIN TED110T C  WITH (NOLOCK) ON C.COMP_CODE    = A.COMP_CODE
+		                                              AND C.DIV_CODE     = A.DIV_CODE
+		                                              AND C.BL_SER_NO    = A.BL_SER_NO
+				   LEFT  JOIN SOF100T Q  WITH (NOLOCK) ON Q.COMP_CODE    = B.COMP_CODE
+		                                              AND Q.DIV_CODE     = B.DIV_CODE
+													  AND Q.ORDER_NUM    = B.ORDER_NUM
+		           LEFT  JOIN TEB100T E  WITH (NOLOCK) ON E.COMP_CODE    = A.COMP_CODE
+		                                              AND E.DIV_CODE     = A.DIV_CODE
+		                                              AND E.LC_SER_NO    = A.LC_SER_NO
+			       LEFT  JOIN (SELECT COMP_CODE
+                                    , EX_DATE
+                                    , EX_NUM
+                                    , AP_STS
+                                 FROM AGJ110T WITH (NOLOCK)
+                                WHERE COMP_CODE  = @COMP_CODE
+                                  AND INPUT_PATH = '60'
+                                  AND (MOD_DIVI IS NULL OR MOD_DIVI = '')
+                                GROUP BY COMP_CODE, EX_DATE, EX_NUM, AP_STS) G ON G.COMP_CODE    = A.COMP_CODE
+			                                                                  AND G.EX_DATE      = A.EX_DATE
+			                                                                  AND G.EX_NUM       = A.EX_NUM
+		           LEFT  JOIN BOR120T F  WITH (NOLOCK) ON F.COMP_CODE    = A.COMP_CODE
+		                                              AND F.DIV_CODE     = A.DIV_CODE
+		           LEFT  JOIN BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE   = Q.COMP_CODE
+		                                              AND M1.MAIN_CODE   = 'S010' 
+		                                              AND M1.SUB_CODE    = Q.ORDER_PRSN
+		           LEFT  JOIN BSA210T D1 WITH (NOLOCK) ON D1.COMP_CODE   = B.COMP_CODE
+		                                              AND D1.TREE_CODE   = M1.REF_CODE2
+		           LEFT  JOIN BCM100T D2 WITH (NOLOCK) ON D2.COMP_CODE   = A.COMP_CODE
+		                                              AND D2.CUSTOM_CODE = A.IMPORTER
+		           LEFT  JOIN BCM600T D3 WITH (NOLOCK) ON D3.COMP_CODE   = A.COMP_CODE
+		                                              AND D3.PJT_CODE    = A.PROJECT_NO
+		
+		     WHERE A.COMP_CODE       = @COMP_CODE
+		       AND A.DATE_SHIPPING  &gt;= @FR_DATE_SHIPPING
+		       AND A.DATE_SHIPPING  &lt;= @TO_DATE_SHIPPING
+		       AND ((ISNULL(A.EX_DATE, '')  = '' AND ISNULL(A.EX_NUM, 0) = 0 AND @WORK = 'PROC')
+			     OR (ISNULL(A.EX_DATE, '') != ''                             AND @WORK = 'CANC'))
+		
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_FR)">
+		       AND A.IMPORTER               &gt;= #{CUSTOM_CODE_FR}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_TO)">
+		       AND A.IMPORTER               &lt;= #{CUSTOM_CODE_TO}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">
+		       AND A.DIV_CODE                = #{ACCNT_DIV_CODE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(AP_STS)">
+		       AND G.AP_STS                  = #{AP_STS}
+			</if>
+		
+		     GROUP BY A.COMP_CODE       , A.DIV_CODE    , A.BL_SER_NO   , A.SO_SER_NO       , A.LC_SER_NO
+		            , A.DATE_SHIPPING   , A.BL_NO       , A.PROJECT_NO  , A.EXCHANGE_RATE   , A.AMT_UNIT
+		            , A.IMPORTER        , B.EXPORT_NM   , A.RECEIPT_PLAN_DATE
+                    , A.EX_DATE         , A.EX_NUM
+		
+		    SET NOCOUNT    OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+	<insert id="agd200ukrServiceImpl.insertLog" parameterType="Map">
+		INSERT L_AGD200T
+			(
+				  KEY_VALUE 
+				, COMP_CODE		
+				, DIV_CODE		
+				, BL_SER_NO			
+				, INSERT_DB_USER
+				, INSERT_DB_TIME
+				, UPDATE_DB_USER
+				, UPDATE_DB_TIME
+			)
+			VALUES
+			(
+				  #{KEY_VALUE}
+				, #{S_COMP_CODE}
+				, #{DIV_CODE}
+				, #{BL_SER_NO}
+				, #{S_USER_ID}
+				, GETDATE()
+				, #{S_USER_ID}
+				, GETDATE()
+			)
+	</insert>
+	<update id="agd200ukrServiceImpl.agd200ukrDo" parameterType="Map" statementType="CALLABLE">
+		{call USP_ACCNT_AutoSlip60 (
+			#{S_COMP_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{FR_DATE_SHIPPING, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{TO_DATE_SHIPPING, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DIV_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CUSTOM_CODE_FR, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CUSTOM_CODE_TO, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{BL_SER_NO, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{BILL_TYPE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{WORK_TYPE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{AC_DATE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_USER_ID, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{INPUT_DATE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{KEY_VALUE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_LANG_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CALL_PATH, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+
+			#{EBYN_MESSAGE, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ERROR_DESC, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{SLIP_KEY_VALUE, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update>
+	<select id="agd200ukrServiceImpl.getSystemDate" parameterType="Map" resultType="String">
+		select CONVERT(NVARCHAR(8), GETDATE(), 112)
+	</select>
+	<update id="agd200ukrServiceImpl.agd200ukrCancel" parameterType="Map" statementType="CALLABLE">
+		{call USP_ACCNT_AutoSlip60Cancel (
+			#{S_COMP_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{FR_DATE_SHIPPING, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{TO_DATE_SHIPPING, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DIV_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CUSTOM_CODE_FR, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CUSTOM_CODE_TO, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{BL_SER_NO, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{BILL_TYPE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_USER_ID, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{INPUT_DATE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{KEY_VALUE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_LANG_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CALL_PATH, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ERROR_DESC, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update>
+</mapper>

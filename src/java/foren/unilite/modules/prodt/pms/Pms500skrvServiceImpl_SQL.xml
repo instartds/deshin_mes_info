@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="pms500skrvServiceImpl">
+   
+	<select id="pms500skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+   	
+		/* pms500skrv.Cpms500skrv[fnQms500QStd] QUERY02  */
+		   	
+		/* 검증검사현황 조회-검증검사현황 조회  */ 
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		    DECLARE 
+		        @CompCode	    NVARCHAR(08) /* 법인코드				*/
+		      , @UserId		    NVARCHAR(100) /* 사용자ID				*/
+		      , @LangType	    NVARCHAR(2)  /* 언어구분				*/
+		      , @RefItem	    NVARCHAR(01) /* 명칭 참조 유형		    */
+		      , @DateFormat		NVARCHAR(10) /* 날짜 포맷 유형 설정                 */
+		      , @MODULE_SEQ     NVARCHAR(02) /* 모듈순번			    */
+		
+		    SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_ID}
+	    	SET @LangType = #{S_LANG_CODE}
+	    	SET @MODULE_SEQ      = N'15'
+	    	
+	    	
+	    /* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+		  FROM BSA300T WITH (NOLOCK)
+		 WHERE USER_ID = @UserId
+		
+	    SET @RefItem = ISNULL(@RefItem, N'0')
+		
+		/* 날짜 포맷 유형 설정 */
+		SELECT TOP 1 @DateFormat = CODE_NAME
+		  FROM BSA100T WITH (NOLOCK)
+		 WHERE COMP_CODE = @CompCode
+		   AND MAIN_CODE = N'B044'
+		   AND REF_CODE1 = N'Y'
+		
+		 SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')	
+		
+		/*	불량내역코드 가져오기	*/
+		    DECLARE       @BadCodeList       TABLE
+		                  (
+		                  SEQ                INTEGER IDENTITY(1, 1)          /* 순서번호	*/
+		                , BAD_CODE           NVARCHAR(10)                    /* 불량코드	*/
+		                , CODE_NAME          NVARCHAR(30)                    /* 코드명	*/
+		                  )
+		
+		    INSERT INTO @BadCodeList(BAD_CODE, CODE_NAME)
+		    SELECT SUB_CODE, CODE_NAME
+		    FROM   BSA100T WITH (NOLOCK)
+		    WHERE  COMP_CODE = @CompCode
+		    AND    MAIN_CODE = N'Q013'
+		    AND    SUB_CODE != N'$'
+		    AND    USE_YN    = N'Y'
+		    ORDER BY SORT_SEQ
+		
+		/* 		조회 		*/
+		
+		    SELECT 
+		           A.DIV_CODE
+		         , A.VERIFY_NUM
+		         , A.VERIFY_SEQ
+		         ,(CASE WHEN ISNULL(A.VERIFY_DATE, '') = ''
+	                    THEN ''
+	                    ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.VERIFY_DATE, 1, 4))
+	                                                            , 'MM'  , SUBSTRING(A.VERIFY_DATE, 5, 2))
+	                                                            , 'DD'  , SUBSTRING(A.VERIFY_DATE, 7, 2))
+	            	END)                                           AS VERIFY_DATE
+		         , A.TIME_GUBUN
+		         , A.INCH
+		         , A.INSPEC_PRSN
+		         , A.ITEM_CODE
+		         , CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+		                ELSE C1.ITEM_NAME
+		            END AS ITEM_NAME
+		         , C1.SPEC
+		         , C1.ITEM_MAKER
+		         , CASE WHEN C3.CUSTOM_NAME IS NULL THEN C1.ITEM_MAKER
+		                WHEN @RefItem = '1' THEN C3.CUSTOM_NAME1
+		                WHEN @RefItem = '2' THEN C3.CUSTOM_NAME2
+		                ELSE C3.CUSTOM_NAME
+		            END AS ITEM_MAKER_NAME
+		         , A.CUSTOM_CODE
+		         , CASE WHEN @RefItem = '1' THEN C2.CUSTOM_NAME1
+		                WHEN @RefItem = '2' THEN C2.CUSTOM_NAME2
+		                ELSE C2.CUSTOM_NAME
+		            END AS CUSTOM_NAME
+		         , B.INSPEC_Q
+		         , A.VERIFY_Q
+		         , A.GOOD_VERIFY_Q
+		         , A.BAD_VERIFY_Q
+		         , CASE WHEN ISNULL(A.VERIFY_Q,0) = 0 THEN 0
+		                ELSE ISNULL(A.BAD_VERIFY_Q,0) / ISNULL(A.VERIFY_Q,0) * 1000000
+		            END AS BAD_PPM
+		         , A.VERIFY_PRSN
+		
+		         , ISNULL(A.BAD_VERIFY_Q1, 0) AS BAD_VERIFY_Q1
+		         , ISNULL(A.BAD_VERIFY_Q2, 0) AS BAD_VERIFY_Q2
+		         , ISNULL(A.BAD_VERIFY_Q3, 0) AS BAD_VERIFY_Q3
+		         , ISNULL(A.BAD_VERIFY_Q4, 0) AS BAD_VERIFY_Q4
+		
+		         , A.INSPEC_NUM
+		         , A.INSPEC_SEQ
+		         , B.LOT_NO AS RAW_LOT_NO
+		         , A.OUT_LOT_NO
+		         , A.COMP_CODE
+		         , A.MODULE_SEQ
+		      FROM (
+		            SELECT A.COMP_CODE , A.DIV_CODE  
+		                 , A.VERIFY_NUM, A.VERIFY_SEQ
+		                 , A.INSPEC_NUM, A.INSPEC_SEQ
+		                 , MAX(ISNULL(A.VERIFY_DATE,''))   AS VERIFY_DATE
+		                 , MAX(ISNULL(A.TIME_GUBUN,''))    AS TIME_GUBUN
+		                 , MAX(ISNULL(A.INCH,0))           AS INCH
+		                 , MAX(ISNULL(A.INSPEC_PRSN,''))   AS INSPEC_PRSN
+		                 , MAX(ISNULL(A.ITEM_CODE,''))     AS ITEM_CODE
+		                 , MAX(ISNULL(A.CUSTOM_CODE,''))   AS CUSTOM_CODE
+		                 , MAX(ISNULL(A.VERIFY_PRSN,''))   AS VERIFY_PRSN
+		                 , MAX(ISNULL(A.VERIFY_Q,0))       AS VERIFY_Q
+		                 , MAX(ISNULL(A.GOOD_VERIFY_Q, 0)) AS GOOD_VERIFY_Q
+		                 , MAX(ISNULL(A.BAD_VERIFY_Q, 0))  AS BAD_VERIFY_Q
+		                 , MAX(ISNULL(A.OUT_LOT_NO,''))    AS OUT_LOT_NO
+		                 , MAX(ISNULL(A.MODULE_SEQ,''))    AS MODULE_SEQ
+		                 , SUM(CASE WHEN ISNULL(C1.BAD_CODE, '')   LIKE '5%' OR ISNULL(C1.BAD_CODE, '') LIKE '6%'
+		                              OR ISNULL(C1.BAD_CODE, '')   LIKE '0%' OR ISNULL(C1.BAD_CODE, '') LIKE '1%'
+		                            THEN ISNULL(B.BAD_VERIFY_Q, 0) ELSE 0 END) AS BAD_VERIFY_Q1
+		                 , SUM(CASE WHEN ISNULL(C2.BAD_CODE, '')   LIKE '5%' OR ISNULL(C2.BAD_CODE, '') LIKE '6%'
+		                              OR ISNULL(C2.BAD_CODE, '')   LIKE '0%' OR ISNULL(C2.BAD_CODE, '') LIKE '1%'
+		                            THEN ISNULL(B.BAD_VERIFY_Q, 0) ELSE 0 END) AS BAD_VERIFY_Q2
+		                 , SUM(CASE WHEN ISNULL(C3.BAD_CODE, '')   LIKE '5%' OR ISNULL(C3.BAD_CODE, '') LIKE '6%'
+		                              OR ISNULL(C3.BAD_CODE, '')   LIKE '0%' OR ISNULL(C3.BAD_CODE, '') LIKE '1%'
+		                            THEN ISNULL(B.BAD_VERIFY_Q, 0) ELSE 0 END) AS BAD_VERIFY_Q3
+		                 , SUM(CASE WHEN ISNULL(C4.BAD_CODE, '')   LIKE '5%' OR ISNULL(C4.BAD_CODE, '') LIKE '6%'
+		                              OR ISNULL(C4.BAD_CODE, '')   LIKE '0%' OR ISNULL(C4.BAD_CODE, '') LIKE '1%'
+		                            THEN ISNULL(B.BAD_VERIFY_Q, 0) ELSE 0 END) AS BAD_VERIFY_Q4
+		              FROM              QMS500T      A  WITH (NOLOCK)
+		                     LEFT  JOIN QMS510T      B  WITH (NOLOCK) ON B.COMP_CODE  = A.COMP_CODE
+		                                                             AND B.DIV_CODE   = A.DIV_CODE
+		                                                             AND B.VERIFY_NUM = A.VERIFY_NUM
+		                                                             AND B.VERIFY_SEQ = A.VERIFY_SEQ
+		                     LEFT  JOIN @BadCodeList C1 ON C1.SEQ       = 1
+		                                                AND C1.BAD_CODE  = B.BAD_INSPEC_CODE
+		                     LEFT  JOIN @BadCodeList C2 ON C2.SEQ       = 2
+		                                                AND C2.BAD_CODE  = B.BAD_INSPEC_CODE
+		                     LEFT  JOIN @BadCodeList C3 ON C3.SEQ       = 3
+		                                                AND C3.BAD_CODE  = B.BAD_INSPEC_CODE
+		                     LEFT  JOIN @BadCodeList C4 ON C4.SEQ       = 4
+		                                                AND C4.BAD_CODE  = B.BAD_INSPEC_CODE
+		             WHERE  A.COMP_CODE = @CompCode
+		             GROUP BY A.COMP_CODE , A.DIV_CODE  
+		                    , A.VERIFY_NUM, A.VERIFY_SEQ
+		                    , A.INSPEC_NUM, A.INSPEC_SEQ
+		           ) A
+		           INNER JOIN QMS400T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+		                                              AND B.INSPEC_NUM   = A.INSPEC_NUM
+		                                              AND B.INSPEC_SEQ   = A.INSPEC_SEQ
+		           INNER JOIN BPR100T C1 WITH (NOLOCK) ON C1.ITEM_CODE   = A.ITEM_CODE
+		                                              AND C1.COMP_CODE   = A.COMP_CODE
+		           INNER JOIN BCM100T C2 WITH (NOLOCK) ON C2.COMP_CODE   = A.COMP_CODE
+		                                              AND C2.CUSTOM_CODE = A.CUSTOM_CODE
+		           LEFT  JOIN BCM100T C3 WITH (NOLOCK) ON C3.COMP_CODE   = C1.COMP_CODE
+		                                              AND C3.CUSTOM_CODE = C1.ITEM_MAKER
+		     WHERE A.MODULE_SEQ        = @MODULE_SEQ
+		       AND A.COMP_CODE         = @CompCode
+		       
+		       <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">  
+			   AND    A.DIV_CODE           = #{DIV_CODE}
+			   </if>
+			   <if test="@foren.Ognl@isNotEmpty(OUT_LOT_NO)">  
+			   AND    A.OUT_LOT_NO         = #{OUT_LOT_NO}
+			   </if>
+			   <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">  
+			   AND    A.ITEM_CODE          = #{ITEM_CODE}
+			   </if>  
+			   
+			   <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">  
+			   AND    A.ITEM_NAME          LIKE #{ITEM_NAME} +'%'
+			   </if>  
+			   
+		       <if test="@foren.Ognl@isNotEmpty(FR_DATE)">  
+			   AND    A.VERIFY_DATE          = #{FR_DATE}
+			   </if>
+			   <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">  
+			   AND    A.VERIFY_DATE          = #{TO_DATE}
+			   </if>
+			   /* <if test="@foren.Ognl@isNotEmpty(WORK_SHOP_CODE)">    */
+			   /* AND    A.WORK_SHOP_CODE          = #{WORK_SHOP_CODE}  */
+			   /* </if>  												*/
+			   <if test="@foren.Ognl@isNotEmpty(VERIFY_PRSN)">  
+			   AND    A.VERIFY_PRSN          = #{VERIFY_PRSN}
+			   </if>
+			   <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">  
+			   AND    A.CUSTOM_CODE          = #{CUSTOM_CODE}
+			   </if>
+			   
+			   <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">  
+			   AND    C2.CUSTOM_NAME         LIKE #{CUSTOM_NAME} +'%'
+			   </if>     
+			   
+			   <if test="@foren.Ognl@isNotEmpty(ITEM_MAKER)">  
+			   AND    C1.ITEM_MAKER          = #{ITEM_MAKER}
+			   </if>
+			   
+			   <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">  
+			   AND    C3.CUSTOM_NAME         LIKE #{CUSTOM_NAME} +'%'
+			   </if>     
+		      
+		     ORDER BY A.VERIFY_NUM, A.VERIFY_SEQ 
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+   	
+	</select>
+</mapper>

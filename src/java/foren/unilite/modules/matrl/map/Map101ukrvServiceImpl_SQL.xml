@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="map101ukrvServiceImpl">
+
+<select id="map101ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+    DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+
+	SET @CompCode = #{S_COMP_CODE}
+
+    /* 데이터 조회 */
+    
+    SELECT
+		 A.COMP_CODE
+		,A.DIV_CODE
+		,ROW_NUMBER() OVER(PARTITION BY A.INOUT_CODE ORDER BY A.INOUT_DATE) AS SEQ
+		,A.INOUT_DATE
+		,A.INOUT_NUM
+		,A.INOUT_TYPE
+		,A.TAX_TYPE
+		,A.INOUT_CODE
+		,MAX(B.CUSTOM_NAME) AS CUSTOM_NAME
+		,SUM(CASE WHEN A.INOUT_TYPE = '1' THEN ISNULL(A.INOUT_I,0) ELSE ISNULL(A.INOUT_I,0) *(-1) END) AS SUM_INOUT_I
+		,SUM(CASE WHEN A.INOUT_TYPE = '1' THEN ISNULL(A.INOUT_TAX_AMT,0) ELSE ISNULL(A.INOUT_TAX_AMT,0) *(-1) END) AS SUM_INOUT_TAX_AMT
+		,SUM(CASE WHEN A.INOUT_TYPE = '1' THEN ISNULL(A.INOUT_I,0) + ISNULL(A.INOUT_TAX_AMT,0) 
+		          ELSE (ISNULL(A.INOUT_I,0) + ISNULL(A.INOUT_TAX_AMT,0)) *(-1) END) AS TOTAL_INOUT_I
+		,MAX(E.BILL_NUM) 		 AS	BILL_NUM           
+		,A.CHANGE_BASIS_NUM		 AS CHANGE_BASIS_NUM
+		,(CASE WHEN A.CHANGE_BASIS_NUM IS NULL THEN #{CHANGE_BASIS_DATE} ELSE MAX(E.BILL_DATE) END) AS BILL_DATE
+		,(CASE WHEN ISNULL(A.CHANGE_BASIS_NUM, '') = '' THEN 
+		           (CASE WHEN A.TAX_TYPE = '1' THEN '51' ELSE '57' END)
+		      ELSE E.BILL_TYPE END) AS BILL_TYPE_G
+		FROM		   BTR100T A WITH(NOLOCK)
+			INNER JOIN BCM100T B WITH(NOLOCK) ON B.COMP_CODE	= A.COMP_CODE
+	                                         AND B.CUSTOM_CODE	= A.INOUT_CODE
+	        INNER JOIN BPR100T C WITH(NOLOCK) ON C.COMP_CODE 	= A.COMP_CODE
+	        								 AND C.ITEM_CODE	= A.ITEM_CODE
+			INNER JOIN BSA210T D WITH(NOLOCK) ON D.COMP_CODE	= A.COMP_CODE
+	       									 AND D.TYPE_LEVEL	= A.DIV_CODE
+	       		     					     AND D.TREE_CODE	= A.DEPT_CODE
+	     	LEFT  JOIN MAP100T E WITH(NOLOCK) ON A.COMP_CODE		= E.COMP_CODE
+	     									 AND E.BILL_DIV_CODE IN (SELECT DIV_CODE FROM BOR120T WITH(NOLOCK) WHERE COMP_CODE = #{S_COMP_CODE})
+	       								     AND A.DIV_CODE  		= E.DIV_CODE
+											 AND A.INOUT_CODE  		= E.CUSTOM_CODE
+	       								     AND A.CHANGE_BASIS_NUM = E.CHANGE_BASIS_NUM
+		WHERE A.COMP_CODE	   = #{S_COMP_CODE}
+		  AND A.INOUT_DATE &gt;= #{INOUT_DATE_FR}
+		  AND A.INOUT_DATE &lt;= #{INOUT_DATE_TO}
+		  AND A.DIV_CODE       = #{DIV_CODE}				  
+	      AND A.INOUT_TYPE IN ('1','4')	   		/* 수불타입-입고,반품 */
+		  AND A.CREATE_LOC  = '2'            	/* 생성경로 */	
+		  <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+		 	AND A.INOUT_CODE = #{CUSTOM_CODE}
+		  </if>
+
+		  AND A.ORDER_TYPE = #{ORDER_TYPE}
+		  AND A.INOUT_Q != 0
+		   
+		<if test="BILL_TYPE == &quot;51&quot;">
+			AND A.TAX_TYPE = '1'
+		</if>
+		<if test="BILL_TYPE == &quot;57&quot;">
+			AND A.TAX_TYPE = '2'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+	 		AND B.AGENT_TYPE = #{AGENT_TYPE}
+	    </if>
+	 	<if test="@foren.Ognl@isNotEmpty(COLLECT_DAY)">
+	 		AND B.COLLECT_DAY = #{COLLECT_DAY}
+	    </if>
+
+		--AND A.ACCOUNT_YNC = 'Y'            		/* 매입기표 대상여부 */
+		--AND A.PRICE_YN    = 'Y'            		/* 진단가 여부 */
+		--AND A.INOUT_Q - A.ACCOUNT_Q != 0
+
+		<if test="@foren.Ognl@isNotEmpty(SEARCH_DEPT_CODE)">
+	 		AND D.TREE_LEVEL LIKE (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE  = D.COMP_CODE 
+	 																			 AND TYPE_LEVEL = D.TYPE_LEVEL 
+	 																			 AND TREE_CODE	= #{SEARCH_DEPT_CODE}) + '%'
+		</if>
+
+	    <if test="CHECKING == &quot;B&quot;">
+	    	AND ISNULL(E.BILL_NUM,'') != ''
+	    	AND E.BILL_TYPE    = #{BILL_TYPE}
+	    </if>
+	    <if test="CHECKING == &quot;C&quot;">
+	       AND NOT EXISTS(SELECT X.CHANGE_BASIS_NUM FROM MAP100T X WITH(NOLOCK) WHERE X.COMP_CODE		 = A.COMP_CODE
+	       																		  AND X.BILL_DIV_CODE IN (SELECT DIV_CODE FROM BOR120T WITH(NOLOCK) WHERE COMP_CODE = #{S_COMP_CODE})	
+	       																		  AND X.DIV_CODE  		 = A.DIV_CODE
+	       																		  AND X.CUSTOM_CODE		 = A.INOUT_CODE
+	       																		  AND X.CHANGE_BASIS_NUM = A.CHANGE_BASIS_NUM
+	       																		  ) 
+	    </if>
+    
+	  GROUP BY  A.COMP_CODE, A.DIV_CODE, A.INOUT_DATE, A.INOUT_NUM, A.INOUT_TYPE, A.TAX_TYPE, A.INOUT_CODE, A.CHANGE_BASIS_NUM, E.BILL_TYPE
+
+    --ORDER BY  A.COMP_CODE, A.INOUT_DATE
+    
+    SET ARITHABORT OFF
+    SET NOCOUNT OFF
+     
+END
+	</select>
+<select id="map101ukrvServiceImpl.selectList2" parameterType="Map" resultType="rMap">	
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+    DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+	    SET @CompCode = #{S_COMP_CODE}
+
+SELECT 
+	 A.COMP_CODE
+	,A.DIV_CODE
+	,A.INOUT_SEQ
+	,A.ITEM_CODE
+	,B.ITEM_NAME
+	,A.ORDER_UNIT
+	,CASE WHEN A.INOUT_TYPE = '1' THEN A.INOUT_Q ELSE A.INOUT_Q *(-1) END AS INOUT_Q
+	,A.INOUT_P
+	,ISNULL(A.TAX_TYPE, B.TAX_TYPE) AS TAX_TYPE
+	,CASE WHEN A.INOUT_TYPE = '1' THEN A.INOUT_I ELSE A.INOUT_I *(-1) END AS INOUT_I
+	,CASE WHEN A.INOUT_TYPE = '1' THEN A.INOUT_TAX_AMT ELSE A.INOUT_TAX_AMT *(-1) END AS INOUT_TAX_AMT
+	,CASE WHEN A.INOUT_TYPE = '1' THEN A.INOUT_I + A.INOUT_TAX_AMT ELSE (A.INOUT_I + A.INOUT_TAX_AMT) *(-1) END AS TOTAL_INOUT_I
+	,A.WH_CODE
+	FROM	   BTR100T  A WITH(NOLOCK) 
+	INNER JOIN BPR100T  B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE    
+                                       AND B.ITEM_CODE   = A.ITEM_CODE  
+	INNER JOIN BCM100T  C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+									   AND C.CUSTOM_CODE = A.INOUT_CODE	
+								   
+	WHERE A.COMP_CODE = @CompCode
+	  AND A.DIV_CODE  = #{DIV_CODE}
+	  AND A.INOUT_NUM = #{INOUT_NUM}
+	  AND A.INOUT_TYPE IN ('1','4')
+	  AND A.CREATE_LOC = '2'
+	  AND A.INOUT_CODE = #{G_INOUT_CODE}
+	  AND ISNULL(A.CHANGE_BASIS_NUM,'') = #{G_CHANGE_BASIS_NUM}
+      
+      AND A.TAX_TYPE  = #{G_TAX_TYPE}
+       
+	--<if test="BILL_TYPE == &quot;51&quot;">
+	--	AND ISNULL(A.TAX_TYPE, B.TAX_TYPE) = '1'
+	--</if>
+	--<if test="BILL_TYPE == &quot;57&quot;">
+	--	AND ISNULL(A.TAX_TYPE, B.TAX_TYPE) = '2'
+	--</if>
+	
+    ORDER BY A.INOUT_SEQ
+   
+    SET ARITHABORT OFF 
+    SET NOCOUNT OFF
+  
+END
+</select>
+	
+<select id="map101ukrvServiceImpl.billDivCode" parameterType="Map" resultType="rMap">	
+	SELECT BILL_DIV_CODE FROM BOR120T
+	WHERE COMP_CODE = #{S_COMP_CODE}
+	  AND DIV_CODE  = #{DIV_CODE}
+</select>	
+	
+<insert id="map101ukrvServiceImpl.insertLogMaster" parameterType="Map"> 
+
+INSERT INTO L_MAP100T
+     ( KEY_VALUE		    , OPR_FLAG
+     , COMP_CODE            , DIV_CODE              , BILL_DIV_CODE         , CUSTOM_CODE           , CHANGE_BASIS_NUM
+     , CHANGE_BASIS_DATE    , DEPT_CODE             , DEPT_NAME             , BILL_TYPE             , BILL_NUM
+     , BILL_DATE            , RECEIPT_TYPE          , ORDER_TYPE            , AMOUNT_I              , VAT_RATE
+     , VAT_AMOUNT_O         
+, MONEY_UNIT            
+     , EX_DATE               , EX_NUM                , AGREE_YN
+     , AC_DATE              , AC_NUM                , DRAFT_YN              , PROJECT_NO            , PJT_CODE
+     , ISSUE_EXPECTED_DATE  , ACCOUNT_TYPE          , CREDIT_NUM            , EB_NUM                , BILL_SEND_YN 
+     , INOUT_NUM
+     , UPDATE_DB_USER	, UPDATE_DB_TIME	, INSERT_DB_USER    	, INSERT_DB_TIME)
+VALUES
+     ( #{KEY_VALUE}         , #{OPR_FLAG}
+     , #{S_COMP_CODE}       , #{DIV_CODE}           , #{BILL_DIV_CODE}      , #{INOUT_CODE}        , #{CHANGE_BASIS_NUM}
+     , #{INOUT_DATE} 		, #{DEPT_CODE}          , #{DEPT_NAME}          , #{BILL_TYPE_G}	   , #{BILL_NUM}
+     , #{BILL_DATE}         , #{RECEIPT_TYPE}       , #{ORDER_TYPE}         , #{SUM_INOUT_I}            , '0'
+     , #{SUM_INOUT_TAX_AMT}     	
+	 , ISNULL((SELECT TOP 1 SUB_CODE FROM BSA100T WHERE COMP_CODE = 'MASTER' AND MAIN_CODE = 'B004' AND SUB_CODE != '$' AND UPPER(ISNULL(REF_CODE1, 'N')) = 'Y'), 'KRW')
+      
+	 , #{EX_DATE}           , #{EX_NUM}            , #{AGREE_YN}
+     , #{AC_DATE}           , #{AC_NUM}             , 'N'					 , #{PROJECT_NO}            , #{PJT_CODE}
+     , #{ISSUE_EXPECTED_DATE}, (CASE WHEN #{BILL_TYPE_G} IN ('51', '57') THEN '10' 
+     							     WHEN #{BILL_TYPE_G} = '53' 		 THEN '20'
+     							     WHEN #{BILL_TYPE_G} = '62' 		 THEN '30' END)
+     							   	 
+     , #{CREDIT_NUM}         , #{EB_NUM}             , #{BILL_SEND_YN}
+     , #{INOUT_NUM}
+     , #{S_USER_ID}     , GETDATE()	       , #{S_USER_ID}     	, GETDATE())	
+
+</insert>	
+
+<update id="map101ukrvServiceImpl.spBuyConfirm" parameterType="Map" statementType="CALLABLE">
+		
+		{call SP_MATRL_BuyConfirm (
+			#{KeyValue, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{LangCode, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ErrorDesc, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+</update>		  
+</mapper>

@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="gba200skrvServiceImpl">
+	<select id="gba200skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		SELECT
+		    GUBUN,
+		    ITEM_CODE,
+		    ITEM_NAME                   	 ITEM_NAME,
+		    SPEC                        	 SPEC,
+		    SUM(ORDER_UNIT_Q)                ORDER_UNIT_Q,
+		    SUM(ORDER_P)                     ORDER_P,
+		    SUM(ORDER_O)                     ORDER_O,
+		    MAX(BUDGET_UNIT_O)               BUDGET_UNIT_O,
+		    SUM(BUDGET_O)                    BUDGET_O,
+		    ORDER_RATE                       ORDER_RATE,
+		    ''								 REMARK
+		FROM
+		    (
+		        SELECT
+		            PROJECT_NO,
+		            PROJECT_NAME,
+		            GUBUN,
+		            ITEM_CODE,
+		            ITEM_NAME,
+		            SPEC,
+		            ORDER_UNIT_Q,
+		            ORDER_P,
+		            ORDER_O,
+		            BUDGET_UNIT_O,
+		            BUDGET_O,
+		            CASE WHEN BUDG_TYPE = '1' OR BUDG_TYPE = '3'
+                        THEN CASE WHEN ISNULL(BUDGET_O, 0) = 0 THEN 0
+                                  ELSE ORDER_O / BUDGET_O * 100 END
+                    ELSE ST_COST_RATE
+                    END ORDER_RATE
+		        FROM
+		            (
+		                SELECT
+		                    PROJECT_NO,
+		                    PROJECT_NAME,
+		                    '1.직접재료비'        GUBUN,
+		                    ITEM_CODE,
+		                    ITEM_NAME,
+		                    SPEC,
+		                    ORDER_UNIT_Q,
+		                    AA.ORDER_P,
+		                    AA.ORDER_O,
+		                    '1'               BUDG_TYPE,
+		                    BUDGET_UNIT_O,
+		                    BUDGET_O,
+		                    NULL  ST_COST_RATE
+		                FROM
+		                    (
+		                        SELECT
+		                            A.PROJECT_NO                                                               PROJECT_NO,
+		                            ISNULL((SELECT PJT_NAME FROM BCM600T
+		                                    WHERE PJT_CODE = A.PROJECT_NO), '')                                PROJECT_NAME,
+		                            A.ORDER_NUM                                                               ORDER_NUM,
+		                            F.CODE_NAME			AS ITEM_ACCOUNT,
+		                            B.ITEM_CODE                                                               ITEM_CODE,
+		                            C.ITEM_NAME         AS  ITEM_NAME,
+		                            C.SPEC				AS	SPEC,
+		                            A.CUSTOM_CODE,
+		                            SUM(B.ORDER_Q)                                                            ORDER_UNIT_Q,
+		                            CASE WHEN ISNULL(SUM(B.ORDER_Q), 0) = 0
+		                                 THEN 0
+		                            ELSE (SUM(B.ORDER_O) / SUM(B.ORDER_Q)) END                                ORDER_P,
+		                            SUM(B.ORDER_O)                                                            ORDER_O,
+		                            SUM(B.OUTSTOCK_Q)                                                         SALE_Q
+								  , CASE WHEN (F.CODE_NAME = '제품' OR F.CODE_NAME  = '반제품') THEN   MAX(ISNULL(H.PL_COST,0)+ISNULL(H.PL_AMOUNT,0)) ELSE MAX(D.PURCHASE_BASE_P)  END BUDGET_UNIT_O
+								  , CASE WHEN (F.CODE_NAME = '제품' OR F.CODE_NAME  = '반제품') THEN   SUM((ISNULL(H.PL_COST,0)+ISNULL(H.PL_AMOUNT,0))* B.ORDER_UNIT_Q) ELSE SUM(D.PURCHASE_BASE_P*B.ORDER_Q) END BUDGET_O
+		                        FROM SOF100T A WITH(NOLOCK)
+										INNER JOIN SOF110T B WITH(NOLOCK) ON A.COMP_CODE	= B.COMP_CODE
+																		 AND A.DIV_CODE		= B.DIV_CODE
+																		 AND A.ORDER_NUM	= B.ORDER_NUM
+										INNER JOIN BPR100T C WITH(NOLOCK) ON A.COMP_CODE	= C.COMP_CODE
+																		 AND B.ITEM_CODE	= C.ITEM_CODE
+										INNER JOIN BPR200T D WITH(NOLOCK) ON A.COMP_CODE	= D.COMP_CODE
+																		 AND A.DIV_CODE		= D.DIV_CODE
+																		 AND B.ITEM_CODE	= D.ITEM_CODE
+										LEFT  JOIN BCM600T E WITH(NOLOCK) ON A.COMP_CODE	= E.COMP_CODE
+																		 AND A.PROJECT_NO 	= E.PJT_CODE
+										LEFT  JOIN BSA100T F WITH(NOLOCK) ON F.COMP_CODE	= A.COMP_CODE
+																		 AND F.MAIN_CODE	= 'B020'
+																		 AND F.SUB_CODE		= D.ITEM_ACCOUNT
+										LEFT  JOIN BPL100T H WITH(NOLOCK) ON H.COMP_CODE	= A.COMP_CODE
+																		 AND H.DIV_CODE		= A.DIV_CODE
+																		 AND H.PROD_ITEM_CODE	= B.ITEM_CODE
+		                        WHERE A.COMP_CODE	= #{S_COMP_CODE}
+								  AND A.DIV_CODE	= #{DIV_CODE}
+								  AND A.PROJECT_NO  = #{PJT_CODE}
+		                        GROUP BY A.PROJECT_NO, A.ORDER_NUM, B.ITEM_CODE, C.ITEM_NAME, C.SPEC, F.CODE_NAME, A.CUSTOM_CODE
+		                    ) AA
+
+		                UNION ALL
+
+		                    SELECT A.PJT_CODE   AS                              PROJECT_NO,
+                            ISNULL((SELECT PJT_NAME FROM BCM600T
+                                WHERE PJT_CODE = A.PJT_CODE), '')               PROJECT_NAME,
+                             '2.' + B.BUDG_NAME                                 GUBUN,
+                            C.BUDG_CODE                                         ITEM_CODE,
+                            A.BUDG_NAME AS                                      ITEM_NAME,
+                            ''                                                  SPEC,
+                            A.ORDER_Q                                           ORDER_UNIT_Q,
+                            A.ORDER_P                                           ORDER_P,
+                            A.ORDER_O                                           ORDER_O,
+                            C.BUDG_TYPE                                         BUDG_TYPE,
+                            0                                                   BUDGET_UNIT_O,
+                            A.BUDG_O                                            BUDGET_O,
+                            CASE WHEN C.BUDG_TYPE !='1' AND C.BUDG_TYPE != '3'
+                                THEN C.ST_COST_RATE
+                            END ST_COST_RATE
+                        FROM  (GBA010T B INNER JOIN GBA010T C
+                                ON  B.COMP_CODE = C.COMP_CODE
+                                    AND B.DIV_CODE = C.DIV_CODE
+                                    AND B.BUDG_CODE = C.TREE_LEVEL) INNER JOIN GBA100T A
+                                        ON A.COMP_CODE = C.COMP_CODE
+                                            AND A.DIV_CODE = C.DIV_CODE
+                                            AND A.BUDG_CODE = C.BUDG_CODE
+                        WHERE B.COMP_CODE   = #{S_COMP_CODE}
+                          AND B.DIV_CODE    = #{DIV_CODE}
+                          AND B.BUDG_CODE = '200'
+                          AND A.PJT_CODE = #{PJT_CODE}
+                          AND B.BUDG_TYPE != '1'
+
+                      UNION ALL
+
+                     SELECT A.PJT_CODE   AS                                     PROJECT_NO,
+                            ISNULL((SELECT PJT_NAME FROM BCM600T
+                                WHERE PJT_CODE = A.PJT_CODE), '')               PROJECT_NAME,
+                            '3.' + B.BUDG_NAME                                  GUBUN,
+                            C.BUDG_CODE                                         ITEM_CODE,
+                            C.BUDG_NAME AS                                      ITEM_NAME,
+                            ''                                                  SPEC,
+                            0                                                   ORDER_UNIT_Q,
+                            0                                                   ORDER_P,
+                            0                                                   ORDER_O,
+                            C.BUDG_TYPE                                         BUDG_TYPE,
+                            CASE WHEN ISNULL(ORDER_Q, 0) = 0 THEN 0
+                                 ELSE BUDG_O / ORDER_Q  END                     BUDGET_UNIT_O,
+                            A.ORDER_O * B.ST_COST_RATE                          BUDGET_O,
+                            CASE WHEN C.BUDG_TYPE != '1' AND C.BUDG_TYPE != '3'
+                                THEN C.ST_COST_RATE
+                            END ST_COST_RATE
+                        FROM  (GBA010T B INNER JOIN GBA010T C
+                                ON  B.COMP_CODE = C.COMP_CODE
+                                    AND B.DIV_CODE = C.DIV_CODE
+                                    AND B.BUDG_CODE = C.TREE_LEVEL) LEFT JOIN GBA100T A
+                                        ON A.COMP_CODE = C.COMP_CODE
+                                            AND A.DIV_CODE = C.DIV_CODE
+                                            AND A.BUDG_CODE = C.BUDG_CODE
+                        WHERE B.COMP_CODE   = #{S_COMP_CODE}
+                            AND B.DIV_CODE  = #{DIV_CODE}
+                            AND B.BUDG_CODE = '300'
+                            AND (A.PJT_CODE= #{PJT_CODE} OR A.PJT_CODE IS NULL)
+                            AND B.BUDG_TYPE != '1'
+		            ) ZZ
+		    ) ZZZ
+		GROUP BY GUBUN, ITEM_CODE, ITEM_NAME, SPEC, ORDER_RATE
+		ORDER BY GUBUN, ITEM_CODE, ITEM_NAME, SPEC, ORDER_RATE
+	</select>
+
+	<update id="gba200skrvServiceImpl.update" parameterType="Map">
+		/* 수정 */
+		UPDATE GBA010T
+		   SET BUDG_NAME      = #{BUDG_NAME}
+		     , ACCNT          = #{ACCNT}
+		     , ST_COST_RATE   = #{ST_COST_RATE}
+		     , CTL_CAL_UNIT   = #{CTL_CAL_UNIT}
+		     , CTL_TERM_UNIT  = #{CTL_TERM_UNIT}
+		     , BUDG_TYPE      = #{BUDG_TYPE}
+		     , USE_YN         = #{USE_YN}
+		     , SORT_SEQ       = #{SORT_SEQ}
+		     , REMARK         = #{REMARK}
+		     , INSERT_DB_USER = #{S_USER_ID}
+		     , INSERT_DB_TIME = GETDATE()
+		     , UPDATE_DB_USER = #{S_USER_ID}
+		     , UPDATE_DB_TIME = GETDATE()
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		 	AND DIV_CODE = #{DIV_CODE}
+		 	AND BUDG_CODE = #{BUDG_CODE}
+	</update>
+
+	<select id="gba200skrvServiceImpl.selectInfo" parameterType="Map" resultType="Map">
+		SELECT B.PJT_CODE
+             , B.PJT_NAME
+             , uniLITE.fnGetUserDate(A.COMP_CODE, A.ORDER_DATE) AS FR_DATE
+             , uniLITE.fnGetUserDate(A.COMP_CODE, B.TO_DATE) AS TO_DATE
+             , uniLITE.fnGetUserDate(A.COMP_CODE, CONVERT(NVARCHAR, GETDATE(), 112)) AS PRINT_DATE
+			 , ISNULL(A.REMARK, '') AS REMARK
+          FROM SOF100T A WITH(NOLOCK)
+			INNER JOIN BCM600T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+											AND  A.PROJECT_NO = B.PJT_CODE
+		WHERE   A.COMP_CODE = #{S_COMP_CODE}
+			AND A.DIV_CODE    = #{DIV_CODE}
+			AND A.PROJECT_NO = #{PJT_CODE}
+	</select>
+
+	<select id="gba200skrvServiceImpl.selectList1" parameterType="Map" resultType="rMap">
+
+
+         SELECT
+                            PROJECT_NO,
+                            PROJECT_NAME,
+                            '1.직접재료비'        GUBUN,
+                            ITEM_CODE,
+                            ITEM_NAME,
+                            SPEC,
+                            ORDER_UNIT_Q,
+                            AA.ORDER_P,
+                            AA.ORDER_O,
+                            '1'               BUDG_TYPE,
+                            BUDGET_UNIT_O,
+                            BUDGET_O
+                        FROM
+                            (
+                                SELECT
+                                    A.PROJECT_NO                                                               PROJECT_NO,
+                                    ISNULL((SELECT PJT_NAME FROM BCM600T
+                                            WHERE PJT_CODE = A.PROJECT_NO), '')                                PROJECT_NAME,
+                                    A.ORDER_NUM                                                               ORDER_NUM,
+                                    F.CODE_NAME         AS ITEM_ACCOUNT,
+                                    B.ITEM_CODE                                                               ITEM_CODE,
+                                    C.ITEM_NAME         AS  ITEM_NAME,
+                                    C.SPEC              AS  SPEC,
+                                    A.CUSTOM_CODE,
+                                    SUM(B.ORDER_Q)                                                            ORDER_UNIT_Q,
+                                    CASE WHEN ISNULL(SUM(B.ORDER_Q), 0) = 0
+                                         THEN 0
+                                    ELSE (SUM(B.ORDER_O) / SUM(B.ORDER_Q)) END                                ORDER_P,
+                                    SUM(B.ORDER_O)                                                            ORDER_O,
+                                    SUM(B.OUTSTOCK_Q)                                                         SALE_Q
+                                  , CASE WHEN (F.CODE_NAME = '제품' OR F.CODE_NAME  = '반제품') THEN   MAX(ISNULL(H.PL_COST,0)+ISNULL(H.PL_AMOUNT,0)) ELSE MAX(D.PURCHASE_BASE_P)  END BUDGET_UNIT_O
+                                  , CASE WHEN (F.CODE_NAME = '제품' OR F.CODE_NAME  = '반제품') THEN   SUM((ISNULL(H.PL_COST,0)+ISNULL(H.PL_AMOUNT,0))* B.ORDER_UNIT_Q) ELSE SUM(D.PURCHASE_BASE_P*B.ORDER_Q) END BUDGET_O
+                                FROM SOF100T A WITH(NOLOCK)
+                                        INNER JOIN SOF110T B WITH(NOLOCK) ON A.COMP_CODE    = B.COMP_CODE
+                                                                         AND A.DIV_CODE     = B.DIV_CODE
+                                                                         AND A.ORDER_NUM    = B.ORDER_NUM
+                                        INNER JOIN BPR100T C WITH(NOLOCK) ON A.COMP_CODE    = C.COMP_CODE
+                                                                         AND B.ITEM_CODE    = C.ITEM_CODE
+                                        INNER JOIN BPR200T D WITH(NOLOCK) ON A.COMP_CODE    = D.COMP_CODE
+                                                                         AND A.DIV_CODE     = D.DIV_CODE
+                                                                         AND B.ITEM_CODE    = D.ITEM_CODE
+                                        LEFT  JOIN BCM600T E WITH(NOLOCK) ON A.COMP_CODE    = E.COMP_CODE
+                                                                         AND A.PROJECT_NO   = E.PJT_CODE
+                                        LEFT  JOIN BSA100T F WITH(NOLOCK) ON F.COMP_CODE    = A.COMP_CODE
+                                                                         AND F.MAIN_CODE    = 'B020'
+                                                                         AND F.SUB_CODE     = D.ITEM_ACCOUNT
+                                        LEFT  JOIN BPL100T H WITH(NOLOCK) ON H.COMP_CODE    = A.COMP_CODE
+                                                                         AND H.DIV_CODE     = A.DIV_CODE
+                                                                         AND H.PROD_ITEM_CODE   = B.ITEM_CODE
+                                WHERE A.COMP_CODE   = #{S_COMP_CODE}
+                                  AND A.DIV_CODE    = #{DIV_CODE}
+                                  AND A.PROJECT_NO  = #{PJT_CODE}
+                                GROUP BY A.PROJECT_NO, A.ORDER_NUM, B.ITEM_CODE, C.ITEM_NAME, C.SPEC, F.CODE_NAME, A.CUSTOM_CODE
+                            ) AA
+
+
+	</select>
+
+	<select id="gba200skrvServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+		SELECT
+	        A.PJT_CODE   AS                                     PROJECT_NO,
+	        ISNULL((SELECT PJT_NAME FROM BCM600T
+	        	WHERE PJT_CODE = A.PJT_CODE), '') 				PROJECT_NAME,
+	        B.BUDG_NAME                                         GUBUN,
+	        C.BUDG_CODE                             			ITEM_CODE,
+	        A.BUDG_NAME AS                                     	ITEM_NAME,
+	        ''                                                	SPEC,
+	        A.ORDER_Q                                           ORDER_UNIT_Q,
+	        A.ORDER_P                                           ORDER_P,
+	        A.ORDER_O											ORDER_O,
+	        C.BUDG_TYPE											BUDG_TYPE,
+	        CASE WHEN ISNULL(ORDER_Q, 0) = 0
+			     THEN 0
+		         ELSE BUDG_O / ORDER_Q
+		     END                                           		BUDGET_UNIT_O,
+	        A.BUDG_O											BUDGET_O,
+	        CASE WHEN C.BUDG_TYPE &lt;&gt; '1' AND C.BUDG_TYPE &lt;&gt; '3'
+                THEN C.ST_COST_RATE
+            END ST_COST_RATE
+	    FROM  (GBA010T B INNER JOIN GBA010T C
+	                  ON  B.COMP_CODE = C.COMP_CODE
+	                      AND B.DIV_CODE = C.DIV_CODE
+	                      AND B.BUDG_CODE = C.TREE_LEVEL) LEFT OUTER JOIN GBA100T A
+	                          ON A.COMP_CODE = C.COMP_CODE
+	                              AND A.DIV_CODE = C.DIV_CODE
+	                              AND A.BUDG_CODE = C.BUDG_CODE
+		 WHERE (A.PJT_CODE LIKE '%' + #{PJT_CODE} + '%' OR A.PJT_CODE IS NULL)
+		             AND B.BUDG_NAME LIKE '%직접경비%'
+	</select>
+
+	<select id="gba200skrvServiceImpl.selectList3" parameterType="Map" resultType="rMap">
+		SELECT
+	        A.PJT_CODE   AS                                     PROJECT_NO,
+	        ISNULL((SELECT PJT_NAME FROM BCM600T
+	        	WHERE PJT_CODE = A.PJT_CODE), '') 				PROJECT_NAME,
+	        B.BUDG_NAME                                         GUBUN,
+	        C.BUDG_CODE                              			ITEM_CODE,
+	        C.BUDG_NAME AS                                     	ITEM_NAME,
+	        ''                                                	SPEC,
+	        A.ORDER_Q                                           ORDER_UNIT_Q,
+	        A.ORDER_P                                           ORDER_P,
+	        A.ORDER_O											ORDER_O,
+	        C.BUDG_TYPE											BUDG_TYPE,
+	        NULL                                          		BUDGET_UNIT_O,
+	        NULL												BUDGET_O,
+	        C.ST_COST_RATE										ST_COST_RATE
+	    FROM  (GBA010T B INNER JOIN GBA010T C
+	                  ON  B.COMP_CODE = C.COMP_CODE
+	                      AND B.DIV_CODE = C.DIV_CODE
+	                      AND B.BUDG_CODE = C.TREE_LEVEL) LEFT OUTER JOIN GBA100T A
+	                          ON A.COMP_CODE = C.COMP_CODE
+	                              AND A.DIV_CODE = C.DIV_CODE
+	                              AND A.BUDG_CODE = C.BUDG_CODE
+		 WHERE (A.PJT_CODE LIKE '%' + #{PJT_CODE} + '%' OR A.PJT_CODE IS NULL)
+		             AND B.BUDG_NAME LIKE '%기타경비%'
+	</select>
+
+</mapper>

@@ -1,0 +1,1151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="agb090ukrServiceImpl">
+	
+	<select id="agb090ukrServiceImpl.selectCheckData" parameterType="Map" resultType="rMap">
+	BEGIN
+		SET NOCOUNT ON
+		/* 쿼리문 또는 프로시저의 영향을 받은 행 수를 나타내는 메시지가 결과 집합의 일부로 반환되지 않도록 하는 것.
+		SET NOCOUNT ON 이 빠져있거나 SET NOCOUNT OFF로 설정이 되어 있으면 프로시저는 항상 자신의 마지막 로직에 의해서 
+		SELECT, UPDATE, INSERT, DELETE된 행의 갯수를 리턴하게 된다. 그 수를 받아서 'nn개의 행이 적용되었습니다.'라는 메세지를 뿌려주게 된다 */
+		SET ARITHABORT ON
+	
+	---- I. 준비 --------------------------------------------------------------------------------------
+	
+	---- 1. 변수선언 ---------------------------------------------------------------------------------- 
+	
+		BEGIN
+		DECLARE @COMP_CODE			NVARCHAR(08)
+			  , @FR_DATE			NVARCHAR(08)
+			  , @TO_DATE			NVARCHAR(08)
+			  , @FR_ACCNT			NVARCHAR(25)
+			  , @TO_ACCNT			NVARCHAR(25)
+			  , @FR_BUDG_CODE		NVARCHAR(16)
+			  , @TO_BUDG_CODE		NVARCHAR(16)
+			  , @AGB100T_YN			NVARCHAR(01)
+			  , @AGB200T_YN			NVARCHAR(01)
+			  , @AGB250T_YN			NVARCHAR(01)
+			  , @AGB500T_YN			NVARCHAR(01)
+			  , @AFB110T_YN			NVARCHAR(01)
+			  , @AFB510T_YN			NVARCHAR(01)
+			  , @INPUT_USER_ID		NVARCHAR(10)
+			  , @ERR_DESC			NVARCHAR(2000)
+			  , @BudgBase			NVARCHAR(01)
+			  , @DataCountEx		INT
+			  , @DataCountAc		INT
+			  , @AGGR_DR_AMT_I		NUMERIC(30,6)
+			  , @AGGR_DR_FOR_AMT_I	NUMERIC(30,6)
+			  , @AGGR_CR_AMT_I		NUMERIC(30,6)
+			  , @AGGR_CR_FOR_AMT_I	NUMERIC(30,6)
+			  , @ACCNT_BOOK			NVARCHAR(100)
+		END
+	
+	---- 2. 변수값 정의 -------------------------------------------------------------------------------
+	
+		BEGIN
+		SET		@COMP_CODE		= #{S_COMP_CODE}
+		SET		@FR_DATE		= #{FR_DATE}
+		SET		@TO_DATE		= #{TO_DATE}
+		SET		@FR_ACCNT		= N''
+		SET		@TO_ACCNT		= N''
+		SET		@FR_BUDG_CODE	= N''
+		SET		@TO_BUDG_CODE	= N''
+		SET		@AGB100T_YN		= #{AGB100T_YN}	-- 총계정원장
+		SET		@AGB200T_YN		= #{AGB200T_YN}	-- 계정명세정보
+		SET		@AGB250T_YN		= N'N'			-- 총계정원장-월합정보
+		SET		@AGB500T_YN		= #{AGB500T_YN}	-- 예적금명세정보
+		SET		@AFB110T_YN		= #{AFB110T_YN}	-- 예산조정정보
+		SET		@AFB510T_YN		= #{AFB110T_YN}	-- (공공)예산확정정보
+		SET		@INPUT_USER_ID	= #{S_USER_ID}	-- 작업자아이디
+		SET		@ERR_DESC		= ''			-- 발생에러정보
+	
+	---- 2.1 회계업무설정의 '예산실적반영시점' 설정값 조회
+		SELECT @BudgBase   = ISNULL(A.BUDG_BASE, '1')	-- 예산통제시점기준 / 1 : 결의전표 입력 시점, 2 : 승인 및 회계전표 입력시점
+		  FROM ABA100T AS A WITH (NOLOCK)				/* WITH (NOLOCK) : 커밋되지 않은 읽기를 허용한다. 즉, 데드락 또는 교착상태가 발생하지 않는다. 
+																			다만, Rollback이 될 수도 있는 데이터 까지 읽기 때문에 데이터의 일관성이 떨어질 수 있다. */	
+		 WHERE A.COMP_CODE = @COMP_CODE
+		   AND A.BASE_CODE = '01'						-- BASE_CODE : 기준코드
+	
+		SET		@BudgBase	= ISNULL(@BudgBase, '1')
+	
+	---- 2.2 적용 데이터 건수	
+		SET		@DataCountEx = 0
+		SET		@DataCountAc = 0
+		END
+	
+	---- 3. 작업대상 임시테이블 생성 ----------------------------------------------------------------
+	
+	---- 3.1. 결의전표 건수 조회
+	
+		BEGIN
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#AGJ110Tmp'))
+			DROP TABLE #AGJ110Tmp
+		/* 로컬 임시 테이블인 #AGJ110tmp에 데이터가 하나라도 존재할 경우 해당 테이블 삭제 */
+		
+		/* 영구테이블 : 일반적인 테이블로 데이터베이스가 다시 시작되어도 항상 존재하는 테이블
+			로컬 임시 테이블 : 테이블 명 앞에 '#'을 붙인다. 사용자 세션 동안만 유지되고 tempdb에 생성된다
+			전역 임시 테이블 : 테이블 명 앞에 '##'을 붙인다. 전체 사용자 세션에서 유지되고 tempdb에 생성된다
+			테이블 변수 : 배치 동안에만 동작하며, 배치가 끝나면 테이블 변수는 사라진다. */
+	
+		SELECT *
+		  INTO #AGJ110Tmp
+		  FROM AGJ110T AS A
+		 WHERE A.COMP_CODE  = @COMP_CODE
+		   AND ((A.EX_DATE &gt;= @FR_DATE  AND @FR_DATE  &lt;&gt; '') OR (@FR_DATE  = ''))
+		   AND ((A.EX_DATE &lt;= @TO_DATE  AND @TO_DATE  &lt;&gt; '') OR (@TO_DATE  = ''))
+		   AND ((A.ACCNT   &gt;= @FR_ACCNT AND @FR_ACCNT &lt;&gt; '') OR (@FR_ACCNT = ''))
+		   AND ((A.ACCNT   &lt;= @TO_ACCNT AND @TO_ACCNT &lt;&gt; '') OR (@TO_ACCNT = ''))
+		   AND ISNULL(A.MOD_DIVI, '')  = ''
+		   AND ISNULL(A.AMT_I   , 0 ) &lt;&gt; 0
+	
+		SET		@DataCountEx = @@ROWCOUNT
+		END
+	
+	---- 3.2. 회계전표 건수 조회
+	
+		BEGIN
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#AGJ210Tmp'))
+			DROP TABLE #AGJ210Tmp
+	
+		SELECT *
+		  INTO #AGJ210Tmp
+		  FROM AGJ210T AS A
+		 WHERE A.COMP_CODE		= @COMP_CODE
+		   AND ((A.AC_DATE	&gt;= @FR_DATE  AND @FR_DATE  &lt;&gt; '') OR (@FR_DATE  = ''))
+		   AND ((A.AC_DATE	&lt;= @TO_DATE  AND @TO_DATE  &lt;&gt; '') OR (@TO_DATE  = ''))
+		   AND ((A.ACCNT	&gt;= @FR_ACCNT AND @FR_ACCNT &lt;&gt; '') OR (@FR_ACCNT = ''))
+		   AND ((A.ACCNT	&lt;= @TO_ACCNT AND @TO_ACCNT &lt;&gt; '') OR (@TO_ACCNT = ''))
+		   AND ISNULL(A.MOD_DIVI, '')  = ''
+		   AND ISNULL(A.AMT_I   , 0 ) &lt;&gt; 0
+	
+		SET		@DataCountAc = @@ROWCOUNT
+		END
+	
+	---- 3.3. 작업대상 전표 존재여부 체크
+	
+		BEGIN
+		IF ( @DataCountEx = 0 AND @DataCountAc = 0 )
+		BEGIN
+			SET @ERR_DESC = ';전표테이블에 조건에 해당하는 자료가 존재하지 않습니다.'
+			GOTO ERROR_HANDLER
+		END
+		END
+	
+	---- II. 잔액맞추기 시작 -------------------------------------------------------------------------
+	
+	---- 1. 총계정원장정보 ---------------------------------------------------------------------------
+	
+		IF ( @AGB100T_YN = 'Y' )
+		BEGIN
+			-- 1.0. 임시테이블 생성
+			IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#AGB100Tmp'))
+				DROP TABLE #AGB100Tmp
+	
+			SELECT  A.COMP_CODE
+				 ,  A.DIV_CODE
+				 ,  A.DEPT_CODE
+				 ,  A.ACCNT
+				 ,  A.AC_DATE
+				 ,  A.P_ACCNT
+				 ,  A.INPUT_PATH
+				 ,  A.MONEY_UNIT
+	
+				 ,  SUM(CASE WHEN A.DR_CR = '1' THEN ISNULL(A.AMT_I    , 0) ELSE 0 END)    AS DR_AMT_I				-- ISNULL(A.AMT_I, 0) : A.AMT_I가 NULL이라면 0으로 치환
+				 ,  SUM(CASE WHEN A.DR_CR = '2' THEN ISNULL(A.AMT_I    , 0) ELSE 0 END)    AS CR_AMT_I				-- DR_CR : 차대구분(A001) / 1: 차변, 2 : 대변
+				 ,  SUM(CASE WHEN A.DR_CR = '1' THEN ISNULL(A.FOR_AMT_I, 0) ELSE 0 END)    AS DR_FOR_AMT_I			-- FOR_AMT_I : 외화금액
+				 ,  SUM(CASE WHEN A.DR_CR = '2' THEN ISNULL(A.FOR_AMT_I, 0) ELSE 0 END)    AS CR_FOR_AMT_I
+				 ,  MAX(ISNULL(A.ACCNT_SPEC , ''))  AS ACCNT_SPEC													-- ACCNT_SPEC : 계정특성(A015) / 현금, 자본금, 전기이월이익잉여금, 전기이월결손금 등
+				 ,  MAX(ISNULL(A.SPEC_DIVI  , ''))  AS SPEC_DIVI													-- SPEC_DIVI : 자산부채특성(A016) / 현금, 보통예금, 받을어음, 지급어음 등
+				 ,  MAX(ISNULL(A.PROFIT_DIVI, ''))  AS PROFIT_DIVI													-- PROFIT_DIVI : 손익특성(A017) / 기간비용, 결산계정, 원재료비 상품, 제품 등
+				 ,  MAX(ISNULL(A.JAN_DIVI   , ''))  AS JAN_DIVI														-- JAN_DIVI : 잔액변(차대)
+				 ,  '1'								AS BLN_DIVI														-- AGB100T의 BLN_DIVI : 이월/발생구분
+	
+			INTO	#AGB100Tmp
+			FROM	#AGJ210Tmp  AS A
+			GROUP BY A.COMP_CODE, A.DIV_CODE, A.DEPT_CODE, A.ACCNT, A.AC_DATE, A.P_ACCNT, A.INPUT_PATH, A.MONEY_UNIT -- MONEY_UNIT : 화폐단위(B004) / CNY, KRW, USD 등
+																													 -- INPUT_PATH : 입력경로(A011) / 전기이월마감, 손익마감 자동기표 등
+			-- 1.1. 조건범위 내의 자료 삭제																					 -- P_ACCNT : 상대계정코드
+			DELETE  FROM AGB100T
+			 WHERE  COMP_CODE		= @COMP_CODE
+			   AND  ((AC_DATE	&gt;= @FR_DATE  AND @FR_DATE  &lt;&gt; '') OR (@FR_DATE  = ''))
+			   AND  ((AC_DATE	&lt;= @TO_DATE  AND @TO_DATE  &lt;&gt; '') OR (@TO_DATE  = ''))
+			   AND  ((ACCNT		&gt;= @FR_ACCNT AND @FR_ACCNT &lt;&gt; '') OR (@FR_ACCNT = ''))
+			   AND  ((ACCNT		&lt;= @TO_ACCNT AND @TO_ACCNT &lt;&gt; '') OR (@TO_ACCNT = ''))
+			   AND  LEN(AC_DATE)	= 8 AND INPUT_PATH &lt;&gt; 'A0'
+	
+			-- 1.2. 총계정원장 반영 I
+			UPDATE  T1
+			   SET  T1.DR_AMT_I			= T2.DR_AMT_I
+				 ,  T1.CR_AMT_I			= T2.CR_AMT_I
+				 ,  T1.DR_FOR_AMT_I		= T2.DR_FOR_AMT_I
+				 ,  T1.CR_FOR_AMT_I		= T2.CR_FOR_AMT_I
+				 ,  T1.UPDATE_DB_USER	= @INPUT_USER_ID
+				 ,  T1.UPDATE_DB_TIME	= GETDATE()
+			  FROM			AGB100T		AS T1
+			 INNER JOIN #AGB100Tmp		AS T2	ON  T2.COMP_CODE	= T1.COMP_CODE
+											   AND T2.DIV_CODE		= T1.DIV_CODE
+											   AND T2.DEPT_CODE		= T1.DEPT_CODE
+											   AND T2.ACCNT			= T1.ACCNT
+											   AND T2.AC_DATE		= T1.AC_DATE
+											   AND T2.P_ACCNT		= T1.P_ACCNT
+											   AND T2.INPUT_PATH	= T1.INPUT_PATH
+											   AND T2.MONEY_UNIT	= T1.MONEY_UNIT
+	
+			-- 1.3. 총계정원장 반영 II
+			INSERT INTO AGB100T ( COMP_CODE , DIV_CODE , DEPT_CODE   , ACCNT   , AC_DATE , P_ACCNT, INPUT_PATH, MONEY_UNIT
+								, DR_AMT_I  , CR_AMT_I , DR_FOR_AMT_I, CR_FOR_AMT_I
+								, ACCNT_SPEC, SPEC_DIVI, PROFIT_DIVI , JAN_DIVI, BLN_DIVI, UPDATE_DB_USER, UPDATE_DB_TIME )
+			SELECT  T1.COMP_CODE
+				 ,  T1.DIV_CODE
+				 ,  T1.DEPT_CODE
+				 ,  T1.ACCNT
+				 ,  T1.AC_DATE
+				 ,  T1.P_ACCNT
+				 ,  T1.INPUT_PATH
+				 ,  T1.MONEY_UNIT
+				 ,  T1.DR_AMT_I
+				 ,  T1.CR_AMT_I
+				 ,  T1.DR_FOR_AMT_I
+				 ,  T1.CR_FOR_AMT_I
+				 ,  T1.ACCNT_SPEC
+				 ,  T1.SPEC_DIVI
+				 ,  T1.PROFIT_DIVI
+				 ,  T1.JAN_DIVI
+				 ,  T1.BLN_DIVI
+				 ,  @INPUT_USER_ID
+				 ,  GETDATE()
+			  FROM		#AGB100Tmp	AS T1
+			  LEFT  JOIN AGB100T	AS T2		ON  T2.COMP_CODE	= T1.COMP_CODE
+											   AND T2.DIV_CODE		= T1.DIV_CODE
+											   AND T2.DEPT_CODE		= T1.DEPT_CODE
+											   AND T2.ACCNT			= T1.ACCNT
+											   AND T2.AC_DATE		= T1.AC_DATE
+											   AND T2.P_ACCNT		= T1.P_ACCNT
+											   AND T2.INPUT_PATH	= T1.INPUT_PATH
+											   AND T2.MONEY_UNIT	= T1.MONEY_UNIT
+			 WHERE  ISNULL(T2.COMP_CODE, '') = ''
+		END
+	
+	-----2. 계정명세정보 ----------------------------------------------------------------------------------
+	
+		IF ( @AGB200T_YN = 'Y' )
+		BEGIN
+			-- 2.0. 임시테이블 생성
+			IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#AGB200Tmp'))
+				DROP TABLE #AGB200Tmp
+	
+			SELECT  A.COMP_CODE
+				 ,  A.DIV_CODE
+				 ,  A.DEPT_CODE
+				 ,  A.ACCNT
+				 ,  A.AC_DATE
+				 ,  A.P_ACCNT
+				 ,  A.INPUT_PATH
+				 ,  A.MONEY_UNIT
+				 ,  ISNULL(A.BOOK_DATA1, '') AS BOOK_DATA1
+				 ,  ISNULL(A.BOOK_DATA2, '') AS BOOK_DATA2
+				 ,  ISNULL(A.BOOK_CODE1, '') AS BOOK_CODE1
+				 ,  ISNULL(A.BOOK_CODE2, '') AS BOOK_CODE2
+				 ,  SUM(CASE WHEN A.DR_CR = '1' THEN ISNULL(A.AMT_I    , 0) ELSE 0 END)    AS DR_AMT_I
+				 ,  SUM(CASE WHEN A.DR_CR = '2' THEN ISNULL(A.AMT_I    , 0) ELSE 0 END)    AS CR_AMT_I
+				 ,  SUM(CASE WHEN A.DR_CR = '1' THEN ISNULL(A.FOR_AMT_I, 0) ELSE 0 END)    AS DR_FOR_AMT_I
+				 ,  SUM(CASE WHEN A.DR_CR = '2' THEN ISNULL(A.FOR_AMT_I, 0) ELSE 0 END)    AS CR_FOR_AMT_I
+				 ,  MAX(ISNULL(A.ACCNT_SPEC , ''))  AS ACCNT_SPEC
+				 ,  MAX(ISNULL(A.SPEC_DIVI  , ''))  AS SPEC_DIVI
+				 ,  MAX(ISNULL(A.PROFIT_DIVI, ''))  AS PROFIT_DIVI
+				 ,  MAX(ISNULL(A.JAN_DIVI   , ''))  AS JAN_DIVI
+				 ,  '1'                             AS BLN_DIVI
+			  INTO #AGB200Tmp
+			  FROM #AGJ210Tmp  AS A
+			 WHERE ISNULL(A.BOOK_CODE1, '') &lt;&gt; ''
+				OR ISNULL(A.BOOK_CODE2, '') &lt;&gt; ''
+			 GROUP BY A.COMP_CODE, A.DIV_CODE, A.DEPT_CODE, A.ACCNT, A.AC_DATE, A.P_ACCNT, A.INPUT_PATH, A.MONEY_UNIT, ISNULL(A.BOOK_DATA1, ''), ISNULL(A.BOOK_DATA2, ''), ISNULL(A.BOOK_CODE1, ''), ISNULL(A.BOOK_CODE2, '')
+	
+			-- 2.1. 조건범위 내의 자료 삭제
+			DELETE  FROM AGB200T
+			 WHERE  COMP_CODE		= @COMP_CODE
+			   AND  ((AC_DATE	&gt;= @FR_DATE  AND @FR_DATE  &lt;&gt; '') OR (@FR_DATE  = ''))
+			   AND  ((AC_DATE	&lt;= @TO_DATE  AND @TO_DATE  &lt;&gt; '') OR (@TO_DATE  = ''))
+			   AND  ((ACCNT		&gt;= @FR_ACCNT AND @FR_ACCNT &lt;&gt; '') OR (@FR_ACCNT = ''))
+			   AND  ((ACCNT		&lt;= @TO_ACCNT AND @TO_ACCNT &lt;&gt; '') OR (@TO_ACCNT = ''))
+			   AND  LEN(AC_DATE)	= 8 AND INPUT_PATH &lt;&gt; 'A0'
+	
+			-- 2.2. 계정명세 반영 I
+			UPDATE  T1
+			   SET  T1.DR_AMT_I			= T2.DR_AMT_I
+				 ,  T1.CR_AMT_I			= T2.CR_AMT_I
+				 ,  T1.DR_FOR_AMT_I		= T2.DR_FOR_AMT_I
+				 ,  T1.CR_FOR_AMT_I		= T2.CR_FOR_AMT_I
+				 ,  T1.BLN_I			= (CASE WHEN T2.JAN_DIVI = '1' THEN T2.DR_AMT_I - T2.CR_AMT_I
+												ELSE						T2.CR_AMT_I - T2.DR_AMT_I
+											END)
+				 ,  T1.FOR_BLN_I		= (CASE WHEN T2.JAN_DIVI = '1' THEN T2.DR_FOR_AMT_I - T2.CR_FOR_AMT_I
+												ELSE						T2.CR_FOR_AMT_I - T2.DR_FOR_AMT_I
+											END)
+				 ,  T1.UPDATE_DB_USER = @INPUT_USER_ID
+				 ,  T1.UPDATE_DB_TIME = GETDATE()
+			  FROM  		AGB200T		AS T1
+			 INNER JOIN #AGB200Tmp		AS T2	ON  T2.COMP_CODE	= T1.COMP_CODE
+											   AND T2.DIV_CODE		= T1.DIV_CODE
+											   AND T2.DEPT_CODE		= T1.DEPT_CODE
+											   AND T2.ACCNT			= T1.ACCNT
+											   AND T2.AC_DATE		= T1.AC_DATE
+											   AND T2.P_ACCNT		= T1.P_ACCNT
+											   AND T2.INPUT_PATH	= T1.INPUT_PATH
+											   AND T2.MONEY_UNIT	= T1.MONEY_UNIT
+											   AND T2.BOOK_CODE1	= T1.BOOK_CODE1
+											   AND T2.BOOK_CODE2	= T1.BOOK_CODE2
+											   AND T2.BOOK_DATA1	= T1.BOOK_DATA1
+											   AND T2.BOOK_DATA2	= T1.BOOK_DATA2
+	
+			-- 2.3. 계정명세 반영 II
+			INSERT INTO AGB200T ( COMP_CODE , DIV_CODE  , DEPT_CODE  , ACCNT     , AC_DATE , P_ACCNT , INPUT_PATH  , MONEY_UNIT
+								, BOOK_DATA1, BOOK_DATA2, BOOK_CODE1 , BOOK_CODE2, DR_AMT_I, CR_AMT_I, DR_FOR_AMT_I, CR_FOR_AMT_I, BLN_I, FOR_BLN_I
+								, ACCNT_SPEC, SPEC_DIVI , PROFIT_DIVI, JAN_DIVI  , BLN_DIVI, UPDATE_DB_USER, UPDATE_DB_TIME )
+			SELECT  T1.COMP_CODE
+				 ,  T1.DIV_CODE
+				 ,  T1.DEPT_CODE
+				 ,  T1.ACCNT
+				 ,  T1.AC_DATE
+				 ,  T1.P_ACCNT
+				 ,  T1.INPUT_PATH
+				 ,  T1.MONEY_UNIT
+				 ,  ISNULL(T1.BOOK_DATA1, '') AS BOOK_DATA1
+				 ,  ISNULL(T1.BOOK_DATA2, '') AS BOOK_DATA2
+				 ,  ISNULL(T1.BOOK_CODE1, '') AS BOOK_CODE1
+				 ,  ISNULL(T1.BOOK_CODE2, '') AS BOOK_CODE2
+				 ,  T1.DR_AMT_I
+				 ,  T1.CR_AMT_I
+				 ,  T1.DR_FOR_AMT_I
+				 ,  T1.CR_FOR_AMT_I
+				 ,  (CASE WHEN T1.JAN_DIVI = '1' THEN T1.DR_AMT_I - T1.CR_AMT_I
+						  ELSE						  T1.CR_AMT_I - T1.DR_AMT_I
+					 END)
+				 ,  (CASE WHEN T1.JAN_DIVI = '1' THEN T1.DR_FOR_AMT_I - T1.CR_FOR_AMT_I
+						  ELSE						  T1.CR_FOR_AMT_I - T1.DR_FOR_AMT_I
+					 END)
+				 ,  T1.ACCNT_SPEC
+				 ,  T1.SPEC_DIVI
+				 ,  T1.PROFIT_DIVI
+				 ,  T1.JAN_DIVI
+				 ,  T1.BLN_DIVI
+				 ,  @INPUT_USER_ID
+				 ,  GETDATE()
+			  FROM		#AGB200Tmp		AS T1
+			  LEFT  JOIN AGB200T		AS T2	ON  T2.COMP_CODE	= T1.COMP_CODE
+											   AND T2.DIV_CODE		= T1.DIV_CODE
+											   AND T2.DEPT_CODE		= T1.DEPT_CODE
+											   AND T2.ACCNT			= T1.ACCNT
+											   AND T2.AC_DATE		= T1.AC_DATE
+											   AND T2.P_ACCNT		= T1.P_ACCNT
+											   AND T2.INPUT_PATH	= T1.INPUT_PATH
+											   AND T2.MONEY_UNIT	= T1.MONEY_UNIT
+											   AND T2.BOOK_CODE1	= T1.BOOK_CODE1
+											   AND T2.BOOK_CODE2	= T1.BOOK_CODE2
+											   AND T2.BOOK_DATA1	= T1.BOOK_DATA1
+											   AND T2.BOOK_DATA2	= T1.BOOK_DATA2
+			 WHERE  ISNULL(T2.COMP_CODE, '') = ''
+		END
+	
+	---- 3. 총계정원장-월합정보 ---------------------------------------------------------------------------
+	
+		IF ( @AGB250T_YN = 'Y' )
+		BEGIN
+			-- 2.0. 임시테이블 생성
+			IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#AGB250Tmp'))
+				DROP TABLE #AGB250Tmp
+	
+			SELECT  A.COMP_CODE
+				 ,  A.DIV_CODE
+				 ,  A.DEPT_CODE
+				 ,  A.ACCNT
+				 ,  LEFT(A.AC_DATE,6) AS AC_DATE
+				 ,  A.MONEY_UNIT
+				 ,  ISNULL(A.BOOK_DATA1, '') AS BOOK_DATA1
+				 ,  ISNULL(A.BOOK_DATA2, '') AS BOOK_DATA2
+				 ,  ISNULL(A.BOOK_CODE1, '') AS BOOK_CODE1
+				 ,  ISNULL(A.BOOK_CODE2, '') AS BOOK_CODE2
+				 ,  SUM(CASE WHEN A.DR_CR = '1' THEN ISNULL(A.AMT_I    , 0) ELSE 0 END)    AS DR_AMT_I
+				 ,  SUM(CASE WHEN A.DR_CR = '2' THEN ISNULL(A.AMT_I    , 0) ELSE 0 END)    AS CR_AMT_I
+				 ,  SUM(CASE WHEN A.DR_CR = '1' THEN ISNULL(A.FOR_AMT_I, 0) ELSE 0 END)    AS DR_FOR_AMT_I
+				 ,  SUM(CASE WHEN A.DR_CR = '2' THEN ISNULL(A.FOR_AMT_I, 0) ELSE 0 END)    AS CR_FOR_AMT_I
+			  INTO  #AGB250Tmp
+			  FROM  #AGJ210Tmp  AS A
+			 GROUP BY A.COMP_CODE, A.DIV_CODE, A.DEPT_CODE, A.ACCNT, LEFT(A.AC_DATE,6), A.MONEY_UNIT, ISNULL(A.BOOK_DATA1, ''), ISNULL(A.BOOK_DATA2, ''), ISNULL(A.BOOK_CODE1, ''), ISNULL(A.BOOK_CODE2, '')
+	
+			-- 2.1. 조건범위 내의 자료 삭제
+			DELETE  FROM AGB250T
+			 WHERE  COMP_CODE		= @COMP_CODE
+			   AND  ((AC_DATE	&gt;= LEFT(@FR_DATE,6) AND LEFT(@FR_DATE,6)  &lt;&gt; '') OR (LEFT(@FR_DATE,6)  = ''))
+			   AND  ((AC_DATE	&lt;= LEFT(@TO_DATE,6) AND LEFT(@TO_DATE,6)  &lt;&gt; '') OR (LEFT(@TO_DATE,6)  = ''))
+			   AND  ((ACCNT		&gt;= @FR_ACCNT AND @FR_ACCNT &lt;&gt; '') OR (@FR_ACCNT = ''))
+			   AND  ((ACCNT		&lt;= @TO_ACCNT AND @TO_ACCNT &lt;&gt; '') OR (@TO_ACCNT = ''))
+	
+			-- 2.2. 총계정원장 반영 I
+			UPDATE  T1
+			   SET  T1.DR_AMT_I			= T2.DR_AMT_I
+				 ,  T1.CR_AMT_I			= T2.CR_AMT_I
+				 ,  T1.DR_FOR_AMT_I		= T2.DR_FOR_AMT_I
+				 ,  T1.CR_FOR_AMT_I		= T2.CR_FOR_AMT_I
+				 ,  T1.UPDATE_DB_USER	= @INPUT_USER_ID
+				 ,  T1.UPDATE_DB_TIME	= GETDATE()
+			  FROM			AGB250T		AS T1
+			 INNER JOIN 	#AGB250Tmp	AS T2	ON  T2.COMP_CODE	= T1.COMP_CODE
+											   AND T2.DIV_CODE		= T1.DIV_CODE
+											   AND T2.DEPT_CODE		= T1.DEPT_CODE
+											   AND T2.ACCNT			= T1.ACCNT
+											   AND T2.AC_DATE		= T1.AC_DATE
+											   AND T2.MONEY_UNIT	= T1.MONEY_UNIT
+											   AND T2.BOOK_DATA1	= T1.BOOK_DATA1
+											   AND T2.BOOK_DATA2	= T1.BOOK_DATA2
+											   AND T2.BOOK_CODE1	= T1.BOOK_CODE1
+											   AND T2.BOOK_CODE2	= T1.BOOK_CODE2
+	
+			-- 2.3. 총계정원장 반영 II
+			INSERT INTO AGB250T
+				 ( COMP_CODE		, DIV_CODE			, DEPT_CODE				, ACCNT				, AC_DATE
+				 , MONEY_UNIT		, BOOK_DATA1		, BOOK_DATA2			, BOOK_CODE1		, BOOK_CODE2
+				 , DR_AMT_I			, CR_AMT_I			, DR_FOR_AMT_I			, CR_FOR_AMT_I
+				 , AGGR_DR_AMT_I	, AGGR_CR_AMT_I		, AGGR_DR_FOR_AMT_I		, AGGR_CR_FOR_AMT_I
+				 , INSERT_DB_USER	, INSERT_DB_TIME	, UPDATE_DB_USER		, UPDATE_DB_TIME )
+			SELECT  T1.COMP_CODE
+				 ,  T1.DIV_CODE
+				 ,  T1.DEPT_CODE
+				 ,  T1.ACCNT
+				 ,  T1.AC_DATE
+				 ,  T1.MONEY_UNIT
+				 ,  ISNULL(T1.BOOK_DATA1, '') AS BOOK_DATA1
+				 ,  ISNULL(T1.BOOK_DATA2, '') AS BOOK_DATA2
+				 ,  ISNULL(T1.BOOK_CODE1, '') AS BOOK_CODE1
+				 ,  ISNULL(T1.BOOK_CODE2, '') AS BOOK_CODE2
+				 ,  T1.DR_AMT_I
+				 ,  T1.CR_AMT_I
+				 ,  T1.DR_FOR_AMT_I
+				 ,  T1.CR_FOR_AMT_I
+				 ,  0
+				 ,  0
+				 ,  0
+				 ,  0
+				 ,  @INPUT_USER_ID
+				 ,  GETDATE()
+				 ,  @INPUT_USER_ID
+				 ,  GETDATE()
+			  FROM		#AGB250Tmp		AS T1
+			  LEFT		JOIN AGB250T	AS T2	 ON  T2.COMP_CODE  = T1.COMP_CODE
+												AND T2.DIV_CODE   = T1.DIV_CODE
+												AND T2.DEPT_CODE  = T1.DEPT_CODE
+												AND T2.ACCNT      = T1.ACCNT
+												AND T2.AC_DATE    = T1.AC_DATE
+												AND T2.MONEY_UNIT = T1.MONEY_UNIT
+												AND T2.BOOK_DATA1 = T1.BOOK_DATA1
+												AND T2.BOOK_DATA2 = T1.BOOK_DATA2
+												AND T2.BOOK_CODE1 = T1.BOOK_CODE1
+												AND T2.BOOK_CODE2 = T1.BOOK_CODE2
+			 WHERE  ISNULL(T2.COMP_CODE, '') = ''
+	
+			DECLARE @START_MONTH	NVARCHAR(6)
+				  , @END_MONTH		NVARCHAR(6)
+				  , @CURR_MONTH		NVARCHAR(6)
+	
+			SET @START_MONTH	= LEFT(@FR_DATE,6)
+			SET @END_MONTH		= LEFT(@TO_DATE,6)
+			SET @CURR_MONTH		= @START_MONTH
+	
+			WHILE (@END_MONTH &gt;= @CURR_MONTH)
+			BEGIN
+				INSERT INTO AGB250T
+					 ( COMP_CODE		, DIV_CODE			, DEPT_CODE				, ACCNT				, AC_DATE
+					 , MONEY_UNIT		, BOOK_DATA1		, BOOK_DATA2			, BOOK_CODE1		, BOOK_CODE2
+					 , DR_AMT_I			, CR_AMT_I			, DR_FOR_AMT_I			, CR_FOR_AMT_I
+					 , AGGR_DR_AMT_I	, AGGR_CR_AMT_I		, AGGR_DR_FOR_AMT_I		, AGGR_CR_FOR_AMT_I
+					 , INSERT_DB_USER	, INSERT_DB_TIME	, UPDATE_DB_USER		, UPDATE_DB_TIME )
+				SELECT  A.COMP_CODE
+					 ,  A.DIV_CODE
+					 ,  A.DEPT_CODE
+					 ,  A.ACCNT
+					 ,  CONVERT(NVARCHAR(06), DATEADD(MONTH, 1, A.AC_DATE + N'01'), 112) AS AC_DATE
+					 ,  A.MONEY_UNIT
+					 ,  ISNULL(A.BOOK_DATA1, '') AS BOOK_DATA1
+					 ,  ISNULL(A.BOOK_DATA2, '') AS BOOK_DATA2
+					 ,  ISNULL(A.BOOK_CODE1, '') AS BOOK_CODE1
+					 ,  ISNULL(A.BOOK_CODE2, '') AS BOOK_CODE2
+					 ,  0
+					 ,  0
+					 ,  0
+					 ,  0
+					 ,  A.AGGR_DR_AMT_I
+					 ,  A.AGGR_CR_AMT_I
+					 ,  A.AGGR_DR_FOR_AMT_I
+					 ,  A.AGGR_CR_FOR_AMT_I
+					 ,  @INPUT_USER_ID
+					 ,  GETDATE()
+					 ,  @INPUT_USER_ID
+					 ,  GETDATE()
+				  FROM		AGB250T A WITH (NOLOCK)
+				  LEFT JOIN AGB250T B WITH (NOLOCK)  ON B.COMP_CODE		= A.COMP_CODE
+													AND B.DIV_CODE		= A.DIV_CODE
+													AND B.DEPT_CODE		= A.DEPT_CODE
+													AND B.ACCNT			= A.ACCNT
+													AND B.AC_DATE		= CONVERT(NVARCHAR(06), DATEADD(MONTH, 1, A.AC_DATE + N'01'), 112)
+													AND B.MONEY_UNIT	= A.MONEY_UNIT
+													AND B.BOOK_DATA1	= A.BOOK_DATA1
+													AND B.BOOK_DATA2	= A.BOOK_DATA2
+													AND B.BOOK_CODE1	= A.BOOK_CODE1
+													AND B.BOOK_CODE2	= A.BOOK_CODE2
+				 WHERE A.COMP_CODE				= @COMP_CODE
+				   AND A.AC_DATE				= @CURR_MONTH
+				   AND ISNULL(B.COMP_CODE,'')	= ''
+	
+				SET @CURR_MONTH = CONVERT(NVARCHAR(06), DATEADD(MONTH, 1, @CURR_MONTH + N'01'), 112)
+			END
+	
+			-- 2.4. 총계정원장 누계반영
+			UPDATE A
+			   SET @AGGR_DR_AMT_I		= CASE WHEN ISNULL(@ACCNT_BOOK, '') &lt;&gt; A.DIV_CODE + A.DEPT_CODE + A.MONEY_UNIT + A.ACCNT + A.BOOK_DATA1 + A.BOOK_DATA2 + A.BOOK_CODE1 + A.BOOK_CODE2 
+													THEN A.DR_AMT_I
+											   ELSE ISNULL(@AGGR_DR_AMT_I,0) + A.DR_AMT_I
+												END
+				 , @AGGR_DR_FOR_AMT_I	= CASE WHEN ISNULL(@ACCNT_BOOK, '') &lt;&gt; A.DIV_CODE + A.DEPT_CODE + A.MONEY_UNIT + A.ACCNT + A.BOOK_DATA1 + A.BOOK_DATA2 + A.BOOK_CODE1 + A.BOOK_CODE2 
+													THEN A.DR_FOR_AMT_I
+											   ELSE ISNULL(@AGGR_DR_FOR_AMT_I,0) + A.DR_FOR_AMT_I
+												END
+				 , @AGGR_CR_AMT_I		= CASE WHEN ISNULL(@ACCNT_BOOK, '') &lt;&gt; A.DIV_CODE + A.DEPT_CODE + A.MONEY_UNIT + A.ACCNT + A.BOOK_DATA1 + A.BOOK_DATA2 + A.BOOK_CODE1 + A.BOOK_CODE2 
+													THEN A.CR_AMT_I
+											   ELSE ISNULL(@AGGR_CR_AMT_I,0) + A.CR_AMT_I
+												END
+				 , @AGGR_CR_FOR_AMT_I	= CASE WHEN ISNULL(@ACCNT_BOOK, '') &lt;&gt; A.DIV_CODE + A.DEPT_CODE + A.MONEY_UNIT + A.ACCNT + A.BOOK_DATA1 + A.BOOK_DATA2 + A.BOOK_CODE1 + A.BOOK_CODE2 
+													THEN A.CR_FOR_AMT_I
+											   ELSE ISNULL(@AGGR_CR_FOR_AMT_I,0) + A.CR_FOR_AMT_I
+												END
+				 , A.AGGR_DR_AMT_I			= @AGGR_DR_AMT_I
+				 , A.AGGR_DR_FOR_AMT_I		= @AGGR_DR_FOR_AMT_I
+				 , A.AGGR_CR_AMT_I			= @AGGR_CR_AMT_I
+				 , A.AGGR_CR_FOR_AMT_I		= @AGGR_CR_FOR_AMT_I
+				 , @ACCNT_BOOK				= A.DIV_CODE + A.DEPT_CODE + A.MONEY_UNIT + A.ACCNT + A.BOOK_DATA1 + A.BOOK_DATA2 + A.BOOK_CODE1 + A.BOOK_CODE2 
+			  FROM		AGB250T 	A WITH (NOLOCK, INDEX(AGB250T_IDX00))
+			 INNER JOIN #AGB250Tmp	AS T2		 ON  T2.COMP_CODE	= A.COMP_CODE
+												AND T2.DIV_CODE		= A.DIV_CODE
+												AND T2.DEPT_CODE	= A.DEPT_CODE
+												AND T2.ACCNT		= A.ACCNT
+												AND T2.AC_DATE		= A.AC_DATE
+												AND T2.MONEY_UNIT	= A.MONEY_UNIT
+												AND T2.BOOK_DATA1	= A.BOOK_DATA1
+												AND T2.BOOK_DATA2	= A.BOOK_DATA2
+												AND T2.BOOK_CODE1	= A.BOOK_CODE1
+												AND T2.BOOK_CODE2	= A.BOOK_CODE2
+			  LEFT JOIN AGB250T B WITH (NOLOCK)  ON B.COMP_CODE		= A.COMP_CODE
+												AND B.DIV_CODE		= A.DIV_CODE
+												AND B.DEPT_CODE		= A.DEPT_CODE
+												AND B.BOOK_DATA1	= A.BOOK_DATA1
+												AND B.BOOK_DATA2	= A.BOOK_DATA2
+												AND B.BOOK_CODE1	= A.BOOK_CODE1
+												AND B.BOOK_CODE2	= A.BOOK_CODE2
+												AND B.MONEY_UNIT	= A.MONEY_UNIT
+												AND B.ACCNT			= A.ACCNT
+												AND B.AC_DATE		= CONVERT(NVARCHAR(06), DATEADD(MONTH, -1, A.AC_DATE + N'01'), 112)
+			 WHERE A.COMP_CODE = @COMP_CODE
+	
+		END
+		
+	---- 예적금명세 ---------------------------------------------------------------------------
+	
+		IF ( @AGB500T_YN = 'Y' )
+		BEGIN
+			-- 2.0. 임시테이블 생성
+			IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#AGB500Tmp'))
+				DROP TABLE #AGB500Tmp
+				
+			SELECT A.COMP_CODE
+				 , A.AC_DATE
+				 , A.SLIP_NUM
+				 , A.SLIP_SEQ
+				 , A.ACCNT
+				 , CASE WHEN A.BOOK_CODE1 = 'A3' THEN A.BOOK_DATA1 ELSE A.BOOK_DATA2 END	AS BANK_CODE
+				 , CASE WHEN A.BOOK_CODE1 = 'O1' THEN A.BOOK_DATA1 ELSE A.BOOK_DATA2 END	AS SAVE_CODE
+				 , A.MONEY_UNIT
+				 , CASE WHEN A.DR_CR = '1' THEN A.AMT_I ELSE 0 END							AS DR_AMT_I
+				 , CASE WHEN A.DR_CR = '2' THEN A.AMT_I ELSE 0 END							AS CR_AMT_I
+				 , CASE WHEN A.DR_CR = '1' THEN A.FOR_AMT_I ELSE 0 END						AS DR_FOR_AMT_I
+				 , CASE WHEN A.DR_CR = '2' THEN A.FOR_AMT_I ELSE 0 END						AS CR_FOR_AMT_I
+				 , A.EXCHG_RATE_O
+				 , A.DIV_CODE
+				 , A.DEPT_CODE
+				 , A.DEPT_NAME
+				 , A.ACCNT_SPEC
+				 , A.SPEC_DIVI
+				 , A.PROFIT_DIVI
+				 , A.REMARK
+				 , A.INPUT_PATH
+			  INTO #AGB500Tmp
+			  FROM #AGJ210Tmp	A
+			 WHERE LEFT(A.SPEC_DIVI, 1) = 'B' OR LEFT(A.SPEC_DIVI, 1) = 'C'
+	
+			-- 2.1. 조건범위 내의 자료 삭제
+			DELETE  FROM AGB500T
+			 WHERE  COMP_CODE		= @COMP_CODE
+			   AND  ((AC_DATE	&gt;= @FR_DATE  AND @FR_DATE  &lt;&gt; '') OR (@FR_DATE  = ''))
+			   AND  ((AC_DATE	&lt;= @TO_DATE  AND @TO_DATE  &lt;&gt; '') OR (@TO_DATE  = ''))
+			   AND  ((ACCNT		&gt;= @FR_ACCNT AND @FR_ACCNT &lt;&gt; '') OR (@FR_ACCNT = ''))
+			   AND  ((ACCNT		&lt;= @TO_ACCNT AND @TO_ACCNT &lt;&gt; '') OR (@TO_ACCNT = ''))
+			   AND  LEN(AC_DATE)	= 8 AND INPUT_PATH &lt;&gt; 'A0'
+	
+			-- 2.2. 계정명세 반영 I
+			UPDATE  T1
+			   SET  T1.DR_AMT_I			= T2.DR_AMT_I
+				 ,  T1.CR_AMT_I			= T2.CR_AMT_I
+				 ,  T1.DR_FOR_AMT_I		= T2.DR_FOR_AMT_I
+				 ,  T1.CR_FOR_AMT_I		= T2.CR_FOR_AMT_I
+				 ,  T1.UPDATE_DB_USER	= @INPUT_USER_ID
+				 ,  T1.UPDATE_DB_TIME	= GETDATE()
+			  FROM			AGB500T		AS T1
+			 INNER JOIN		#AGB500Tmp	AS T2	 ON  T2.COMP_CODE	= T1.COMP_CODE
+												AND T2.DIV_CODE		= T1.DIV_CODE
+												AND T2.DEPT_CODE	= T1.DEPT_CODE
+												AND T2.ACCNT		= T1.ACCNT
+												AND T2.AC_DATE		= T1.AC_DATE
+												AND T2.SLIP_NUM		= T1.SLIP_NUM
+												AND T2.SLIP_SEQ		= T1.SLIP_SEQ
+												AND T2.MONEY_UNIT	= T1.MONEY_UNIT
+												AND T2.BANK_CODE	= T1.BANK_CODE
+												AND T2.SAVE_CODE	= T1.SAVE_CODE
+	
+			-- 2.3. 계정명세 반영 II
+			INSERT INTO AGB500T ( COMP_CODE	, AC_DATE	, SLIP_NUM		, SLIP_SEQ		, ACCNT			, BANK_CODE			, SAVE_CODE			, MONEY_UNIT
+								, DR_AMT_I	, CR_AMT_I	, DR_FOR_AMT_I	, CR_FOR_AMT_I	, EXCHG_RATE_O	, DIV_CODE			, DEPT_CODE			, DEPT_NAME
+								, ACCNT_SPEC, SPEC_DIVI	, PROFIT_DIVI	, REMARK		, INPUT_PATH	, UPDATE_DB_USER	, UPDATE_DB_TIME	)
+			SELECT  T1.COMP_CODE
+				 ,  T1.AC_DATE
+				 ,  T1.SLIP_NUM
+				 ,  T1.SLIP_SEQ
+				 ,  T1.ACCNT
+				 ,  T1.BANK_CODE
+				 ,  T1.SAVE_CODE
+				 ,  T1.MONEY_UNIT
+				 ,  T1.DR_AMT_I
+				 ,  T1.CR_AMT_I
+				 ,  T1.DR_FOR_AMT_I
+				 ,  T1.CR_FOR_AMT_I
+				 ,  T1.EXCHG_RATE_O
+				 ,  T1.DIV_CODE
+				 ,  T1.DEPT_CODE
+				 ,  T1.DEPT_NAME
+				 ,  T1.ACCNT_SPEC
+				 ,  T1.SPEC_DIVI
+				 ,  T1.PROFIT_DIVI
+				 ,  T1.REMARK
+				 ,  T1.INPUT_PATH
+				 ,  @INPUT_USER_ID
+				 ,  GETDATE()
+			  FROM		#AGB500Tmp	AS T1
+			  LEFT	JOIN AGB500T	AS T2	 ON  T2.COMP_CODE	= T1.COMP_CODE
+											AND T2.DIV_CODE		= T1.DIV_CODE
+											AND T2.DEPT_CODE	= T1.DEPT_CODE
+											AND T2.ACCNT		= T1.ACCNT
+											AND T2.AC_DATE		= T1.AC_DATE
+											AND T2.SLIP_NUM		= T1.SLIP_NUM
+											AND T2.SLIP_SEQ		= T1.SLIP_SEQ
+											AND T2.MONEY_UNIT	= T1.MONEY_UNIT
+											AND T2.BANK_CODE	= T1.BANK_CODE
+											AND T2.SAVE_CODE	= T1.SAVE_CODE
+			 WHERE  ISNULL(T2.COMP_CODE, '') = ''
+		END
+	
+	---- 4. 예산실적I  (계정과목으로 적용) ----------------------------------------------------------------
+	
+		IF ( @AFB110T_YN = 'Y' )
+		BEGIN
+	---- 4.1   결의전표 
+			IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#AFB110TmpEx'))
+				DROP TABLE #AFB110TmpEx
+	
+			CREATE TABLE #AFB110TmpEx ( COMP_CODE		NVARCHAR(08)
+									,	BUDG_YYYYMM		NVARCHAR(06)
+									,	ACCNT			NVARCHAR(16)
+									,	DEPT_CODE		NVARCHAR(08)
+									,	EX_AMT_I		NUMERIC(30, 6)
+									  )
+	
+			-- 4.1.0 결의전표 실적 집계 , 임시테이블 생성
+			IF ( @BudgBase = '1' )
+			BEGIN
+				INSERT  INTO #AFB110TmpEx ( COMP_CODE, BUDG_YYYYMM, ACCNT, DEPT_CODE, EX_AMT_I )
+				SELECT  GT.COMP_CODE
+					 ,  GT.BUDG_YYYYMM
+					 ,  GT.ACCNT
+					 ,  GT.DEPT_CODE
+					 ,  SUM(CASE WHEN GT.ACCNT_DIVI  = '1' AND GT.JAN_DIVI  = GT.DR_CR THEN GT.AMT_I
+								 WHEN GT.ACCNT_DIVI  = '1' AND GT.JAN_DIVI &lt;&gt; GT.DR_CR THEN 0
+								 WHEN GT.ACCNT_DIVI &lt;&gt; '1' AND GT.JAN_DIVI  = GT.DR_CR THEN GT.AMT_I
+								 WHEN GT.ACCNT_DIVI &lt;&gt; '1' AND GT.JAN_DIVI &lt;&gt; GT.DR_CR THEN GT.AMT_I * (-1)
+							END) AS EX_AMT_I
+				  FROM (
+						SELECT  A.COMP_CODE
+							 ,  LEFT(A.EX_DATE, 6) AS BUDG_YYYYMM
+							 ,  A.ACCNT
+							 ,  A.DEPT_CODE
+							 ,  A.AMT_I
+							 ,  A.DR_CR
+							 ,  A.JAN_DIVI
+							 ,  C1.ACCNT_DIVI
+						  FROM		#AGJ110Tmp	AS A
+						  LEFT  JOIN ABA400T	AS C1 WITH (NOLOCK)  ON  C1.COMP_CODE	= A.COMP_CODE
+																	AND C1.ACCNT		= A.ACCNT
+						 WHERE  A.AP_STS				= '1'
+						   AND  ISNULL(A.BUDG_YN, '')	= 'Y'
+						   AND  A.INPUT_PATH NOT IN ('50', '52', '58', '81', '82', '83', 'Z4')
+						) AS GT
+				 GROUP BY GT.COMP_CODE, GT.BUDG_YYYYMM, GT.ACCNT, GT.DEPT_CODE
+			END
+	
+			-- 4.1.1 결의전표 실적 반영 I (변경된 전표 반영)
+			UPDATE  A
+			   SET	A.EX_AMT_I = ISNULL(B.EX_AMT_I, 0)
+			  FROM			AFB110T		AS A
+			 INNER JOIN #AFB110TmpEx	AS B	 ON  B.COMP_CODE	= A.COMP_CODE
+												AND B.BUDG_YYYYMM	= A.BUDG_YYYYMM
+												AND B.ACCNT			= A.ACCNT
+												AND B.DEPT_CODE		= A.DEPT_CODE
+			WHERE  A.COMP_CODE			= @COMP_CODE
+			  AND  A.BUDG_YYYYMM	&gt;= LEFT(@FR_DATE, 6)
+			  AND  A.BUDG_YYYYMM	&lt;= LEFT(@TO_DATE, 6)
+			  AND  ((A.ACCNT		&gt;= @FR_ACCNT		AND @FR_ACCNT &lt;&gt; '') OR (@FR_ACCNT = ''))
+			  AND  ((A.ACCNT		&lt;= @TO_ACCNT		AND @TO_ACCNT &lt;&gt; '') OR (@TO_ACCNT = ''))
+	
+			-- 4.1.2 결의전표 실적 반영 II (누락된 전표 반영)
+			INSERT INTO AFB110T ( COMP_CODE, BUDG_YYYYMM   , ACCNT         , DEPT_CODE     , DEPT_NAME     , EX_AMT_I
+								, CAL_DIVI , INSERT_DB_USER, INSERT_DB_TIME, UPDATE_DB_USER, UPDATE_DB_TIME )
+			SELECT  A.COMP_CODE
+				 ,  A.BUDG_YYYYMM
+				 ,  A.ACCNT
+				 ,  A.DEPT_CODE
+				 ,  N1.TREE_NAME		AS DEPT_NAME
+				 ,  A.EX_AMT_I
+				 ,  '1' AS CAL_DIVI
+				 ,  @INPUT_USER_ID
+				 ,  GETDATE()
+				 ,  @INPUT_USER_ID
+				 ,  GETDATE()
+			  FROM		#AFB110TmpEx	AS A WITH (NOLOCK)
+			  LEFT	JOIN AFB110T		AS B WITH (NOLOCK)	 ON  B.COMP_CODE	= A.COMP_CODE
+															AND B.BUDG_YYYYMM	= A.BUDG_YYYYMM
+															AND B.ACCNT			= A.ACCNT
+															AND B.DEPT_CODE		= A.DEPT_CODE
+			  LEFT	JOIN BSA210T		AS N1 WITH (NOLOCK)  ON  N1.COMP_CODE	= A.COMP_CODE
+															AND N1.TREE_CODE	= A.DEPT_CODE
+			 WHERE  B.COMP_CODE IS NULL
+	
+			-- 4.1.3 결의전표 실적 반영 III (삭제된 전표 반영)
+			UPDATE  A
+			   SET	EX_AMT_I = 0
+			  FROM			AFB110T		AS A
+			  LEFT	JOIN #AFB110TmpEx	AS B	 ON  B.COMP_CODE	= A.COMP_CODE
+												AND B.BUDG_YYYYMM	= A.BUDG_YYYYMM
+												AND B.ACCNT			= A.ACCNT
+												AND B.DEPT_CODE		= A.DEPT_CODE
+			 WHERE  A.COMP_CODE			= @COMP_CODE
+			   AND  A.BUDG_YYYYMM	&gt;= LEFT(@FR_DATE, 6)
+			   AND  A.BUDG_YYYYMM	&lt;= LEFT(@TO_DATE, 6)
+			   AND  ((A.ACCNT		&gt;= @FR_ACCNT		AND @FR_ACCNT &lt;&gt; '') OR (@FR_ACCNT = ''))
+			   AND  ((A.ACCNT		&lt;= @TO_ACCNT		AND @TO_ACCNT &lt;&gt; '') OR (@TO_ACCNT = ''))
+			   AND  B.COMP_CODE		IS NULL
+	
+	---------- 4.2   회계전표 -------------------------------------------------------------------------
+			-- 4.2.0 회계전표 실적 집계 , 임시테이블 생성
+			IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#AFB110TmpAc'))
+			DROP TABLE #AFB110TmpAc
+	
+			SELECT  GT.COMP_CODE
+				 ,  GT.BUDG_YYYYMM
+				 ,  GT.ACCNT
+				 ,  GT.DEPT_CODE
+				 ,  SUM(CASE WHEN GT.ACCNT_DIVI  = '1' AND GT.JAN_DIVI  = GT.DR_CR THEN GT.AMT_I
+							 WHEN GT.ACCNT_DIVI  = '1' AND GT.JAN_DIVI &lt;&gt; GT.DR_CR THEN 0
+							 WHEN GT.ACCNT_DIVI &lt;&gt; '1' AND GT.JAN_DIVI  = GT.DR_CR THEN GT.AMT_I
+							 WHEN GT.ACCNT_DIVI &lt;&gt; '1' AND GT.JAN_DIVI &lt;&gt; GT.DR_CR THEN GT.AMT_I * (-1)
+							 ELSE 0
+						END) AS AC_AMT_I
+			 INTO #AFB110TmpAc
+			 FROM (
+					SELECT  A.COMP_CODE
+						 ,  LEFT(A.AC_DATE, 6) AS BUDG_YYYYMM
+						 ,  A.ACCNT
+						 ,  A.DEPT_CODE
+						 ,  A.AMT_I
+						 ,  A.DR_CR
+						 ,  A.JAN_DIVI
+						 ,  C1.ACCNT_DIVI
+					  FROM		#AGJ210Tmp	AS A  WITH (NOLOCK)
+					  LEFT	JOIN ABA400T	AS C1 WITH (NOLOCK)  ON  C1.COMP_CODE	= A.COMP_CODE
+																AND C1.ACCNT		= A.ACCNT
+					 WHERE  ISNULL(A.BUDG_YN, '') = 'Y'
+					   AND  A.INPUT_PATH NOT IN ('50', '52', '58', '81', '82', '83', 'Z4')
+				) AS GT
+			GROUP BY GT.COMP_CODE, GT.BUDG_YYYYMM, GT.ACCNT, GT.DEPT_CODE
+	
+			-- 4.2.1 회계전표 실적 반영 I (변경된 전표 반영)
+			UPDATE  A
+			   SET  A.AC_AMT_I = ISNULL(B.AC_AMT_I, 0)
+			  FROM  AFB110T     AS A
+			 INNER  JOIN #AFB110TmpAc AS B	 ON  B.COMP_CODE	= A.COMP_CODE
+											AND B.BUDG_YYYYMM	= A.BUDG_YYYYMM
+											AND B.ACCNT			= A.ACCNT
+											AND B.DEPT_CODE		= A.DEPT_CODE
+			 WHERE  A.COMP_CODE			= @COMP_CODE
+			   AND  A.BUDG_YYYYMM	&gt;= LEFT(@FR_DATE, 6)
+			   AND  A.BUDG_YYYYMM	&lt;= LEFT(@TO_DATE, 6)
+			   AND  ((A.ACCNT		&gt;= @FR_ACCNT		AND @FR_ACCNT &lt;&gt; '') OR (@FR_ACCNT = ''))
+			   AND  ((A.ACCNT		&lt;= @TO_ACCNT		AND @TO_ACCNT &lt;&gt; '') OR (@TO_ACCNT = ''))
+	
+			-- 4.2.2 회계전표 실적 반영 II (누락된 전표 반영)
+			INSERT INTO AFB110T ( COMP_CODE, BUDG_YYYYMM   , ACCNT         , DEPT_CODE     , DEPT_NAME     , AC_AMT_I
+								, CAL_DIVI , INSERT_DB_USER, INSERT_DB_TIME, UPDATE_DB_USER, UPDATE_DB_TIME )
+			SELECT  A.COMP_CODE
+				 ,  A.BUDG_YYYYMM
+				 ,  A.ACCNT
+				 ,  A.DEPT_CODE
+				 ,  N1.TREE_NAME	AS DEPT_NAME
+				 ,  A.AC_AMT_I
+				 ,  '1' AS CAL_DIVI
+				 ,  @INPUT_USER_ID
+				 ,  GETDATE()
+				 ,  @INPUT_USER_ID
+				 ,  GETDATE()
+			  FROM		#AFB110TmpAc	AS A WITH (NOLOCK)
+			  LEFT	JOIN AFB110T		AS B WITH (NOLOCK)  ON  B.COMP_CODE		= A.COMP_CODE
+															AND B.BUDG_YYYYMM	= A.BUDG_YYYYMM
+															AND B.ACCNT			= A.ACCNT
+															AND B.DEPT_CODE		= A.DEPT_CODE
+			  LEFT	JOIN BSA210T		AS N1 WITH (NOLOCK)  ON  N1.COMP_CODE	= A.COMP_CODE
+															AND N1.TREE_CODE	= A.DEPT_CODE
+			 WHERE  B.COMP_CODE IS NULL
+	
+			-- 4.2.3 회계전표 실적 반영 III (삭제된 전표 반영)
+			UPDATE  A
+			   SET  A.AC_AMT_I = 0
+			  FROM  AFB110T				AS A
+			  LEFT  JOIN #AFB110TmpAc	AS B	 ON  B.COMP_CODE	= A.COMP_CODE
+												AND B.BUDG_YYYYMM	= A.BUDG_YYYYMM
+												AND B.ACCNT			= A.ACCNT
+												AND B.DEPT_CODE		= A.DEPT_CODE
+			 WHERE  A.COMP_CODE			= @COMP_CODE
+			   AND  A.BUDG_YYYYMM	&gt;= LEFT(@FR_DATE, 6)
+			   AND  A.BUDG_YYYYMM	&lt;= LEFT(@TO_DATE, 6)
+			   AND  ((A.ACCNT		&gt;= @FR_ACCNT		AND @FR_ACCNT &lt;&gt; '') OR (@FR_ACCNT = ''))
+			   AND  ((A.ACCNT		&lt;= @TO_ACCNT		AND @TO_ACCNT &lt;&gt; '') OR (@TO_ACCNT = ''))
+			   AND  B.COMP_CODE		IS NULL   
+		END
+	
+	-----5. 예산실적II (예산과목으로 적용) ----------------------------------------------------------
+	
+		IF ( @AFB510T_YN = 'Y' )
+		BEGIN
+	---------- 5.1   결의전표 -------------------------------------------------------------------------
+			IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#AFB510TmpEx'))
+				DROP TABLE #AFB510TmpEx
+	
+			CREATE TABLE #AFB510TmpEx ( COMP_CODE		NVARCHAR(08)
+									,	BUDG_YYYYMM		NVARCHAR(06)
+									,	DEPT_CODE		NVARCHAR(08)
+									,	BUDG_CODE		NVARCHAR(16)
+									,	BUDG_GUBUN		NVARCHAR(01)
+									,	EX_AMT_I		NUMERIC(30, 6)
+										)
+	
+			-- 5.1.0 결의전표 실적 집계 , 임시테이블 생성
+			IF ( @BudgBase = '1' )
+			BEGIN
+				INSERT INTO #AFB510TmpEx ( COMP_CODE, BUDG_YYYYMM, DEPT_CODE, BUDG_CODE, BUDG_GUBUN, EX_AMT_I )
+				SELECT GT.COMP_CODE
+					 , GT.BUDG_YYYYMM
+					 , GT.DEPT_CODE
+					 , GT.BUDG_CODE
+					 , GT.BUDG_GUBUN
+					 , SUM(CASE WHEN GT.ACCNT_DIVI  = '1' AND GT.ACCNT_SPEC  = 'E'		AND GT.JAN_DIVI &lt;&gt; 	GT.DR_CR THEN GT.AMT_I
+								WHEN GT.ACCNT_DIVI  = '1' AND GT.ACCNT_SPEC &lt;&gt; 'E' AND GT.JAN_DIVI =			GT.DR_CR THEN GT.AMT_I
+								WHEN GT.ACCNT_DIVI  = '2'								 AND GT.JAN_DIVI =			GT.DR_CR THEN GT.AMT_I
+								WHEN GT.ACCNT_DIVI  = '2'								 AND GT.JAN_DIVI &lt;&gt;	GT.DR_CR THEN GT.AMT_I * (-1)
+								WHEN GT.ACCNT_DIVI  = '3'								 AND GT.JAN_DIVI =			GT.DR_CR THEN GT.AMT_I
+								WHEN GT.ACCNT_DIVI  = '3'								 AND GT.JAN_DIVI &lt;&gt; 	GT.DR_CR THEN GT.AMT_I * (-1)
+								WHEN GT.ACCNT_DIVI &lt;&gt; '1' AND
+									 GT.ACCNT_DIVI &lt;&gt; '2' AND
+									 GT.ACCNT_DIVI &lt;&gt; '3' AND GT.DR_CR		= '1' AND B.BUDG_TYPE	= '2'	THEN GT.AMT_I
+								WHEN GT.ACCNT_DIVI &lt;&gt; '1' AND
+									 GT.ACCNT_DIVI &lt;&gt; '2' AND
+									 GT.ACCNT_DIVI &lt;&gt; '3' AND GT.DR_CR		= '1' AND B.BUDG_TYPE	= '1'	THEN GT.AMT_I * (-1)
+								WHEN GT.ACCNT_DIVI &lt;&gt; '1' AND
+									 GT.ACCNT_DIVI &lt;&gt; '2' AND
+									 GT.ACCNT_DIVI &lt;&gt; '3' AND GT.DR_CR		= '2' AND B.BUDG_TYPE	= '2'	THEN GT.AMT_I * (-1)
+								WHEN GT.ACCNT_DIVI &lt;&gt; '1' AND
+									 GT.ACCNT_DIVI &lt;&gt; '2' AND
+									 GT.ACCNT_DIVI &lt;&gt; '3' AND GT.DR_CR		= '2' AND B.BUDG_TYPE	= '1'	THEN GT.AMT_I
+								ELSE 0
+							END) AS EX_AMT_I
+				 FROM (
+						SELECT  A.COMP_CODE
+							 , LEFT(A.EX_DATE, 6) AS BUDG_YYYYMM
+							 , A.DEPT_CODE
+							 , CASE WHEN C1.BUDGCTL_SUM_UNIT = '1' THEN D1.BUDG_CODE
+									ELSE CASE 'A7'
+											WHEN A.AC_CODE1 THEN A.AC_DATA1
+											WHEN A.AC_CODE2 THEN A.AC_DATA2
+											WHEN A.AC_CODE3 THEN A.AC_DATA3
+											WHEN A.AC_CODE4 THEN A.AC_DATA4
+											WHEN A.AC_CODE5 THEN A.AC_DATA5
+											WHEN A.AC_CODE6 THEN A.AC_DATA6
+										END
+								END AS BUDG_CODE
+							 , CASE 'A8'
+									WHEN A.AC_CODE1 THEN A.AC_DATA1
+									WHEN A.AC_CODE2 THEN A.AC_DATA2
+									WHEN A.AC_CODE3 THEN A.AC_DATA3
+									WHEN A.AC_CODE4 THEN A.AC_DATA4
+									WHEN A.AC_CODE5 THEN A.AC_DATA5
+									WHEN A.AC_CODE6 THEN A.AC_DATA6
+									ELSE '1'
+								END AS BUDG_GUBUN
+							 , A.AMT_I
+							 , A.DR_CR
+							 , A.JAN_DIVI
+							 , C1.ACCNT_DIVI
+							 , C1.ACCNT_SPEC
+						  FROM			#AGJ110Tmp	AS A  WITH (NOLOCK)
+						  LEFT		JOIN ABA400T	AS C1 WITH (NOLOCK)  ON  C1.COMP_CODE	= A.COMP_CODE
+																		AND C1.ACCNT		= A.ACCNT
+						  LEFT  JOIN ( SELECT SD1.COMP_CODE
+											, SD1.AC_YYYY
+											, SD1.DEPT_CODE
+											, SD1.BUDG_CODE
+											, SD1.ACCNT
+										 FROM			AFB410T AS SD1 WITH (NOLOCK)
+										INNER JOIN		ABA400T AS SD2 WITH (NOLOCK) ON  SD2.COMP_CODE		 = SD1.COMP_CODE
+																					AND SD2.ACCNT			 = SD1.ACCNT
+																					AND SD2.BUDG_YN			 = N'Y'
+																					AND SD2.BUDGCTL_SUM_UNIT = N'1'
+									)		AS D1				 ON D1.COMP_CODE	= A.COMP_CODE
+																AND D1.AC_YYYY		= uniLITE.fnGetBudgAcYyyy(A.COMP_CODE, A.EX_DATE)
+																AND D1.DEPT_CODE	= A.DEPT_CODE
+																AND D1.ACCNT		= A.ACCNT
+						 WHERE  ISNULL(A.AP_STS , '1') = '1'
+						   AND  ISNULL(A.BUDG_YN, '' ) = 'Y'
+						   AND  A.INPUT_PATH NOT IN ('50', '52', '58', '81', '82', '83', 'Z4')
+					) AS GT
+				 LEFT  JOIN AFB400T  AS B WITH (NOLOCK)  ON  B.COMP_CODE = GT.COMP_CODE
+														AND B.AC_YYYY   = uniLITE.fnGetBudgAcYyyy(GT.COMP_CODE, GT.BUDG_YYYYMM)
+														AND B.BUDG_CODE = GT.BUDG_CODE
+				WHERE ((GT.BUDG_CODE &gt;= @FR_BUDG_CODE AND @FR_BUDG_CODE &lt;&gt; '') OR (@FR_BUDG_CODE = ''))
+				  AND ((GT.BUDG_CODE &lt;= @TO_BUDG_CODE AND @TO_BUDG_CODE &lt;&gt; '') OR (@TO_BUDG_CODE = ''))
+				GROUP BY GT.COMP_CODE, GT.BUDG_YYYYMM, GT.DEPT_CODE, GT.BUDG_CODE, GT.BUDG_GUBUN
+				HAVING (GT.BUDG_CODE IS NOT NULL OR GT.BUDG_CODE &lt;&gt; '')
+				ORDER BY GT.DEPT_CODE, GT.BUDG_YYYYMM, GT.BUDG_CODE, GT.BUDG_GUBUN
+			END
+	
+			-- 5.1.1 결의전표 실적 반영 I (변경된 전표 반영)
+			UPDATE  A
+			   SET  A.EX_AMT_I = ISNULL(B.EX_AMT_I, 0)
+			  FROM		AFB510T		 AS A
+			 INNER JOIN #AFB510TmpEx AS B	 ON  B.COMP_CODE	= A.COMP_CODE
+											AND B.BUDG_YYYYMM	= A.BUDG_YYYYMM
+											AND B.DEPT_CODE		= A.DEPT_CODE
+											AND B.BUDG_CODE		= A.BUDG_CODE
+											AND B.BUDG_GUBUN	= A.BUDG_GUBUN
+			 WHERE  A.COMP_CODE			= @COMP_CODE
+			   AND  A.BUDG_YYYYMM	&gt;= LEFT(@FR_DATE, 6)
+			   AND  A.BUDG_YYYYMM	&lt;= LEFT(@TO_DATE, 6)
+			   AND  ((A.BUDG_CODE	&gt;= @FR_BUDG_CODE		AND @FR_BUDG_CODE &lt;&gt; '') OR (@FR_BUDG_CODE = ''))
+			   AND  ((A.BUDG_CODE	&lt;= @TO_BUDG_CODE		AND @TO_BUDG_CODE &lt;&gt; '') OR (@TO_BUDG_CODE = ''))
+	
+			 -- 5.1.2 결의전표 실적 반영 II (누락된 전표 반영)
+			INSERT INTO AFB510T ( COMP_CODE, BUDG_YYYYMM   , DEPT_CODE     , BUDG_CODE     , BUDG_GUBUN    , EX_AMT_I
+								, CAL_DIVI , INSERT_DB_USER, INSERT_DB_TIME, UPDATE_DB_USER, UPDATE_DB_TIME )
+			SELECT  A.COMP_CODE
+				 ,  A.BUDG_YYYYMM
+				 ,  A.DEPT_CODE
+				 ,  A.BUDG_CODE
+				 ,  A.BUDG_GUBUN
+				 ,  A.EX_AMT_I
+				 ,  '1' AS CAL_DIVI
+				 ,  @INPUT_USER_ID
+				 ,  GETDATE()
+				 ,  @INPUT_USER_ID
+				 ,  GETDATE()
+			  FROM		#AFB510TmpEx	AS A
+			  LEFT		JOIN AFB510T	AS B	 ON  B.COMP_CODE   = A.COMP_CODE
+												AND B.BUDG_YYYYMM = A.BUDG_YYYYMM
+												AND B.DEPT_CODE   = A.DEPT_CODE
+												AND B.BUDG_CODE   = A.BUDG_CODE
+												AND B.BUDG_GUBUN  = A.BUDG_GUBUN
+			 WHERE  B.COMP_CODE IS NULL
+	
+			-- 5.1.3 결의전표 실적 반영 III (삭제된 전표 반영)
+			UPDATE  A
+			   SET  A.EX_AMT_I = 0
+			  FROM			AFB510T		AS A
+			  LEFT	JOIN #AFB510TmpEx	AS B	 ON  B.COMP_CODE   = A.COMP_CODE
+												AND B.BUDG_YYYYMM = A.BUDG_YYYYMM
+												AND B.DEPT_CODE   = A.DEPT_CODE
+												AND B.BUDG_CODE   = A.BUDG_CODE
+												AND B.BUDG_GUBUN  = A.BUDG_GUBUN
+			 WHERE  A.COMP_CODE			= @COMP_CODE
+			   AND  A.BUDG_YYYYMM	&gt;= LEFT(@FR_DATE, 6)
+			   AND  A.BUDG_YYYYMM	&lt;= LEFT(@TO_DATE, 6)
+			   AND  ((A.BUDG_CODE	&gt;= @FR_BUDG_CODE		AND @FR_BUDG_CODE &lt;&gt; '') OR (@FR_BUDG_CODE = ''))
+			   AND  ((A.BUDG_CODE	&lt;= @TO_BUDG_CODE		AND @TO_BUDG_CODE &lt;&gt; '') OR (@TO_BUDG_CODE = ''))
+			   AND  B.COMP_CODE			IS NULL
+	
+	---------- 5.2   회계전표 -------------------------------------------------------------------------
+			-- 5.2.0 회계전표 실적 집계 , 임시테이블 생성
+			IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#AFB510TmpAc'))
+				DROP TABLE #AFB510TmpAc
+	
+			SELECT GT.COMP_CODE
+				 , GT.BUDG_YYYYMM
+				 , GT.DEPT_CODE
+				 , GT.BUDG_CODE
+				 , GT.BUDG_GUBUN
+				 , SUM(CASE WHEN GT.ACCNT_DIVI  = '1' AND GT.ACCNT_SPEC  = 'E'			AND GT.JAN_DIVI &lt;&gt;	GT.DR_CR THEN GT.AMT_I
+							WHEN GT.ACCNT_DIVI  = '1' AND GT.ACCNT_SPEC &lt;&gt; 'E'	AND GT.JAN_DIVI	=			GT.DR_CR THEN GT.AMT_I
+							WHEN GT.ACCNT_DIVI  = '2'									AND GT.JAN_DIVI	=			GT.DR_CR THEN GT.AMT_I
+							WHEN GT.ACCNT_DIVI  = '2'									AND GT.JAN_DIVI &lt;&gt;	GT.DR_CR THEN GT.AMT_I * (-1)
+							WHEN GT.ACCNT_DIVI  = '3'									AND GT.JAN_DIVI  =			GT.DR_CR THEN GT.AMT_I
+							WHEN GT.ACCNT_DIVI  = '3'									AND GT.JAN_DIVI &lt;&gt;	GT.DR_CR THEN GT.AMT_I * (-1)
+							WHEN GT.ACCNT_DIVI &lt;&gt; '1' AND
+								 GT.ACCNT_DIVI &lt;&gt; '2' AND
+								 GT.ACCNT_DIVI &lt;&gt; '3' AND GT.DR_CR	= '1' AND B.BUDG_TYPE	= '2'	THEN GT.AMT_I
+							WHEN GT.ACCNT_DIVI &lt;&gt; '1' AND
+								 GT.ACCNT_DIVI &lt;&gt; '2' AND
+								 GT.ACCNT_DIVI &lt;&gt; '3' AND GT.DR_CR	= '1' AND B.BUDG_TYPE	= '1'	THEN GT.AMT_I * (-1)
+							WHEN GT.ACCNT_DIVI &lt;&gt; '1' AND
+								 GT.ACCNT_DIVI &lt;&gt; '2' AND
+								 GT.ACCNT_DIVI &lt;&gt; '3' AND GT.DR_CR	= '2' AND B.BUDG_TYPE	= '2'	THEN GT.AMT_I * (-1)
+							WHEN GT.ACCNT_DIVI &lt;&gt; '1' AND
+								 GT.ACCNT_DIVI &lt;&gt; '2' AND
+								 GT.ACCNT_DIVI &lt;&gt; '3' AND GT.DR_CR	= '2' AND B.BUDG_TYPE	= '1'	THEN GT.AMT_I
+							ELSE 0
+						END) AS AC_AMT_I
+			  INTO #AFB510TmpAc
+			  FROM (
+					SELECT  A.COMP_CODE
+						 ,  LEFT(A.AC_DATE, 6) AS BUDG_YYYYMM
+						 ,  A.DEPT_CODE
+						 ,  CASE WHEN C1.BUDGCTL_SUM_UNIT = '1'THEN D1.BUDG_CODE
+								 ELSE CASE 'A7'
+									  WHEN A.AC_CODE1 THEN A.AC_DATA1
+									  WHEN A.AC_CODE2 THEN A.AC_DATA2
+									  WHEN A.AC_CODE3 THEN A.AC_DATA3
+									  WHEN A.AC_CODE4 THEN A.AC_DATA4
+									  WHEN A.AC_CODE5 THEN A.AC_DATA5
+									  WHEN A.AC_CODE6 THEN A.AC_DATA6
+								END
+							END AS BUDG_CODE
+						 ,  CASE 'A8'
+								WHEN A.AC_CODE1 THEN A.AC_DATA1
+								WHEN A.AC_CODE2 THEN A.AC_DATA2
+								WHEN A.AC_CODE3 THEN A.AC_DATA3
+								WHEN A.AC_CODE4 THEN A.AC_DATA4
+								WHEN A.AC_CODE5 THEN A.AC_DATA5
+								WHEN A.AC_CODE6 THEN A.AC_DATA6
+								ELSE '1'
+							END AS BUDG_GUBUN
+						 ,  A.AMT_I
+						 ,  A.DR_CR
+						 ,  A.JAN_DIVI
+						 ,  C1.ACCNT_DIVI
+						 ,  C1.ACCNT_SPEC
+					  FROM		#AGJ210Tmp	AS A WITH (NOLOCK)
+					  LEFT  JOIN ABA400T	AS C1 WITH (NOLOCK)  ON C1.COMP_CODE	= A.COMP_CODE
+																AND C1.ACCNT		= A.ACCNT
+					  LEFT  JOIN ( SELECT SD1.COMP_CODE
+										, SD1.AC_YYYY
+										, SD1.DEPT_CODE
+										, SD1.BUDG_CODE
+										, SD1.ACCNT
+									 FROM			AFB410T AS SD1 WITH (NOLOCK)
+									INNER JOIN		ABA400T AS SD2 WITH (NOLOCK) ON SD2.COMP_CODE			= SD1.COMP_CODE
+																				AND SD2.ACCNT				= SD1.ACCNT
+																				AND SD2.BUDG_YN				= N'Y'
+																				AND SD2.BUDGCTL_SUM_UNIT	= N'1'
+								)	AS D1					 ON D1.COMP_CODE	= A.COMP_CODE
+															AND D1.AC_YYYY		= uniLITE.fnGetBudgAcYyyy(A.COMP_CODE, A.AC_DATE)
+															AND D1.DEPT_CODE	= A.DEPT_CODE
+															AND D1.ACCNT		= A.ACCNT
+					 WHERE  ISNULL(A.BUDG_YN , '')  = 'Y'
+					   AND  A.INPUT_PATH NOT IN ('50', '52', '58', '81', '82', '83', 'Z4')
+					) AS GT
+			  LEFT  JOIN AFB400T  AS B WITH (NOLOCK) ON B.COMP_CODE	= GT.COMP_CODE
+													AND B.AC_YYYY	= uniLITE.fnGetBudgAcYyyy(GT.COMP_CODE, GT.BUDG_YYYYMM)
+													AND B.BUDG_CODE	= GT.BUDG_CODE
+			 WHERE  ((GT.BUDG_CODE &gt;= @FR_BUDG_CODE AND @FR_BUDG_CODE &lt;&gt; '') OR (@FR_BUDG_CODE = ''))
+			   AND  ((GT.BUDG_CODE &lt;= @TO_BUDG_CODE AND @TO_BUDG_CODE &lt;&gt; '') OR (@TO_BUDG_CODE = ''))
+			 GROUP BY GT.COMP_CODE, GT.BUDG_YYYYMM, GT.DEPT_CODE, GT.BUDG_CODE, GT.BUDG_GUBUN
+			 HAVING  (GT.BUDG_CODE IS NOT NULL OR GT.BUDG_CODE &lt;&gt; '')
+			 ORDER BY GT.DEPT_CODE, GT.BUDG_YYYYMM, GT.BUDG_CODE, GT.BUDG_GUBUN
+	
+			-- 5.2.1 회계전표 실적 반영 I (변경된 전표 반영)
+			UPDATE  A
+			   SET  A.AC_AMT_I = ISNULL(B.AC_AMT_I, 0)
+			  FROM		AFB510T			AS A
+			 INNER JOIN #AFB510TmpAc	AS B	 ON  B.COMP_CODE	= A.COMP_CODE
+												AND B.BUDG_YYYYMM	= A.BUDG_YYYYMM
+												AND B.DEPT_CODE		= A.DEPT_CODE
+												AND B.BUDG_CODE		= A.BUDG_CODE
+												AND B.BUDG_GUBUN	= A.BUDG_GUBUN
+			 WHERE  A.COMP_CODE    = @COMP_CODE
+			   AND  A.BUDG_YYYYMM &gt;= LEFT(@FR_DATE, 6)
+			   AND  A.BUDG_YYYYMM &lt;= LEFT(@TO_DATE, 6)
+			   AND  ((A.BUDG_CODE &gt;= @FR_BUDG_CODE	AND @FR_BUDG_CODE &lt;&gt; '') OR (@FR_BUDG_CODE = ''))
+			   AND  ((A.BUDG_CODE &lt;= @TO_BUDG_CODE	AND @TO_BUDG_CODE &lt;&gt; '') OR (@TO_BUDG_CODE = ''))
+	
+			-- 5.2.2 회계전표 실적 반영 II (누락된 전표 반영)
+			INSERT INTO AFB510T ( COMP_CODE, BUDG_YYYYMM	, DEPT_CODE		, BUDG_CODE		, BUDG_GUBUN	, AC_AMT_I
+								, CAL_DIVI , INSERT_DB_USER	, INSERT_DB_TIME, UPDATE_DB_USER, UPDATE_DB_TIME )
+			SELECT  A.COMP_CODE
+				 ,  A.BUDG_YYYYMM
+				 ,  A.DEPT_CODE
+				 ,  A.BUDG_CODE
+				 ,  A.BUDG_GUBUN
+				 ,  A.AC_AMT_I
+				 ,  '1' AS CAL_DIVI
+				 ,  @INPUT_USER_ID
+				 ,  GETDATE()
+				 ,  @INPUT_USER_ID
+				 ,  GETDATE()
+			  FROM		#AFB510TmpAc	AS A
+			  LEFT  JOIN AFB510T		AS B	 ON  B.COMP_CODE	= A.COMP_CODE
+												AND B.BUDG_YYYYMM	= A.BUDG_YYYYMM
+												AND B.DEPT_CODE		= A.DEPT_CODE
+												AND B.BUDG_CODE		= A.BUDG_CODE
+												AND B.BUDG_GUBUN	= A.BUDG_GUBUN
+			 WHERE  B.COMP_CODE IS NULL
+	
+			-- 5.2.3 회계전표 실적 반영 III (삭제된 전표 반영)
+			UPDATE  A
+			   SET  A.AC_AMT_I = 0
+			  FROM			AFB510T		AS A
+			  LEFT	JOIN #AFB510TmpAc	AS B	 ON  B.COMP_CODE   = A.COMP_CODE
+												AND B.BUDG_YYYYMM = A.BUDG_YYYYMM
+												AND B.DEPT_CODE   = A.DEPT_CODE
+												AND B.BUDG_CODE   = A.BUDG_CODE
+												AND B.BUDG_GUBUN  = A.BUDG_GUBUN
+			 WHERE  A.COMP_CODE			= @COMP_CODE
+			   AND  A.BUDG_YYYYMM	&gt;= LEFT(@FR_DATE, 6)
+			   AND  A.BUDG_YYYYMM	&lt;= LEFT(@TO_DATE, 6)
+			   AND  ((A.BUDG_CODE	&gt;= @FR_BUDG_CODE		AND @FR_BUDG_CODE &lt;&gt; '') OR (@FR_BUDG_CODE = ''))
+			   AND  ((A.BUDG_CODE	&lt;= @TO_BUDG_CODE		AND @TO_BUDG_CODE &lt;&gt; '') OR (@TO_BUDG_CODE = ''))
+			   AND  B.COMP_CODE			IS NULL
+		END
+	
+	ERROR_HANDLER:
+		SET NOCOUNT OFF
+		SET ARITHABORT OFF
+	
+		IF CHARINDEX(';', @ERR_DESC) &gt; 0
+			SELECT  SUBSTRING(@ERR_DESC, 1, CHARINDEX(';', @ERR_DESC) - 1)				AS ERROR_CODE
+				 ,  SUBSTRING(@ERR_DESC, CHARINDEX(';', @ERR_DESC) + 1, LEN(@ERR_DESC))	AS ERROR_DESC
+				 ,  'Ex:0,Ac:0'															AS DATA_COUNT
+		ELSE
+			SELECT  TOP 1 '' AS ERROR_CODE, '' AS ERROR_DESC
+				 ,  'Ex:' + CONVERT(NVARCHAR, @DataCountEx) + ',Ac:' + CONVERT(NVARCHAR, @DataCountAc) AS DATA_COUNT
+	END
+	</select>
+
+</mapper>

@@ -1,0 +1,416 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="biv420skrvServiceImpl">
+	<select id="biv420skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+/* biv420skrv.Cbiv420skrv[fnBiv420QStd] Query01 */
+BEGIN
+   SET NOCOUNT ON
+   SET ARITHABORT ON
+
+   DECLARE @CompCode      NVARCHAR(08)   /* 법인코드      */
+         , @UserId         NVARCHAR(100)   /* 사용자ID      */
+         , @LangType      NVARCHAR(02)      /* 언어구분      */
+          , @RefItem      NVARCHAR(01)
+          , @DateFormat      NVARCHAR(10)
+          , @MonthFormat   NVARCHAR(10)
+
+    SET @CompCode = #{S_COMP_CODE}
+    SET @UserId   = #{S_USER_ID}
+    SET @LangType = N'KR'
+
+   /* 명칭 참조 유형 */
+    SELECT TOP 1 @RefItem = REF_ITEM
+   FROM BSA300T WITH (NOLOCK)
+   WHERE USER_ID = @UserId
+
+    SET @RefItem = ISNULL(@RefItem, N'0')
+
+   /* 날짜 포맷 유형 설정 */
+   SELECT TOP 1 @DateFormat = CODE_NAME, @MonthFormat = REF_CODE2
+   FROM BSA100T WITH (NOLOCK)
+   WHERE COMP_CODE = @CompCode
+      AND MAIN_CODE = N'B044'
+      AND REF_CODE1 = N'Y'
+
+    SET @DateFormat  = ISNULL(@DateFormat,  'YYYY.MM.DD')
+   SET @MonthFormat = ISNULL(@MonthFormat, 'YYYY.MM')
+
+ DECLARE
+  @FR_MONTH           NVARCHAR(08)                /* (필수) 시작월*/
+, @INOUT_FLAG         NVARCHAR(01)                /* 수불 발생 유형(1: 발생, 2: 미발생, 3: 전체)*/
+, @QRY_TYPE           NVARCHAR(02)                /* 조회유형 (1: 품목별,  2: 창고별)*/
+, @WH_CODE            NVARCHAR(08)                /* (선택) 창고코드*/
+   /*1. 재고단가 계산 방법 설정*/
+    DECLARE @StockP             NVARCHAR(01)
+
+    SELECT TOP 1 @StockP = SUB_CODE
+    FROM BSA100T WITH (NOLOCK)
+    WHERE COMP_CODE = @CompCode                     /* 단가처리 기준 */
+      AND MAIN_CODE = 'B069'
+      AND SUB_CODE  = '1'                         /* (기준재고단가) */
+      AND REF_CODE1 = 'Y'
+
+    SET @StockP = ISNULL(@StockP, '')
+
+   /*2. 가장 최근 마감월 조회*/
+    DECLARE     @LastYYYYMM      NVARCHAR(06)      /* 가장 최근 마감월 */
+               ,@BasisYYYYMM     NVARCHAR(06)      /* 기초 계산월      */
+               
+    SET @BasisYYYYMM = CONVERT(NVARCHAR(06), DATEADD(MONTH, -1, @FR_MONTH), 112)
+                   
+    SELECT @LastYYYYMM = MAX(MIN_BASIS_YYYYMM)
+    FROM BIV200TV1 WITH (NOLOCK)
+    WHERE COMP_CODE            = @CompCode
+      AND DIV_CODE         = #{DIV_CODE}
+      AND MIN_BASIS_YYYYMM   &lt; #{BasisYYYYMM}
+      /* 선택조건 Start   */
+     
+<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+      AND ITEM_CODE         = #{ITEM_CODE}
+      </if>      
+<if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+      AND WH_CODE            = #{WH_CODE}
+      </if> 
+      /* 선택조건 End      */
+    
+    SET @LastYYYYMM  = ISNULL(@LastYYYYMM, @BasisYYYYMM)
+
+   /*3. 임시 테이블 선언*/
+    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..__uniLITE200807111410')) 
+       DROP TABLE __uniLITE200807111410
+
+    CREATE TABLE __uniLITE200807111410
+        (
+   /* 일반정보 */
+      TYPE_FLAG          NVARCHAR(02),    COMP_CODE               NVARCHAR(08),    DIV_CODE         NVARCHAR(08)
+      , ITEM_ACCOUNT       NVARCHAR(02),    ITEM_CODE               NVARCHAR(20)
+      , SPEC               NVARCHAR(160),   STOCK_UNIT              NVARCHAR(03),    INOUT_DATE       NVARCHAR(10)
+      , ITEM_STATUS        NVARCHAR(01),    INOUT_TYPE              NVARCHAR(03),    MOVE_TYPE        NVARCHAR(20)
+
+    /* 기초정보 */
+      , BASIS_Q            NUMERIC(30, 6),  BASIS_I                 NUMERIC(30, 6)
+
+    /* 입고정보   */
+      , IN_Q               NUMERIC(30, 6),  IN_P                    NUMERIC(30, 6),  IN_I             NUMERIC(30, 6)
+
+    /* 수불정보   */
+      , INOUT_TYPE_DETAIL  NVARCHAR(10),    INOUT_METH              NVARCHAR(02)
+      , WH_CODE            NVARCHAR(08),    SUBCON_CODE             NVARCHAR(08)
+      , CREATE_LOC         NVARCHAR(01),    INOUT_CODE_TYPE         NVARCHAR(08),    INOUT_CODE       NVARCHAR(08)
+      , PRICE_YN           NVARCHAR(01)
+
+    /* 구매/판매 정보 */
+      , ORDER_TYPE         NVARCHAR(02)
+      , ORDER_UNIT         NVARCHAR(03),    ORDER_UNIT_P            NUMERIC(30, 6)
+      , ORDER_UNIT_Q       NUMERIC(30, 6),  ORDER_UNIT_O            NUMERIC(30, 6),  TRNS_RATE        NUMERIC(12, 6)
+
+    /* 부가정보   */
+      , INOUT_PRSN         NVARCHAR(10),    INOUT_NUM               NVARCHAR(20),    INOUT_SEQ        NUMERIC(06, 0)
+      , PROJECT_NO         NVARCHAR(20),    LOT_NO                  NVARCHAR(20)
+
+    /* 기타      */
+      , BASIS_MONTH        NVARCHAR(06),    MAX_MONTH               NVARCHAR(06)
+      , PERIODIC_YN        NVARCHAR(01)     /* 재고평가 입고데이터 여부 */
+      , SORT_WH_CODE       NVARCHAR(08)
+      , SORT_FLD           AS COMP_CODE + DIV_CODE + ITEM_CODE + SORT_WH_CODE + INOUT_DATE + CASE WHEN INOUT_TYPE = '1' THEN '1'
+                                                                                                  WHEN INOUT_TYPE = '3' THEN '2'
+                                                                                                  WHEN INOUT_TYPE = '2' THEN '3' END + INOUT_NUM + RIGHT('000000' + CONVERT(NVARCHAR, INOUT_SEQ), 6)
+        )    
+
+    CREATE INDEX uniLITE200807111410_IDX01 ON __uniLITE200807111410(COMP_CODE, DIV_CODE, ITEM_CODE, SORT_WH_CODE, INOUT_DATE, INOUT_TYPE, INOUT_NUM, INOUT_SEQ)
+
+   /* 4. 조회 데이터 생성 */
+    IF @INOUT_FLAG = '1'                /* 수불 발생 조회시   */
+        INSERT INTO __uniLITE200807111410
+             ( TYPE_FLAG               , COMP_CODE               , DIV_CODE
+             , ITEM_ACCOUNT            , ITEM_CODE               , SPEC                    , STOCK_UNIT
+             , INOUT_DATE              , ITEM_STATUS             , INOUT_TYPE              , MOVE_TYPE
+             , BASIS_Q                 , BASIS_I
+             , IN_Q                    , IN_P                    , IN_I
+             , INOUT_TYPE_DETAIL       , INOUT_METH              , WH_CODE                 , SUBCON_CODE
+             , CREATE_LOC              , INOUT_CODE_TYPE         , INOUT_CODE              , PRICE_YN
+             , ORDER_TYPE              , ORDER_UNIT              , ORDER_UNIT_P            , ORDER_UNIT_Q
+             , ORDER_UNIT_O            , TRNS_RATE
+             , INOUT_PRSN              , INOUT_NUM               , INOUT_SEQ
+             , PROJECT_NO              , LOT_NO                  , PERIODIC_YN             , SORT_WH_CODE)
+        SELECT
+               '10' AS TYPE_FLAG
+             , A.COMP_CODE, A.DIV_CODE
+             , ISNULL(C2.ITEM_ACCOUNT, '')                                                                   AS ITEM_ACCOUNT
+             , A.ITEM_CODE
+             , ISNULL(C1.SPEC, '')                                                                           AS SPEC
+             , ISNULL(C1.STOCK_UNIT, '')                                                                     AS STOCK_UNIT
+             , A.INOUT_DATE                                                                                  AS INOUT_DATE
+             , ISNULL(A.ITEM_STATUS, '')                                                                     AS ITEM_STATUS
+             , ISNULL(A.INOUT_TYPE, '')                                                                      AS INOUT_TYPE
+             , ISNULL(A.MOVE_TYPE, '')                                                                       AS MOVE_TYPE
+
+             , 0.0                                                                                           AS BASIS_Q
+             , 0.0                                                                                           AS BASIS_I
+
+             , ISNULL(A.INOUT_Q, 0.0)                                                                        AS IN_Q
+             , ISNULL(A.INOUT_P, 0.0)                                                                        AS IN_P
+             , ISNULL(A.INOUT_I, 0.0) + ISNULL(A.EXPENSE_I, 0.0)                                             AS IN_I
+
+             , ISNULL(A.MOVE_TYPE, '')                                                                       AS INOUT_TYPE_DETAIL
+             , ISNULL(A.INOUT_METH, '')                                                                      AS INOUT_METH
+             , ISNULL(A.WH_CODE, '')                                                                         AS WH_CODE
+             , ''                                                                                            AS SUBCON_CODE
+             , ISNULL(A.CREATE_LOC, '')                                                                      AS CREATE_LOC
+             , ISNULL(A.INOUT_CODE_TYPE, '')                                                                 AS INOUT_CODE_TYPE
+             , ISNULL(A.INOUT_CODE, '')                                                                      AS INOUT_CODE
+             , ISNULL(A.PRICE_YN, '')                                                                        AS PRICE_YN
+             , ISNULL(A.ORDER_TYPE, '')                                                                      AS ORDER_TYPE
+             , ISNULL(A.ORDER_UNIT, '')                                                                      AS ORDER_UNIT
+             , ISNULL(A.ORDER_UNIT_P, 0)                                                                     AS ORDER_UNIT_P
+             , ISNULL(A.ORDER_UNIT_Q, 0)                                                                     AS ORDER_UNIT_Q
+             , ISNULL(A.ORDER_UNIT_O, 0)                                                                     AS ORDER_UNIT_O
+             , ISNULL(A.TRNS_RATE, 0)                                                                        AS TRNS_RATE
+             , ISNULL(A.INOUT_PRSN, '')                                                                      AS INOUT_PRSN
+             , ISNULL(A.INOUT_NUM, '')                                                                       AS INOUT_NUM
+             , A.INOUT_SEQ                                                                                   AS INOUT_SEQ
+             , ISNULL(A.PROJECT_NO, '')                                                                      AS PROJECT_NO
+             , ISNULL(A.LOT_NO, '')                                                                          AS LOT_NO
+             , CASE WHEN E1.COMP_CODE IS NULL              THEN 'N' ELSE 'Y'                   END           AS PERIODIC_YN
+             , CASE WHEN @QRY_TYPE = '1' AND @WH_CODE = '' THEN ''  ELSE ISNULL(A.WH_CODE, '') END           AS SORT_WH_CODE
+        FROM              BTR100T   A  WITH (NOLOCK, INDEX(BTR100T_IDX02))
+               LEFT  JOIN BPR100T   C1 WITH (NOLOCK) ON C1.COMP_CODE       = A.COMP_CODE                    /* 품목   */
+                                                    AND C1.ITEM_CODE       = A.ITEM_CODE
+               LEFT  JOIN BPR200T   C2 WITH (NOLOCK) ON C2.COMP_CODE       = A.COMP_CODE                    /* 사업장 품목   */
+                                                    AND C2.DIV_CODE        = A.DIV_CODE
+                                                    AND C2.ITEM_CODE       = A.ITEM_CODE
+               LEFT  JOIN BTR100TV3 E1 WITH (NOLOCK) ON E1.COMP_CODE       = A.COMP_CODE                    /* 재고평가 입고데이터 */
+                                                    AND E1.INOUT_TYPE      = A.INOUT_TYPE
+                                                    AND E1.INOUT_METH      = A.INOUT_METH
+                                                    AND E1.INOUT_CODE_TYPE = A.INOUT_CODE_TYPE
+                                                    AND E1.PRICE_YN        = A.PRICE_YN
+                                                    AND E1.ITEM_ACCOUNT    = ISNULL(C2.ITEM_ACCOUNT, '')
+        WHERE   A.COMP_CODE         = @CompCode
+         AND A.DIV_CODE         = #{DIV_CODE}
+         AND A.INOUT_DATE       &gt;= #{FR_MONTH}           /* 수불년월   */
+         AND A.INOUT_DATE       &lt;= #{TO_MONTH}
+         AND A.INOUT_TYPE      = N'1'               /* 수불유형(입고) */
+
+         /* 선택조건 Start */
+    
+<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+         AND  A.ITEM_CODE    LIKE #{ITEM_CODE} + '%'
+         		  </if>      
+<if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+         AND (CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                                ELSE C1.ITEM_NAME
+             END)            LIKE '%' + #{ITEM_NAME} + '%'
+                  </if>      
+<if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">    
+         AND  C2.ITEM_ACCOUNT   = #{ITEM_ACCOUNT}
+                  </if>      
+<if test="@foren.Ognl@isNotEmpty(WH_CODE)">            
+         AND  A.WH_CODE         = #{WH_CODE}
+                  </if>      
+<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)">               
+         AND  C1.ITEM_LEVEL1      = #{ITEM_LEVEL1}         /* 대분류 */
+                  </if>      
+<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL2)">
+         AND  C1.ITEM_LEVEL2      = #{ITEM_LEVEL2}         /* 중분류 */
+                  </if>      
+<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL3)">
+         AND  C1.ITEM_LEVEL3      = #{ITEM_LEVEL3}      /* 소분류 */
+                  </if>
+         /* 선택조건 End */
+
+   /* 5. 기초 수량/금액 조회*/
+   /* 기초수량/금액 조회 */
+
+    IF @INOUT_FLAG = '1'       /* 수불 발생건만 조회시,  기초 수량/금액 조회 */
+    BEGIN
+        /* 월별 수불부 참조 (평균단가 가져올때 사용) */
+        UPDATE A
+        SET    A.BASIS_MONTH = CASE WHEN LEFT(A.INOUT_DATE,6) &gt; ISNULL(B.MAX_BASIS_YYYYMM, '') THEN ISNULL(B.MAX_BASIS_YYYYMM, '')
+                                    ELSE CONVERT(NVARCHAR(06), DATEADD(MONTH, -1, LEFT(A.INOUT_DATE,6) + '01'), 112)
+                               END
+             , A.MAX_MONTH   = ISNULL(B.MAX_BASIS_YYYYMM, '')
+        FROM              __uniLITE200807111410 A
+               LEFT  JOIN (
+                          SELECT COMP_CODE, DIV_CODE, WH_CODE, ITEM_CODE, MAX(BASIS_YYYYMM) AS MAX_BASIS_YYYYMM
+                          FROM   BIV200T WITH (NOLOCK)
+                          WHERE  COMP_CODE = @CompCode
+                          AND    DIV_CODE  = #{DIV_CODE}
+                          GROUP BY COMP_CODE, DIV_CODE, WH_CODE, ITEM_CODE
+                          ) B                                   ON B.COMP_CODE    = A.COMP_CODE
+                                                               AND B.DIV_CODE     = A.DIV_CODE
+                                                               AND B.WH_CODE      = A.WH_CODE
+                                                               AND B.ITEM_CODE    = A.ITEM_CODE
+
+        /* 기초수량 : BIV200T의 현재월의 재고수량 */
+        UPDATE A
+        SET    A.BASIS_Q = ISNULL(B.BASIS_Q, 0.0)
+             , A.BASIS_I = ISNULL(B.BASIS_I, 0.0)
+        FROM              __uniLITE200807111410 A
+               LEFT  JOIN (
+                          SELECT S1.COMP_CODE, S1.DIV_CODE,  S1.BASIS_YYYYMM, S1.ITEM_CODE
+                               , SUM(S1.BASIS_Q) AS BASIS_Q, SUM(S1.BASIS_AMOUNT_I) AS BASIS_I
+                          FROM   BIV200T  S1 WITH (NOLOCK)
+                          WHERE  S1.COMP_CODE  = @CompCode
+                          AND    S1.DIV_CODE   = #{DIV_CODE}
+                          GROUP  BY S1.COMP_CODE, S1.DIV_CODE, S1.BASIS_YYYYMM, S1.ITEM_CODE
+                          ) B                                   ON B.COMP_CODE    = A.COMP_CODE
+                                                               AND B.DIV_CODE     = A.DIV_CODE
+                                                               AND B.ITEM_CODE    = A.ITEM_CODE
+                                                               AND B.BASIS_YYYYMM = LEFT(A.INOUT_DATE, 6)
+
+    END
+
+   /*6. 데이터 조회*/
+    SELECT
+         A.COMP_CODE                    , A.DIV_CODE
+        , A.ITEM_ACCOUNT AS COMMON_CODE  , ISNULL(M1.CODE_NAME, '') AS COMMON_NAME
+          , A.ITEM_CODE
+          , CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                 ELSE C1.ITEM_NAME
+            END                                                             AS ITEM_NAME
+          , CASE WHEN ISNULL(A.SPEC, '') = '' THEN ' ' ELSE A.SPEC END      AS SPEC
+          , A.STOCK_UNIT
+
+          , CASE WHEN ISNULL(A.INOUT_DATE, '') = '' THEN ''
+                 ELSE REPLACE(
+                      REPLACE(@MonthFormat, 'YYYY', SUBSTRING(A.INOUT_DATE, 1, 4))
+                                          , 'MM',   SUBSTRING(A.INOUT_DATE, 5, 2))
+            END                                                AS INOUT_MONTH   
+
+          , A.BASIS_Q                      , A.BASIS_I
+
+          , uniLITE.fnGetUserDate(A.COMP_CODE, A.INOUT_DATE)                AS INOUT_DATE
+          , CASE WHEN ISNULL(A.INOUT_DATE, '') = '' THEN ''
+                 ELSE REPLACE(
+                      REPLACE(
+                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.INOUT_DATE, 1, 4))
+                                         , 'MM',   SUBSTRING(A.INOUT_DATE, 5, 2))
+                                         , 'DD',   SUBSTRING(A.INOUT_DATE, 7, 2))
+            END                                                AS INOUT_DATE   
+
+          , A.ITEM_STATUS                  
+        , ISNULL(M2.CODE_NAME, '')       AS ITEM_STATUS_NAME
+          , A.INOUT_TYPE                   , ISNULL(M3.CODE_NAME, '')       AS INOUT_TYPE_NAME
+          , A.INOUT_TYPE_DETAIL            , ISNULL(D1.MOVE_TYPE_NAME, '')  AS INOUT_TYPE_DETAIL_NAME
+          , A.INOUT_METH                   , ISNULL(M4.CODE_NAME, '')       AS INOUT_METH_NAME
+          , A.WH_CODE                      , ISNULL(C3.TREE_NAME, '')       AS WH_NAME
+          , A.CREATE_LOC                   , ISNULL(M5.CODE_NAME, '')       AS CREATE_LOC_NAME
+          , A.INOUT_CODE_TYPE              , ISNULL(M6.CODE_NAME, '')       AS INOUT_CODE_TYPE_NAME
+          , A.INOUT_CODE                   , CASE WHEN A.INOUT_CODE_TYPE = '1'         THEN C4.TREE_NAME
+                                                  WHEN A.INOUT_CODE_TYPE = '2'         THEN C5.TREE_NAME
+                                                  WHEN A.INOUT_CODE_TYPE = '3'         THEN C6.TREE_NAME
+                                                  WHEN A.INOUT_CODE_TYPE IN ('4', '5') THEN CASE WHEN @RefItem = '0' THEN C7.CUSTOM_NAME
+                                                                                                 WHEN @RefItem = '1' THEN C7.CUSTOM_NAME1
+                                                                                                 WHEN @RefItem = '2' THEN C7.CUSTOM_NAME2
+                                                                                                 ELSE C7.CUSTOM_NAME
+                                                                                            END
+                                                  ELSE '' END               AS INOUT_CODE_NAME
+          , A.PRICE_YN                     , ISNULL(M7.CODE_NAME, '')       AS PRICE_YN_NAME
+          , A.IN_Q                         , A.IN_P
+          , A.IN_I
+          , B.TOT_IN_Q                     , B.TOT_IN_I
+          , A.BASIS_Q + B.TOT_IN_Q AS CAL_Q, A.BASIS_I + B.TOT_IN_I         AS CAL_I
+          , C.AVERAGE_P
+          , C2.BASIS_P                                                      AS BASIS_P
+
+          , A.PERIODIC_YN                  , ISNULL(M10.CODE_NAME, '')      AS PERIODIC_YN_NAME
+          , A.INOUT_PRSN                   , ISNULL(M9.CODE_NAME, '')       AS INOUT_PRSN_NAME
+          , A.INOUT_NUM                    , A.INOUT_SEQ
+          , A.PROJECT_NO                   , A.LOT_NO
+          , A.SORT_WH_CODE                 , A.SORT_FLD
+   FROM   __uniLITE200807111410 A   WITH (NOLOCK)
+      LEFT  JOIN (
+              SELECT S1.COMP_CODE, S1.DIV_CODE, LEFT(S1.INOUT_DATE, 6) AS INOUT_MONTH, S1.ITEM_CODE, S1.PERIODIC_YN
+                  , SUM(S1.IN_Q) AS TOT_IN_Q, SUM(S1.IN_I) AS TOT_IN_I
+              FROM   __uniLITE200807111410 S1 WITH (NOLOCK)
+              WHERE  S1.COMP_CODE = @CompCode
+              AND    S1.DIV_CODE  = #{DIV_CODE}
+              GROUP  BY S1.COMP_CODE, S1.DIV_CODE, LEFT(S1.INOUT_DATE, 6), S1.ITEM_CODE, S1.PERIODIC_YN
+              )         B                 ON B.COMP_CODE        = A.COMP_CODE            /* 입고수량 합계 */
+                                  AND B.DIV_CODE         = A.DIV_CODE
+                                  AND B.INOUT_MONTH      = LEFT(A.INOUT_DATE, 6)
+                                  AND B.ITEM_CODE        = A.ITEM_CODE
+                                  AND B.PERIODIC_YN      = A.PERIODIC_YN
+      LEFT  JOIN BIV200T   C  WITH (NOLOCK) ON C.COMP_CODE        = A.COMP_CODE            /* 평균단가   */
+                                  AND C.DIV_CODE         = A.DIV_CODE
+                                  AND C.WH_CODE          = A.WH_CODE
+                                  AND C.ITEM_CODE        = A.ITEM_CODE
+                                  AND C.BASIS_YYYYMM     = CASE WHEN LEFT(A.INOUT_DATE,6) &gt; A.MAX_MONTH THEN A.MAX_MONTH ELSE LEFT(A.INOUT_DATE,6) END
+      INNER JOIN BPR100T   C1 WITH (NOLOCK) ON C1.COMP_CODE       = A.COMP_CODE            /* 품목      */
+                                  AND C1.ITEM_CODE       = A.ITEM_CODE
+      INNER JOIN BPR200T   C2 WITH (NOLOCK) ON C2.COMP_CODE       = A.COMP_CODE            /* 사업장 품목 */
+                                  AND C2.DIV_CODE        = A.DIV_CODE
+                                  AND C2.ITEM_CODE       = A.ITEM_CODE
+      LEFT  JOIN BSA220T   C3 WITH (NOLOCK) ON C3.COMP_CODE       = A.COMP_CODE            /* 창고코드   */
+                                  AND C3.TYPE_LEVEL      = A.DIV_CODE
+                                  AND C3.TREE_CODE       = A.WH_CODE
+      LEFT  JOIN BSA210T   C4 WITH (NOLOCK) ON C4.COMP_CODE       = A.COMP_CODE            /* 수불처 코드(1) =&gt; 부서코드 */
+                                  AND C4.TYPE_LEVEL      = A.DIV_CODE
+                                  AND C4.TREE_CODE       = A.INOUT_CODE
+                                  AND A.INOUT_CODE_TYPE  = '1'
+      LEFT  JOIN BSA220T   C5 WITH (NOLOCK) ON C5.COMP_CODE       = A.COMP_CODE            /* 수불처 코드(2) =&gt; 창고코드 */
+                                  AND C5.TYPE_LEVEL      = A.DIV_CODE
+                                  AND C5.TREE_CODE       = A.INOUT_CODE
+                                  AND A.INOUT_CODE_TYPE  = '2'
+      LEFT  JOIN BSA230T   C6 WITH (NOLOCK) ON C6.COMP_CODE       = A.COMP_CODE            /* 수불처 코드(3) =&gt; 작업장코드 */
+                                  AND C6.TYPE_LEVEL      = A.DIV_CODE
+                                  AND C6.TREE_CODE       = A.INOUT_CODE
+                                  AND A.INOUT_CODE_TYPE  = '3'
+      LEFT  JOIN BCM100T   C7 WITH (NOLOCK) ON C7.COMP_CODE       = A.COMP_CODE            /* 수불처 코드(4) =&gt; 거래처코드 */
+                                  AND C7.CUSTOM_CODE     = A.INOUT_CODE
+                                  AND A.INOUT_CODE_TYPE IN ('4', '5')
+      LEFT  JOIN BTR100TV2 D1 WITH (NOLOCK) ON D1.COMP_CODE       = A.COMP_CODE            /* 수불유형 */
+                                  AND D1.MOVE_TYPE       = A.MOVE_TYPE
+      LEFT  JOIN BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE       = C2.COMP_CODE
+                                  AND M1.MAIN_CODE       = 'B020'               /* 계정구분   */
+                                  AND M1.SUB_CODE        = C2.ITEM_ACCOUNT
+      LEFT  JOIN BSA100T   M2 WITH (NOLOCK) ON M2.COMP_CODE       = A.COMP_CODE            /* 품목상태   */
+                                  AND M2.MAIN_CODE       = 'B021'
+                                  AND M2.SUB_CODE        = A.ITEM_STATUS
+      LEFT  JOIN BSA100T   M3 WITH (NOLOCK) ON M3.COMP_CODE       = A.COMP_CODE            /* 입/출고유형 */
+                                  AND M3.MAIN_CODE       = 'B035'
+                                  AND M3.SUB_CODE        = A.INOUT_TYPE
+      LEFT  JOIN BSA100T   M4 WITH (NOLOCK) ON M4.COMP_CODE       = A.COMP_CODE            /* 수불방법 */
+                                  AND M4.MAIN_CODE       = 'B036'
+                                  AND M4.SUB_CODE        = A.INOUT_METH
+      LEFT  JOIN BSA100T   M5 WITH (NOLOCK) ON M5.COMP_CODE       = A.COMP_CODE            /* 생성경로 */
+                                  AND M5.MAIN_CODE       = 'B031'
+                                  AND M5.SUB_CODE        = A.CREATE_LOC
+      LEFT  JOIN BSA100T   M6 WITH (NOLOCK) ON M6.COMP_CODE       = A.COMP_CODE            /* 수불처 유형 */
+                                  AND M6.MAIN_CODE       = 'B005'
+                                  AND M6.SUB_CODE        = A.INOUT_CODE_TYPE
+      LEFT  JOIN BSA100T   M7 WITH (NOLOCK) ON M7.COMP_CODE       = A.COMP_CODE            /* 단가형태 */
+                                  AND M7.MAIN_CODE       = 'M301'
+                                  AND M7.SUB_CODE        = A.PRICE_YN
+      LEFT  JOIN BSA100T   M8 WITH (NOLOCK) ON M8.COMP_CODE       = A.COMP_CODE            /* 수/발주 구분 */
+                                  AND M8.MAIN_CODE       = 'M001'
+                                  AND M8.SUB_CODE        = A.ORDER_TYPE
+      LEFT  JOIN BSA100T   M9 WITH (NOLOCK) ON M9.COMP_CODE       = A.COMP_CODE            /* 수불담당자 */
+                                  AND M9.MAIN_CODE       = 'B024'
+                                  AND M9.SUB_CODE        = A.INOUT_PRSN
+      LEFT  JOIN BSA100T   M10 WITH (NOLOCK) ON M10.COMP_CODE      = A.COMP_CODE            /* 사용여부 */
+                                  AND M10.MAIN_CODE      = 'B010'
+                                  AND M10.SUB_CODE       = A.PERIODIC_YN
+   WHERE (A.BASIS_Q  != 0
+      OR  A.BASIS_I  != 0
+      OR  A.IN_Q     != 0
+      OR  A.IN_I     != 0)
+
+      /* 선택조건 Start */
+      <if test="PERIODIC_YN == &quot;B&quot;">
+      AND  A.PERIODIC_YN = #{PERIODIC_YN}   /* 재고평가 입고데이터 여부 */
+      </if>
+      <if test="PERIODIC_YN == &quot;C&quot;">
+      AND  A.PERIODIC_YN = #{PERIODIC_YN}   /* 재고평가 입고데이터 여부 */
+	  </if>
+      /* 선택조건 End   */
+    ORDER BY A.PERIODIC_YN DESC, A.COMP_CODE, A.ITEM_ACCOUNT, A.SORT_FLD
+
+   SET NOCOUNT OFF
+    SET ARITHABORT OFF
+END
+	</select>
+
+</mapper>

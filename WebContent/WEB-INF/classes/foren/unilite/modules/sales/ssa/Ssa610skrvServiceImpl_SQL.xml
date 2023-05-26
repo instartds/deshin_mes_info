@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ssa610skrvServiceImpl">
+
+	<select id="ssa610skrvServiceImpl.selectList1" parameterType="Map" resultType="rMap">
+	<![CDATA[
+
+		/* ssa610skrv.Cssa610skrv[fnSsa610QStd] QUERY01 */
+    DECLARE     @CompCode       NVARCHAR(10)
+              , @DivCode        NVARCHAR(10)
+              , @CustomCode     NVARCHAR(10)
+              , @CustomName     NVARCHAR(30)
+              , @FrDate         NVARCHAR(08)
+              , @ToDate         NVARCHAR(08)
+              , @AgentType      NVARCHAR(08)
+              , @PrevYM         NVARCHAR(06)
+              , @SALE_DATE      NVARCHAR(08)
+              , @BALANCE_AMT    NUMERIC(30,6)
+              , @BAL_CALC_AMT   NUMERIC(30,6)
+              , @BASIS_DATE     NVARCHAR(08)
+
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+    SET @CompCode       = #{S_COMP_CODE}
+    SET @DivCode        = #{DIV_CODE}
+    SET @FrDate         = #{FrDate}
+    SET @ToDate         = #{ToDate}
+    SET @CustomCode     = #{CUSTOM_CODE}
+    SET @CustomName     = #{CUSTOM_NAME}
+    SET @AgentType      = #{AGENT_TYPE}
+    SET @PrevYM         = CONVERT(VARCHAR(6), DATEADD(month, -1, @FrDate), 112)
+
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE ID=OBJECT_ID('tempdb..#TMP_SSA610'))
+			DROP TABLE #TMP_SSA610
+
+
+    SELECT COMP_CODE, DIV_CODE, MONEY_UNIT, LEFT(BASE_DATE,6) AS SALE_MONTH, BASE_DATE, SUM(REMAIN_AMT) AS CARRIED_OVER_AMT, SUM(SALE_AMT) AS SALE_AMT, SUM(COLLECT_AMT) AS COLLECT_AMT, SUM(REMAIN_AMT) AS REMAIN_AMT, GUBUN
+          , ROW_NUMBER() OVER(ORDER BY MONEY_UNIT, GUBUN, BASE_DATE) AS SEQ, SUM(CARD_SALE) AS CARD_SALE
+    INTO #TMP_SSA610
+    FROM (
+				SELECT A.COMP_CODE
+					 , DIV_CODE
+					 , LEFT(@FrDate,6)		AS BASE_DATE
+					 , A.MONEY_UNIT, 0		AS SALE_AMT
+					 , 0					AS COLLECT_AMT
+					 , SUM(A.UNCOLLECT_AMT)	AS REMAIN_AMT
+					 , '1'					AS GUBUN   --기초잔액
+					 , 0					AS CARD_SALE
+				  FROM unilite.fnGetBalance4CustomTbl(@CompCode, @DivCode, @CustomCode, @FrDate, '', '3') A
+				  LEFT OUTER JOIN BCM100T B WITH (NOLOCK) ON B.COMP_CODE 		= A.COMP_CODE
+														 AND B.CUSTOM_CODE 		= A.CUSTOM_CODE
+				  ]]>
+				  <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+				   <![CDATA[	 WHERE A.CUSTOM_CODE 		= @CustomCode					/* 거래처코드  */		]]>
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+				   <![CDATA[	 WHERE A.CUSTOM_CODE 		LIKE  @CustomCode + '%'			/* 거래처코드  */		]]>
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+				   <![CDATA[	 WHERE B.CUSTOM_NAME 		LIKE '%' + @CustomName + '%'	/* 거래처명  */		]]>
+				  </if> 
+				<![CDATA[
+				 GROUP BY A.COMP_CODE, A.DIV_CODE, A.MONEY_UNIT
+
+			UNION
+
+				SELECT A.COMP_CODE
+					 , A.DIV_CODE
+					 , A.SALE_DATE 							AS BASE_DATE
+					 , A.MONEY_UNIT
+					 , SUM(A.SALE_LOC_AMT_I+A.TAX_AMT_O) 	AS SALE_AMT
+					 , CASE WHEN A.BILL_TYPE = '40' THEN SUM(A.SALE_LOC_AMT_I+A.TAX_AMT_O) 
+													ELSE  0 
+							END  							AS COLLECT_AMT
+					 , 0 									AS REMAIN_AMT
+					 , '9' 									AS GUBUN	--매출
+					 , CASE WHEN A.BILL_TYPE = '40' THEN SUM(A.SALE_LOC_AMT_I+A.TAX_AMT_O) 
+													ELSE  0 
+							END 							AS CARD_SALE
+				  FROM SALES_V A
+				  LEFT OUTER JOIN BCM100T B WITH (NOLOCK)  ON B.COMP_CODE		= A.COMP_CODE
+														  AND B.CUSTOM_CODE		= A.SALE_CUSTOM_CODE
+				 WHERE A.COMP_CODE = @CompCode
+				]]>
+				  <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+				   <![CDATA[	 AND A.SALE_CUSTOM_CODE 		= @CustomCode					/* 거래처코드  */		]]>
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+				   <![CDATA[	 AND A.SALE_CUSTOM_CODE 		LIKE  @CustomCode + '%'			/* 거래처코드  */		]]>
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+				   <![CDATA[	 AND B.CUSTOM_NAME 		LIKE '%' + @CustomName + '%'	/* 거래처명  */		]]>
+				  </if> 
+				<![CDATA[
+				   AND A.SALE_DATE >= @FrDate
+				   AND A.SALE_DATE <= @ToDate
+				 GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_DATE, A.MONEY_UNIT, A.BILL_TYPE
+
+			UNION ALL
+
+				SELECT A.COMP_CODE
+					 , A.DIV_CODE
+					 , A.COLLECT_DATE
+					 , A.MONEY_UNIT
+					 , 0 						AS SALE_AMT
+					 , SUM(A.COLLECT_FOR_AMT) 	AS COLLECT_AMT
+					 , 0 						AS REMAIN_AMT
+					 , '9' 						AS GUBUN	--수금
+					 , 0 						AS CARD_SALE
+				  FROM 			  SCO100T A WITH (NOLOCK)
+				  LEFT OUTER JOIN BCM100T B WITH (NOLOCK)  ON B.COMP_CODE = A.COMP_CODE
+														  AND B.CUSTOM_CODE = A.CUSTOM_CODE
+				 WHERE A.COMP_CODE = @CompCode
+				 
+				 ]]>
+				  <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+				   <![CDATA[	 AND A.CUSTOM_CODE 		= @CustomCode					/* 거래처코드  */		]]>
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+				   <![CDATA[	 AND A.CUSTOM_CODE 		LIKE  @CustomCode + '%'			/* 거래처코드  */		]]>
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+				   <![CDATA[	 AND B.CUSTOM_NAME 		LIKE '%' + @CustomName + '%'	/* 거래처명  */		]]>
+				  </if> 
+				<![CDATA[
+				 
+				   AND A.COLLECT_DATE >= @FrDate
+				   AND A.COLLECT_DATE <= @ToDate
+				 GROUP BY A.COMP_CODE, A.DIV_CODE, A.COLLECT_DATE, A.MONEY_UNIT
+		  ) X
+	GROUP BY COMP_CODE, DIV_CODE, MONEY_UNIT, BASE_DATE, GUBUN;
+
+
+	WITH ACCOUNT_BOOK
+	AS (
+		SELECT *
+		FROM #TMP_SSA610
+		)
+
+	SELECT  ''+ A.MONEY_UNIT +' ' + unilite.fnGetUserdate(A.COMP_CODE, LEFT(A.SALE_MONTH,6))  AS SALE_MONTH
+			  , A.MONEY_UNIT
+			, unilite.fnGetUserdate(A.COMP_CODE, A.BASE_DATE) AS SALE_DATE
+			, A.SALE_AMT
+			, A.COLLECT_AMT
+			, SUM(ISNULL(B.CARRIED_OVER_AMT,0) + ISNULL(B.SALE_AMT,0)-ISNULL(B.COLLECT_AMT,0)) AS BALANCE_AMT
+			, A.GUBUN
+			, A.DIV_CODE
+			, A.CARD_SALE
+	FROM	ACCOUNT_BOOK A
+			  LEFT JOIN ACCOUNT_BOOK B ON A.MONEY_UNIT=B.MONEY_UNIT AND A.SEQ >= B.SEQ
+	GROUP BY A.COMP_CODE, A.DIV_CODE, A.MONEY_UNIT, A.BASE_DATE, A.SALE_AMT, A.COLLECT_AMT, A.SEQ, A.SALE_MONTH, A.GUBUN, A.CARD_SALE 
+	ORDER BY A.SEQ, A.MONEY_UNIT, LEFT(A.SALE_MONTH,6)
+
+	SET NOCOUNT OFF
+
+	]]>
+	</select>
+
+</mapper>

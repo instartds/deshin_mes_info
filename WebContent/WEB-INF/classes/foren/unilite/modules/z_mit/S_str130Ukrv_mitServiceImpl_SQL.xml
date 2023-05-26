@@ -1,0 +1,542 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_str130ukrv_mitServiceImpl">
+	<!-- 검사완료된 실적 데이터 조회 -->
+	<select id="s_str130ukrv_mitServiceImpl.selectList" parameterType="Map" resultType="rMap">	
+		/* s_str130ukrv_mitServiceImpl.selectList 검사완료된 실적 데이터 조회 */
+		BEGIN
+		     SET NOCOUNT ON
+		     SET ARITHABORT ON
+
+		     DECLARE @CompCode    NVARCHAR(08)  /* 법인코드    */
+		           , @UserId      NVARCHAR(100) /* 사용자ID    */
+		           , @LangType    NVARCHAR(2)   /* 언어구분    */
+		           , @RefItem     NVARCHAR(01)  /* 명칭 참조 유형  */
+		           , @DateFormat  NVARCHAR(10)  /* 날짜 포맷 유형 설정 */
+
+		     SET @CompCode = #{S_COMP_CODE}
+		     SET @UserId   = #{S_USER_ID}
+		     SET @LangType = #{S_LANG_CODE}
+
+		     /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		      FROM BSA100T WITH (NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+		       AND MAIN_CODE = N'B044'
+		       AND REF_CODE1 = N'Y'
+
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+
+		    /* 3. 임시 테이블 선언 */
+		    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#T_s_str130ukrv_mit'))
+		       DROP TABLE #T_s_str130ukrv_mit
+
+		    CREATE TABLE #T_s_str130ukrv_mit (
+		     /* 일반정보 */
+		        COMP_CODE           NVARCHAR(08)
+		      , DIV_CODE            NVARCHAR(08)
+		      , PRODT_NUM           NVARCHAR(20)
+		      , WKORD_NUM           NVARCHAR(20)
+		      , INSPEC_NUM          NVARCHAR(20)
+		      , INSPEC_SEQ          NUMERIC(04,0)
+
+		    /* 품목정보 */
+		      , ITEM_CODE           NVARCHAR(20)
+		      , ITEM_NAME           NVARCHAR(100)
+		      , SPEC                NVARCHAR(100)
+		      , STOCK_UNIT          NVARCHAR(03)
+		      , BASIS_P             NUMERIC(18,6)
+		      , ITEM_ACCOUNT        NVARCHAR(02)
+
+		    /* 생산 및 검사정보 */
+		      , PRODT_DATE          NVARCHAR(08)
+		      , INSPEC_DATE         NVARCHAR(08)
+		      , PRODT_Q             NUMERIC(18,6)    DEFAULT 0
+		      , GOOD_INSPEC_Q       NUMERIC(18,6)    DEFAULT 0
+		      , BAD_INSPEC_Q        NUMERIC(18,6)    DEFAULT 0
+		      , INOUT_Q             NUMERIC(18,6)    DEFAULT 0
+		      , ITEM_STATUS         NVARCHAR(01)
+		      , WORK_SHOP_CODE      NVARCHAR(08)
+		      , WORK_SHOP_NAME      NVARCHAR(100)
+		      , WH_CODE             NVARCHAR(08)
+		      , WH_NAME             NVARCHAR(100)
+
+		    /* 기타정보 */
+		      , PROJECT_NO          NVARCHAR(20)
+		      , LOT_NO              NVARCHAR(20)
+		      , SORT_KEY            AS RTRIM(INSPEC_NUM) + CONVERT(NVARCHAR(05), RTRIM(INSPEC_SEQ))
+		    )
+		    CREATE INDEX uniLITE200903040004_IDX01 ON #T_s_str130ukrv_mit(COMP_CODE, DIV_CODE, INSPEC_NUM, INSPEC_SEQ)
+
+
+		    /* 4. 조회 데이터 생성 (양품) -- 20191021 양품, 불량 통합 (5번 삭제) */
+		    INSERT INTO #T_s_str130ukrv_mit (
+		           COMP_CODE          , DIV_CODE          , PRODT_NUM         , WKORD_NUM
+		         , ITEM_CODE          , ITEM_NAME         , SPEC              , STOCK_UNIT        , BASIS_P      , ITEM_ACCOUNT
+		         , PRODT_DATE         , PRODT_Q
+		         , INOUT_Q            , WORK_SHOP_CODE    , WORK_SHOP_NAME
+		         , WH_CODE            , WH_NAME           , PROJECT_NO        , LOT_NO            , ITEM_STATUS
+		         --, INSPEC_NUM         , INSPEC_SEQ        , INSPEC_DATE       , GOOD_INSPEC_Q     , BAD_INSPEC_Q
+		    )
+		    SELECT A.COMP_CODE
+		         , A.DIV_CODE
+		         , A.PRODT_NUM
+		         , A.WKORD_NUM
+		         , A.ITEM_CODE
+		         , CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+		                ELSE C1.ITEM_NAME
+		           END                   AS ITEM_NAME
+		         , C1.SPEC
+		         , C1.STOCK_UNIT
+		         , ISNULL(C2.BASIS_P, 0) AS BASIS_P
+		         , C2.ITEM_ACCOUNT
+		         , A.PRODT_DATE
+		         , A.GOOD_PRODT_Q AS PRODT_Q
+		         --, A.PRODT_Q 			 AS PRODT_Q
+		         , 0                     AS INOUT_Q
+		         , A.WORK_SHOP_CODE
+		         , C3.TREE_NAME          AS WORK_SHOP_NAME
+		         , C2.WH_CODE
+		         , C4.TREE_NAME          AS WH_NAME
+		         , A.PROJECT_NO
+		         , A.LOT_NO
+		         --20191022 양불구분 조회로직 수정
+		         , CASE WHEN ISNULL(GOODBAD_TYPE, '') = '' THEN '1'
+		                ELSE RIGHT(ISNULL(GOODBAD_TYPE, '1'), 1)
+		           END                   AS ITEM_STATUS
+		         --20191021 주석
+		         --, B.INSPEC_NUM
+		         --, B.INSPEC_SEQ
+		         --0, B.INSPEC_DATE
+		         --, B.GOOD_INSPEC_Q
+		         --, 0                     AS BAD_INSPEC_Q
+		      FROM       PMR200T A  WITH (NOLOCK)
+		      --20191017: INNER -> LEFT JOIN으로 변경 - 검사와 관계없이 미입고 된 데이터 모두 표시하기 위해서
+		      LEFT  JOIN QMS400T B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		                                         AND B.DIV_CODE    = A.DIV_CODE
+		                                         AND B.PRODT_NUM   = A.PRODT_NUM
+		                                         AND B.WKORD_NUM   = A.WKORD_NUM
+		      INNER JOIN BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE
+		                                         AND C1.ITEM_CODE  = A.ITEM_CODE
+		      INNER JOIN BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE
+		                                         AND C2.DIV_CODE   = A.DIV_CODE
+		                                         AND C2.ITEM_CODE  = A.ITEM_CODE
+		      LEFT  JOIN BSA230T C3 WITH (NOLOCK) ON C3.COMP_CODE  = A.COMP_CODE
+		                                         AND C3.TYPE_LEVEL = A.DIV_CODE
+		                                         AND C3.TREE_CODE  = A.WORK_SHOP_CODE
+		      LEFT  JOIN BSA220T C4 WITH (NOLOCK) ON C4.COMP_CODE  = C2.COMP_CODE
+		                                         AND C4.TYPE_LEVEL = C2.DIV_CODE
+		                                         AND C4.TREE_CODE  = C2.WH_CODE
+		     WHERE A.COMP_CODE  = @CompCode
+		       AND A.DIV_CODE   = #{DIV_CODE}
+		       --20191017: INNER -> LEFT JOIN으로 변경 - 검사와 관계없이 미입고 된 데이터 모두 표시하기 위해서
+		       --AND ISNULL(C2.INSPEC_YN, 'N') = 'Y'
+			   AND A.PRODT_Q != A.IN_STOCK_Q
+		    <if test="@foren.Ognl@isNotEmpty(PRODT_DATE_FR)">
+		       AND A.PRODT_DATE &gt;= #{PRODT_DATE_FR}
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(PRODT_DATE_TO)">
+		       AND A.PRODT_DATE &lt;= #{PRODT_DATE_TO}
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		       AND A.ITEM_CODE  LIKE #{ITEM_CODE} + '%'
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+		       AND (CASE WHEN @RefItem  = '1' THEN C1.ITEM_NAME1
+		                 WHEN @RefItem  = '2' THEN C1.ITEM_NAME2
+		                                      ELSE C1.ITEM_NAME
+		             END)       LIKE #{ITEM_NAME} + '%'
+		    </if>
+
+
+		    /* 6. 입고수량 입력 */
+		    UPDATE A
+		       SET A.INOUT_Q = B.INOUT_Q
+		      FROM #T_s_str130ukrv_mit A WITH (NOLOCK)
+		      INNER JOIN (
+		                  SELECT COMP_CODE, DIV_CODE, BASIS_NUM, BASIS_SEQ, ITEM_STATUS, INSPEC_NUM, INSPEC_SEQ
+		                       , SUM(INOUT_Q) AS INOUT_Q
+		                    FROM BTR100T WITH (NOLOCK)
+		                   WHERE COMP_CODE  = @CompCode
+		                     AND DIV_CODE   = #{DIV_CODE}
+		                     AND INOUT_TYPE = '1'   /* 입고 */
+		                     AND CREATE_LOC = '1'   /* 영업 */
+		                   GROUP  BY COMP_CODE, DIV_CODE, BASIS_NUM, BASIS_SEQ, ITEM_STATUS, INSPEC_NUM, INSPEC_SEQ
+		                  ) B ON B.COMP_CODE   = A.COMP_CODE
+		                     AND B.DIV_CODE    = A.DIV_CODE
+		                     AND B.BASIS_NUM   = A.PRODT_NUM
+		                     AND ISNULL(B.BASIS_SEQ, 0)  = 0
+		                     --20191018 입고량 업데이트 시, 대상에 검사품목만 적용하는 부분 주석
+		                     --AND B.INSPEC_NUM  = A.INSPEC_NUM
+		                     --AND B.INSPEC_SEQ  = A.INSPEC_SEQ
+		                     --20191021 주석
+		                     --AND B.ITEM_STATUS = A.ITEM_STATUS
+		     WHERE A.COMP_CODE = @CompCode
+		       AND A.DIV_CODE  = #{DIV_CODE}
+
+
+		    /* 7. 검사참조 조회 */
+		    SELECT CAST(0 AS BIT) CHOICE
+		         , A.COMP_CODE
+		         , A.ITEM_CODE
+		         , (CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+		                 WHEN @RefItem = '2' THEN B.ITEM_NAME2
+		                 ELSE                     B.ITEM_NAME
+		            END)                                             AS ITEM_NAME
+		         , A.SPEC
+		         , A.STOCK_UNIT
+		         , (CASE WHEN ISNULL(A.PRODT_DATE, '') = ''
+		                 THEN ''
+		                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PRODT_DATE, 1, 4))
+		                                                         , 'MM'  , SUBSTRING(A.PRODT_DATE, 5, 2))
+		                                                         , 'DD'  , SUBSTRING(A.PRODT_DATE, 7, 2))
+		            END)                                             AS PROD_DT
+		         , (CASE WHEN ISNULL(A.INSPEC_DATE, '') = ''
+		                 THEN ''
+		                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.INSPEC_DATE, 1, 4))
+		                                                         , 'MM'  , SUBSTRING(A.INSPEC_DATE, 5, 2))
+		                                                         , 'DD'  , SUBSTRING(A.INSPEC_DATE, 7, 2))
+		            END)                                             AS INSPEC_DATE
+		         /* 20191021 수정: 생산수량, 미입고수량 은 검사와 관계 없이 계산 */ 
+		         , A.PRODT_Q                                         AS PRODT_Q
+
+		         /* 양품일 경우 불량은 0, 불량일 경우 양품은 0이므로 더해서 계산한다. - 20191021 주석 */
+		         --, A.GOOD_INSPEC_Q + A.BAD_INSPEC_Q                  AS PRODT_Q1
+		         , A.ITEM_STATUS
+		         , A.INOUT_Q                                         AS INOUT_Q
+		         , A.PRODT_Q - A.INOUT_Q                             AS NOTIN_Q
+
+		         , A.WORK_SHOP_CODE
+		         , A.WORK_SHOP_NAME                                  AS WK_SHOP_NM
+		         , A.WH_CODE
+		         , A.WH_NAME                                         AS WH_NM
+		         , A.PRODT_NUM
+		         , A.WKORD_NUM
+		         , A.DIV_CODE
+		         , A.PROJECT_NO
+		         , A.LOT_NO
+		         , A.BASIS_P
+		         , A.ITEM_ACCOUNT
+		         , A.SORT_KEY
+		         , A.INSPEC_NUM
+		         , A.INSPEC_SEQ
+		         , A.PRODT_DATE                                      AS INOUT_DATE
+		      FROM       #T_s_str130ukrv_mit A WITH (NOLOCK)
+		      INNER JOIN BPR100T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                        AND B.ITEM_CODE = A.ITEM_CODE
+		      --20191018 임시로 제품만 조회되도록 수정
+		      INNER JOIN BPR200T C WITH (NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+		                                        AND C.DIV_CODE  = A.DIV_CODE
+		                                        AND C.ITEM_CODE = A.ITEM_CODE
+		     WHERE A.COMP_CODE = @CompCode
+		       AND A.DIV_CODE   = #{DIV_CODE}
+		       --20191018 제품만 조회되도록 수정
+		       AND C.ITEM_ACCOUNT = '10'
+		       /* 양품일 경우 불량은 0, 불량일 경우 양품은 0이므로 더해서 계산하며 INOUT_Q 생성이후 조건 실행 : 20191021 검사와 관계없이 미납량이 0보다 큰 데이터만 조회하도록 수정*/
+		       AND A.PRODT_Q - A.INOUT_Q &gt; 0
+		     ORDER BY A.INSPEC_NUM, INSPEC_SEQ
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+
+	<select id="s_str130ukrv_mitServiceImpl.selectList2" parameterType="Map" resultType="rMap">	
+		/* s_str130ukrv_mitServiceImpl.selectList2 */
+		BEGIN
+		     SET NOCOUNT ON
+		     SET ARITHABORT ON
+
+		     DECLARE @CompCode    NVARCHAR(08)  /* 법인코드    */
+		           , @UserId      NVARCHAR(100) /* 사용자ID    */
+		           , @LangType    NVARCHAR(02)  /* 언어구분    */
+		           , @RefItem     NVARCHAR(01)  /* 명칭 참조 유형  */
+		           , @DateFormat  NVARCHAR(10)  /* 날짜 포맷 유형 설정 */
+
+		     SET @CompCode = #{S_COMP_CODE}
+		     SET @UserId   = #{S_USER_ID}
+		     SET @LangType = #{S_LANG_CODE}
+
+		     /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		      FROM BSA100T WITH (NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+		       AND MAIN_CODE = N'B044'
+		       AND REF_CODE1 = N'Y'
+
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		    FROM   BSA300T WITH (NOLOCK)
+		    WHERE  COMP_CODE = @CompCode
+		    AND    USER_ID   = @UserId
+
+		    SET @RefItem = ISNULL(@RefItem, '0')
+
+		    SELECT A.COMP_CODE
+		         , A.DIV_CODE
+		         , A.INOUT_METH
+		         , A.INOUT_CODE_TYPE
+		         , (CASE WHEN ISNULL(A.INOUT_DATE, '') = ''
+		                 THEN ''
+		                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.INOUT_DATE, 1, 4))
+		                                                         , 'MM'  , SUBSTRING(A.INOUT_DATE, 5, 2))
+		                                                         , 'DD'  , SUBSTRING(A.INOUT_DATE, 7, 2))
+		            END)                                                        AS INOUT_DATE
+		         , A.INOUT_PRSN
+		         , A.INOUT_NUM
+		         , A.INOUT_SEQ
+		         , A.INOUT_TYPE_DETAIL
+		         , A.ITEM_CODE
+		         , CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+		                ELSE                     C1.ITEM_NAME
+		           END                                                          AS ITEM_NAME
+		         , C1.SPEC
+		         , C1.STOCK_UNIT
+		         , A.ITEM_STATUS
+		         , A.INOUT_Q
+		         , A.WH_CODE
+		         , A.WH_CELL_CODE
+		         , A.INOUT_CODE
+		         , A.TO_DIV_CODE
+		         , A.TO_DIV_CODE                                                AS ORG_CD
+		         , A.INOUT_Q                                                    AS ORIGINAL_Q
+		         , ISNULL(B.PRODT_Q, 0) - ISNULL(B.IN_STOCK_Q, 0)               AS NOTIN_Q
+		         , A.MONEY_UNIT
+		         , A.INOUT_P
+		         , A.INOUT_I
+		         , A.INOUT_FOR_P
+		         , A.INOUT_FOR_O
+		         , C2.BASIS_P
+		         , C2.ITEM_ACCOUNT
+		         , A.BASIS_NUM
+		         , A.PROJECT_NO
+		         , B.WKORD_NUM                                                  AS WKORD_NUM
+		         , A.LOT_NO
+		         , A.REMARK
+		         , A.UPDATE_DB_USER
+		         , A.UPDATE_DB_TIME
+		         , RTRIM(A.INOUT_NUM) + RTRIM(CONVERT(VARCHAR(4),A.INOUT_SEQ))  AS SORT_KEY
+		         , A.INSPEC_NUM
+		         , A.INSPEC_SEQ
+		         , RIGHT(A.LOT_NO, LEN(A.LOT_NO) - CHARINDEX('-', A.LOT_NO))    AS SN
+		    FROM              BTR100T A  WITH (NOLOCK)
+		           LEFT  JOIN PMR200T B  WITH (NOLOCK) ON B.COMP_CODE  = A.COMP_CODE
+		                                              AND B.DIV_CODE   = A.DIV_CODE
+		                                              AND B.PRODT_NUM  = A.BASIS_NUM
+		           INNER JOIN BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+		                                              AND C1.ITEM_CODE = A.ITEM_CODE
+		           INNER JOIN BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE = A.COMP_CODE
+		                                              AND C2.DIV_CODE  = A.DIV_CODE
+		                                              AND C2.ITEM_CODE = A.ITEM_CODE
+		    WHERE  A.COMP_CODE     = @CompCode
+		      AND  A.INOUT_TYPE    = '1'              /* 수불유형 : 입고 */
+		      AND  A.CREATE_LOC    = '1'              /* 생성경로 : 영업 */
+		      AND  A.DIV_CODE      = #{DIV_CODE}      /* 사업장 */
+		      --20191017 제품만 보이도록 수정
+		      AND  C2.ITEM_ACCOUNT = '10'
+		    <if test="@foren.Ognl@isNotEmpty(PRODT_DATE_FR)">
+		      AND  B.PRODT_DATE &gt;= #{PRODT_DATE_FR}
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(PRODT_DATE_TO)">
+		      AND  B.PRODT_DATE &lt;= #{PRODT_DATE_TO}
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		      AND  B.ITEM_CODE  LIKE #{ITEM_CODE} + '%'
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+		      AND (CASE WHEN @RefItem  = '1' THEN C1.ITEM_NAME1
+		                WHEN @RefItem  = '2' THEN C1.ITEM_NAME2
+		                                     ELSE C1.ITEM_NAME
+		           END)         LIKE #{ITEM_NAME} + '%'
+		    </if>
+<!-- 20191126 추가: panel에 입력된 창고의 데이터만 보이도록 수정 -->
+		    <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+		      AND  A.WH_CODE = #{WH_CODE}
+		    </if>
+		    ORDER BY A.INSPEC_NUM, INSPEC_SEQ
+		    --ORDER  BY A.INOUT_NUM, A.INOUT_SEQ, A.ITEM_CODE, A.INOUT_DATE
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+
+
+
+	<insert id="s_str130ukrv_mitServiceImpl.insertLogMaster" parameterType="Map">
+		/* s_str130ukrv_mitServiceImpl.insertLogMaster */
+		INSERT INTO L_BTR100T (
+			  KEY_VALUE,		   OPR_FLAG
+			, INOUT_NUM,           INOUT_TYPE,         INOUT_METH,        INOUT_SEQ,                         INOUT_TYPE_DETAIL
+			, INOUT_CODE_TYPE,     INOUT_CODE,         WH_CODE,           TO_DIV_CODE,                       INOUT_DATE
+			, ITEM_STATUS,         INOUT_Q,            INOUT_P,           INOUT_I,                           MONEY_UNIT
+			, INOUT_FOR_P,         INOUT_FOR_O,        EXCHG_RATE_O,      INOUT_PRSN,                        CREATE_LOC
+			, ITEM_CODE,           BASIS_NUM,          SALE_C_YN,         PROJECT_NO,                        REMARK
+			, LOT_NO,              UPDATE_DB_USER,     UPDATE_DB_TIME,    SALE_DIV_CODE,                     SALE_CUSTOM_CODE
+			, BILL_TYPE,           SALE_TYPE,          PRICE_YN,          DIV_CODE,                          INSPEC_NUM
+			, ORDER_NUM
+			, INSPEC_SEQ,          WH_CELL_CODE,       COMP_CODE
+			, INSERT_DB_USER,      INSERT_DB_TIME
+		) VALUES (
+			  #{KEY_VALUE},        #{OPR_FLAG}
+			, #{INOUT_NUM},        '1',                #{INOUT_METH},     #{INOUT_SEQ},                      #{INOUT_TYPE_DETAIL}
+			, #{INOUT_CODE_TYPE},  #{INOUT_CODE},      #{WH_CODE},        #{TO_DIV_CODE},                    #{INOUT_DATE}
+			, #{ITEM_STATUS},      1,                  #{INOUT_FOR_P},    #{INOUT_FOR_P},                    #{MONEY_UNIT}
+			, #{INOUT_FOR_P},      #{INOUT_FOR_O},     '1',               #{INOUT_PRSN},                     '1'
+			, #{ITEM_CODE},        #{BASIS_NUM},       '',                #{PROJECT_NO},                     #{REMARK}
+			, #{LOT_NO},           #{S_USER_ID},       GETDATE(),         '*',                               '*'
+			, '*',                 '*',                '*',               #{DIV_CODE},                       #{INSPEC_NUM}
+			, #{WKORD_NUM}
+			<if test="INSPEC_SEQ == null">
+			, null
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(INSPEC_SEQ)">
+			, #{INSPEC_SEQ}
+			</if>
+			, #{WH_CELL_CODE},    #{S_COMP_CODE}
+			, #{S_USER_ID},       GETDATE()
+		)
+	</insert>
+
+	<update id="spReceiving" parameterType="Map" statementType="CALLABLE">
+		{call USP_SALES_Str120ukr (
+			#{KeyValue, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{InOutNum, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ErrorDesc, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update>
+<!-- 20191126 추가: USP_SALES_S_STR130UKRV_MIT 호출하는 로직 추가 -->
+	<update id="spReceiving2" parameterType="Map" statementType="CALLABLE">
+		{call USP_SALES_S_STR130UKRV_MIT (
+			#{KeyValue, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{InOutNum, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ErrorDesc2, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update>
+
+	<select id="s_str130ukrv_mitServiceImpl.deptWhcode" parameterType="Map" resultType="rMap">
+		/* s_str130ukrv_mitServiceImpl.deptWhcode */
+		SELECT WH_CODE
+		  FROM BSA210T WITH(NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND TYPE_LEVEL = #{DIV_CODE}
+		   AND TREE_CODE = #{DEPT_CODE}
+	</select>
+
+
+
+	<!-- 바코드 입력 관련 로직 -->
+	<select id="s_str130ukrv_mitServiceImpl.getBarcodeInfo" parameterType="Map" resultType="rMap">
+		DECLARE @ITEM_CODE_FR INT
+		      , @LOT_NO_FR    INT
+		      , @SN_FR        INT
+		      , @BARCODE      NVARCHAR(200)
+		      , @ITEM_CODE    NVARCHAR(20)
+		      , @LOT_NO       NVARCHAR(20)
+		      , @SN           NVARCHAR(20)
+
+		   SET @BARCODE = UPPER(#{BARCODE})
+
+		   IF SUBSTRING(@BARCODE, 35, 2) != '11'     --미국이 아니고
+		       BEGIN
+		           IF LEN(@BARCODE) > 55             --일본
+		               BEGIN
+		                   SELECT @ITEM_CODE_FR = A.REF_CODE1
+		                        , @LOT_NO_FR    = A.REF_CODE2
+		                        , @SN_FR        = A.REF_CODE3
+		                     FROM BSA100T A WITH(NOLOCK)
+		                    WHERE A.COMP_CODE = #{S_COMP_CODE}
+		                      AND A.MAIN_CODE = 'Z017'
+		                      AND SUB_CODE    = 'JP'
+
+		                   SELECT @ITEM_CODE = SUBSTRING(@BARCODE, @ITEM_CODE_FR, 7)
+		                        , @LOT_NO    = SUBSTRING(@BARCODE, @LOT_NO_FR, 8)
+		                        , @SN        = SUBSTRING(@BARCODE, @SN_FR, LEN(@BARCODE) - @SN_FR - 10)
+		               END
+		           ELSE                              --프랑스, 기타
+		               BEGIN
+		                   SELECT @ITEM_CODE_FR = A.REF_CODE1
+		                        , @LOT_NO_FR    = A.REF_CODE2
+		                        , @SN_FR        = A.REF_CODE3
+		                     FROM BSA100T A WITH(NOLOCK)
+		                    WHERE A.COMP_CODE = #{S_COMP_CODE}
+		                      AND A.MAIN_CODE = 'Z017'
+		                      AND SUB_CODE    = 'ZZ'
+
+		                   SELECT @ITEM_CODE = SUBSTRING(@BARCODE, @ITEM_CODE_FR, 7)
+		                        , @LOT_NO    = SUBSTRING(@BARCODE, @LOT_NO_FR, 8)
+		                        , @SN        = SUBSTRING(@BARCODE, @SN_FR, LEN(@BARCODE) - @SN_FR + 1)
+		               END
+		       END
+		   ELSE                                  --미국
+		       BEGIN
+		           SELECT @ITEM_CODE_FR = A.REF_CODE1
+		                , @LOT_NO_FR    = A.REF_CODE2
+		                , @SN_FR        = A.REF_CODE3
+		             FROM BSA100T A WITH(NOLOCK)
+		            WHERE A.COMP_CODE = #{S_COMP_CODE}
+		              AND A.MAIN_CODE = 'Z017'
+		              AND SUB_CODE    = 'US'
+
+		           SELECT @ITEM_CODE = SUBSTRING(@BARCODE, @ITEM_CODE_FR, 7)
+		                , @LOT_NO    = SUBSTRING(@BARCODE, @LOT_NO_FR, 8)
+		                , @SN        = SUBSTRING(@BARCODE, @SN_FR, LEN(@BARCODE) - @SN_FR + 1)
+		       END
+
+		SELECT @ITEM_CODE     AS ITEM_CODE
+		     , @LOT_NO        AS LOT_NO
+		     , @SN            AS SN
+		     , @ITEM_CODE_FR  AS ITEM_CODE_FR
+		     , @LOT_NO_FR     AS LOT_NO_FR
+		     , @SN_FR         AS SN_FR
+	</select>
+	<select id="s_str130ukrv_mitServiceImpl.getBarcodeInfo_Backup" parameterType="Map" resultType="rMap">
+		DECLARE @ITEM_CODE_FR INT
+		      , @LOT_NO_FR    INT
+		      , @SN_FR        INT
+		      , @BARCODE      NVARCHAR(MAX)
+		
+		   SET @BARCODE = UPPER(#{BARCODE})
+		
+		SELECT @ITEM_CODE_FR = A.REF_CODE1
+		     , @LOT_NO_FR    = A.REF_CODE2
+		     , @SN_FR        = A.REF_CODE3
+		  FROM BSA100T A WITH(NOLOCK)
+		 WHERE A.COMP_CODE = #{S_COMP_CODE}
+		   AND A.MAIN_CODE = 'Z017'
+		   AND A.SUB_CODE  = #{NATION_CODE}
+
+		SELECT SUBSTRING(@BARCODE, @ITEM_CODE_FR, 7)  AS ITEM_CODE
+		     , SUBSTRING(@BARCODE, @LOT_NO_FR, 8)     AS LOT_NO
+		     , SUBSTRING(@BARCODE, @SN_FR, 1)         AS SN
+		     , @ITEM_CODE_FR                          AS ITEM_CODE_FR
+		     , @LOT_NO_FR                             AS LOT_NO_FR
+		     , @SN_FR                                 AS SN_FR
+	</select>
+	<update id="s_str130ukrv_mitServiceImpl.spProdtWh1350in_mit" parameterType="Map" statementType="CALLABLE">
+
+        {call USP_PRODT_WH1350IN_MIT (
+        	  #{S_COMP_CODE,      mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String}              
+		    , #{DIV_CODE,         mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String}              
+        )}
+       
+     </update>
+</mapper>

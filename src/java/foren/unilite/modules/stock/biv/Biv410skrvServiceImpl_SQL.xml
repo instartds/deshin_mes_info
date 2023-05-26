@@ -1,0 +1,1847 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="biv410skrvServiceImpl">
+	<select id="biv410skrvServiceImpl.userWhcode" parameterType="Map" resultType="rMap">	/* 창고 초기화 */
+		SELECT
+			A.WH_CODE
+		FROM BSA210T A WITH(NOLOCK)
+			LEFT JOIN BSA300T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+											AND B.DEPT_CODE = A.TREE_CODE
+		WHERE A.COMP_CODE = #{S_COMP_CODE}
+		  AND B.USER_ID = #{S_USER_ID}
+	</select>
+	
+	<select id="biv410skrvServiceImpl.selectMasterList" parameterType="Map" resultType="rMap">	/* 품목별 */
+	/*biv410skrv.Cbiv410skrv[fnBiv410QStd] Query01*/
+	/*일별 수불현황 조회*/
+	BEGIN
+	    DECLARE         @COMP_CODE          NVARCHAR(08)                /* (필수) 법인코드*/
+	                  , @DIV_CODE           NVARCHAR(08)                /* (필수) 사업장코드*/
+	
+	                  , @FR_INOUT_DATE      NVARCHAR(08)                /* (필수) 시작 수불일*/
+	                  , @TO_INOUT_DATE      NVARCHAR(08)                /* (필수) 종료 수불일*/
+	
+	                  , @ITEM_CODE          NVARCHAR(20)                /* (선택) 품목코드*/
+	                  , @ITEM_NAME          NVARCHAR(200)               /* (선택) 품목명*/
+	
+	                  , @ITEM_ACCOUNT       NVARCHAR(02)                /* (선택) 품목 계정코드*/
+	
+	                  , @WH_CODE            NVARCHAR(08)                /* (선택) 창고코드*/
+	
+	                  , @ITEM_LEVEL1        NVARCHAR(20)                /* 대분류*/
+	                  , @ITEM_LEVEL2        NVARCHAR(20)                /* 중분류*/
+	                  , @ITEM_LEVEL3        NVARCHAR(20)                /* 소분류*/
+	
+	                  , @EVAL_FLAG          NVARCHAR(01)                /* 실사조정 포함 여부(Y/N)*/
+	
+	                  , @INOUT_METH         NVARCHAR(02)                /* 수불방법*/
+	                  , @CREATE_LOC         NVARCHAR(02)                /* 생성경로*/
+	                  , @INOUT_CODE_TYPE    NVARCHAR(02)                /* 수불처 유형*/
+	                  , @ITEM_STATUS        NVARCHAR(01)                /* 품목상태*/
+	
+	                  , @INOUT_NUM          NVARCHAR(20)                /* 수불번호*/
+	                  , @LOT_NO             NVARCHAR(20)                /* Lot No.*/
+	                  , @PROJECT_NO         NVARCHAR(20)                /* 관리번호*/
+	
+	                  , @INOUT_FLAG         NVARCHAR(01)                /* 수불 발생 유형(1: 발생, 2: 미발생, 3: 전체)*/
+	
+	                  , @SUBCON_YN          NVARCHAR(02)                /* 외주포함여부 (N: 포함않함,  Y: 포함)*/
+	                  , @QRY_TYPE           NVARCHAR(02)                /* 조회유형 (1: 품목별,  2: 창고별)*/
+	
+	                  , @NORMAL_INOUT_YN    NVARCHAR(01)                /* 정상수불여부 ('':전체, Y:예, N:아니오) - 수불방법이 (1:정상, 2:예외)인 데이터만 조회*/
+	
+	                  , @USER_ID            NVARCHAR(100)                /* (필수) USER ID*/
+	                  , @STOCK_CARE_YN    	NVARCHAR(01)                /* 재고관리대상 ('A':전체, Y:예, N:아니오) - 수불방법이 (1:정상, 2:예외)인 데이터만 조회*/
+					  , @LOT_DISPLAY_YN 	NVARCHAR(10)				/* 재고 표시 여부 */
+	
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+	
+	/*  1. 변수 값 할당 */
+	    SET @COMP_CODE       = #{S_COMP_CODE}
+			SET @DIV_CODE        = #{DIV_CODE}
+			
+			SET @FR_INOUT_DATE   = CASE WHEN #{FR_INOUT_DATE} = '' THEN CONVERT(NVARCHAR(08), GETDATE(), 112) ELSE #{FR_INOUT_DATE} END
+			SET @TO_INOUT_DATE   = CASE WHEN #{TO_INOUT_DATE} = '' THEN CONVERT(NVARCHAR(08), GETDATE(), 112) ELSE #{TO_INOUT_DATE} END
+			
+			SET @ITEM_CODE       = #{ITEM_CODE}
+			SET @ITEM_NAME       = #{ITEM_NAME}
+			SET @ITEM_NAME       = REPLACE( #{ITEM_NAME} , '[', '[[]')
+			
+			SET @ITEM_ACCOUNT    = #{ITEM_ACCOUNT}
+			
+			SET @WH_CODE         = #{WH_CODE}
+			
+			SET @ITEM_LEVEL1     = #{ITEM_LEVEL1}
+			SET @ITEM_LEVEL2     = #{ITEM_LEVEL2}
+			SET @ITEM_LEVEL3     = #{ITEM_LEVEL3}
+			
+			SET @EVAL_FLAG       = ''
+			
+			SET @INOUT_METH      = #{INOUT_METH}
+			SET @CREATE_LOC      = ''
+			SET @INOUT_CODE_TYPE = ''
+			SET @ITEM_STATUS     = #{ITEM_STATUS}
+			
+			SET @INOUT_NUM       = ''
+			SET @LOT_NO          = #{LOT_NO}
+			SET @PROJECT_NO      = ''
+			
+			SET @INOUT_FLAG      = #{INOUT_FLAG}
+	
+			SET @QRY_TYPE        = CASE WHEN SUBSTRING('1', 1, 1) = '' THEN '1' ELSE SUBSTRING('1', 1, 1) END
+			    
+			SET @NORMAL_INOUT_YN = #{NORMAL_INOUT_YN}
+			SET @STOCK_CARE_YN	 = #{STOCK_CARE_YN}
+			SET @USER_ID         = #{S_USER_ID}
+			SET @LOT_DISPLAY_YN	 = #{LOT_DISPLAY_YN}
+	
+	/*  2. 명칭 조회 유형 설정 */
+	    DECLARE @RefItem            NVARCHAR(01)
+	
+	    SELECT TOP 1 @RefItem = REF_ITEM
+	    FROM   BSA300T WITH (NOLOCK)
+	    WHERE  USER_ID = @USER_ID
+	
+	    SET @RefItem = ISNULL(@RefItem, '')
+	
+	/*  3. 재고단가 계산 방법 설정 */
+	    DECLARE @StockP             NVARCHAR(01)
+	
+	    SELECT TOP 1 @StockP = SUB_CODE
+	    FROM   BSA100T WITH (NOLOCK)
+	    WHERE  COMP_CODE = @COMP_CODE                                             /* 단가처리 기준*/
+	    AND    MAIN_CODE = 'B069'
+	    AND    SUB_CODE  = '1'                                                    /* 기준재고단가*/
+	    AND    REF_CODE1 = 'Y'
+	
+	    SET @StockP = ISNULL(@StockP, '')
+	
+	/*  4. 가장 최근 마감월 조회 */
+	    DECLARE     @LastYYYYMM      NVARCHAR(06)     /* 가장 최근 마감월*/
+	               ,@BasisYYYYMM     NVARCHAR(06)     /* 기초 계산월*/
+	               
+	    SET @BasisYYYYMM = CONVERT(NVARCHAR(06), DATEADD(MONTH, -1, @FR_INOUT_DATE), 112)
+	                   
+	    SELECT @LastYYYYMM = MAX(MIN_BASIS_YYYYMM)
+	    FROM   BIV200TV1 WITH (NOLOCK)
+	    WHERE  COMP_CODE        = @COMP_CODE
+	    AND    DIV_CODE         = @DIV_CODE
+	    AND    MIN_BASIS_YYYYMM &lt; @BasisYYYYMM
+	    
+	    -- 2019-12-18  @@
+	    --AND  ((ITEM_CODE        = @ITEM_CODE AND @ITEM_CODE != '') OR (@ITEM_CODE = ''))
+	    --AND  ((WH_CODE          = @WH_CODE   AND @WH_CODE   != '') OR (@WH_CODE   = ''))
+	    
+	    SET @LastYYYYMM  = ISNULL(@LastYYYYMM, @BasisYYYYMM)
+	
+	/*  5. 임시 테이블 선언 */
+	    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#uniLITE200807111410')) 
+	       DROP TABLE #uniLITE200807111410
+	
+	    CREATE TABLE #uniLITE200807111410
+	        (
+	    /*  일반정보*/
+	        TYPE_FLAG          NVARCHAR(02),    COMP_CODE               NVARCHAR(08),    DIV_CODE         NVARCHAR(08)
+	      , ITEM_ACCOUNT       NVARCHAR(02),    ITEM_CODE               NVARCHAR(20)
+	      , SPEC               NVARCHAR(160),   STOCK_UNIT              NVARCHAR(03),    INOUT_DATE       NVARCHAR(10)
+	      , ITEM_STATUS        NVARCHAR(01),    INOUT_TYPE              NVARCHAR(03),    MOVE_TYPE        NVARCHAR(20)
+	
+	    /*  수량정보*/
+	      , BASIS_Q            NUMERIC(30, 6),  IN_Q                    NUMERIC(30, 6),  OUT_Q            NUMERIC(30, 6)
+	      , OUT_RTN_Q              NUMERIC(30, 6), IN_RTN_Q              NUMERIC(30, 6),  STOCK_Q                 NUMERIC(30, 6)
+	
+	    /*  금액정보*/
+	      , BASIS_I            NUMERIC(30, 6),  IN_I                    NUMERIC(30, 6),  OUT_I            NUMERIC(30, 6)
+	      , OUT_RTN_I              NUMERIC(30, 6), IN_RTN_I              NUMERIC(30, 6),  STOCK_I                 NUMERIC(30, 6)
+	
+	    /*  수불정보*/
+	      , INOUT_TYPE_DETAIL  NVARCHAR(10),    INOUT_METH              NVARCHAR(02)
+	      , WH_CODE            NVARCHAR(08),    SUBCON_CODE             NVARCHAR(08)
+	      , CREATE_LOC         NVARCHAR(01),    INOUT_CODE_TYPE         NVARCHAR(08),    INOUT_CODE       NVARCHAR(08)
+	
+	    /*  구매/판매 정보*/
+	      , ORDER_TYPE         NVARCHAR(02)
+	      , ORDER_UNIT         NVARCHAR(03),    ORDER_UNIT_P            NUMERIC(30, 6)
+	      , ORDER_UNIT_Q       NUMERIC(30, 6),  ORDER_UNIT_O            NUMERIC(30, 6),  TRNS_RATE        NUMERIC(12, 6)
+	
+	    /*  부가정보*/
+	      , INOUT_PRSN         NVARCHAR(10),    INOUT_NUM               NVARCHAR(20),    INOUT_SEQ        NUMERIC(06, 0)
+	      , PROJECT_NO         NVARCHAR(20),    LOT_NO                  NVARCHAR(20)
+	
+	    /*  기타*/
+	      , SORT_WH_CODE       NVARCHAR(08)
+	      , SORT_FLD           AS COMP_CODE + DIV_CODE + ITEM_CODE + SORT_WH_CODE + INOUT_DATE + CASE WHEN INOUT_TYPE = '1' THEN '1'
+	                                                                                                  WHEN INOUT_TYPE = '3' THEN '2'
+	                                                                                                  WHEN INOUT_TYPE = '2' THEN '3' END + INOUT_NUM + RIGHT('000000' + CONVERT(NVARCHAR, INOUT_SEQ), 6)
+	        )
+	
+	    CREATE INDEX uniLITE200807111410_IDX01 ON #uniLITE200807111410(COMP_CODE, DIV_CODE, ITEM_CODE, SORT_WH_CODE, INOUT_DATE, INOUT_TYPE, INOUT_NUM, INOUT_SEQ)
+	
+	/*  6. 조회 데이터 생성 */
+	    IF @INOUT_FLAG = '1'                         /* 수불 발생 조회시*/
+	        INSERT INTO #uniLITE200807111410
+	             ( TYPE_FLAG               , COMP_CODE               , DIV_CODE
+		        , ITEM_ACCOUNT            , ITEM_CODE               , SPEC                    , STOCK_UNIT
+		        , INOUT_DATE              , ITEM_STATUS             , INOUT_TYPE              , MOVE_TYPE
+		        , BASIS_Q                 , IN_Q                    , OUT_Q                   , IN_RTN_Q		, OUT_RTN_Q
+		        , BASIS_I                 , IN_I                    , OUT_I                   , IN_RTN_I		, OUT_RTN_I
+		        , INOUT_TYPE_DETAIL       , INOUT_METH              , WH_CODE                 , SUBCON_CODE
+		        , CREATE_LOC              , INOUT_CODE_TYPE         , INOUT_CODE              , ORDER_TYPE
+		        , ORDER_UNIT              , ORDER_UNIT_P            , ORDER_UNIT_Q            , ORDER_UNIT_O
+		        , TRNS_RATE               , INOUT_PRSN              , INOUT_NUM               , INOUT_SEQ
+		        , PROJECT_NO              , LOT_NO                  , SORT_WH_CODE)
+	        SELECT 
+	               '10' AS TYPE_FLAG
+	             , A.COMP_CODE, A.DIV_CODE
+	             , ISNULL(C2.ITEM_ACCOUNT, '')                                                                   AS ITEM_ACCOUNT
+	             , A.ITEM_CODE
+	             , ISNULL(C1.SPEC, '')                                                                           AS SPEC
+	             , ISNULL(C1.STOCK_UNIT, '')                                                                     AS STOCK_UNIT
+	             , A.INOUT_DATE                                                                                  AS INOUT_DATE
+	             , ISNULL(A.ITEM_STATUS, '')                                                                     AS ITEM_STATUS
+	             , ISNULL(A.INOUT_TYPE, '')                                                                      AS INOUT_TYPE
+	             , ISNULL(A.MOVE_TYPE, '')                                                                       AS MOVE_TYPE
+	
+	             , 0.0                                                                                           AS BASIS_Q
+	             , CASE WHEN A.INOUT_TYPE = '1' THEN ISNULL(A.INOUT_Q, 0) ELSE 0 END                             AS IN_Q
+		         , CASE WHEN A.INOUT_TYPE = '4' THEN ISNULL(A.INOUT_Q, 0) ELSE 0 END                             AS IN_RTN_Q
+		         , CASE WHEN A.INOUT_TYPE = '2' THEN ISNULL(A.INOUT_Q, 0) ELSE 0 END                             AS OUT_Q
+		         , CASE WHEN A.INOUT_TYPE = '3' THEN ISNULL(A.INOUT_Q, 0) ELSE 0 END                             AS OUT_RTN_Q
+	
+	             , 0.0                                                                                           AS BASIS_I
+	             , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN A.INOUT_TYPE = '1' THEN ISNULL(A.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN A.INOUT_TYPE = '1' THEN ISNULL(A.INOUT_CAL_I, 0) ELSE 0 END) END         AS IN_I
+		        , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN A.INOUT_TYPE = '4' THEN ISNULL(A.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN A.INOUT_TYPE = '4' THEN ISNULL(A.INOUT_CAL_I, 0) ELSE 0 END) END         AS IN_RTN_I
+		        , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN A.INOUT_TYPE = '2' THEN ISNULL(A.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN A.INOUT_TYPE = '2' THEN ISNULL(A.INOUT_CAL_I, 0) ELSE 0 END) END         AS OUT_I
+		        , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN A.INOUT_TYPE = '3' THEN ISNULL(A.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN A.INOUT_TYPE = '3' THEN ISNULL(A.INOUT_CAL_I, 0) ELSE 0 END) END         AS OUT_RTN_I
+	
+	             , ISNULL(A.MOVE_TYPE, '')                                                                       AS INOUT_TYPE_DETAIL
+	             , ISNULL(A.INOUT_METH, '')                                                                      AS INOUT_METH
+	             , ISNULL(A.WH_CODE, '')                                                                         AS WH_CODE
+	             , ''                                                                                            AS SUBCON_CODE
+	             , ISNULL(A.CREATE_LOC, '')                                                                      AS CREATE_LOC
+	             , ISNULL(A.INOUT_CODE_TYPE, '')                                                                 AS INOUT_CODE_TYPE
+	             , ISNULL(A.INOUT_CODE, '')                                                                      AS INOUT_CODE
+	             , ISNULL(A.ORDER_TYPE, '')                                                                      AS ORDER_TYPE
+	             , ISNULL(A.ORDER_UNIT, '')                                                                      AS ORDER_UNIT
+	             , ISNULL(A.ORDER_UNIT_P, 0)                                                                     AS ORDER_UNIT_P
+	             , ISNULL(A.ORDER_UNIT_Q, 0)                                                                     AS ORDER_UNIT_Q
+	             , ISNULL(A.ORDER_UNIT_O, 0)                                                                     AS ORDER_UNIT_O
+	             , ISNULL(A.TRNS_RATE, 0)                                                                        AS TRNS_RATE
+	             , ISNULL(A.INOUT_PRSN, '')                                                                      AS INOUT_PRSN
+	             , ISNULL(A.INOUT_NUM, '')                                                                       AS INOUT_NUM
+	             , A.INOUT_SEQ                                                                                   AS INOUT_SEQ
+	             , ISNULL(A.PROJECT_NO, '')                                                                      AS PROJECT_NO
+	             --, ISNULL(A.LOT_NO, '')                                                                          AS LOT_NO
+				 , CASE WHEN @LOT_DISPLAY_YN = 'N' THEN '' ELSE ISNULL(A.LOT_NO, '')  END                        AS LOT_NO		--20201203
+	             , CASE WHEN @QRY_TYPE = '1' AND @WH_CODE = '' THEN '' ELSE ISNULL(A.WH_CODE, '') END            AS SORT_WH_CODE
+	        FROM              BTR100T   A  WITH (NOLOCK, INDEX(BTR100T_IDX02))
+	               INNER JOIN BPR100T   C1 WITH (NOLOCK) ON C1.COMP_CODE       = A.COMP_CODE                           /* 품목*/
+	                                                    AND C1.ITEM_CODE       = A.ITEM_CODE
+	               INNER JOIN BPR200T   C2 WITH (NOLOCK) ON C2.COMP_CODE       = A.COMP_CODE                           /* 사업장 품목*/
+	                                                    AND C2.DIV_CODE        = A.DIV_CODE
+	                                                    AND C2.ITEM_CODE       = A.ITEM_CODE
+	        WHERE  A.COMP_CODE       = @COMP_CODE
+	        AND    A.DIV_CODE        = @DIV_CODE
+	        AND    A.INOUT_DATE     &gt;= @FR_INOUT_DATE                                                                  /* 수불년월*/
+	        AND    A.INOUT_DATE     &lt;= @TO_INOUT_DATE
+	
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+				AND A.ITEM_CODE = #{ITEM_CODE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+				AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+				AND CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+						 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+						 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+						 ELSE C1.ITEM_NAME
+					END LIKE '%' + #{ITEM_NAME} + '%' 
+			</if>
+	        AND  ((C2.ITEM_ACCOUNT   = @ITEM_ACCOUNT    AND @ITEM_ACCOUNT    != '') OR (@ITEM_ACCOUNT    = ''))        /* 계정*/
+	        AND  ((A.WH_CODE         = @WH_CODE         AND @WH_CODE         != '') OR (@WH_CODE         = ''))        /* 창고*/
+	
+	        AND  ((C1.ITEM_LEVEL1    = @ITEM_LEVEL1     AND @ITEM_LEVEL1     != '') OR (@ITEM_LEVEL1     = ''))        /* 대분류*/
+	        AND  ((C1.ITEM_LEVEL2    = @ITEM_LEVEL2     AND @ITEM_LEVEL2     != '') OR (@ITEM_LEVEL2     = ''))        /* 중분류*/
+	        AND  ((C1.ITEM_LEVEL3    = @ITEM_LEVEL3     AND @ITEM_LEVEL3     != '') OR (@ITEM_LEVEL3     = ''))        /* 소분류*/
+	
+	        AND  ((A.INOUT_METH      = '4'              AND @EVAL_FLAG       != '') OR (@EVAL_FLAG       = ''))        /* 실사조정 포함여부*/
+	        AND  ((A.INOUT_METH      = @INOUT_METH      AND @INOUT_METH      != '') OR (@INOUT_METH      = ''))        /* 수불방법*/
+	        AND  ((A.CREATE_LOC      = @CREATE_LOC      AND @CREATE_LOC      != '') OR (@CREATE_LOC      = ''))        /* 생성경로*/
+	        AND  ((A.INOUT_CODE_TYPE = @INOUT_CODE_TYPE AND @INOUT_CODE_TYPE != '') OR (@INOUT_CODE_TYPE = ''))        /* 생성경로*/
+	        AND  ((A.ITEM_STATUS     = @ITEM_STATUS     AND @ITEM_STATUS     != '') OR (@ITEM_STATUS     = ''))        /* 품목상태*/
+	        AND  ((A.INOUT_NUM    LIKE @INOUT_NUM + '%' AND @INOUT_NUM       != '') OR (@INOUT_NUM       = ''))        /* 수불번호*/
+	        AND  ((A.LOT_NO       LIKE @LOT_NO    + '%' AND @LOT_NO          != '') OR (@LOT_NO          = ''))        /* LOT_NO*/
+	        AND  ((A.PROJECT_NO      = @PROJECT_NO      AND @PROJECT_NO      != '') OR (@PROJECT_NO      = ''))        /* PROJECT_NO*/
+	
+	        AND  ((A.INOUT_METH     IN ('1', '2')       AND @NORMAL_INOUT_YN = 'Y')
+	           OR (A.INOUT_METH NOT IN ('1', '2')       AND @NORMAL_INOUT_YN = 'N') OR (@NORMAL_INOUT_YN = ''))        /* 정상수불여부*/
+	
+	    IF @INOUT_FLAG = '2'                         /* 전체 재고 조회시*/
+	        INSERT INTO #uniLITE200807111410
+	             ( TYPE_FLAG               , COMP_CODE               , DIV_CODE                , ITEM_ACCOUNT
+		        , ITEM_CODE               , SPEC                    , STOCK_UNIT
+		        , INOUT_DATE              , ITEM_STATUS             , INOUT_TYPE              , MOVE_TYPE
+		        , BASIS_Q                 , IN_Q                    , OUT_Q                   , IN_RTN_Q		, OUT_RTN_Q
+		        , BASIS_I                 , IN_I                    , OUT_I                   , IN_RTN_I		, OUT_RTN_I
+		        , INOUT_TYPE_DETAIL       , INOUT_METH              , WH_CODE                 , SUBCON_CODE
+		        , CREATE_LOC              , INOUT_CODE_TYPE         , INOUT_CODE              , ORDER_TYPE
+		        , ORDER_UNIT              , ORDER_UNIT_P            , ORDER_UNIT_Q            , ORDER_UNIT_O
+		        , TRNS_RATE               , INOUT_PRSN              , INOUT_NUM               , INOUT_SEQ
+		        , PROJECT_NO              , LOT_NO                  , SORT_WH_CODE)
+	        SELECT 
+	               '11' AS TYPE_FLAG
+	             , A.COMP_CODE, A.DIV_CODE
+	             , ISNULL(C2.ITEM_ACCOUNT, '')                                                                   AS ITEM_ACCOUNT
+	             , A.ITEM_CODE
+	             , ISNULL(C1.SPEC, '')                                                                           AS SPEC
+	             , ISNULL(C1.STOCK_UNIT, '')                                                                     AS STOCK_UNIT
+	             , ISNULL(B.INOUT_DATE, @FR_INOUT_DATE)                                                          AS INOUT_DATE
+	             , ISNULL(B.ITEM_STATUS, '')                                                                     AS ITEM_STATUS
+	             , ISNULL(B.INOUT_TYPE, '')                                                                      AS INOUT_TYPE
+	             , ISNULL(B.MOVE_TYPE, '')                                                                       AS MOVE_TYPE
+	
+	             , ISNULL(A.BASIS_STOCK_Q, 0)                                                                    AS BASIS_Q
+	             , CASE WHEN B.INOUT_TYPE = '1' THEN ISNULL(B.INOUT_Q, 0) ELSE 0 END                             AS IN_Q
+				, CASE WHEN B.INOUT_TYPE = '4' THEN ISNULL(B.INOUT_Q, 0) ELSE 0 END                             AS IN_RTN_Q
+				, CASE WHEN B.INOUT_TYPE = '2' THEN ISNULL(B.INOUT_Q, 0) ELSE 0 END                             AS OUT_Q
+				, CASE WHEN B.INOUT_TYPE = '3' THEN ISNULL(B.INOUT_Q, 0) ELSE 0 END                             AS OUT_RTN_Q
+	
+	             , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * ISNULL(A.BASIS_STOCK_Q, 0)
+		            ELSE ISNULL(A.BASIS_STOCK_I, 0) END                                                      AS BASIS_I
+		        , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN B.INOUT_TYPE = '1' THEN ISNULL(B.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN B.INOUT_TYPE = '1' THEN ISNULL(B.INOUT_CAL_I, 0) ELSE 0 END) END         AS IN_I
+		        , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN B.INOUT_TYPE = '4' THEN ISNULL(B.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN B.INOUT_TYPE = '4' THEN ISNULL(B.INOUT_CAL_I, 0) ELSE 0 END) END         AS IN_RTN_I
+		        , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN B.INOUT_TYPE = '2' THEN ISNULL(B.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN B.INOUT_TYPE = '2' THEN ISNULL(B.INOUT_CAL_I, 0) ELSE 0 END) END         AS OUT_I
+		        , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN B.INOUT_TYPE = '3' THEN ISNULL(B.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN B.INOUT_TYPE = '3' THEN ISNULL(B.INOUT_CAL_I, 0) ELSE 0 END) END         AS OUT_RTN_I
+	
+	             , ISNULL(B.MOVE_TYPE, '')                                                                       AS INOUT_TYPE_DETAIL
+	             , ISNULL(B.INOUT_METH, '')                                                                      AS INOUT_METH
+	             , ISNULL(B.WH_CODE, A.WH_CODE)                                                                  AS WH_CODE
+	             , ''                                                                                            AS SUBCON_CODE
+	             , ISNULL(B.CREATE_LOC, '')                                                                      AS CREATE_LOC
+	             , ISNULL(B.INOUT_CODE_TYPE, '')                                                                 AS INOUT_CODE_TYPE
+	             , ISNULL(B.INOUT_CODE, '')                                                                      AS INOUT_CODE
+	             , ISNULL(B.ORDER_TYPE, '')                                                                      AS ORDER_TYPE
+	             , ISNULL(B.ORDER_UNIT, '')                                                                      AS ORDER_UNIT
+	             , ISNULL(B.ORDER_UNIT_P, 0)                                                                     AS ORDER_UNIT_P
+	             , ISNULL(B.ORDER_UNIT_Q, 0)                                                                     AS ORDER_UNIT_Q
+	             , ISNULL(B.ORDER_UNIT_O, 0)                                                                     AS ORDER_UNIT_O
+	             , ISNULL(B.TRNS_RATE, 0)                                                                        AS TRNS_RATE
+	             , ISNULL(B.INOUT_PRSN, '')                                                                      AS INOUT_PRSN
+	             , ISNULL(B.INOUT_NUM, '')                                                                       AS INOUT_NUM
+	             , B.INOUT_SEQ                                                                                   AS INOUT_SEQ
+	             , ISNULL(B.PROJECT_NO, '')                                                                      AS PROJECT_NO
+
+--	             , ISNULL(B.LOT_NO, '')                                                                          AS LOT_NO
+	             , ISNULL(A.LOT_NO, '')                                                                          AS LOT_NO
+
+	             , CASE WHEN @QRY_TYPE = '1' AND @WH_CODE = '' THEN '' ELSE ISNULL(B.WH_CODE, A.WH_CODE) END     AS SORT_WH_CODE
+	        FROM              (
+	                          SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.LOT_NO, A.WH_CODE
+	                               , SUM(ISNULL(A.STOCK_Q, 0)) AS BASIS_STOCK_Q, SUM(ISNULL(A.STOCK_I, 0)) AS BASIS_STOCK_I
+	                          FROM   (
+	                                 SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE
+										  --, A.LOT_NO
+										  , CASE WHEN @LOT_DISPLAY_YN = 'N' THEN '' ELSE ISNULL(A.LOT_NO, '')  END AS LOT_NO		--20201203
+										  , CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE '' END AS WH_CODE
+	                                      , 0 AS STOCK_Q, 0 AS STOCK_I
+	                                 FROM              BIV150T  A  WITH (NOLOCK)
+	                                        INNER JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE                          /* 품목*/
+	                                                                            AND C1.ITEM_CODE  = A.ITEM_CODE
+	                                        INNER JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE                          /* 사업장 품목*/
+	                                                                            AND C2.DIV_CODE   = A.DIV_CODE
+	                                                                            AND C2.ITEM_CODE  = A.ITEM_CODE
+	                                 WHERE  A.COMP_CODE      = @COMP_CODE
+	                                 AND    A.DIV_CODE       = @DIV_CODE
+									<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+										AND A.ITEM_CODE = #{ITEM_CODE}
+									</if>
+									<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+										AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+									</if>
+									<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+										AND CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+												 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+												 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+												 ELSE C1.ITEM_NAME
+											END LIKE '%' + #{ITEM_NAME} + '%' 
+									</if>
+	                                 AND  ((C1.ITEM_LEVEL1   = @ITEM_LEVEL1     AND @ITEM_LEVEL1  != '') OR (@ITEM_LEVEL1  = ''))        /* 대분류*/
+	                                 AND  ((C1.ITEM_LEVEL2   = @ITEM_LEVEL2     AND @ITEM_LEVEL2  != '') OR (@ITEM_LEVEL2  = ''))        /* 중분류*/
+	                                 AND  ((C1.ITEM_LEVEL3   = @ITEM_LEVEL3     AND @ITEM_LEVEL3  != '') OR (@ITEM_LEVEL3  = ''))        /* 소분류*/
+	                                 AND  ((A.WH_CODE        = @WH_CODE         AND @WH_CODE      != '') OR (@WH_CODE      = ''))        /* 창고*/
+	                                 AND  ((C2.ITEM_ACCOUNT  = @ITEM_ACCOUNT    AND @ITEM_ACCOUNT != '') OR (@ITEM_ACCOUNT = ''))        /* 계정*/
+	                                 UNION ALL
+	                                 SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE
+										  --, A.LOT_NO
+										  , CASE WHEN @LOT_DISPLAY_YN = 'N' THEN '' ELSE ISNULL(A.LOT_NO, '')  END AS LOT_NO		--20201203
+										  , CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE '' END AS WH_CODE
+	                                      , ISNULL(A.STOCK_Q, 0) AS STOCK_Q, ISNULL(A.STOCK_I, 0) AS STOCK_I
+	                                 FROM              BIV250T  A  WITH (NOLOCK)
+	                                        INNER JOIN (
+	                                                   SELECT A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE, MAX(A.BASIS_YYYYMM) AS BASIS_YYYYMM
+	                                                   FROM              BIV200T  A  WITH (NOLOCK)
+	                                                          INNER JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE                          /* 품목*/
+	                                                                                              AND C1.ITEM_CODE  = A.ITEM_CODE
+	                                                          INNER JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE                          /* 사업장 품목*/
+	                                                                                              AND C2.DIV_CODE   = A.DIV_CODE
+	                                                                                              AND C2.ITEM_CODE  = A.ITEM_CODE
+	                                                   WHERE  A.COMP_CODE      = @COMP_CODE
+	                                                   AND    A.DIV_CODE       = @DIV_CODE
+	                                                   AND    A.BASIS_YYYYMM  &gt;= CONVERT(NVARCHAR(6), DATEADD(MONTH, -6, CONVERT(DATETIME, @LastYYYYMM + '01')), 112)
+	                                                   AND    A.BASIS_YYYYMM  &lt;= @LastYYYYMM
+														<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+															AND A.ITEM_CODE = #{ITEM_CODE}
+														</if>
+														<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+															AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+														</if>
+														<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+															AND CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+																	 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+																	 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+																	 ELSE C1.ITEM_NAME
+																END LIKE '%' + #{ITEM_NAME} + '%' 
+														</if>
+	                                                   AND  ((C1.ITEM_LEVEL1   = @ITEM_LEVEL1     AND @ITEM_LEVEL1  != '') OR (@ITEM_LEVEL1  = ''))        /* 대분류*/
+	                                                   AND  ((C1.ITEM_LEVEL2   = @ITEM_LEVEL2     AND @ITEM_LEVEL2  != '') OR (@ITEM_LEVEL2  = ''))        /* 중분류*/
+	                                                   AND  ((C1.ITEM_LEVEL3   = @ITEM_LEVEL3     AND @ITEM_LEVEL3  != '') OR (@ITEM_LEVEL3  = ''))        /* 소분류*/
+	                                                   AND  ((A.WH_CODE        = @WH_CODE         AND @WH_CODE      != '') OR (@WH_CODE      = ''))        /* 창고*/
+	                                                   AND  ((C2.ITEM_ACCOUNT  = @ITEM_ACCOUNT    AND @ITEM_ACCOUNT != '') OR (@ITEM_ACCOUNT = ''))        /* 계정*/
+	                                                   GROUP BY A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE
+	                                                   ) B                       ON B.COMP_CODE    = A.COMP_CODE
+	                                                                            AND B.DIV_CODE     = A.DIV_CODE
+	                                                                            AND B.WH_CODE      = A.WH_CODE
+	                                                                            AND B.ITEM_CODE    = A.ITEM_CODE
+	                                                                            AND B.BASIS_YYYYMM = A.BASIS_YYYYMM
+	                                 UNION ALL
+	                                 SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE
+									      --, A.LOT_NO
+										  , CASE WHEN @LOT_DISPLAY_YN = 'N' THEN '' ELSE ISNULL(A.LOT_NO, '')  END AS LOT_NO		--20201203
+										  , CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE '' END AS WH_CODE
+	                                      , CASE WHEN A.INOUT_TYPE = '1' THEN      ISNULL(A.INOUT_Q, 0)
+	                                             WHEN A.INOUT_TYPE = '2' THEN -1 * ISNULL(A.INOUT_Q, 0)
+	                                             WHEN A.INOUT_TYPE = '3' THEN      ISNULL(A.INOUT_Q, 0)
+	                                             WHEN A.INOUT_TYPE = '4' THEN -1 * ISNULL(A.INOUT_Q, 0)
+	                                             ELSE 0 END                                             AS STOCK_Q
+	                                      , CASE WHEN A.INOUT_TYPE = '1' THEN      ISNULL(A.INOUT_CAL_I, 0)
+	                                             WHEN A.INOUT_TYPE = '2' THEN -1 * ISNULL(A.INOUT_CAL_I, 0)
+	                                             WHEN A.INOUT_TYPE = '3' THEN      ISNULL(A.INOUT_CAL_I, 0)
+	                                             WHEN A.INOUT_TYPE = '4' THEN -1 * ISNULL(A.INOUT_CAL_I, 0)
+	                                             ELSE 0 END                                             AS STOCK_I
+	                                 FROM              BTR100T  A  WITH (NOLOCK, INDEX(BTR100T_IDX02))
+	                                        INNER JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE                                 /* 품목*/
+	                                                                            AND C1.ITEM_CODE  = A.ITEM_CODE
+	                                        INNER JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE                                 /* 사업장 품목*/
+	                                                                            AND C2.DIV_CODE   = A.DIV_CODE
+	                                                                            AND C2.ITEM_CODE  = A.ITEM_CODE
+	                                 WHERE  A.COMP_CODE       = @COMP_CODE
+	                                 AND    A.DIV_CODE        = @DIV_CODE
+	                                 AND    A.INOUT_DATE     &gt;= @LastYYYYMM + '32'
+	                                 AND    A.INOUT_DATE     &lt; @FR_INOUT_DATE
+	
+									<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+										AND A.ITEM_CODE = #{ITEM_CODE}
+									</if>
+									<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+										AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+									</if>
+									<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+										AND CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+												 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+												 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+												 ELSE C1.ITEM_NAME
+											END LIKE '%' + #{ITEM_NAME} + '%' 
+									</if>
+	                                 AND  ((C2.ITEM_ACCOUNT   = @ITEM_ACCOUNT    AND @ITEM_ACCOUNT    != '') OR (@ITEM_ACCOUNT    = ''))        /* 계정*/
+	                                 AND  ((A.WH_CODE         = @WH_CODE         AND @WH_CODE         != '') OR (@WH_CODE         = ''))        /* 창고*/
+	
+	                                 AND  ((C1.ITEM_LEVEL1    = @ITEM_LEVEL1     AND @ITEM_LEVEL1     != '') OR (@ITEM_LEVEL1     = ''))        /* 대분류*/
+	                                 AND  ((C1.ITEM_LEVEL2    = @ITEM_LEVEL2     AND @ITEM_LEVEL2     != '') OR (@ITEM_LEVEL2     = ''))        /* 중분류*/
+	                                 AND  ((C1.ITEM_LEVEL3    = @ITEM_LEVEL3     AND @ITEM_LEVEL3     != '') OR (@ITEM_LEVEL3     = ''))        /* 소분류*/
+	
+	                                 AND  ((A.INOUT_METH      = '4'              AND @EVAL_FLAG       != '') OR (@EVAL_FLAG       = ''))        /* 실사조정 포함여부*/
+	                                 AND  ((A.INOUT_METH      = @INOUT_METH      AND @INOUT_METH      != '') OR (@INOUT_METH      = ''))        /* 수불방법*/
+	                                 AND  ((A.CREATE_LOC      = @CREATE_LOC      AND @CREATE_LOC      != '') OR (@CREATE_LOC      = ''))        /* 생성경로*/
+	                                 AND  ((A.INOUT_CODE_TYPE = @INOUT_CODE_TYPE AND @INOUT_CODE_TYPE != '') OR (@INOUT_CODE_TYPE = ''))        /* 생성경로*/
+	                                 AND  ((A.ITEM_STATUS     = @ITEM_STATUS     AND @ITEM_STATUS     != '') OR (@ITEM_STATUS     = ''))        /* 품목상태*/
+	                                 AND  ((A.INOUT_NUM    LIKE @INOUT_NUM + '%' AND @INOUT_NUM       != '') OR (@INOUT_NUM       = ''))        /* 수불번호*/
+	                                 AND  ((A.LOT_NO       LIKE @LOT_NO    + '%' AND @LOT_NO          != '') OR (@LOT_NO          = ''))        /* LOT_NO*/
+	                                 AND  ((A.PROJECT_NO      = @PROJECT_NO      AND @PROJECT_NO      != '') OR (@PROJECT_NO      = ''))        /* PROJECT_NO*/
+	
+	                                 AND  ((A.INOUT_METH     IN ('1', '2')       AND @NORMAL_INOUT_YN = 'Y')
+	                                    OR (A.INOUT_METH NOT IN ('1', '2')       AND @NORMAL_INOUT_YN = 'N') OR (@NORMAL_INOUT_YN = ''))        /* 정상수불여부*/
+	                                 ) A
+	                          GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.LOT_NO, A.WH_CODE
+	                          ) A
+	               LEFT  JOIN BTR100T   B  WITH (NOLOCK) ON  B.COMP_CODE       = A.COMP_CODE
+	                                                    AND  B.DIV_CODE        = A.DIV_CODE
+	                                                    AND  B.ITEM_CODE       = A.ITEM_CODE
+	                                                    AND  B.WH_CODE         = CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE B.WH_CODE END
+	                                                    AND  B.INOUT_DATE     &gt;= @FR_INOUT_DATE
+	                                                    AND  B.INOUT_DATE     &lt;= @TO_INOUT_DATE
+	                                                    --@@
+	                                                    AND B.LOT_NO = A.LOT_NO
+	               INNER JOIN BPR100T   C1 WITH (NOLOCK) ON C1.COMP_CODE       = A.COMP_CODE                                             /* 품목*/
+	                                                    AND C1.ITEM_CODE       = A.ITEM_CODE
+	               INNER JOIN BPR200T   C2 WITH (NOLOCK) ON C2.COMP_CODE       = A.COMP_CODE                                             /* 사업장 품목*/
+	                                                    AND C2.DIV_CODE        = A.DIV_CODE
+	                                                    AND C2.ITEM_CODE       = A.ITEM_CODE
+	
+	/*  7. 기초 수량/금액 조회 */
+	/*  기초수량/금액 조회*/
+	    IF @INOUT_FLAG = '1'       /* 수불 발생건만 조회시,  기초 수량/금액 조회*/
+	    BEGIN
+	        UPDATE A
+	        SET    A.BASIS_Q = ISNULL(B.STOCK_Q, 0) + ISNULL(C.STOCK_Q, 0)
+	             , A.BASIS_I = ISNULL(B.STOCK_I, 0) + ISNULL(C.STOCK_I, 0)
+	        FROM   #uniLITE200807111410 A WITH (NOLOCK)
+	               LEFT  JOIN (
+	                          SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE
+								   --, A.LOT_NO
+								   , CASE WHEN @LOT_DISPLAY_YN = 'N' THEN '' ELSE ISNULL(A.LOT_NO, '')  END AS LOT_NO		--20201203
+								   , CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE '' END AS WH_CODE
+	                               , SUM(ISNULL(A.STOCK_Q, 0)) AS STOCK_Q, SUM(ISNULL(A.STOCK_I, 0)) AS STOCK_I
+	                          FROM              BIV250T  A  WITH (NOLOCK)
+	                                 INNER JOIN (
+	                                            SELECT A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE, A.LOT_NO, MAX(A.BASIS_YYYYMM) AS BASIS_YYYYMM
+	                                            FROM   BIV250T  A  WITH (NOLOCK)
+	                                            WHERE  A.COMP_CODE      = @COMP_CODE
+	                                            AND    A.DIV_CODE       = @DIV_CODE
+	                                            AND    A.BASIS_YYYYMM  &gt;= CONVERT(NVARCHAR(6), DATEADD(MONTH, -6, CONVERT(DATETIME, @LastYYYYMM + '01')), 112)
+	                                            AND    A.BASIS_YYYYMM  &lt;= @LastYYYYMM
+	                                            GROUP BY A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE, A.LOT_NO
+	                                            ) C                       ON  C.COMP_CODE    = A.COMP_CODE
+	                                                                     AND  C.DIV_CODE     = A.DIV_CODE
+	                                                                     AND  C.WH_CODE      = A.WH_CODE
+	                                                                     AND  C.ITEM_CODE    = A.ITEM_CODE
+																		 AND  C.LOT_NO		 = A.LOT_NO
+	                                                                     AND  C.BASIS_YYYYMM = A.BASIS_YYYYMM
+	                          WHERE  A.COMP_CODE      = @COMP_CODE
+	                          AND    A.DIV_CODE       = @DIV_CODE
+	                          GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE
+									 --, A.LOT_NO
+									 , CASE WHEN @LOT_DISPLAY_YN = 'N' THEN '' ELSE ISNULL(A.LOT_NO, '')  END		--20201203
+									 , CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE '' END
+	                          ) B                        ON  B.COMP_CODE       = A.COMP_CODE
+	                                                    AND  B.DIV_CODE        = A.DIV_CODE
+	                                                    AND  B.ITEM_CODE       = A.ITEM_CODE
+														AND  B.LOT_NO          = A.LOT_NO							
+	                                                    AND  B.WH_CODE         = CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE B.WH_CODE END
+	               LEFT  JOIN (
+	                          SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE
+								   --, A.LOT_NO
+								   , CASE WHEN @LOT_DISPLAY_YN = 'N' THEN '' ELSE ISNULL(A.LOT_NO, '')  END AS LOT_NO		--20201203
+								   , CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE '' END AS WH_CODE
+	                               , SUM(CASE WHEN A.INOUT_TYPE = '1' THEN      ISNULL(A.INOUT_Q, 0)
+	                                          WHEN A.INOUT_TYPE = '2' THEN -1 * ISNULL(A.INOUT_Q, 0)
+	                                          WHEN A.INOUT_TYPE = '3' THEN      ISNULL(A.INOUT_Q, 0)
+	                                          WHEN A.INOUT_TYPE = '4' THEN -1 * ISNULL(A.INOUT_Q, 0)
+	                                          ELSE 0 END)                                             AS STOCK_Q
+	                               , SUM(CASE WHEN A.INOUT_TYPE = '1' THEN      ISNULL(A.INOUT_CAL_I, 0)
+	                                          WHEN A.INOUT_TYPE = '2' THEN -1 * ISNULL(A.INOUT_CAL_I, 0)
+	                                          WHEN A.INOUT_TYPE = '3' THEN      ISNULL(A.INOUT_CAL_I, 0)
+	                                          WHEN A.INOUT_TYPE = '4' THEN -1 * ISNULL(A.INOUT_CAL_I, 0)
+	                                          ELSE 0 END)                                             AS STOCK_I
+	                          FROM   BTR100T  A  WITH (NOLOCK)
+	                          WHERE  A.COMP_CODE      = @COMP_CODE
+	                          AND    A.DIV_CODE       = @DIV_CODE
+	                          AND    A.INOUT_DATE    &gt;= @LastYYYYMM + '32'                                                          /* 수불년월*/
+	                          AND    A.INOUT_DATE     &lt; @FR_INOUT_DATE
+	                          GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE
+									  --,A.LOT_NO
+									, CASE WHEN @LOT_DISPLAY_YN = 'N' THEN '' ELSE ISNULL(A.LOT_NO, '')  END 		--20201203
+									, CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE '' END
+	                          ) C                        ON  C.COMP_CODE       = A.COMP_CODE
+	                                                    AND  C.DIV_CODE        = A.DIV_CODE
+	                                                    AND  C.ITEM_CODE       = A.ITEM_CODE
+														AND  C.LOT_NO		   = A.LOT_NO
+	                                                    AND  C.WH_CODE         = CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE C.WH_CODE END
+	        WHERE  A.TYPE_FLAG IN ('10', '11')
+	    END
+	    
+	/*  8. 일별 수불데이터 생성 */
+	/*  일별수불 임시테이블 생성*/
+	    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#uniLITE200811181730')) 
+	       DROP TABLE #uniLITE200811181730
+	
+	    CREATE TABLE #uniLITE200811181730
+	    (
+	    /*     일반정보*/
+	           COMP_CODE            NVARCHAR(08)
+	         , DIV_CODE             NVARCHAR(08)
+	         , COMMON_CODE          NVARCHAR(10)
+	         , COMMON_NAME          NVARCHAR(20)
+	         , ITEM_LEVEL1          NVARCHAR(20)
+	         , ITEM_LEVEL_NAME1     NVARCHAR(20)
+	         , ITEM_LEVEL2          NVARCHAR(20)
+	         , ITEM_LEVEL_NAME2     NVARCHAR(20)
+	         , ITEM_LEVEL3          NVARCHAR(20)
+	         , ITEM_LEVEL_NAME3     NVARCHAR(20)
+	         , ITEM_CODE            NVARCHAR(20)
+	         , ITEM_NAME            NVARCHAR(200)
+	         , SPEC                 NVARCHAR(160)
+	         , STOCK_UNIT           NVARCHAR(03)
+	         , INOUT_DATE           NVARCHAR(10)
+	         , LOT_NO               NVARCHAR(20)
+	
+	    /**  수량정보*/
+	         , BASIS_Q              NUMERIC(30, 6)
+	         , IN_Q                 NUMERIC(30, 6)
+	         , OUT_Q                NUMERIC(30, 6)
+	         , IN_RTN_Q                NUMERIC(30, 6)
+	         , OUT_RTN_Q                NUMERIC(30, 6)
+	         , STOCK_Q              NUMERIC(30, 6)
+	
+	    /*  금액정보*/
+	         , BASIS_I              NUMERIC(30, 6)
+	         , IN_I                 NUMERIC(30, 6)
+	         , OUT_I                NUMERIC(30, 6)
+	         , IN_RTN_I                NUMERIC(30, 6)
+	         , OUT_RTN_I                NUMERIC(30, 6)
+	         , STOCK_I              NUMERIC(30, 6)
+	    )
+	
+	/*  일별수불데이터 생성*/
+	    IF @QRY_TYPE = '1'    /*품목별*/
+	    BEGIN
+	        INSERT INTO #uniLITE200811181730
+	        (      COMP_CODE            , DIV_CODE              , COMMON_CODE           , COMMON_NAME
+		        , ITEM_LEVEL1          , ITEM_LEVEL_NAME1      , ITEM_LEVEL2           , ITEM_LEVEL_NAME2
+		        , ITEM_LEVEL3          , ITEM_LEVEL_NAME3
+		        , ITEM_CODE            , ITEM_NAME             , SPEC                  , STOCK_UNIT            , INOUT_DATE     , LOT_NO
+		        , BASIS_Q              , IN_Q                  , OUT_Q                 , IN_RTN_Q              , OUT_RTN_Q 		, STOCK_Q
+		        , BASIS_I              , IN_I                  , OUT_I                 , IN_RTN_I              , OUT_RTN_I   		, STOCK_I
+		)
+	        SELECT A.COMP_CODE
+	             , A.DIV_CODE
+	             , A.COMMON_CODE
+	             , A.COMMON_NAME
+	             , A.ITEM_LEVEL1
+	             , A.ITEM_LEVEL_NAME1
+	             , A.ITEM_LEVEL2
+	             , A.ITEM_LEVEL_NAME2
+	             , A.ITEM_LEVEL3
+	             , A.ITEM_LEVEL_NAME3
+	             , A.ITEM_CODE
+	             , A.ITEM_NAME
+	             , A.SPEC
+	             , A.STOCK_UNIT
+	             , A.INOUT_DATE
+	             , A.LOT_NO
+	             , A.BASIS_Q
+	             , SUM(A.IN_Q)  AS IN_Q
+		        , SUM(A.IN_RTN_Q) AS IN_RTN_Q
+		        , SUM(A.OUT_Q) AS OUT_Q
+		        , SUM(A.OUT_RTN_Q) AS OUT_RTN_Q
+		        , A.STOCK_Q
+		        , A.BASIS_I
+		        , SUM(A.IN_I)  AS IN_I
+		        , SUM(A.IN_RTN_I) AS IN_RTN_I
+		        , SUM(A.OUT_I) AS OUT_I
+		        , SUM(A.OUT_RTN_I) AS OUT_RTN_I
+	             , A.STOCK_I
+	        FROM   (
+	               SELECT A.COMP_CODE                                                AS COMP_CODE
+	                    , A.DIV_CODE                                                 AS DIV_CODE
+	                    , A.ITEM_ACCOUNT                                             AS COMMON_CODE
+	                    , ISNULL(M1.CODE_NAME, '')                                   AS COMMON_NAME
+	                    , C1.ITEM_LEVEL1                                             AS ITEM_LEVEL1
+	                    , ISNULL(C3.LEVEL_NAME, '')                                  AS ITEM_LEVEL_NAME1
+	                    , C1.ITEM_LEVEL2                                             AS ITEM_LEVEL2
+	                    , ISNULL(C4.LEVEL_NAME, '')                                  AS ITEM_LEVEL_NAME2
+	                    , C1.ITEM_LEVEL3                                             AS ITEM_LEVEL3
+	                    , ISNULL(C5.LEVEL_NAME, '')                                  AS ITEM_LEVEL_NAME3
+	                    , A.ITEM_CODE
+	                    , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+	                           WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+	                           WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+	                           ELSE C1.ITEM_NAME
+	                      END                                                        AS ITEM_NAME
+	                    , ISNULL(C1.SPEC, '')                                        AS SPEC
+	                    , ISNULL(C1.STOCK_UNIT, '')                                  AS STOCK_UNIT
+	                    , LEFT(uniLITE.fnGetUserDate(A.COMP_CODE, A.INOUT_DATE), 10) AS INOUT_DATE
+	                    , A.LOT_NO                                                   AS LOT_NO
+	                    , A.BASIS_Q                                                  AS BASIS_Q
+		                , A.BASIS_I                                                  AS BASIS_I
+		                , A.IN_Q                                                     AS IN_Q
+		                , A.IN_I                                                     AS IN_I
+		                , A.IN_RTN_Q                                                    AS IN_RTN_Q
+		                , A.IN_RTN_I                                                    AS IN_RTN_I
+		                , A.OUT_Q                                                    AS OUT_Q
+		                , A.OUT_I                                                    AS OUT_I
+		                , A.OUT_RTN_Q                                                    AS OUT_RTN_Q
+		                , A.OUT_RTN_I                                                    AS OUT_RTN_I
+		                , A.STOCK_Q                                                  AS STOCK_Q
+		                , A.STOCK_I                                                  AS STOCK_I
+	               FROM   #uniLITE200807111410 A  WITH (NOLOCK)
+	                      INNER JOIN BPR100T   C1 WITH (NOLOCK) ON C1.COMP_CODE       = A.COMP_CODE              /* 품목*/
+	                                                           AND C1.ITEM_CODE       = A.ITEM_CODE
+	                      INNER JOIN BPR200T   C2 WITH (NOLOCK) ON C2.COMP_CODE       = A.COMP_CODE              /* 사업장 품목*/
+	                                                           AND C2.DIV_CODE        = A.DIV_CODE
+	                                                           AND C2.ITEM_CODE       = A.ITEM_CODE
+	                      LEFT  JOIN BPR000T   C3 WITH (NOLOCK) ON C3.COMP_CODE       = C1.COMP_CODE             /* 품목 대분류*/
+	                                                           AND C3.LEVEL1          = C1.ITEM_LEVEL1
+	                                                           AND C3.LEVEL1         != '*'
+	                                                           AND C3.LEVEL2          = '*'
+	                                                           AND C3.LEVEL3          = '*'
+	                      LEFT  JOIN BPR000T   C4 WITH (NOLOCK) ON C4.COMP_CODE       = C1.COMP_CODE             /* 품목 중분류*/
+	                                                           AND C4.LEVEL1          = C1.ITEM_LEVEL1
+	                                                           AND C4.LEVEL1         != '*'
+	                                                           AND C4.LEVEL2          = C1.ITEM_LEVEL2
+	                                                           AND C4.LEVEL2         != '*'
+	                                                           AND C4.LEVEL3          = '*'
+	                      LEFT  JOIN BPR000T   C5 WITH (NOLOCK) ON C5.COMP_CODE       = C1.COMP_CODE             /* 품목 소분류*/
+	                                                           AND C5.LEVEL1          = C1.ITEM_LEVEL1
+	                                                           AND C5.LEVEL1         != '*'
+	                                                           AND C5.LEVEL2          = C1.ITEM_LEVEL2
+	                                                           AND C5.LEVEL2         != '*'
+	                                                           AND C5.LEVEL3          = C1.ITEM_LEVEL3
+	                                                           AND C5.LEVEL3         != '*'
+	                      LEFT  JOIN BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE       = C2.COMP_CODE
+	                                                           AND M1.MAIN_CODE       = 'B020'                  /* 계정구분*/
+	                                                           AND M1.SUB_CODE        = C2.ITEM_ACCOUNT
+	               WHERE  A.BASIS_Q  != 0
+	               OR     A.BASIS_I  != 0
+	               OR     A.IN_Q     != 0
+	               OR     A.IN_I     != 0
+	               OR     A.OUT_Q    != 0
+	               OR     A.OUT_I    != 0
+	               OR     A.IN_RTN_Q    != 0
+	               OR     A.IN_RTN_I    != 0
+	               OR     A.OUT_RTN_Q    != 0
+	               OR     A.OUT_RTN_I    != 0
+	               OR     A.STOCK_Q  != 0
+	               OR     A.STOCK_I  != 0
+	               ) A 
+	        GROUP BY A.COMP_CODE, A.DIV_CODE, A.COMMON_CODE, A.COMMON_NAME, A.ITEM_LEVEL1, A.ITEM_LEVEL_NAME1
+	               , A.ITEM_LEVEL2, A.ITEM_LEVEL_NAME2, A.ITEM_LEVEL3, A.ITEM_LEVEL_NAME3
+	               , A.ITEM_CODE, A.ITEM_NAME, A.SPEC, A.STOCK_UNIT, A.INOUT_DATE , A.LOT_NO
+	               , A.BASIS_Q, A.BASIS_I, A.STOCK_Q, A.STOCK_I
+	        ORDER BY A.COMMON_CODE, A.ITEM_CODE, A.LOT_NO, A.INOUT_DATE
+	    END
+	 ELSE                 /*창고별*/
+	    BEGIN
+	        INSERT INTO #uniLITE200811181730
+	        (      COMP_CODE            , DIV_CODE              , COMMON_CODE           , COMMON_NAME
+		        , ITEM_LEVEL1          , ITEM_LEVEL_NAME1      , ITEM_LEVEL2           , ITEM_LEVEL_NAME2
+		        , ITEM_LEVEL3          , ITEM_LEVEL_NAME3
+		        , ITEM_CODE            , ITEM_NAME             , SPEC                  , STOCK_UNIT            , INOUT_DATE     , LOT_NO
+		        , BASIS_Q              , IN_Q                  , OUT_Q                 , IN_RTN_Q              , OUT_RTN_Q 		, STOCK_Q
+		        , BASIS_I              , IN_I                  , OUT_I                 , IN_RTN_I              , OUT_RTN_I			, STOCK_I
+		)
+	        SELECT A.COMP_CODE
+	             , A.DIV_CODE
+	             , A.COMMON_CODE
+	             , A.COMMON_NAME
+	             , A.ITEM_LEVEL1
+	             , A.ITEM_LEVEL_NAME1
+	             , A.ITEM_LEVEL2
+	             , A.ITEM_LEVEL_NAME2
+	             , A.ITEM_LEVEL3
+	             , A.ITEM_LEVEL_NAME3
+	             , A.ITEM_CODE
+	             , A.ITEM_NAME
+	             , A.SPEC
+	             , A.STOCK_UNIT
+	             , A.INOUT_DATE
+	             , A.LOT_NO
+	             , A.BASIS_Q
+	             , SUM(A.IN_Q)  AS IN_Q
+		        , SUM(A.IN_RTN_Q) AS IN_RTN_Q
+		        , SUM(A.OUT_Q) AS OUT_Q
+		        , SUM(A.OUT_RTN_Q) AS OUT_RTN_Q
+		        , A.STOCK_Q
+		        , A.BASIS_I
+		        , SUM(A.IN_I)  AS IN_I
+		        , SUM(A.IN_RTN_I) AS IN_RTN_I
+		        , SUM(A.OUT_I) AS OUT_I
+		        , SUM(A.OUT_RTN_I) AS OUT_RTN_I
+	             , A.STOCK_I
+	        FROM   (
+	               SELECT A.COMP_CODE                                                AS COMP_CODE
+	                    , A.DIV_CODE                                                 AS DIV_CODE
+	                    , A.WH_CODE                                                  AS COMMON_CODE
+	                    , ISNULL(D1.TREE_NAME, '')                                   AS COMMON_NAME
+	                    , C1.ITEM_LEVEL1                                             AS ITEM_LEVEL1
+	                    , ISNULL(C3.LEVEL_NAME, '')                                  AS ITEM_LEVEL_NAME1
+	                    , C1.ITEM_LEVEL2                                             AS ITEM_LEVEL2
+	                    , ISNULL(C4.LEVEL_NAME, '')                                  AS ITEM_LEVEL_NAME2
+	                    , C1.ITEM_LEVEL3                                             AS ITEM_LEVEL3
+	                    , ISNULL(C5.LEVEL_NAME, '')                                  AS ITEM_LEVEL_NAME3
+	                    , A.ITEM_CODE
+	                    , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+	                           WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+	                           WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+	                           ELSE C1.ITEM_NAME
+	                      END                                                        AS ITEM_NAME
+	                    , ISNULL(C1.SPEC, '')                                        AS SPEC
+	                    , ISNULL(C1.STOCK_UNIT, '')                                  AS STOCK_UNIT
+	                    , LEFT(uniLITE.fnGetUserDate(A.COMP_CODE, A.INOUT_DATE), 10) AS INOUT_DATE
+	                    , A.LOT_NO                                                   AS LOT_NO
+	                    , A.BASIS_Q                                                  AS BASIS_Q
+	                    , A.BASIS_I                                                  AS BASIS_I
+	                    , A.IN_Q                                                     AS IN_Q
+	                    , A.IN_I                                                     AS IN_I
+	                    , A.OUT_Q                                                    AS OUT_Q
+	                    , A.OUT_I                                                    AS OUT_I
+	                    , A.IN_RTN_Q                                                    AS IN_RTN_Q
+	                    , A.IN_RTN_I                                                    AS IN_RTN_I
+	                    , A.OUT_RTN_Q                                                    AS OUT_RTN_Q
+	                    , A.OUT_RTN_I                                                    AS OUT_RTN_I
+	                    , A.STOCK_Q                                                  AS STOCK_Q
+	                    , A.STOCK_I                                                  AS STOCK_I
+	               FROM   #uniLITE200807111410 A  WITH (NOLOCK)
+	                      INNER JOIN BPR100T   C1 WITH (NOLOCK) ON C1.COMP_CODE       = A.COMP_CODE              /* 품목*/
+	                                                           AND C1.ITEM_CODE       = A.ITEM_CODE
+	                      INNER JOIN BPR200T   C2 WITH (NOLOCK) ON C2.COMP_CODE       = A.COMP_CODE              /* 사업장 품목*/
+	                                                           AND C2.DIV_CODE        = A.DIV_CODE
+	                                                           AND C2.ITEM_CODE       = A.ITEM_CODE
+	                      LEFT  JOIN BPR000T   C3 WITH (NOLOCK) ON C3.COMP_CODE       = C1.COMP_CODE             /* 품목 대분류*/
+	                                                           AND C3.LEVEL1          = C1.ITEM_LEVEL1
+	                                                           AND C3.LEVEL1         != '*'
+	                                                           AND C3.LEVEL2          = '*'
+	                                                           AND C3.LEVEL3          = '*'
+	                      LEFT  JOIN BPR000T   C4 WITH (NOLOCK) ON C4.COMP_CODE       = C1.COMP_CODE             /* 품목 중분류*/
+	                                                           AND C4.LEVEL1          = C1.ITEM_LEVEL1
+	                                                           AND C4.LEVEL1         != '*'
+	                                                           AND C4.LEVEL2          = C1.ITEM_LEVEL2
+	                                                           AND C4.LEVEL2         != '*'
+	                                                           AND C4.LEVEL3          = '*'
+	                      LEFT  JOIN BPR000T   C5 WITH (NOLOCK) ON C5.COMP_CODE       = C1.COMP_CODE             /* 품목 소분류*/
+	                                                           AND C5.LEVEL1          = C1.ITEM_LEVEL1
+	                                                           AND C5.LEVEL1         != '*'
+	                                                           AND C5.LEVEL2          = C1.ITEM_LEVEL2
+	                                                           AND C5.LEVEL2         != '*'
+	                                                           AND C5.LEVEL3          = C1.ITEM_LEVEL3
+	                                                           AND C5.LEVEL3         != '*'
+	                      LEFT  JOIN BSA220T   D1 WITH (NOLOCK) ON D1.COMP_CODE       = A.COMP_CODE             /* 창고코드*/
+	                                                           AND D1.TYPE_LEVEL      = A.DIV_CODE
+	                                                           AND D1.TREE_CODE       = A.WH_CODE
+	                      LEFT  JOIN BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE       = C2.COMP_CODE
+	                                                           AND M1.MAIN_CODE       = 'B020'                  /* 계정구분*/
+	                                                           AND M1.SUB_CODE        = C2.ITEM_ACCOUNT
+	               WHERE  A.BASIS_Q  != 0
+	               OR     A.BASIS_I  != 0
+	               OR     A.IN_Q     != 0
+	               OR     A.IN_I     != 0
+	               OR     A.OUT_Q    != 0
+	               OR     A.OUT_I    != 0
+	               OR     A.IN_RTN_Q    != 0
+	               OR     A.IN_RTN_I    != 0
+	               OR     A.OUT_RTN_Q    != 0
+	               OR     A.OUT_RTN_I    != 0
+	               OR     A.STOCK_Q  != 0
+	               OR     A.STOCK_I  != 0
+	               ) A 
+	        GROUP BY A.COMP_CODE, A.DIV_CODE, A.COMMON_CODE, A.COMMON_NAME, A.ITEM_LEVEL1, A.ITEM_LEVEL_NAME1
+	               , A.ITEM_LEVEL2, A.ITEM_LEVEL_NAME2, A.ITEM_LEVEL3, A.ITEM_LEVEL_NAME3
+	               , A.ITEM_CODE, A.ITEM_NAME, A.SPEC, A.STOCK_UNIT, A.INOUT_DATE , A.LOT_NO
+	               , A.BASIS_Q, A.BASIS_I, A.STOCK_Q, A.STOCK_I
+	        ORDER BY A.COMMON_CODE, A.ITEM_CODE, A.INOUT_DATE
+	    END
+	
+	/*  기초수량/금액 계산*/
+	    DECLARE         @StockQ             NUMERIC(30, 6)
+	                  , @StockI             NUMERIC(30, 6)
+	                  , @BasisQ             NUMERIC(30, 6)
+	                  , @BasisI             NUMERIC(30, 6)
+	                  , @PreItem            NVARCHAR(50)
+	                  , @Common             NVARCHAR(10)
+	
+	    --UPDATE A		--@@
+	    --SET    @BasisQ   = CASE WHEN ISNULL(@PreItem, '') != A.ITEM_CODE OR ISNULL(@Common, '') != A.COMMON_CODE THEN A.BASIS_Q ELSE ISNULL(@StockQ, 0) END
+	    --     , @BasisI   = CASE WHEN ISNULL(@PreItem, '') != A.ITEM_CODE OR ISNULL(@Common, '') != A.COMMON_CODE THEN A.BASIS_I ELSE ISNULL(@StockI, 0) END
+	    --     , @StockQ   = ISNULL(@BasisQ, 0) + A.IN_Q - A.IN_RTN_Q - A.OUT_Q + A.OUT_RTN_Q
+	    --     , @StockI   = ISNULL(@BasisI, 0) + A.IN_I - A.IN_RTN_I - A.OUT_I + A.OUT_RTN_I
+	    --     , @PreItem  = A.ITEM_CODE
+	    --     , @Common   = A.COMMON_CODE
+	    --     , A.BASIS_Q = @BasisQ
+	    --     , A.BASIS_I = @BasisI
+	    --     , A.STOCK_Q = @StockQ
+	    --     , A.STOCK_I = @StockI
+	    --FROM   #uniLITE200811181730 A WITH (NOLOCK)
+	    UPDATE A
+	    SET    @BasisQ   = CASE WHEN ISNULL(@PreItem, '') != A.ITEM_CODE + A.LOT_NO OR ISNULL(@Common, '') != A.COMMON_CODE THEN A.BASIS_Q ELSE ISNULL(@StockQ, 0) END
+	         , @BasisI   = CASE WHEN ISNULL(@PreItem, '') != A.ITEM_CODE + A.LOT_NO OR ISNULL(@Common, '') != A.COMMON_CODE THEN A.BASIS_I ELSE ISNULL(@StockI, 0) END
+	         , @StockQ   = ISNULL(@BasisQ, 0) + A.IN_Q - A.IN_RTN_Q - A.OUT_Q + A.OUT_RTN_Q
+	         , @StockI   = ISNULL(@BasisI, 0) + A.IN_I - A.IN_RTN_I - A.OUT_I + A.OUT_RTN_I
+	         , @PreItem  = A.ITEM_CODE + A.LOT_NO
+	         , @Common   = A.COMMON_CODE
+	         , A.BASIS_Q = @BasisQ
+	         , A.BASIS_I = @BasisI
+	         , A.STOCK_Q = @StockQ
+	         , A.STOCK_I = @StockI
+	    FROM   #uniLITE200811181730 A WITH (NOLOCK)
+	
+	/*  8. 데이터 조회 */
+	    SELECT A.COMP_CODE
+	         , A.DIV_CODE
+	         , A.COMMON_CODE
+	         , A.COMMON_NAME
+	         , A.ITEM_LEVEL1
+	         , A.ITEM_LEVEL_NAME1
+	         , A.ITEM_LEVEL2
+	         , A.ITEM_LEVEL_NAME2
+	         , A.ITEM_LEVEL3
+	         , A.ITEM_LEVEL_NAME3
+	         , A.ITEM_CODE
+	         , A.ITEM_NAME
+	         , A.SPEC
+	         , A.STOCK_UNIT
+	         , A.INOUT_DATE
+	         , A.LOT_NO
+	         , A.BASIS_Q
+	         , A.BASIS_I
+	         , A.IN_Q
+	         , A.IN_I
+	         , A.OUT_Q
+	         , A.OUT_I
+	         , A.IN_RTN_Q
+	         , A.IN_RTN_I
+	         , A.OUT_RTN_Q
+	         , A.OUT_RTN_I
+	         , A.STOCK_Q
+	         , A.STOCK_I
+	    FROM   #uniLITE200811181730 A WITH (NOLOCK)
+	    WHERE  A.BASIS_Q  != 0
+	    OR     A.BASIS_I  != 0
+	    OR     A.IN_Q     != 0
+	    OR     A.IN_I     != 0
+	    OR     A.OUT_Q    != 0
+	    OR     A.OUT_I    != 0
+	    OR     A.IN_RTN_Q    != 0
+	    OR     A.IN_RTN_I    != 0
+	    OR     A.OUT_RTN_Q    != 0
+	    OR     A.OUT_RTN_I    != 0
+	    OR     A.STOCK_Q  != 0
+	    OR     A.STOCK_I  != 0
+	    ORDER BY A.COMMON_CODE, A.ITEM_CODE, A.LOT_NO, A.INOUT_DATE
+	
+	    SET NOCOUNT OFF
+	    SET ARITHABORT OFF
+	END
+	</select>
+	
+	<select id="biv410skrvServiceImpl.selectMasterList2" parameterType="Map" resultType="rMap">		/* 창고별 */
+	/*biv410skrv.Cbiv410skrv[fnBiv410QStd] Query01*/
+	/*일별 수불현황 조회*/
+	BEGIN
+	    DECLARE         @COMP_CODE          NVARCHAR(08)                /* (필수) 법인코드*/
+	                  , @DIV_CODE           NVARCHAR(08)                /* (필수) 사업장코드*/
+	
+	                  , @FR_INOUT_DATE      NVARCHAR(08)                /* (필수) 시작 수불일*/
+	                  , @TO_INOUT_DATE      NVARCHAR(08)                /* (필수) 종료 수불일*/
+	
+	                  , @ITEM_CODE          NVARCHAR(20)                /* (선택) 품목코드*/
+	                  , @ITEM_NAME          NVARCHAR(200)               /* (선택) 품목명*/
+	
+	                  , @ITEM_ACCOUNT       NVARCHAR(02)                /* (선택) 품목 계정코드*/
+	
+	                  , @WH_CODE            NVARCHAR(08)                /* (선택) 창고코드*/
+	
+	                  , @ITEM_LEVEL1        NVARCHAR(20)                /* 대분류*/
+	                  , @ITEM_LEVEL2        NVARCHAR(20)                /* 중분류*/
+	                  , @ITEM_LEVEL3        NVARCHAR(20)                /* 소분류*/
+	
+	                  , @EVAL_FLAG          NVARCHAR(01)                /* 실사조정 포함 여부(Y/N)*/
+	
+	                  , @INOUT_METH         NVARCHAR(02)                /* 수불방법*/
+	                  , @CREATE_LOC         NVARCHAR(02)                /* 생성경로*/
+	                  , @INOUT_CODE_TYPE    NVARCHAR(02)                /* 수불처 유형*/
+	                  , @ITEM_STATUS        NVARCHAR(01)                /* 품목상태*/
+	
+	                  , @INOUT_NUM          NVARCHAR(20)                /* 수불번호*/
+	                  , @LOT_NO             NVARCHAR(20)                /* Lot No.*/
+	                  , @PROJECT_NO         NVARCHAR(20)                /* 관리번호*/
+	
+	                  , @INOUT_FLAG         NVARCHAR(01)                /* 수불 발생 유형(1: 발생, 2: 미발생, 3: 전체)*/
+	
+	                  , @SUBCON_YN          NVARCHAR(02)                /* 외주포함여부 (N: 포함않함,  Y: 포함)*/
+	                  , @QRY_TYPE           NVARCHAR(02)                /* 조회유형 (1: 품목별,  2: 창고별)*/
+	
+	                  , @NORMAL_INOUT_YN    NVARCHAR(01)                /* 정상수불여부 ('':전체, Y:예, N:아니오) - 수불방법이 (1:정상, 2:예외)인 데이터만 조회*/
+					  , @STOCK_CARE_YN    	NVARCHAR(01)                /* 재고관리대상 ('A':전체, Y:예, N:아니오) - 수불방법이 (1:정상, 2:예외)인 데이터만 조회*/
+	                  , @USER_ID            NVARCHAR(100)                /* (필수) USER ID*/
+					  , @LOT_DISPLAY_YN 	NVARCHAR(10)
+	
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+	
+	/*1. 변수 값 할당*/
+	    SET @COMP_CODE       = #{S_COMP_CODE}
+		SET @DIV_CODE        = #{DIV_CODE}
+		
+		SET @FR_INOUT_DATE   = CASE WHEN #{FR_INOUT_DATE} = '' THEN CONVERT(NVARCHAR(08), GETDATE(), 112) ELSE #{FR_INOUT_DATE} END
+		SET @TO_INOUT_DATE   = CASE WHEN #{TO_INOUT_DATE} = '' THEN CONVERT(NVARCHAR(08), GETDATE(), 112) ELSE #{TO_INOUT_DATE} END
+		
+		SET @ITEM_CODE       = #{ITEM_CODE}
+		SET @ITEM_NAME       = #{ITEM_NAME}
+		SET @ITEM_NAME       = REPLACE( #{ITEM_NAME} , '[', '[[]')
+		
+		SET @ITEM_ACCOUNT    = #{ITEM_ACCOUNT}
+		
+		SET @WH_CODE         = #{WH_CODE}
+		
+		SET @ITEM_LEVEL1     = #{ITEM_LEVEL1}
+		SET @ITEM_LEVEL2     = #{ITEM_LEVEL2}
+		SET @ITEM_LEVEL3     = #{ITEM_LEVEL3}
+		
+		SET @EVAL_FLAG       = ''
+		
+		SET @INOUT_METH      = #{INOUT_METH}
+		SET @CREATE_LOC      = ''
+		SET @INOUT_CODE_TYPE = ''
+		SET @ITEM_STATUS     = #{ITEM_STATUS}
+		
+		SET @INOUT_NUM       = ''
+		SET @LOT_NO          = #{LOT_NO}
+		SET @PROJECT_NO      = ''
+		
+		SET @INOUT_FLAG      = #{INOUT_FLAG}
+	
+	    SET @QRY_TYPE        = CASE WHEN SUBSTRING('1', 1, 1) = '' THEN '1' ELSE SUBSTRING('1', 1, 1) END
+	    
+	    SET @NORMAL_INOUT_YN = #{NORMAL_INOUT_YN}
+		SET @STOCK_CARE_YN	 = #{STOCK_CARE_YN}
+	    SET @USER_ID         = #{S_USER_ID}
+	
+	/*2. 명칭 조회 유형 설정*/
+	    DECLARE @RefItem            NVARCHAR(01)
+	
+	    SELECT TOP 1 @RefItem = REF_ITEM
+	    FROM   BSA300T WITH (NOLOCK)
+	    WHERE  USER_ID = @USER_ID
+	
+	    SET @RefItem = ISNULL(@RefItem, '')
+	
+	/*3. 재고단가 계산 방법 설정*/
+	    DECLARE @StockP             NVARCHAR(01)
+	
+	    SELECT TOP 1 @StockP = SUB_CODE
+	    FROM   BSA100T WITH (NOLOCK)
+	    WHERE  COMP_CODE = @COMP_CODE                                             /* 단가처리 기준*/
+	    AND    MAIN_CODE = 'B069'
+	    AND    SUB_CODE  = '1'                                                    /* 기준재고단가*/
+	    AND    REF_CODE1 = 'Y'
+	
+	    SET @StockP = ISNULL(@StockP, '')
+	
+	/*4. 가장 최근 마감월 조회*/
+	    DECLARE     @LastYYYYMM      NVARCHAR(06)     /* 가장 최근 마감월*/
+	               ,@BasisYYYYMM     NVARCHAR(06)     /* 기초 계산월*/
+	               
+	    SET @BasisYYYYMM = CONVERT(NVARCHAR(06), DATEADD(MONTH, -1, @FR_INOUT_DATE), 112)
+	                   
+	    SELECT @LastYYYYMM = MAX(MIN_BASIS_YYYYMM)
+	    FROM   BIV200TV1 WITH (NOLOCK)
+	    WHERE  COMP_CODE        = @COMP_CODE
+	    AND    DIV_CODE         = @DIV_CODE
+	    AND    MIN_BASIS_YYYYMM &lt; @BasisYYYYMM
+    AND  ((ITEM_CODE        = @ITEM_CODE AND @ITEM_CODE != '') OR (@ITEM_CODE = ''))
+    AND  ((WH_CODE          = @WH_CODE   AND @WH_CODE   != '') OR (@WH_CODE   = ''))
+    
+    SET @LastYYYYMM  = ISNULL(@LastYYYYMM, @BasisYYYYMM)
+
+/*5. 임시 테이블 선언*/
+    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#uniLITE200807111410')) 
+       DROP TABLE #uniLITE200807111410
+
+    CREATE TABLE #uniLITE200807111410
+        (
+    /*  일반정보*/
+        TYPE_FLAG          NVARCHAR(02),    COMP_CODE               NVARCHAR(08),    DIV_CODE         NVARCHAR(08)
+      , ITEM_ACCOUNT       NVARCHAR(02),    ITEM_CODE               NVARCHAR(20)
+      , SPEC               NVARCHAR(160),   STOCK_UNIT              NVARCHAR(03),    INOUT_DATE       NVARCHAR(10)
+      , ITEM_STATUS        NVARCHAR(01),    INOUT_TYPE              NVARCHAR(03),    MOVE_TYPE        NVARCHAR(20)
+
+    /*  수량정보*/
+      , BASIS_Q            NUMERIC(30, 6),  IN_Q                    NUMERIC(30, 6),  OUT_Q            NUMERIC(30, 6)
+	  , OUT_RTN_Q          NUMERIC(30, 6), IN_RTN_Q				    NUMERIC(30, 6),  STOCK_Q          NUMERIC(30, 6)
+
+    /*  금액정보*/
+      , BASIS_I            NUMERIC(30, 6),  IN_I                    NUMERIC(30, 6),  OUT_I            NUMERIC(30, 6)
+	  , OUT_RTN_I          NUMERIC(30, 6), IN_RTN_I					NUMERIC(30, 6),  STOCK_I          NUMERIC(30, 6)
+
+    /*  수불정보*/
+      , INOUT_TYPE_DETAIL  NVARCHAR(10),    INOUT_METH              NVARCHAR(02)
+      , WH_CODE            NVARCHAR(08),    SUBCON_CODE             NVARCHAR(08)
+      , CREATE_LOC         NVARCHAR(01),    INOUT_CODE_TYPE         NVARCHAR(08),    INOUT_CODE       NVARCHAR(08)
+
+    /*  구매/판매 정보*/
+      , ORDER_TYPE         NVARCHAR(02)
+      , ORDER_UNIT         NVARCHAR(03),    ORDER_UNIT_P            NUMERIC(30, 6)
+      , ORDER_UNIT_Q       NUMERIC(30, 6),  ORDER_UNIT_O            NUMERIC(30, 6),  TRNS_RATE        NUMERIC(12, 6)
+
+    /*  부가정보*/
+      , INOUT_PRSN         NVARCHAR(10),    INOUT_NUM               NVARCHAR(20),    INOUT_SEQ        NUMERIC(06, 0)
+      , PROJECT_NO         NVARCHAR(20),    LOT_NO                  NVARCHAR(20)
+
+    /*  기타*/
+      , SORT_WH_CODE       NVARCHAR(08)
+      , SORT_FLD           AS COMP_CODE + DIV_CODE + ITEM_CODE + SORT_WH_CODE + INOUT_DATE + CASE WHEN INOUT_TYPE = '1' THEN '1'
+                                                                                                  WHEN INOUT_TYPE = '3' THEN '2'
+                                                                                                  WHEN INOUT_TYPE = '2' THEN '3' END + INOUT_NUM + RIGHT('000000' + CONVERT(NVARCHAR, INOUT_SEQ), 6)
+        )
+
+    CREATE INDEX uniLITE200807111410_IDX01 ON #uniLITE200807111410(COMP_CODE, DIV_CODE, ITEM_CODE, SORT_WH_CODE, INOUT_DATE, INOUT_TYPE, INOUT_NUM, INOUT_SEQ)
+
+/*6. 조회 데이터 생성*/
+    IF @INOUT_FLAG = '1'                         /* 수불 발생 조회시*/
+        INSERT INTO #uniLITE200807111410
+             ( TYPE_FLAG               , COMP_CODE               , DIV_CODE
+             , ITEM_ACCOUNT            , ITEM_CODE               , SPEC                    , STOCK_UNIT
+             , INOUT_DATE              , ITEM_STATUS             , INOUT_TYPE              , MOVE_TYPE
+             , BASIS_Q                 , IN_Q                    , OUT_Q                   , IN_RTN_Q		, OUT_RTN_Q
+             , BASIS_I                 , IN_I                    , OUT_I                   , IN_RTN_I		, OUT_RTN_I
+             , INOUT_TYPE_DETAIL       , INOUT_METH              , WH_CODE                 , SUBCON_CODE
+             , CREATE_LOC              , INOUT_CODE_TYPE         , INOUT_CODE              , ORDER_TYPE
+             , ORDER_UNIT              , ORDER_UNIT_P            , ORDER_UNIT_Q            , ORDER_UNIT_O
+             , TRNS_RATE               , INOUT_PRSN              , INOUT_NUM               , INOUT_SEQ
+             , PROJECT_NO              , LOT_NO                  , SORT_WH_CODE)
+        SELECT 
+               '10' AS TYPE_FLAG
+             , A.COMP_CODE, A.DIV_CODE
+             , ISNULL(C2.ITEM_ACCOUNT, '')                                                                   AS ITEM_ACCOUNT
+             , A.ITEM_CODE
+             , ISNULL(C1.SPEC, '')                                                                           AS SPEC
+             , ISNULL(C1.STOCK_UNIT, '')                                                                     AS STOCK_UNIT
+             , A.INOUT_DATE                                                                                  AS INOUT_DATE
+             , ISNULL(A.ITEM_STATUS, '')                                                                     AS ITEM_STATUS
+             , ISNULL(A.INOUT_TYPE, '')                                                                      AS INOUT_TYPE
+             , ISNULL(A.MOVE_TYPE, '')                                                                       AS MOVE_TYPE
+
+             , 0.0                                                                                           AS BASIS_Q
+             , CASE WHEN A.INOUT_TYPE = '1' THEN ISNULL(A.INOUT_Q, 0) ELSE 0 END                             AS IN_Q
+		     , CASE WHEN A.INOUT_TYPE = '4' THEN ISNULL(A.INOUT_Q, 0) ELSE 0 END                             AS IN_RTN_Q
+		     , CASE WHEN A.INOUT_TYPE = '2' THEN ISNULL(A.INOUT_Q, 0) ELSE 0 END                             AS OUT_Q
+		     , CASE WHEN A.INOUT_TYPE = '3' THEN ISNULL(A.INOUT_Q, 0) ELSE 0 END                             AS OUT_RTN_Q
+
+             , 0.0                                                                                           AS BASIS_I
+             , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN A.INOUT_TYPE = '1' THEN ISNULL(A.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN A.INOUT_TYPE = '1' THEN ISNULL(A.INOUT_CAL_I, 0) ELSE 0 END) END         AS IN_I
+		     , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN A.INOUT_TYPE = '4' THEN ISNULL(A.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN A.INOUT_TYPE = '4' THEN ISNULL(A.INOUT_CAL_I, 0) ELSE 0 END) END         AS IN_RTN_I
+		     , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN A.INOUT_TYPE = '2' THEN ISNULL(A.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN A.INOUT_TYPE = '2' THEN ISNULL(A.INOUT_CAL_I, 0) ELSE 0 END) END         AS OUT_I
+		     , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN A.INOUT_TYPE = '3' THEN ISNULL(A.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN A.INOUT_TYPE = '3' THEN ISNULL(A.INOUT_CAL_I, 0) ELSE 0 END) END         AS OUT_RTN_I
+
+             , ISNULL(A.MOVE_TYPE, '')                                                                       AS INOUT_TYPE_DETAIL
+             , ISNULL(A.INOUT_METH, '')                                                                      AS INOUT_METH
+             , ISNULL(A.WH_CODE, '')                                                                         AS WH_CODE
+             , ''                                                                                            AS SUBCON_CODE
+             , ISNULL(A.CREATE_LOC, '')                                                                      AS CREATE_LOC
+             , ISNULL(A.INOUT_CODE_TYPE, '')                                                                 AS INOUT_CODE_TYPE
+             , ISNULL(A.INOUT_CODE, '')                                                                      AS INOUT_CODE
+             , ISNULL(A.ORDER_TYPE, '')                                                                      AS ORDER_TYPE
+             , ISNULL(A.ORDER_UNIT, '')                                                                      AS ORDER_UNIT
+             , ISNULL(A.ORDER_UNIT_P, 0)                                                                     AS ORDER_UNIT_P
+             , ISNULL(A.ORDER_UNIT_Q, 0)                                                                     AS ORDER_UNIT_Q
+             , ISNULL(A.ORDER_UNIT_O, 0)                                                                     AS ORDER_UNIT_O
+             , ISNULL(A.TRNS_RATE, 0)                                                                        AS TRNS_RATE
+             , ISNULL(A.INOUT_PRSN, '')                                                                      AS INOUT_PRSN
+             , ISNULL(A.INOUT_NUM, '')                                                                       AS INOUT_NUM
+             , A.INOUT_SEQ                                                                                   AS INOUT_SEQ
+             , ISNULL(A.PROJECT_NO, '')                                                                      AS PROJECT_NO
+             --, ISNULL(A.LOT_NO, '')                                                                          AS LOT_NO
+			 , CASE WHEN @LOT_DISPLAY_YN = 'N' THEN '' ELSE ISNULL(A.LOT_NO, '')  END                        AS LOT_NO		--20201203
+             , CASE WHEN @QRY_TYPE = '1' AND @WH_CODE = '' THEN '' ELSE ISNULL(A.WH_CODE, '') END            AS SORT_WH_CODE
+        FROM              BTR100T   A  WITH (NOLOCK, INDEX(BTR100T_IDX02))
+               INNER JOIN BPR100T   C1 WITH (NOLOCK) ON C1.COMP_CODE       = A.COMP_CODE                           /* 품목*/
+                                                    AND C1.ITEM_CODE       = A.ITEM_CODE
+               INNER JOIN BPR200T   C2 WITH (NOLOCK) ON C2.COMP_CODE       = A.COMP_CODE                           /* 사업장 품목*/
+                                                    AND C2.DIV_CODE        = A.DIV_CODE
+                                                    AND C2.ITEM_CODE       = A.ITEM_CODE
+        WHERE  A.COMP_CODE       = @COMP_CODE
+        AND    A.DIV_CODE        = @DIV_CODE
+        AND    A.INOUT_DATE     &gt;= @FR_INOUT_DATE                                                                  /* 수불년월*/
+        AND    A.INOUT_DATE     &lt;= @TO_INOUT_DATE
+
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE = #{ITEM_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+					 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+					 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+					 ELSE C1.ITEM_NAME
+				END LIKE '%' + #{ITEM_NAME} + '%' 
+		</if>
+        AND  ((C2.ITEM_ACCOUNT   = @ITEM_ACCOUNT    AND @ITEM_ACCOUNT    != '') OR (@ITEM_ACCOUNT    = ''))        /* 계정*/
+        AND  ((A.WH_CODE         = @WH_CODE         AND @WH_CODE         != '') OR (@WH_CODE         = ''))        /* 창고*/
+
+        AND  ((C1.ITEM_LEVEL1    = @ITEM_LEVEL1     AND @ITEM_LEVEL1     != '') OR (@ITEM_LEVEL1     = ''))        /* 대분류*/
+        AND  ((C1.ITEM_LEVEL2    = @ITEM_LEVEL2     AND @ITEM_LEVEL2     != '') OR (@ITEM_LEVEL2     = ''))        /* 중분류*/
+        AND  ((C1.ITEM_LEVEL3    = @ITEM_LEVEL3     AND @ITEM_LEVEL3     != '') OR (@ITEM_LEVEL3     = ''))        /* 소분류*/
+
+        AND  ((A.INOUT_METH      = '4'              AND @EVAL_FLAG       != '') OR (@EVAL_FLAG       = ''))        /* 실사조정 포함여부*/
+        AND  ((A.INOUT_METH      = @INOUT_METH      AND @INOUT_METH      != '') OR (@INOUT_METH      = ''))        /* 수불방법*/
+        AND  ((A.CREATE_LOC      = @CREATE_LOC      AND @CREATE_LOC      != '') OR (@CREATE_LOC      = ''))        /* 생성경로*/
+        AND  ((A.INOUT_CODE_TYPE = @INOUT_CODE_TYPE AND @INOUT_CODE_TYPE != '') OR (@INOUT_CODE_TYPE = ''))        /* 생성경로*/
+        AND  ((A.ITEM_STATUS     = @ITEM_STATUS     AND @ITEM_STATUS     != '') OR (@ITEM_STATUS     = ''))        /* 품목상태*/
+        AND  ((A.INOUT_NUM    LIKE @INOUT_NUM + '%' AND @INOUT_NUM       != '') OR (@INOUT_NUM       = ''))        /* 수불번호*/
+        AND  ((A.LOT_NO       LIKE @LOT_NO    + '%' AND @LOT_NO          != '') OR (@LOT_NO          = ''))        /* LOT_NO*/
+        AND  ((A.PROJECT_NO      = @PROJECT_NO      AND @PROJECT_NO      != '') OR (@PROJECT_NO      = ''))        /* PROJECT_NO*/
+
+        AND  ((A.INOUT_METH     IN ('1', '2')       AND @NORMAL_INOUT_YN = 'Y')
+           OR (A.INOUT_METH NOT IN ('1', '2')       AND @NORMAL_INOUT_YN = 'N') OR (@NORMAL_INOUT_YN = ''))        /* 정상수불여부*/
+
+    IF @INOUT_FLAG = '2'                         /* 전체 재고 조회시*/
+        INSERT INTO #uniLITE200807111410
+             ( TYPE_FLAG               , COMP_CODE               , DIV_CODE                , ITEM_ACCOUNT
+             , ITEM_CODE               , SPEC                    , STOCK_UNIT
+             , INOUT_DATE              , ITEM_STATUS             , INOUT_TYPE              , MOVE_TYPE
+             , BASIS_Q                 , IN_Q                    , OUT_Q                   , IN_RTN_Q		, OUT_RTN_Q
+             , BASIS_I                 , IN_I                    , OUT_I                   , IN_RTN_I		, OUT_RTN_I
+             , INOUT_TYPE_DETAIL       , INOUT_METH              , WH_CODE                 , SUBCON_CODE
+             , CREATE_LOC              , INOUT_CODE_TYPE         , INOUT_CODE              , ORDER_TYPE
+             , ORDER_UNIT              , ORDER_UNIT_P            , ORDER_UNIT_Q            , ORDER_UNIT_O
+             , TRNS_RATE               , INOUT_PRSN              , INOUT_NUM               , INOUT_SEQ
+             , PROJECT_NO              , LOT_NO                  , SORT_WH_CODE)
+        SELECT 
+               '11' AS TYPE_FLAG
+             , A.COMP_CODE, A.DIV_CODE
+             , ISNULL(C2.ITEM_ACCOUNT, '')                                                                   AS ITEM_ACCOUNT
+             , A.ITEM_CODE
+             , ISNULL(C1.SPEC, '')                                                                           AS SPEC
+             , ISNULL(C1.STOCK_UNIT, '')                                                                     AS STOCK_UNIT
+             , ISNULL(B.INOUT_DATE, @FR_INOUT_DATE)                                                          AS INOUT_DATE
+             , ISNULL(B.ITEM_STATUS, '')                                                                     AS ITEM_STATUS
+             , ISNULL(B.INOUT_TYPE, '')                                                                      AS INOUT_TYPE
+             , ISNULL(B.MOVE_TYPE, '')                                                                       AS MOVE_TYPE
+
+             , ISNULL(A.BASIS_STOCK_Q, 0)                                                                    AS BASIS_Q
+	         , CASE WHEN B.INOUT_TYPE = '1' THEN ISNULL(B.INOUT_Q, 0) ELSE 0 END                             AS IN_Q
+			 , CASE WHEN B.INOUT_TYPE = '4' THEN ISNULL(B.INOUT_Q, 0) ELSE 0 END                             AS IN_RTN_Q
+			 , CASE WHEN B.INOUT_TYPE = '2' THEN ISNULL(B.INOUT_Q, 0) ELSE 0 END                             AS OUT_Q
+			 , CASE WHEN B.INOUT_TYPE = '3' THEN ISNULL(B.INOUT_Q, 0) ELSE 0 END                             AS OUT_RTN_Q
+
+             , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+                    THEN ISNULL(C2.BASIS_P, 0) * ISNULL(A.BASIS_STOCK_Q, 0)
+                    ELSE ISNULL(A.BASIS_STOCK_I, 0) END                                                      AS BASIS_I
+             , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN B.INOUT_TYPE = '1' THEN ISNULL(B.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN B.INOUT_TYPE = '1' THEN ISNULL(B.INOUT_CAL_I, 0) ELSE 0 END) END         AS IN_I
+		     , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN B.INOUT_TYPE = '4' THEN ISNULL(B.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN B.INOUT_TYPE = '4' THEN ISNULL(B.INOUT_CAL_I, 0) ELSE 0 END) END         AS IN_RTN_I
+		     , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN B.INOUT_TYPE = '2' THEN ISNULL(B.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN B.INOUT_TYPE = '2' THEN ISNULL(B.INOUT_CAL_I, 0) ELSE 0 END) END         AS OUT_I
+		     , CASE WHEN @StockP = '1' AND SUBSTRING(ISNULL(C2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')
+		            THEN ISNULL(C2.BASIS_P, 0) * 
+		                    (CASE WHEN B.INOUT_TYPE = '3' THEN ISNULL(B.INOUT_Q, 0)     ELSE 0 END)
+		            ELSE (CASE WHEN B.INOUT_TYPE = '3' THEN ISNULL(B.INOUT_CAL_I, 0) ELSE 0 END) END         AS OUT_RTN_I
+
+             , ISNULL(B.MOVE_TYPE, '')                                                                       AS INOUT_TYPE_DETAIL
+             , ISNULL(B.INOUT_METH, '')                                                                      AS INOUT_METH
+             , ISNULL(B.WH_CODE, A.WH_CODE)                                                                  AS WH_CODE
+             , ''                                                                                            AS SUBCON_CODE
+             , ISNULL(B.CREATE_LOC, '')                                                                      AS CREATE_LOC
+             , ISNULL(B.INOUT_CODE_TYPE, '')                                                                 AS INOUT_CODE_TYPE
+             , ISNULL(B.INOUT_CODE, '')                                                                      AS INOUT_CODE
+             , ISNULL(B.ORDER_TYPE, '')                                                                      AS ORDER_TYPE
+             , ISNULL(B.ORDER_UNIT, '')                                                                      AS ORDER_UNIT
+             , ISNULL(B.ORDER_UNIT_P, 0)                                                                     AS ORDER_UNIT_P
+             , ISNULL(B.ORDER_UNIT_Q, 0)                                                                     AS ORDER_UNIT_Q
+             , ISNULL(B.ORDER_UNIT_O, 0)                                                                     AS ORDER_UNIT_O
+             , ISNULL(B.TRNS_RATE, 0)                                                                        AS TRNS_RATE
+             , ISNULL(B.INOUT_PRSN, '')                                                                      AS INOUT_PRSN
+             , ISNULL(B.INOUT_NUM, '')                                                                       AS INOUT_NUM
+             , B.INOUT_SEQ                                                                                   AS INOUT_SEQ
+             , ISNULL(B.PROJECT_NO, '')                                                                      AS PROJECT_NO
+             --, ISNULL(B.LOT_NO, '')                                                                          AS LOT_NO
+			 , CASE WHEN @LOT_DISPLAY_YN = 'N' THEN '' ELSE ISNULL(B.LOT_NO, '')  END                        AS LOT_NO		--20201203
+             , CASE WHEN @QRY_TYPE = '1' AND @WH_CODE = '' THEN '' ELSE ISNULL(B.WH_CODE, A.WH_CODE) END     AS SORT_WH_CODE
+        FROM              (
+                          SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.WH_CODE
+                               , SUM(ISNULL(A.STOCK_Q, 0)) AS BASIS_STOCK_Q, SUM(ISNULL(A.STOCK_I, 0)) AS BASIS_STOCK_I
+                          FROM   (
+                                 SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE '' END AS WH_CODE
+                                      , 0 AS STOCK_Q, 0 AS STOCK_I
+                                 FROM              BIV100T  A  WITH (NOLOCK)
+                                        INNER JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE                          /* 품목*/
+                                                                            AND C1.ITEM_CODE  = A.ITEM_CODE
+                                        INNER JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE                          /* 사업장 품목*/
+                                                                            AND C2.DIV_CODE   = A.DIV_CODE
+                                                                            AND C2.ITEM_CODE  = A.ITEM_CODE
+                                 WHERE  A.COMP_CODE      = @COMP_CODE
+                                 AND    A.DIV_CODE       = @DIV_CODE
+								<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+									AND A.ITEM_CODE = #{ITEM_CODE}
+								</if>
+								<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+									AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+								</if>
+								<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+									AND CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+											 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+											 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+											 ELSE C1.ITEM_NAME
+										END LIKE '%' + #{ITEM_NAME} + '%' 
+								</if>
+                                 AND  ((C1.ITEM_LEVEL1   = @ITEM_LEVEL1     AND @ITEM_LEVEL1  != '') OR (@ITEM_LEVEL1  = ''))        /* 대분류*/
+                                 AND  ((C1.ITEM_LEVEL2   = @ITEM_LEVEL2     AND @ITEM_LEVEL2  != '') OR (@ITEM_LEVEL2  = ''))        /* 중분류*/
+                                 AND  ((C1.ITEM_LEVEL3   = @ITEM_LEVEL3     AND @ITEM_LEVEL3  != '') OR (@ITEM_LEVEL3  = ''))        /* 소분류*/
+                                 AND  ((A.WH_CODE        = @WH_CODE         AND @WH_CODE      != '') OR (@WH_CODE      = ''))        /* 창고*/
+                                 AND  ((C2.ITEM_ACCOUNT  = @ITEM_ACCOUNT    AND @ITEM_ACCOUNT != '') OR (@ITEM_ACCOUNT = ''))        /* 계정*/
+                                 UNION ALL
+                                 SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE '' END AS WH_CODE
+                                      , ISNULL(A.STOCK_Q, 0) AS STOCK_Q, ISNULL(A.STOCK_I, 0) AS STOCK_I
+                                 FROM              BIV200T  A  WITH (NOLOCK)
+                                        INNER JOIN (
+                                                   SELECT A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE, MAX(A.BASIS_YYYYMM) AS BASIS_YYYYMM
+                                                   FROM              BIV200T  A  WITH (NOLOCK)
+                                                          INNER JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE                          /* 품목*/
+                                                                                              AND C1.ITEM_CODE  = A.ITEM_CODE
+                                                          INNER JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE                          /* 사업장 품목*/
+                                                                                              AND C2.DIV_CODE   = A.DIV_CODE
+                                                                                              AND C2.ITEM_CODE  = A.ITEM_CODE
+                                                   WHERE  A.COMP_CODE      = @COMP_CODE
+                                                   AND    A.DIV_CODE       = @DIV_CODE
+                                                   AND    A.BASIS_YYYYMM  &gt;= CONVERT(NVARCHAR(6), DATEADD(MONTH, -6, CONVERT(DATETIME, @LastYYYYMM + '01')), 112)
+                                                   AND    A.BASIS_YYYYMM  &lt;= @LastYYYYMM
+													<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+														AND A.ITEM_CODE = #{ITEM_CODE}
+													</if>
+													<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+														AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+													</if>
+													<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+														AND CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+																 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+																 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+																 ELSE C1.ITEM_NAME
+															END LIKE '%' + #{ITEM_NAME} + '%' 
+													</if>
+                                                   AND  ((C1.ITEM_LEVEL1   = @ITEM_LEVEL1     AND @ITEM_LEVEL1  != '') OR (@ITEM_LEVEL1  = ''))        /* 대분류*/
+                                                   AND  ((C1.ITEM_LEVEL2   = @ITEM_LEVEL2     AND @ITEM_LEVEL2  != '') OR (@ITEM_LEVEL2  = ''))        /* 중분류*/
+                                                   AND  ((C1.ITEM_LEVEL3   = @ITEM_LEVEL3     AND @ITEM_LEVEL3  != '') OR (@ITEM_LEVEL3  = ''))        /* 소분류*/
+                                                   AND  ((A.WH_CODE        = @WH_CODE         AND @WH_CODE      != '') OR (@WH_CODE      = ''))        /* 창고*/
+                                                   AND  ((C2.ITEM_ACCOUNT  = @ITEM_ACCOUNT    AND @ITEM_ACCOUNT != '') OR (@ITEM_ACCOUNT = ''))        /* 계정*/
+                                                   GROUP BY A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE
+                                                   ) B                       ON B.COMP_CODE    = A.COMP_CODE
+                                                                            AND B.DIV_CODE     = A.DIV_CODE
+                                                                            AND B.WH_CODE      = A.WH_CODE
+                                                                            AND B.ITEM_CODE    = A.ITEM_CODE
+                                                                            AND B.BASIS_YYYYMM = A.BASIS_YYYYMM
+                                 UNION ALL
+                                 SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE '' END AS WH_CODE
+                                      , CASE WHEN A.INOUT_TYPE = '1' THEN      ISNULL(A.INOUT_Q, 0)
+                                             WHEN A.INOUT_TYPE = '2' THEN -1 * ISNULL(A.INOUT_Q, 0)
+                                             WHEN A.INOUT_TYPE = '3' THEN      ISNULL(A.INOUT_Q, 0)
+                                             WHEN A.INOUT_TYPE = '4' THEN -1 * ISNULL(A.INOUT_Q, 0)
+                                             ELSE 0 END                                             AS STOCK_Q
+                                      , CASE WHEN A.INOUT_TYPE = '1' THEN      ISNULL(A.INOUT_CAL_I, 0)
+                                             WHEN A.INOUT_TYPE = '2' THEN -1 * ISNULL(A.INOUT_CAL_I, 0)
+                                             WHEN A.INOUT_TYPE = '3' THEN      ISNULL(A.INOUT_CAL_I, 0)
+                                             WHEN A.INOUT_TYPE = '4' THEN -1 * ISNULL(A.INOUT_CAL_I, 0)
+                                             ELSE 0 END                                             AS STOCK_I
+                                 FROM              BTR100T  A  WITH (NOLOCK, INDEX(BTR100T_IDX02))
+                                        INNER JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE                                 /* 품목*/
+                                                                            AND C1.ITEM_CODE  = A.ITEM_CODE
+                                        INNER JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE                                 /* 사업장 품목*/
+                                                                            AND C2.DIV_CODE   = A.DIV_CODE
+                                                                            AND C2.ITEM_CODE  = A.ITEM_CODE
+                                 WHERE  A.COMP_CODE       = @COMP_CODE
+                                 AND    A.DIV_CODE        = @DIV_CODE
+                                 AND    A.INOUT_DATE     &gt;= @LastYYYYMM + '32'
+                                 AND    A.INOUT_DATE     &lt; @FR_INOUT_DATE
+
+								<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+									AND A.ITEM_CODE = #{ITEM_CODE}
+								</if>
+								<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+									AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+								</if>
+								<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+									AND CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+											 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+											 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+											 ELSE C1.ITEM_NAME
+										END LIKE '%' + #{ITEM_NAME} + '%' 
+								</if>
+                                 AND  ((C2.ITEM_ACCOUNT   = @ITEM_ACCOUNT    AND @ITEM_ACCOUNT    != '') OR (@ITEM_ACCOUNT    = ''))        /* 계정*/
+                                 AND  ((A.WH_CODE         = @WH_CODE         AND @WH_CODE         != '') OR (@WH_CODE         = ''))        /* 창고*/
+
+                                 AND  ((C1.ITEM_LEVEL1    = @ITEM_LEVEL1     AND @ITEM_LEVEL1     != '') OR (@ITEM_LEVEL1     = ''))        /* 대분류*/
+                                 AND  ((C1.ITEM_LEVEL2    = @ITEM_LEVEL2     AND @ITEM_LEVEL2     != '') OR (@ITEM_LEVEL2     = ''))        /* 중분류*/
+                                 AND  ((C1.ITEM_LEVEL3    = @ITEM_LEVEL3     AND @ITEM_LEVEL3     != '') OR (@ITEM_LEVEL3     = ''))        /* 소분류*/
+
+                                 AND  ((A.INOUT_METH      = '4'              AND @EVAL_FLAG       != '') OR (@EVAL_FLAG       = ''))        /* 실사조정 포함여부*/
+                                 AND  ((A.INOUT_METH      = @INOUT_METH      AND @INOUT_METH      != '') OR (@INOUT_METH      = ''))        /* 수불방법*/
+                                 AND  ((A.CREATE_LOC      = @CREATE_LOC      AND @CREATE_LOC      != '') OR (@CREATE_LOC      = ''))        /* 생성경로*/
+                                 AND  ((A.INOUT_CODE_TYPE = @INOUT_CODE_TYPE AND @INOUT_CODE_TYPE != '') OR (@INOUT_CODE_TYPE = ''))        /* 생성경로*/
+                                 AND  ((A.ITEM_STATUS     = @ITEM_STATUS     AND @ITEM_STATUS     != '') OR (@ITEM_STATUS     = ''))        /* 품목상태*/
+                                 AND  ((A.INOUT_NUM    LIKE @INOUT_NUM + '%' AND @INOUT_NUM       != '') OR (@INOUT_NUM       = ''))        /* 수불번호*/
+                                 AND  ((A.LOT_NO       LIKE @LOT_NO    + '%' AND @LOT_NO          != '') OR (@LOT_NO          = ''))        /* LOT_NO*/
+                                 AND  ((A.PROJECT_NO      = @PROJECT_NO      AND @PROJECT_NO      != '') OR (@PROJECT_NO      = ''))        /* PROJECT_NO*/
+
+                                 AND  ((A.INOUT_METH     IN ('1', '2')       AND @NORMAL_INOUT_YN = 'Y')
+                                    OR (A.INOUT_METH NOT IN ('1', '2')       AND @NORMAL_INOUT_YN = 'N') OR (@NORMAL_INOUT_YN = ''))        /* 정상수불여부*/
+                                 ) A
+                          GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.WH_CODE
+                          ) A
+               LEFT  JOIN BTR100T   B  WITH (NOLOCK) ON  B.COMP_CODE       = A.COMP_CODE
+                                                    AND  B.DIV_CODE        = A.DIV_CODE
+                                                    AND  B.ITEM_CODE       = A.ITEM_CODE
+                                                    AND  B.WH_CODE         = CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE B.WH_CODE END
+                                                    AND  B.INOUT_DATE     &gt;= @FR_INOUT_DATE
+                                                    AND  B.INOUT_DATE     &lt;= @TO_INOUT_DATE
+               INNER JOIN BPR100T   C1 WITH (NOLOCK) ON C1.COMP_CODE       = A.COMP_CODE                                             /* 품목*/
+                                                    AND C1.ITEM_CODE       = A.ITEM_CODE
+               INNER JOIN BPR200T   C2 WITH (NOLOCK) ON C2.COMP_CODE       = A.COMP_CODE                                             /* 사업장 품목*/
+                                                    AND C2.DIV_CODE        = A.DIV_CODE
+                                                    AND C2.ITEM_CODE       = A.ITEM_CODE
+
+/*7. 기초 수량/금액 조회*/
+/*  기초수량/금액 조회*/
+    IF @INOUT_FLAG = '1'       /* 수불 발생건만 조회시,  기초 수량/금액 조회*/
+    BEGIN
+        UPDATE A
+        SET    A.BASIS_Q = ISNULL(B.STOCK_Q, 0) + ISNULL(C.STOCK_Q, 0)
+             , A.BASIS_I = ISNULL(B.STOCK_I, 0) + ISNULL(C.STOCK_I, 0)
+        FROM   #uniLITE200807111410 A WITH (NOLOCK)
+               LEFT  JOIN (
+                          SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE '' END AS WH_CODE
+                               , SUM(ISNULL(A.STOCK_Q, 0)) AS STOCK_Q, SUM(ISNULL(A.STOCK_I, 0)) AS STOCK_I
+                          FROM              BIV200T  A  WITH (NOLOCK)
+                                 INNER JOIN (
+                                            SELECT A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE, MAX(A.BASIS_YYYYMM) AS BASIS_YYYYMM
+                                            FROM   BIV200T  A  WITH (NOLOCK)
+                                            WHERE  A.COMP_CODE      = @COMP_CODE
+                                            AND    A.DIV_CODE       = @DIV_CODE
+                                            AND    A.BASIS_YYYYMM  &gt;= CONVERT(NVARCHAR(6), DATEADD(MONTH, -6, CONVERT(DATETIME, @LastYYYYMM + '01')), 112)
+                                            AND    A.BASIS_YYYYMM  &lt;= @LastYYYYMM
+                                            GROUP BY A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE
+                                            ) C                       ON  C.COMP_CODE    = A.COMP_CODE
+                                                                     AND  C.DIV_CODE     = A.DIV_CODE
+                                                                     AND  C.WH_CODE      = A.WH_CODE
+                                                                     AND  C.ITEM_CODE    = A.ITEM_CODE
+                                                                     AND  C.BASIS_YYYYMM = A.BASIS_YYYYMM
+                          WHERE  A.COMP_CODE      = @COMP_CODE
+                          AND    A.DIV_CODE       = @DIV_CODE
+                          GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE '' END
+                          ) B                        ON  B.COMP_CODE       = A.COMP_CODE
+                                                    AND  B.DIV_CODE        = A.DIV_CODE
+                                                    AND  B.ITEM_CODE       = A.ITEM_CODE
+                                                    AND  B.WH_CODE         = CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE B.WH_CODE END
+               LEFT  JOIN (
+                          SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE '' END AS WH_CODE
+                               , SUM(CASE WHEN A.INOUT_TYPE = '1' THEN      ISNULL(A.INOUT_Q, 0)
+                                          WHEN A.INOUT_TYPE = '2' THEN -1 * ISNULL(A.INOUT_Q, 0)
+                                          WHEN A.INOUT_TYPE = '3' THEN      ISNULL(A.INOUT_Q, 0)
+                                          WHEN A.INOUT_TYPE = '4' THEN -1 * ISNULL(A.INOUT_Q, 0)
+                                          ELSE 0 END)                                             AS STOCK_Q
+                               , SUM(CASE WHEN A.INOUT_TYPE = '1' THEN      ISNULL(A.INOUT_CAL_I, 0)
+                                          WHEN A.INOUT_TYPE = '2' THEN -1 * ISNULL(A.INOUT_CAL_I, 0)
+                                          WHEN A.INOUT_TYPE = '3' THEN      ISNULL(A.INOUT_CAL_I, 0)
+                                          WHEN A.INOUT_TYPE = '4' THEN -1 * ISNULL(A.INOUT_CAL_I, 0)
+                                          ELSE 0 END)                                             AS STOCK_I
+                          FROM   BTR100T  A  WITH (NOLOCK)
+                          WHERE  A.COMP_CODE      = @COMP_CODE
+                          AND    A.DIV_CODE       = @DIV_CODE
+                          AND    A.INOUT_DATE    &gt;= @LastYYYYMM + '32'                                                          /* 수불년월*/
+                          AND    A.INOUT_DATE     &lt; @FR_INOUT_DATE
+                          GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE '' END
+                          ) C                        ON  C.COMP_CODE       = A.COMP_CODE
+                                                    AND  C.DIV_CODE        = A.DIV_CODE
+                                                    AND  C.ITEM_CODE       = A.ITEM_CODE
+                                                    AND  C.WH_CODE         = CASE WHEN @QRY_TYPE = '2' OR @WH_CODE != '' THEN A.WH_CODE ELSE C.WH_CODE END
+        WHERE  A.TYPE_FLAG IN ('10', '11')
+    END
+    
+/*8. 일별 수불데이터 생성*/
+/*  일별수불 임시테이블 생성*/
+    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#uniLITE200811181730')) 
+       DROP TABLE #uniLITE200811181730
+
+    CREATE TABLE #uniLITE200811181730
+    (
+    /*     일반정보*/
+           COMP_CODE            NVARCHAR(08)
+         , DIV_CODE             NVARCHAR(08)
+         , COMMON_CODE          NVARCHAR(10)
+         , COMMON_NAME          NVARCHAR(20)
+         , ITEM_LEVEL1          NVARCHAR(20)
+         , ITEM_LEVEL_NAME1     NVARCHAR(20)
+         , ITEM_LEVEL2          NVARCHAR(20)
+         , ITEM_LEVEL_NAME2     NVARCHAR(20)
+         , ITEM_LEVEL3          NVARCHAR(20)
+         , ITEM_LEVEL_NAME3     NVARCHAR(20)
+         , ITEM_CODE            NVARCHAR(20)
+         , ITEM_NAME            NVARCHAR(200)
+         , SPEC                 NVARCHAR(160)
+         , STOCK_UNIT           NVARCHAR(03)
+         , INOUT_DATE           NVARCHAR(10)
+         , LOT_NO               NVARCHAR(20)
+
+    /*  수량정보*/
+        , BASIS_Q              NUMERIC(30, 6)
+		, IN_Q                 NUMERIC(30, 6)
+		, OUT_Q                NUMERIC(30, 6)
+		, IN_RTN_Q             NUMERIC(30, 6)
+		, OUT_RTN_Q            NUMERIC(30, 6)
+		, STOCK_Q              NUMERIC(30, 6)
+
+    /*  금액정보*/
+         , BASIS_I             NUMERIC(30, 6)
+	     , IN_I                NUMERIC(30, 6)
+	     , OUT_I               NUMERIC(30, 6)
+	     , IN_RTN_I            NUMERIC(30, 6)
+	     , OUT_RTN_I           NUMERIC(30, 6)
+	     , STOCK_I             NUMERIC(30, 6)
+    )
+
+/*  일별수불데이터 생성*/
+    IF @QRY_TYPE = '1'    /*품목별*/
+    BEGIN
+        INSERT INTO #uniLITE200811181730
+        (      COMP_CODE            , DIV_CODE              , COMMON_CODE           , COMMON_NAME
+             , ITEM_LEVEL1          , ITEM_LEVEL_NAME1      , ITEM_LEVEL2           , ITEM_LEVEL_NAME2
+             , ITEM_LEVEL3          , ITEM_LEVEL_NAME3
+             , ITEM_CODE            , ITEM_NAME             , SPEC                  , STOCK_UNIT            , INOUT_DATE        , LOT_NO
+             , BASIS_Q              , IN_Q                  , OUT_Q                 , IN_RTN_Q              , OUT_RTN_Q 		, STOCK_Q
+		     , BASIS_I              , IN_I                  , OUT_I                 , IN_RTN_I              , OUT_RTN_I   		, STOCK_I
+        )
+        SELECT A.COMP_CODE
+             , A.DIV_CODE
+             , A.COMMON_CODE
+             , A.COMMON_NAME
+             , A.ITEM_LEVEL1
+             , A.ITEM_LEVEL_NAME1
+             , A.ITEM_LEVEL2
+             , A.ITEM_LEVEL_NAME2
+             , A.ITEM_LEVEL3
+             , A.ITEM_LEVEL_NAME3
+             , A.ITEM_CODE
+             , A.ITEM_NAME
+             , A.SPEC
+             , A.STOCK_UNIT
+             , A.INOUT_DATE
+             , A.LOT_NO
+             , A.BASIS_Q
+             , SUM(A.IN_Q)  AS IN_Q
+		     , SUM(A.IN_RTN_Q) AS IN_RTN_Q
+		     , SUM(A.OUT_Q) AS OUT_Q
+		     , SUM(A.OUT_RTN_Q) AS OUT_RTN_Q
+		     , A.STOCK_Q
+		     , A.BASIS_I
+		     , SUM(A.IN_I)  AS IN_I
+		     , SUM(A.IN_RTN_I) AS IN_RTN_I
+		     , SUM(A.OUT_I) AS OUT_I
+		     , SUM(A.OUT_RTN_I) AS OUT_RTN_I
+	         , A.STOCK_I
+        FROM   (
+               SELECT A.COMP_CODE                                                AS COMP_CODE
+                    , A.DIV_CODE                                                 AS DIV_CODE
+                    , A.ITEM_ACCOUNT                                             AS COMMON_CODE
+                    , ISNULL(M1.CODE_NAME, '')                                   AS COMMON_NAME
+                    , C1.ITEM_LEVEL1                                             AS ITEM_LEVEL1
+                    , ISNULL(C3.LEVEL_NAME, '')                                  AS ITEM_LEVEL_NAME1
+                    , C1.ITEM_LEVEL2                                             AS ITEM_LEVEL2
+                    , ISNULL(C4.LEVEL_NAME, '')                                  AS ITEM_LEVEL_NAME2
+                    , C1.ITEM_LEVEL3                                             AS ITEM_LEVEL3
+                    , ISNULL(C5.LEVEL_NAME, '')                                  AS ITEM_LEVEL_NAME3
+                    , A.ITEM_CODE
+                    , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                           WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                           WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                           ELSE C1.ITEM_NAME
+                      END                                                        AS ITEM_NAME
+                    , ISNULL(C1.SPEC, '')                                        AS SPEC
+                    , ISNULL(C1.STOCK_UNIT, '')                                  AS STOCK_UNIT
+                    , LEFT(uniLITE.fnGetUserDate(A.COMP_CODE, A.INOUT_DATE), 10) AS INOUT_DATE
+                    , A.LOT_NO                                                   AS LOT_NO
+                    , A.BASIS_Q                                                  AS BASIS_Q
+                    , A.BASIS_I                                                  AS BASIS_I
+                    , A.IN_Q                                                     AS IN_Q
+                    , A.IN_I                                                     AS IN_I
+					, A.IN_RTN_Q                                                 AS IN_RTN_Q
+		            , A.IN_RTN_I                                                 AS IN_RTN_I
+                    , A.OUT_Q                                                    AS OUT_Q
+                    , A.OUT_I                                                    AS OUT_I
+                    , A.OUT_RTN_Q                                                AS OUT_RTN_Q
+		            , A.OUT_RTN_I												 AS OUT_RTN_I
+                    , A.STOCK_Q                                                  AS STOCK_Q
+                    , A.STOCK_I                                                  AS STOCK_I
+               FROM   #uniLITE200807111410 A  WITH (NOLOCK)
+                      INNER JOIN BPR100T   C1 WITH (NOLOCK) ON C1.COMP_CODE       = A.COMP_CODE              /* 품목*/
+                                                           AND C1.ITEM_CODE       = A.ITEM_CODE
+                      INNER JOIN BPR200T   C2 WITH (NOLOCK) ON C2.COMP_CODE       = A.COMP_CODE              /* 사업장 품목*/
+                                                           AND C2.DIV_CODE        = A.DIV_CODE
+                                                           AND C2.ITEM_CODE       = A.ITEM_CODE
+                      LEFT  JOIN BPR000T   C3 WITH (NOLOCK) ON C3.COMP_CODE       = C1.COMP_CODE             /* 품목 대분류*/
+                                                           AND C3.LEVEL1          = C1.ITEM_LEVEL1
+                                                           AND C3.LEVEL1         != '*'
+                                                           AND C3.LEVEL2          = '*'
+                                                           AND C3.LEVEL3          = '*'
+                      LEFT  JOIN BPR000T   C4 WITH (NOLOCK) ON C4.COMP_CODE       = C1.COMP_CODE             /* 품목 중분류*/
+                                                           AND C4.LEVEL1          = C1.ITEM_LEVEL1
+                                                           AND C4.LEVEL1         != '*'
+                                                           AND C4.LEVEL2          = C1.ITEM_LEVEL2
+                                                           AND C4.LEVEL2         != '*'
+                                                           AND C4.LEVEL3          = '*'
+                      LEFT  JOIN BPR000T   C5 WITH (NOLOCK) ON C5.COMP_CODE       = C1.COMP_CODE             /* 품목 소분류*/
+                                                           AND C5.LEVEL1          = C1.ITEM_LEVEL1
+                                                           AND C5.LEVEL1         != '*'
+                                                           AND C5.LEVEL2          = C1.ITEM_LEVEL2
+                                                           AND C5.LEVEL2         != '*'
+                                                           AND C5.LEVEL3          = C1.ITEM_LEVEL3
+                                                           AND C5.LEVEL3         != '*'
+                      LEFT  JOIN BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE       = C2.COMP_CODE
+                                                           AND M1.MAIN_CODE       = 'B020'                  /* 계정구분*/
+                                                           AND M1.SUB_CODE        = C2.ITEM_ACCOUNT
+               WHERE  A.BASIS_Q  != 0
+               OR     A.BASIS_I  != 0
+               OR     A.IN_Q     != 0
+               OR     A.IN_I     != 0
+               OR     A.OUT_Q    != 0
+               OR     A.OUT_I    != 0
+               OR     A.IN_RTN_Q    != 0
+	           OR     A.IN_RTN_I    != 0
+	           OR     A.OUT_RTN_Q    != 0
+	           OR     A.OUT_RTN_I    != 0
+               OR     A.STOCK_Q  != 0
+               OR     A.STOCK_I  != 0
+               ) A 
+        GROUP BY A.COMP_CODE, A.DIV_CODE, A.COMMON_CODE, A.COMMON_NAME, A.ITEM_LEVEL1, A.ITEM_LEVEL_NAME1
+               , A.ITEM_LEVEL2, A.ITEM_LEVEL_NAME2, A.ITEM_LEVEL3, A.ITEM_LEVEL_NAME3
+               , A.ITEM_CODE, A.ITEM_NAME, A.SPEC, A.STOCK_UNIT, A.INOUT_DATE, A.LOT_NO
+               , A.BASIS_Q, A.BASIS_I, A.STOCK_Q, A.STOCK_I
+        ORDER BY A.COMMON_CODE, A.ITEM_CODE, A.LOT_NO, A.INOUT_DATE
+    END
+ ELSE                 /*창고별*/
+    BEGIN
+        INSERT INTO #uniLITE200811181730
+        (      COMP_CODE            , DIV_CODE              , COMMON_CODE           , COMMON_NAME
+             , ITEM_LEVEL1          , ITEM_LEVEL_NAME1      , ITEM_LEVEL2           , ITEM_LEVEL_NAME2
+             , ITEM_LEVEL3          , ITEM_LEVEL_NAME3
+             , ITEM_CODE            , ITEM_NAME             , SPEC                  , STOCK_UNIT            , INOUT_DATE        , LOT_NO
+             , BASIS_Q              , IN_Q                  , OUT_Q                 , IN_RTN_Q              , OUT_RTN_Q 		, STOCK_Q
+		        , BASIS_I              , IN_I                  , OUT_I                 , IN_RTN_I              , OUT_RTN_I			, STOCK_I
+        )
+        SELECT A.COMP_CODE
+             , A.DIV_CODE
+             , A.COMMON_CODE
+             , A.COMMON_NAME
+             , A.ITEM_LEVEL1
+             , A.ITEM_LEVEL_NAME1
+             , A.ITEM_LEVEL2
+             , A.ITEM_LEVEL_NAME2
+             , A.ITEM_LEVEL3
+             , A.ITEM_LEVEL_NAME3
+             , A.ITEM_CODE
+             , A.ITEM_NAME
+             , A.SPEC
+             , A.STOCK_UNIT
+             , A.INOUT_DATE
+             , A.LOT_NO
+             , A.BASIS_Q
+             , SUM(A.IN_Q)  AS IN_Q
+             , SUM(A.IN_RTN_Q) AS IN_RTN_Q
+		    , SUM(A.OUT_Q) AS OUT_Q
+		    , SUM(A.OUT_RTN_Q) AS OUT_RTN_Q
+		    , A.STOCK_Q
+		    , A.BASIS_I
+		    , SUM(A.IN_I)  AS IN_I
+		    , SUM(A.IN_RTN_I) AS IN_RTN_I
+		    , SUM(A.OUT_I) AS OUT_I
+		    , SUM(A.OUT_RTN_I) AS OUT_RTN_I
+	        , A.STOCK_I
+        FROM   (
+               SELECT A.COMP_CODE                                                AS COMP_CODE
+                    , A.DIV_CODE                                                 AS DIV_CODE
+                    , A.WH_CODE                                                  AS COMMON_CODE
+                    , ISNULL(D1.TREE_NAME, '')                                   AS COMMON_NAME
+                    , C1.ITEM_LEVEL1                                             AS ITEM_LEVEL1
+                    , ISNULL(C3.LEVEL_NAME, '')                                  AS ITEM_LEVEL_NAME1
+                    , C1.ITEM_LEVEL2                                             AS ITEM_LEVEL2
+                    , ISNULL(C4.LEVEL_NAME, '')                                  AS ITEM_LEVEL_NAME2
+                    , C1.ITEM_LEVEL3                                             AS ITEM_LEVEL3
+                    , ISNULL(C5.LEVEL_NAME, '')                                  AS ITEM_LEVEL_NAME3
+                    , A.ITEM_CODE
+                    , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                           WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                           WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                           ELSE C1.ITEM_NAME
+                      END                                                        AS ITEM_NAME
+                    , ISNULL(C1.SPEC, '')                                        AS SPEC
+                    , ISNULL(C1.STOCK_UNIT, '')                                  AS STOCK_UNIT
+                    , LEFT(uniLITE.fnGetUserDate(A.COMP_CODE, A.INOUT_DATE), 10) AS INOUT_DATE
+                    , A.LOT_NO                                                   AS LOT_NO
+                    , A.BASIS_Q                                                  AS BASIS_Q
+                    , A.BASIS_I                                                  AS BASIS_I
+                    , A.IN_Q                                                     AS IN_Q
+                    , A.IN_I                                                     AS IN_I
+                    , A.OUT_Q                                                    AS OUT_Q
+                    , A.OUT_I                                                    AS OUT_I
+                    , A.IN_RTN_Q                                                    AS IN_RTN_Q
+	                , A.IN_RTN_I                                                    AS IN_RTN_I
+	                , A.OUT_RTN_Q                                                    AS OUT_RTN_Q
+	                , A.OUT_RTN_I                                                    AS OUT_RTN_I
+                    , A.STOCK_Q                                                  AS STOCK_Q
+                    , A.STOCK_I                                                  AS STOCK_I
+               FROM   #uniLITE200807111410 A  WITH (NOLOCK)
+                      INNER JOIN BPR100T   C1 WITH (NOLOCK) ON C1.COMP_CODE       = A.COMP_CODE              /* 품목*/
+                                                           AND C1.ITEM_CODE       = A.ITEM_CODE
+                      INNER JOIN BPR200T   C2 WITH (NOLOCK) ON C2.COMP_CODE       = A.COMP_CODE              /* 사업장 품목*/
+                                                           AND C2.DIV_CODE        = A.DIV_CODE
+                                                           AND C2.ITEM_CODE       = A.ITEM_CODE
+                      LEFT  JOIN BPR000T   C3 WITH (NOLOCK) ON C3.COMP_CODE       = C1.COMP_CODE             /* 품목 대분류*/
+                                                           AND C3.LEVEL1          = C1.ITEM_LEVEL1
+                                                           AND C3.LEVEL1         != '*'
+                                                           AND C3.LEVEL2          = '*'
+                                                           AND C3.LEVEL3          = '*'
+                      LEFT  JOIN BPR000T   C4 WITH (NOLOCK) ON C4.COMP_CODE       = C1.COMP_CODE             /* 품목 중분류*/
+                                                           AND C4.LEVEL1          = C1.ITEM_LEVEL1
+                                                           AND C4.LEVEL1         != '*'
+                                                           AND C4.LEVEL2          = C1.ITEM_LEVEL2
+                                                           AND C4.LEVEL2         != '*'
+                                                           AND C4.LEVEL3          = '*'
+                      LEFT  JOIN BPR000T   C5 WITH (NOLOCK) ON C5.COMP_CODE       = C1.COMP_CODE             /* 품목 소분류*/
+                                                           AND C5.LEVEL1          = C1.ITEM_LEVEL1
+                                                           AND C5.LEVEL1         != '*'
+                                                           AND C5.LEVEL2          = C1.ITEM_LEVEL2
+                                                           AND C5.LEVEL2         != '*'
+                                                           AND C5.LEVEL3          = C1.ITEM_LEVEL3
+                                                           AND C5.LEVEL3         != '*'
+                      LEFT  JOIN BSA220T   D1 WITH (NOLOCK) ON D1.COMP_CODE       = A.COMP_CODE             /* 창고코드*/
+                                                           AND D1.TYPE_LEVEL      = A.DIV_CODE
+                                                           AND D1.TREE_CODE       = A.WH_CODE
+                      LEFT  JOIN BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE       = C2.COMP_CODE
+                                                           AND M1.MAIN_CODE       = 'B020'                  /* 계정구분*/
+                                                           AND M1.SUB_CODE        = C2.ITEM_ACCOUNT
+               WHERE  A.BASIS_Q  != 0
+               OR     A.BASIS_I  != 0
+               OR     A.IN_Q     != 0
+               OR     A.IN_I     != 0
+               OR     A.OUT_Q    != 0
+               OR     A.OUT_I    != 0
+               OR     A.IN_RTN_Q    != 0
+	            OR     A.IN_RTN_I    != 0
+	            OR     A.OUT_RTN_Q    != 0
+	            OR     A.OUT_RTN_I    != 0
+               OR     A.STOCK_Q  != 0
+               OR     A.STOCK_I  != 0
+               ) A 
+        GROUP BY A.COMP_CODE, A.DIV_CODE, A.COMMON_CODE, A.COMMON_NAME, A.ITEM_LEVEL1, A.ITEM_LEVEL_NAME1
+               , A.ITEM_LEVEL2, A.ITEM_LEVEL_NAME2, A.ITEM_LEVEL3, A.ITEM_LEVEL_NAME3
+               , A.ITEM_CODE, A.ITEM_NAME, A.SPEC, A.STOCK_UNIT, A.INOUT_DATE, A.LOT_NO
+               , A.BASIS_Q, A.BASIS_I, A.STOCK_Q, A.STOCK_I
+        ORDER BY A.COMMON_CODE, A.ITEM_CODE, A.INOUT_DATE
+    END
+
+/*  기초수량/금액 계산*/
+    DECLARE         @StockQ             NUMERIC(30, 6)
+                  , @StockI             NUMERIC(30, 6)
+                  , @BasisQ             NUMERIC(30, 6)
+                  , @BasisI             NUMERIC(30, 6)
+                  , @PreItem            NVARCHAR(20)
+                  , @Common             NVARCHAR(10)
+
+    UPDATE A
+    SET    @BasisQ   = CASE WHEN ISNULL(@PreItem, '') != A.ITEM_CODE OR ISNULL(@Common, '') != A.COMMON_CODE THEN A.BASIS_Q ELSE ISNULL(@StockQ, 0) END
+         , @BasisI   = CASE WHEN ISNULL(@PreItem, '') != A.ITEM_CODE OR ISNULL(@Common, '') != A.COMMON_CODE THEN A.BASIS_I ELSE ISNULL(@StockI, 0) END
+         , @StockQ   = ISNULL(@BasisQ, 0) + A.IN_Q - A.IN_RTN_Q - A.OUT_Q + A.OUT_RTN_Q - A.IN_RTN_Q
+         , @StockI   = ISNULL(@BasisI, 0) + A.IN_I - A.IN_RTN_I - A.OUT_I + A.OUT_RTN_I - A.IN_RTN_I
+         , @PreItem  = A.ITEM_CODE
+         , @Common   = A.COMMON_CODE
+         , A.BASIS_Q = @BasisQ
+         , A.BASIS_I = @BasisI
+         , A.STOCK_Q = @StockQ
+         , A.STOCK_I = @StockI
+    FROM   #uniLITE200811181730 A WITH (NOLOCK)
+
+/*8. 데이터 조회*/
+    SELECT A.COMP_CODE
+         , A.DIV_CODE
+         , A.COMMON_CODE
+         , A.COMMON_NAME
+         , A.ITEM_LEVEL1
+         , A.ITEM_LEVEL_NAME1
+         , A.ITEM_LEVEL2
+         , A.ITEM_LEVEL_NAME2
+         , A.ITEM_LEVEL3
+         , A.ITEM_LEVEL_NAME3
+         , A.ITEM_CODE
+         , A.ITEM_NAME
+         , A.SPEC
+         , A.STOCK_UNIT
+         , A.INOUT_DATE
+         , A.LOT_NO
+         , A.BASIS_Q
+         , A.BASIS_I
+         , A.IN_Q
+         , A.IN_I
+         , A.OUT_Q
+         , A.OUT_I
+          , A.IN_RTN_Q
+	    , A.IN_RTN_I
+	    , A.OUT_RTN_Q
+	    , A.OUT_RTN_I
+         , A.STOCK_Q
+         , A.STOCK_I
+    FROM   #uniLITE200811181730 A WITH (NOLOCK)
+    WHERE  A.BASIS_Q  != 0
+    OR     A.BASIS_I  != 0
+    OR     A.IN_Q     != 0
+    OR     A.IN_I     != 0
+    OR     A.OUT_Q    != 0
+    OR     A.OUT_I    != 0
+    OR     A.IN_RTN_Q    != 0
+	OR     A.IN_RTN_I    != 0
+	OR     A.OUT_RTN_Q    != 0
+	OR     A.OUT_RTN_I    != 0
+    OR     A.STOCK_Q  != 0
+    OR     A.STOCK_I  != 0
+    ORDER BY A.COMMON_CODE, A.ITEM_CODE, A.LOT_NO, A.INOUT_DATE
+
+    SET NOCOUNT OFF
+    SET ARITHABORT OFF
+END
+	</select>
+		
+		
+</mapper>

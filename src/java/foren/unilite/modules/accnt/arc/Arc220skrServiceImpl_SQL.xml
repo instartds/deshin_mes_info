@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="arc220skrServiceImpl">
+					
+	<select id="arc220skrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* arc220skr[fnArc210QStd] Query01 법무채권 원장조회 */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		--  1. 임시 테이블 선언 ---------------------------------------------------------------------------------------------
+		    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#arc210skr_20170404'))
+		       DROP TABLE #arc210skr_20170404
+		
+		    CREATE TABLE #arc210skr_20170404
+		    (
+		    --     기본정보
+		           COMP_CODE            NVARCHAR(10)                -- 법인코드
+		         , RECE_COMP_CODE       NVARCHAR(10)                -- 채권법인코드
+		         , SORT_DATE            NVARCHAR(20)                -- 누계일자
+		         , GUBUN                NVARCHAR(02)                -- 구분
+		         , MNG_DATE             NVARCHAR(100)               -- 일자
+		         , MNG_GUBUN            NVARCHAR(25)                -- 구분코드
+		         , MNG_GUBUN_NAME       NVARCHAR(50)                -- 구분명
+		         , REMARK               NVARCHAR(200)               -- 내용
+		         , RECEIVE_AMT          NUMERIC(30,6)   DEFAULT 0   -- 접수금액
+		         , COLLECT_AMT          NUMERIC(30,6)   DEFAULT 0   -- 수금액
+		         , ADJUST_AMT           NUMERIC(30,6)   DEFAULT 0   -- 조정금액
+		         , BALANCE_AMT          NUMERIC(30,6)   DEFAULT 0   -- 누적잔액
+		
+		    --     기타정보
+		         , SORT_KEY             AS RTRIM(COMP_CODE) + RTRIM(RECE_COMP_CODE) + RTRIM(SORT_DATE) + RTRIM(GUBUN) + RTRIM(MNG_DATE)
+		    )
+		    CREATE INDEX #arc210skr_20170404_IDX01 ON #arc210skr_20170404(SORT_KEY) 
+		
+		--  2. 이월금액 데이터 생성 -----------------------------------------------------------------------------------------
+		    INSERT INTO #arc210skr_20170404
+		         ( COMP_CODE    , RECE_COMP_CODE   , SORT_DATE        , GUBUN 
+		         , MNG_DATE     , MNG_GUBUN        , MNG_GUBUN_NAME   , REMARK
+		         , RECEIVE_AMT  , COLLECT_AMT      , ADJUST_AMT       , BALANCE_AMT)
+		    SELECT A.COMP_CODE
+		         , A.RECE_COMP_CODE
+		         , ''                                          AS SORT_DATE
+		         , '1'                                         AS GUBUN
+		         , ''                                          AS MNG_DATE
+		         , ''                                          AS MNG_GUBUN
+		         , ''                                          AS MNG_GUBUN_NAME
+		         , '이월금액'                                    AS REMARK
+		         , 0                                           AS RECEIVE_AMT
+		         , 0                                           AS COLLECT_AMT
+		         , 0                                           AS ADJUST_AMT
+		         , SUM((CASE WHEN X1.REF_CODE2 = '01' THEN B.COLLECT_AMT ELSE 0 END)
+		             - (CASE WHEN X1.REF_CODE2 = '02' THEN B.COLLECT_AMT ELSE 0 END)
+		             - (CASE WHEN X1.REF_CODE2 = '03' THEN B.COLLECT_AMT ELSE 0 END))
+		                                                       AS BALANCE_AMT  
+		    FROM              ARC200T A  WITH (NOLOCK)
+		           INNER JOIN ARC210T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+		                                              AND B.CONF_RECE_NO = A.CONF_RECE_NO
+													  AND B.MNG_DATE &gt;= #{DATE_FR}
+													  AND B.MNG_DATE &lt;= #{DATE_TO}
+		                                              
+		                                              
+		           LEFT  JOIN BSA100T X1 WITH (NOLOCK) ON X1.COMP_CODE   = B.COMP_CODE
+		                                              AND X1.MAIN_CODE   = 'J504'
+		                                              AND X1.SUB_CODE    = B.MNG_GUBUN
+		           LEFT  JOIN BSA100T X2 WITH (NOLOCK) ON X2.COMP_CODE   = X1.COMP_CODE
+		                                              AND X2.MAIN_CODE   = 'J505'
+		                                              AND X2.SUB_CODE    = X1.REF_CODE2
+		    WHERE  A.COMP_CODE			= #{S_COMP_CODE}
+			  AND  A.RECE_COMP_CODE		= #{RECE_COMP_CODE}
+			  AND  A.CUSTOM_CODE		= #{CUSTOM_CODE}        
+		    --그냥 두라-------------------------------
+		      AND  A.CONF_RECE_DATE &gt;= '19900101'
+		    --요기까지 -------------------------------
+			  AND  A.CONF_RECE_DATE	 &lt; #{DATE_TO}
+		  <if test="@foren.Ognl@isNotEmpty(CONF_RECE_NO)">  
+		      AND  A.CONF_RECE_NO		= #{CONF_RECE_NO}
+		  </if>
+			  AND  X1.REF_CODE1			= '2'
+		    GROUP BY A.COMP_CODE, A.RECE_COMP_CODE, A.CUSTOM_CODE
+		
+		    IF @@ROWCOUNT = 0
+		    BEGIN
+		        INSERT INTO #arc210skr_20170404
+		            ( COMP_CODE    , RECE_COMP_CODE   , SORT_DATE        , GUBUN
+		            , MNG_DATE     , MNG_GUBUN        , MNG_GUBUN_NAME   , REMARK
+		            , RECEIVE_AMT  , COLLECT_AMT      , ADJUST_AMT       , BALANCE_AMT)
+		        SELECT ''                                          AS COMP_CODE
+		             , ''                                          AS RECE_COMP_CODE
+		             , ''                                          AS SORT_DATE
+		             , '1'                                         AS GUBUN
+		             , ''                                          AS MNG_DATE
+		             , ''                                          AS MNG_GUBUN
+		             , ''                                          AS MNG_GUBUN_NAME
+		             , '이월금액'                                  AS REMARK
+		             , 0                                           AS RECEIVE_AMT
+		             , 0                                           AS COLLECT_AMT
+		             , 0                                           AS ADJUST_AMT
+		             , 0                                           AS BALANCE_AMT 
+		    END
+		
+		--  3. 조회 데이터 생성 ---------------------------------------------------------------------------------------------
+		    INSERT INTO #arc210skr_20170404
+		         ( COMP_CODE    , RECE_COMP_CODE   , SORT_DATE        , GUBUN 
+		         , MNG_DATE     , MNG_GUBUN        , MNG_GUBUN_NAME   , REMARK
+		         , RECEIVE_AMT  , COLLECT_AMT      , ADJUST_AMT       , BALANCE_AMT)
+		    SELECT A.COMP_CODE
+		         , A.RECE_COMP_CODE
+		         , B.MNG_DATE          AS SORT_DATE
+		         , '2'                 AS GUBUN
+		         , B.MNG_DATE
+		         , X1.REF_CODE2        AS MNG_GUBUN
+		         , X2.CODE_NAME        AS MNG_GUBUN_NAME
+				 , X1.CODE_NAME		   AS REMARK
+		         , (CASE WHEN X1.REF_CODE2 = '01' THEN B.COLLECT_AMT ELSE 0 END) AS RECEIVE_AMT      /* 접수금액 */
+		         , (CASE WHEN X1.REF_CODE2 = '02' THEN B.COLLECT_AMT ELSE 0 END) AS COLLECT_AMT      /* 수금액   */
+		         , (CASE WHEN X1.REF_CODE2 = '03' THEN B.COLLECT_AMT ELSE 0 END) AS ADJUST_AMT       /* 조정액   */
+		         , 0 AS BALANCE_AMT
+		      FROM            ARC200T A  WITH (NOLOCK)
+		           INNER JOIN ARC210T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+		                                              AND B.CONF_RECE_NO = A.CONF_RECE_NO
+													  AND B.MNG_DATE &gt;= #{DATE_FR}
+													  AND B.MNG_DATE &lt;= #{DATE_TO}
+		                                              
+		                                              
+		           LEFT  JOIN BCM100T V  WITH (NOLOCK) ON V.COMP_CODE    = A.COMP_CODE  
+		                                              AND V.CUSTOM_CODE  = A.CUSTOM_CODE
+		           LEFT  JOIN BOR100T Y  WITH (NOLOCK) ON Y.COMP_CODE    = A.RECE_COMP_CODE
+		           LEFT  JOIN BSA100T X1 WITH (NOLOCK) ON X1.COMP_CODE   = B.COMP_CODE
+		                                              AND X1.MAIN_CODE   = 'J504'
+		                                              AND X1.SUB_CODE    = B.MNG_GUBUN
+		           LEFT  JOIN BSA100T X2 WITH (NOLOCK) ON X2.COMP_CODE   = X1.COMP_CODE
+		                                              AND X2.MAIN_CODE   = 'J505'
+		                                              AND X2.SUB_CODE    = X1.REF_CODE2
+		    WHERE  A.COMP_CODE			= #{S_COMP_CODE}
+			  AND  A.RECE_COMP_CODE		= #{RECE_COMP_CODE}
+			  AND  A.CUSTOM_CODE		= #{CUSTOM_CODE}        
+			  AND  A.CONF_RECE_DATE &gt;= #{DATE_FR}
+			  AND  A.CONF_RECE_DATE &lt;= #{DATE_TO}
+		  <if test="@foren.Ognl@isNotEmpty(CONF_RECE_NO)">  
+		      AND  A.CONF_RECE_NO		= #{CONF_RECE_NO}
+		  </if>
+			  AND  X1.REF_CODE1      = '2'
+		   
+		--  4. 누적금액 계산 ------------------------------------------------------------------------------------------------
+		    DECLARE         @AccrueI            NUMERIC(30,6)               -- 누적금액
+		
+		    SET @AccrueI         = 0
+		
+		    UPDATE A
+		       SET @AccrueI      = ISNULL(@AccrueI, 0) + A.RECEIVE_AMT - A.COLLECT_AMT - A.ADJUST_AMT
+		         , A.BALANCE_AMT = @AccrueI
+		      FROM #arc210skr_20170404  A WITH (NOLOCK, INDEX(#arc210skr_20170404_IDX01))
+		   
+		--  5. 조회 -------------------------------------------------------------------------------------------
+		    SELECT A.COMP_CODE
+		         , A.RECE_COMP_CODE
+		         , A.SORT_DATE
+		         , A.GUBUN
+		         , A.MNG_DATE
+		         , A.MNG_GUBUN
+		         , A.MNG_GUBUN_NAME
+		         , A.REMARK
+		         , A.RECEIVE_AMT
+		         , A.COLLECT_AMT
+		         , A.ADJUST_AMT
+		         , A.BALANCE_AMT
+		    FROM   #arc210skr_20170404 A
+		    ORDER  BY A.SORT_KEY
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END 
+	</select>
+</mapper>

@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="pos120skrvServiceImpl">
+	
+	<select id="pos120skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* pos120skrv.pos120skrv [fnPrpt310QSt1] QUERY01 */
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+				
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+				
+			DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+			      , @UserId			NVARCHAR(100)	/* 사용자ID */
+			      , @LangType		NVARCHAR(2)		/* 언어구분 */
+			      , @RefItem		NVARCHAR(01)
+			      , @DateFormat		NVARCHAR(10)
+				
+			SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_ID}
+			SET @LangType = #{S_LANG_CODE}
+				
+			/* 명칭 참조 유형 */
+			SELECT TOP 1 @RefItem = REF_ITEM
+				FROM BSA300T WITH (NOLOCK)
+				WHERE COMP_CODE = @CompCode
+					AND USER_ID = @UserId
+				
+			SET @RefItem = ISNULL(@RefItem, N'0')
+				
+			/* 날짜 포맷 유형 설정 */
+			SELECT TOP 1 @DateFormat = CODE_NAME
+				FROM BSA100T WITH (NOLOCK)
+				WHERE COMP_CODE = @CompCode
+				AND MAIN_CODE = N'B044'
+				AND REF_CODE1 = N'Y'
+				
+			SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		
+			/* 조회  */
+			SELECT 
+				A.COMP_CODE, A.DIV_CODE
+				, A.COLLECT_DATE									 AS SALE_DATE
+				, A.STORE_CODE
+				, A.STORE_NAME
+				, A.POS_NO 
+				, A.POS_NAME	
+				,SUM(A.CASH_O)										  AS CASH_O		/* 현금*/
+				,SUM(A.TICKECT_O)									  AS TICKECT_O	/* 상품권*/
+				,SUM(A.CRDIT_O)										  AS CRDIT_O	/* 외상*/
+				,SUM(A.CARD_O)										  AS CARD_O		/* 카드*/
+				,SUM(A.COLLECT_AMT - A.CASH_O - A.TICKECT_O - A.CRDIT_O -A.CARD_O)		  AS ETC	/* 기타 */
+				,SUM(A.COLLECT_AMT)									  AS SALE_AMT_O	/*합계*/
+			FROM (
+
+				SELECT A.COMP_CODE, A.DIV_CODE
+					 , A.COLLECT_DATE
+					 , E1.tree_code AS STORE_CODE
+					 , E1.tree_name AS STORE_NAME
+					 , ISNULL(A.POS_NO, 'ERP') AS POS_NO
+					 , ISNULL(E2.POS_name, '기타')  AS POS_NAME
+					 , SUM(A.COLLECT_AMT) COLLECT_AMT												  /* 총수금액 */
+					 , SUM(CASE WHEN A.COLLECT_TYPE = '10' THEN A.COLLECT_AMT ELSE 0 END) CASH_O	    /* 현금  */
+					 , SUM(CASE WHEN A.COLLECT_TYPE = '22' THEN A.COLLECT_AMT ELSE 0 END) CARD_O		/* 카드 */
+					 , SUM(CASE WHEN A.COLLECT_TYPE = '23' THEN A.COLLECT_AMT ELSE 0 END) TICKECT_O     /* 상품권 */
+					 , SUM(CASE WHEN A.COLLECT_TYPE = '40' THEN A.COLLECT_AMT ELSE 0 END) CRDIT_O    	/* 외상  */
+					 
+				 FROM	SCO100T A WITH(NOLOCK)
+						 INNER JOIN BSA210T E1 WITH(NOLOCK) ON A.COMP_CODE = E1.COMP_CODE
+		 												  AND A.DIV_CODE  = E1.TYPE_LEVEL
+		 												  AND A.DEPT_CODE = E1.TREE_CODE	
+						 LEFT  JOIN BSA240T E2 WITH(NOLOCK) ON A.COMP_CODE  = E2.COMP_CODE
+										 				  AND A.DIV_CODE   = E2.DIV_CODE
+										 				  AND A.POS_NO 	   = E2.POS_NO								  
+				WHERE A.COMP_CODE  	= @CompCode
+					<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+					 AND A.DIV_CODE 		= #{DIV_CODE}
+		            </if>
+				    <if test="@foren.Ognl@isNotEmpty(SALE_DATE_FR)">
+					 AND A.COLLECT_DATE 		&gt;= #{SALE_DATE_FR}
+		            </if>
+		            <if test="@foren.Ognl@isNotEmpty(SALE_DATE_TO)">
+					 AND A.COLLECT_DATE 		&lt;= #{SALE_DATE_TO}
+		            </if>
+					 <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">     
+				     AND E1.TREE_LEVEL    LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =E1.COMP_CODE AND TYPE_LEVEL=E1.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+				    </if>
+				    <if test="@foren.Ognl@isNotEmpty(POS_CODE)">					
+				     AND A.POS_NO IN
+						<foreach collection="POS_CODE" item="item" separator="," close=")" open="(">
+						 #{item}
+						</foreach>									
+					</if>
+					
+					AND A.INSERT_DB_USER = 'POS_TRAN'
+					
+				GROUP BY A.COMP_CODE, A.DIV_CODE, A.COLLECT_DATE, E1.tree_code, E1.tree_name, ISNULL(A.POS_NO, 'ERP'), ISNULL(E2.POS_name, '기타')
+				) A
+				
+			GROUP BY A.COMP_CODE, A.DIV_CODE, A.COLLECT_DATE, A.STORE_CODE, A.STORE_NAME, A.POS_NO, A.POS_NAME
+			ORDER BY A.COMP_CODE, A.DIV_CODE, A.COLLECT_DATE, A.STORE_CODE, A.POS_NO
+
+
+SET @END_TIME   = GETDATE()
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'pos120skrv', '입금유형별 매출현황조회', #{SALE_DATE_FR}, #{SALE_DATE_TO}, @DIFF_TIME
+
+		   SET ARITHABORT OFF
+		   SET NOCOUNT OFF
+		END
+    </select>
+</mapper>

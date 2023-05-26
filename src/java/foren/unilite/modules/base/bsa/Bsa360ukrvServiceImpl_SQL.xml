@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="bsa360ukrvServiceImpl">
+	<select id="bsa360ukrvServiceImpl.oldPwdCheck" parameterType="Map" resultType="rMap">
+		SELECT  TOP 1 1
+	    FROM    BSA350T A WITH (NOLOCK)
+	    WHERE   A.USER_ID= #{S_USER_ID}
+	    AND    (A.PASSWORD  = #{OLD_PWD} OR pwdcompare(#{OLD_PWD}, A.password) = 1)
+	</select>	
+	<select id="bsa360ukrvServiceImpl.pwRuleCheck" parameterType="Map" resultType="rMap">
+		SELECT CHAR_TYPE, ALLOW_VALUE FROM PWD100T WITH (NOLOCK)  
+	</select>
+	
+	<select id="bsa360ukrvServiceImpl.pwCheckQ" parameterType="Map" resultType="rMap">
+		/* bsa360ukrv.CPassword (fnPwdRegCheck-2) 기존비밀번호 체크 갯수 */
+		SELECT  TOP 1 CASE WHEN ISNULL(REF_CODE5,'')='' THEN 0 ELSE CONVERT(NUMERIC(10,0), REF_CODE5) END AS CYCLE_CNT
+		FROM    BSA100T WITH (NOLOCK) 
+		WHERE   COMP_CODE = 'MASTER' AND MAIN_CODE= 'B110' AND SUB_CODE='20'
+	</select>
+	
+	<select id="bsa360ukrvServiceImpl.pwDuplicateCheck" parameterType="Map" resultType="rMap">
+		SELECT  TOP 1 1
+		FROM    BSA350T A WITH (NOLOCK)
+		WHERE   A.USER_ID= #{S_USER_ID}
+		AND     A.PASSWORD = PWDENCRYPT(#{NEW_PWD})
+	</select>
+	
+	<select id="bsa360ukrvServiceImpl.pwSameCheck" parameterType="Map" resultType="rMap">
+		/* bsa360ukrv.CPassword (fnPwdRegCheck-2-1) */
+		SET NOCOUNT ON
+		SELECT ISNULL(MAX(CHANGE_CNT),0)- #{DCYCLE_CNT}  AS CHECK_SEQ, COMP_CODE, USER_ID
+		INTO    #USER_INFO
+		FROM    LOG200T WITH (NOLOCK)
+		WHERE   COMP_CODE > '' AND USER_ID= #{S_USER_ID}
+		GROUP BY COMP_CODE, USER_ID
+		
+		SET NOCOUNT OFF
+		
+		SELECT  TOP 1 1
+		FROM    LOG200T A WITH (NOLOCK)
+		        INNER JOIN #USER_INFO B ON A.COMP_CODE=B.COMP_CODE AND A.USER_ID=B.USER_ID
+		WHERE   A.COMP_CODE > ''
+		AND     A.USER_ID= #{S_USER_ID}
+		AND     A.CHANGE_CNT > B.CHECK_SEQ
+		AND     UPPER(uniLITE.fnCipherDecrypt(PASSWORD,'')) = UPPER(#{NEW_PWD})
+		
+		DROP TABLE #USER_INFO
+	</select>
+	
+	<select id="bsa360ukrvServiceImpl.encryptionYN" parameterType="Map" resultType="rMap">
+		/* UBsa01Krv.CBsa400UKr[fnSetChangePass] Query01  암호화 적용여부체크 */
+		--20210106 추가
+		SELECT TOP 1 1 as CNT
+		        , ISNULL((
+		            SELECT  TOP 1 UPPER(REF_CODE5) AS CASE_SENS_YN 
+		            FROM    BSA100T WITH (NOLOCK)
+		            WHERE   COMP_CODE='MASTER' AND MAIN_CODE='B110' AND SUB_CODE='40' AND USE_YN='Y'
+		        ),'N') AS CASE_SENS_YN
+		FROM BSA100T WITH (NOLOCK) 
+		WHERE COMP_CODE='MASTER' 
+		AND MAIN_CODE='B239' AND SUB_CODE='10' AND REF_CODE2='Y'
+	</select>
+	<update id="bsa360ukrvServiceImpl.encryptionSavePw" parameterType="Map">
+		UPDATE BSA350T
+		       SET PASSWORD = #{CHG_PWD}
+		         , PWD_UPDATE_DATE = GETDATE()
+		         , UPDATE_DB_USER = #{S_USER_ID}
+		WHERE COMP_CODE &gt; '' AND USER_ID  = #{S_USER_ID}
+		        
+		IF EXISTS (SELECT TOP 1 1 FROM BSA301T WITH (NOLOCK) WHERE COMP_CODE &gt; '' AND USER_ID=#{S_USER_ID})
+		    UPDATE BSA301T                     
+		           SET PASSWORD = uniLITE.fnCipherEncrypt(#{NEW_PWD}, '')
+		             , UPDATE_DB_TIME = GETDATE()
+		             , UPDATE_DB_USER = #{S_USER_ID}
+		    WHERE COMP_CODE &gt; '' AND USER_ID  = #{S_USER_ID}
+		                
+		ELSE
+		    INSERT INTO BSA301T (COMP_CODE, USER_ID, PASSWORD, INSERT_DB_USER, UPDATE_DB_USER)
+		    SELECT COMP_CODE, USER_ID, uniLITE.fnCipherEncrypt(#{NEW_PWD}, '') PASSWORD, #{S_USER_ID} INSERT_DB_USER, #{S_USER_ID} UPDATE_DB_USER
+		    FROM BSA300T WITH (NOLOCK)
+		    WHERE COMP_CODE &gt; '' AND USER_ID=#{S_USER_ID}
+	</update>
+	
+	<update id="bsa360ukrvServiceImpl.notEncryptionSavePw" parameterType="Map">
+	    UPDATE BSA350T                     
+	       SET PASSWORD = #{NEW_PWD}      
+	         , PWD_UPDATE_DATE = GETDATE()
+	         , UPDATE_DB_USER = #{S_USER_ID}
+	    WHERE COMP_CODE > '' AND USER_ID  = #{S_USER_ID}	
+	</update>
+	
+</mapper>

@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_pmp200rkrv_hsServiceImpl">
+					
+<select id="s_pmp200rkrv_hsServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	BEGIN
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+				
+		DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+			    , @UserId		NVARCHAR(100)	/* 사용자ID */
+			    , @LangType		NVARCHAR(2)		/* 언어구분 */
+			    , @RefItem		NVARCHAR(01)
+			    , @DateFormat	NVARCHAR(10)
+				
+		SET @CompCode = #{S_COMP_CODE}
+		SET @UserId   = #{S_USER_ID}
+		SET @LangType = 'ko'
+				
+		/* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+			FROM BSA300T WITH (NOLOCK)
+			WHERE USER_ID = @UserId
+				
+		SET @RefItem = ISNULL(@RefItem, N'0')
+				
+		/* 날짜 포맷 유형 설정 */
+		SELECT TOP 1 @DateFormat = CODE_NAME
+			FROM BSA100T WITH (NOLOCK)
+			WHERE COMP_CODE = @CompCode
+			AND MAIN_CODE = N'B044'
+			AND REF_CODE1 = N'Y'
+				
+		SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		
+		/*  조회  */
+		SELECT  DISTINCT
+		        A.COMP_CODE
+				, A.DIV_CODE
+				, A.WORK_SHOP_CODE		--작업장
+				 
+				, A.ITEM_CODE
+				, (CASE WHEN @RefItem = '1' THEN C.ITEM_NAME1
+				        WHEN @RefItem = '2' THEN C.ITEM_NAME2
+				                            ELSE C.ITEM_NAME
+				    END)               AS ITEM_NAME
+				, C.SPEC
+				, A.LOT_NO	--
+				, C.STOCK_UNIT
+
+				, ISNULL(A.WKORD_Q, 0) 	AS	WKORD_Q			--작업지시량
+
+				, ISNULL(E.PACK_QTY, 1) AS 	PACK_QTY		--포장량
+				, CASE WHEN ISNULL(A.WKORD_Q, 0) &lt;= 0
+				       THEN 0
+				  	   ELSE 1 
+				   END								AS START_NUM
+				, ROUND(ISNULL(A.WKORD_Q, 0), 0)	AS END_NUM
+				, ROUND(ISNULL(A.WKORD_Q, 0), 0)    AS PRINT_QTY 
+				, F.CODE_NAME			AS PRINT_FORM
+				, A.WKORD_NUM									--작업지시번호
+
+				, (CASE WHEN ISNULL(A.PRODT_WKORD_DATE, '') = ''
+				        THEN ''
+				        ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PRODT_WKORD_DATE, 1, 4))
+				                                                , 'MM'  , SUBSTRING(A.PRODT_WKORD_DATE, 5, 2))
+				                                                , 'DD'  , SUBSTRING(A.PRODT_WKORD_DATE, 7, 2))
+				    END)				AS PRODT_WKORD_DATE		--작업지시일
+
+			FROM      PMP100T A WITH (NOLOCK)
+			LEFT JOIN BPR100T C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+											 AND C.ITEM_CODE   = A.ITEM_CODE
+		    INNER JOIN (SELECT DISTINCT
+							  E.WKORD_NUM
+							, ISNULL(F.CONTROL_STATUS, 3) AS CONTROL_STATUS
+						FROM      PMP100T E WITH (NOLOCK)
+						LEFT JOIN PMR100T F WITH (NOLOCK) ON E.COMP_CODE   = F.COMP_CODE
+														AND E.LINE_END_YN = F.LINE_END_YN
+														AND E.WKORD_NUM   = F.WKORD_NUM
+						WHERE E.COMP_CODE   = @CompCode
+						  AND E.LINE_END_YN = 'Y'
+						GROUP BY E.WKORD_NUM, F.CONTROL_STATUS) AS D ON A.WKORD_NUM = D.WKORD_NUM
+
+		    LEFT JOIN BPR200T E WITH (NOLOCK) ON E.COMP_CODE   = A.COMP_CODE
+											 AND E.DIV_CODE    = A.DIV_CODE
+											 AND E.ITEM_CODE   = A.ITEM_CODE
+	     	LEFT JOIN BSA100T F WITH (NOLOCK) ON F.COMP_CODE   = A.COMP_CODE
+											 AND F.MAIN_CODE   = 'B706'
+											 AND F.SUB_CODE    = 'A'
+		   WHERE A.COMP_CODE         = @CompCode
+			 AND A.LINE_END_YN       = 'Y'				 
+			 AND A.DIV_CODE          = #{DIV_CODE}
+			 AND A.PRODT_WKORD_DATE &gt;= #{WKORD_DATE_FR}
+			 AND A.PRODT_WKORD_DATE &lt;= #{WKORD_DATE_TO}
+
+		 <if test="@foren.Ognl@isNotEmpty(WORK_SHOP_CODE)">
+		  	 AND A.WORK_SHOP_CODE 	 = #{WORK_SHOP_CODE}
+		 </if>
+				 
+		SET NOCOUNT OFF
+		SET ARITHABORT OFF
+	END 
+	
+</select>
+
+<select id="s_pmp200rkrv_hsServiceImpl.selectPrint" parameterType="Map" resultType="rMap">
+	--s_pmp200rkrv_hsServiceImpl.selectPrint
+	BEGIN
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+	<foreach collection="QUERY_PARAMS" item="item" separator="    UNION ALL ">
+		
+		SELECT #{item.ITEM_NAME}							AS ITEM_NAME
+			 , #{item.LOT_NO}								AS LOT_NO
+			 , #{item.PACK_QTY} + ' ' + #{item.STOCK_UNIT}	AS NET_WEIGHT
+			 , NUMBER										AS PRINT_SEQ
+			 , #{item.WKORD_NUM}							AS WKORD_NUM			
+			 , #{item.ITEM_CODE} AS ITEM_CODE
+			 , #{item.PACK_QTY}  AS PACK_QTY
+		  FROM MASTER..spt_values
+		 WHERE TYPE = 'P'
+		   AND NUMBER BETWEEN ${item.START_NUM} AND ${item.END_NUM}
+		   
+	</foreach>
+		SET NOCOUNT OFF
+		SET ARITHABORT OFF
+	END 
+	
+</select>
+
+
+</mapper>

@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sf_cms110skrvService">
+
+    <select id="sf_cms110skrvService.selectDetail" parameterType="Map" resultType="rMap">     
+
+	SELECT				
+		B.BANK_CD		--은행 
+		,R2.CUSTOM_NAME AS BANK_NM
+		,B.ACNUT_NO		--계좌번호
+		,B.ACNUT_NM		--계좌명
+		,B.DEPOSIT_NM	--계좌별칭
+		,A.RCPMNY_AMT	--입금 
+		,A.DEFRAY_AMT	--출금 
+		,A.BLCE_AMT		--잔액 
+		,A.STATE_MATTER_1 AS REMARK		--적요 
+	   					--거래처 
+		
+		,A.DEALING_DT +' '+ A.DEALING_TM AS DEALING_DTTM
+	   					
+		,A.DEALING_DT
+		,A.DEALING_TM
+		,A.DEALING_SEQ
+	
+		,C.RCPMNY_AMT AS SUM_RCPMNY_AMT_N			--현 기간에 따른 sum
+		,C.DEFRAY_AMT AS SUM_DEFRAY_AMT_N
+		,C.BLCE_AMT AS SUM_BLCE_AMT_N
+	   
+		,D.RCPMNY_AMT AS SUM_RCPMNY_AMT_P			--1년전 기간에 따른 sum
+		,D.DEFRAY_AMT AS SUM_DEFRAY_AMT_P
+		,D.BLCE_AMT AS SUM_BLCE_AMT_P
+
+		,C.RCPMNY_AMT - ISNULL(D.RCPMNY_AMT, 0) AS CALC_RCPMNY_AMT	--현기간 - 1년전기간 입금액
+		,C.DEFRAY_AMT - ISNULL(D.DEFRAY_AMT, 0) AS CALC_DEFRAY_AMT	--현기간 - 1년전기간 출금액 
+		,C.BLCE_AMT   - ISNULL(D.BLCE_AMT  , 0) AS CALC_BLCE_AMT	--현기간 - 1년전기간 잔액
+
+		 FROM SF_CMS110T A WITH(NOLOCK) 
+   INNER JOIN SF_CMS100T B WITH(NOLOCK) ON B.COMPANY_NO    = A.COMPANY_NO 
+									   AND B.ACNUT_NO      = A.ACNUT_NO
+	-- 통장정보
+   LEFT JOIN AFS100T R1 WITH(NOLOCK)    ON R1.COMP_CODE    = A.COMP_CODE
+                                       AND REPLACE(uniLITE.fnCipherDecrypt(R1.BANK_ACCOUNT, 'B'), '-', '') = B.ACNUT_NO
+   -- 거래처정보
+   LEFT JOIN BCM100T R2 WITH(NOLOCK)    ON R2.COMP_CODE    = A.COMP_CODE
+    								   AND R2.CUSTOM_CODE  = R1.BANK_CODE
+   									   AND R2.CUSTOM_TYPE  = '4'	
+									   
+	LEFT JOIN (
+			SELECT 
+				MAX(S2.COMPANY_NO) AS COMPANY_NO
+				,ISNULL(SUM(S1.RCPMNY_AMT),0) AS  RCPMNY_AMT
+				,ISNULL(SUM(S1.DEFRAY_AMT),0) AS DEFRAY_AMT
+				,ISNULL(SUM(CASE WHEN ISNULL(S3.DEALING_DTTM, '') = (S1.DEALING_DT + ' ' + S1.DEALING_TM) THEN S1.BLCE_AMT ELSE 0 END),0) AS BLCE_AMT
+			
+			  FROM SF_CMS110T S1 WITH(NOLOCK) 
+	    INNER JOIN SF_CMS100T S2 WITH(NOLOCK) ON S2.COMPANY_NO = S1.COMPANY_NO 
+											 AND S2.ACNUT_NO   = S1.ACNUT_NO 
+		LEFT  JOIN	(
+						SELECT S3.COMP_CODE
+							 , S3.ACNUT_NO
+							 , MAX(S3.DEALING_DT + ' ' + S3.DEALING_TM)	AS DEALING_DTTM
+						  FROM SF_CMS110T S3 WITH(NOLOCK)
+						 WHERE S3.COMP_CODE	  = #{S_COMP_CODE}
+						   AND S3.DEALING_DT &gt;= #{DEALING_DT_FR}
+						   AND S3.DEALING_DT &lt;= #{DEALING_DT_TO}
+						 GROUP BY S3.COMP_CODE
+							 , S3.ACNUT_NO
+					) S3					 ON S1.COMP_CODE	= S3.COMP_CODE
+											AND S1.ACNUT_NO		= S3.ACNUT_NO
+		 WHERE S1.COMP_CODE = #{S_COMP_CODE}
+			 <if test="@foren.Ognl@isNotEmpty(ACNUT_NO)">
+			  AND S2.ACNUT_NO = #{ACNUT_NO}
+			 </if>
+			 <if test="WORK_TYPE == &quot;1&quot;">
+				AND S1.RCPMNY_AMT &gt; 0 	--입금
+			 </if>
+			 <if test="WORK_TYPE == &quot;2&quot;">
+				AND S1.DEFRAY_AMT &gt; 0 	--출금
+			 </if>
+			 <if test="@foren.Ognl@isNotEmpty(DEALING_DT_FR)">
+				  AND S1.DEALING_DT &gt;= #{DEALING_DT_FR}
+			 </if>
+			 <if test="@foren.Ognl@isNotEmpty(DEALING_DT_TO)">
+				  AND S1.DEALING_DT &lt;= #{DEALING_DT_TO}
+			 </if>
+		  
+	) C ON C.COMPANY_NO = B.COMPANY_NO
+
+	LEFT JOIN (
+		SELECT 
+		MAX(S2.COMPANY_NO) AS COMPANY_NO
+		,ISNULL(SUM(S1.RCPMNY_AMT),0) AS  RCPMNY_AMT
+		,ISNULL(SUM(S1.DEFRAY_AMT),0) AS DEFRAY_AMT
+		,ISNULL(SUM(S1.BLCE_AMT),0) AS BLCE_AMT
+				
+			  FROM SF_CMS110T S1 WITH(NOLOCK) 
+	    INNER JOIN SF_CMS100T S2 WITH(NOLOCK) ON S2.COMPANY_NO = S1.COMPANY_NO 
+											 AND S2.ACNUT_NO   = S1.ACNUT_NO 
+			 WHERE S1.COMP_CODE = #{S_COMP_CODE}
+				 <if test="@foren.Ognl@isNotEmpty(ACNUT_NO)">
+				  AND S2.ACNUT_NO = #{ACNUT_NO}
+				 </if>
+				 <if test="WORK_TYPE == &quot;1&quot;">
+					AND S1.RCPMNY_AMT &gt; 0 	--입금
+				 </if>
+				 <if test="WORK_TYPE == &quot;2&quot;">
+					AND S1.DEFRAY_AMT &gt; 0 	--출금
+				 </if>
+				 <if test="@foren.Ognl@isNotEmpty(DEALING_DT_FR)">
+					  AND S1.DEALING_DT &gt;= CONVERT(CHAR(8), DATEADD(YEAR, -1, #{DEALING_DT_FR}) , 112) 
+				 </if>
+				 <if test="@foren.Ognl@isNotEmpty(DEALING_DT_TO)">
+					  AND S1.DEALING_DT &lt;= CONVERT(CHAR(8), DATEADD(YEAR, -1, #{DEALING_DT_TO}) , 112) 
+				 </if>
+	) D ON D.COMPANY_NO = B.COMPANY_NO
+
+WHERE A.COMP_CODE =  #{S_COMP_CODE}
+  
+	 <if test="@foren.Ognl@isNotEmpty(BANK_CD)">
+	  AND R1.BANK_CODE = #{BANK_CD}
+	 </if>
+	 <if test="@foren.Ognl@isNotEmpty(ACNUT_NO)">
+	  AND B.ACNUT_NO = #{ACNUT_NO}
+	 </if>
+	 <if test="WORK_TYPE == &quot;1&quot;">
+		AND A.RCPMNY_AMT &gt; 0 	--입금
+	 </if>
+	 <if test="WORK_TYPE == &quot;2&quot;">
+		AND A.DEFRAY_AMT &gt; 0 	--출금
+	 </if>
+	 <if test="@foren.Ognl@isNotEmpty(DEALING_DT_FR)">
+		  AND A.DEALING_DT &gt;= #{DEALING_DT_FR}
+	 </if>
+	 <if test="@foren.Ognl@isNotEmpty(DEALING_DT_TO)">
+		  AND A.DEALING_DT &lt;= #{DEALING_DT_TO}
+	 </if>
+
+ORDER BY
+B.COMPANY_NO ,  B.ACNUT_NO 
+
+	  
+    </select>
+    
+</mapper>

@@ -1,0 +1,482 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="atx326ukrServiceImpl">
+	<select id="atx326ukrServiceImpl.selectCreditCardListFirst" parameterType="Map" resultType="rMap">
+		--atx326ukr.Catx326ukr[fnatx326QStd] atx326T조회 신용,직불카드 및 기명식선불카드 매출전표 수취명세
+		SELECT FR_PUB_DATE
+		     , TO_PUB_DATE
+		     , BILL_DIVI_CODE
+		     , CASH_DIVI
+		     , SEQ 
+		  -- , uniLITE.fnCipherDecrypt(A.MEM_NUM, 'C') AS MEM_NUM
+		     , uniLITE.fnCipherDecrypt(A.MEM_NUM, '') AS MEM_NUM
+		     , '' CUSTOM_CODE 
+		 --  , SUBSTRING(A.COMP_NUM, 1, 3) + '-' + SUBSTRING(A.COMP_NUM, 4, 2) + '-' + SUBSTRING(A.COMP_NUM, 6, 5) AS COMP_NUM 
+		     , A.COMP_NUM
+		     , A.BUSI_CNT  
+		     , SUM(ISNULL(SUPPLY_AMT_I,0)) SUPPLY_AMT_I, SUM(ISNULL(TAX_AMT_I, 0)) AS TAX_AMT_I 
+		     , '' AS UPDATE_DB_USER 
+		     , GETDATE() AS UPDATE_DB_TIME
+		     , COMP_CODE 
+		     , '' AS SAVE_FLAG
+		  FROM ATX325T A WITH (NOLOCK)
+		 WHERE COMP_CODE      = #{S_COMP_CODE}
+		   AND CASH_DIVI      = '1'
+		   AND FR_PUB_DATE    = #{FR_PUB_DATE}
+		   AND TO_PUB_DATE    = #{TO_PUB_DATE}
+		<if test="BILL_DIVI_CODE != &quot;00&quot;">  
+		   AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+		</if>
+		 GROUP BY A.FR_PUB_DATE, TO_PUB_DATE, A.COMP_NUM, A.BILL_DIVI_CODE, CASH_DIVI
+		        , SEQ, uniLITE.fnCipherDecrypt(MEM_NUM, ''), A.BUSI_CNT, A.COMP_CODE
+		 ORDER BY A.COMP_NUM
+	</select>
+
+	<select id="atx326ukrServiceImpl.selectCreditCardListSecond" parameterType="Map" resultType="rMap">
+		--atx326ukr.Catx326ukr[fnatx326QStd] ATX100T에서 신용카드매입정보 가져온다
+		
+		-- 부가세테이블에는 신용카드번호가 있고 신용카드정보에 없는 경우 가장 빠른 코드의 카드구분값 적용"
+    	DECLARE @TOP_CRDT_GBN  NVARCHAR(01)
+
+	    SELECT TOP 1 @TOP_CRDT_GBN = CRDT_GBN
+	    FROM   ABA500T WITH (NOLOCK)
+	    WHERE  COMP_CODE = #{S_COMP_CODE}
+	    AND    USE_YN    = N'Y'
+	    ORDER BY CRDT_NUM
+    
+		SELECT CONVERT(NVARCHAR(8),'') AS FR_PUB_DATE  
+		     , CONVERT(NVARCHAR(8),'') AS TO_PUB_DATE  
+		     , A.BILL_DIVI_CODE  
+		     , CASE WHEN ISNULL(B.CRDT_GBN, '') = '' THEN CONVERT(NVARCHAR(1), @TOP_CRDT_GBN) ELSE B.CRDT_GBN END           AS CASH_DIVI 
+		   --, CONVERT(NUMERIC(5), 0) AS SEQ 
+		   --, uniLITE.fnCipherDecrypt(A.CREDIT_NUM, 'C') AS MEM_NUM
+		     , uniLITE.fnCipherDecrypt(A.CREDIT_NUM, '') AS MEM_NUM
+		     , '' CUSTOM_CODE 
+		   --, SUBSTRING(A.COMPANY_NUM, 1, 3) + '-' + SUBSTRING(A.COMPANY_NUM, 4, 2) + '-' + SUBSTRING(A.COMPANY_NUM, 6, 5) AS COMP_NUM 
+		     ,A.COMPANY_NUM AS COMP_NUM 
+		     , CONVERT(NUMERIC(5), COUNT(1)) AS BUSI_CNT 
+		     , SUM(ISNULL(A.SUPPLY_AMT_I,0)) AS SUPPLY_AMT_I 
+		     , SUM(ISNULL(A.TAX_AMT_I, 0)) AS TAX_AMT_I 
+		     , '' AS UPDATE_DB_USER 
+		     , GETDATE() AS UPDATE_DB_TIME
+		     , A.COMP_CODE 
+		     , 'N' AS SAVE_FLAG
+		  FROM            ATX100T   A  WITH (NOLOCK)
+		       LEFT  JOIN (SELECT COMP_CODE
+		                        , REPLACE(uniLITE.fnCipherDecrypt(CRDT_FULL_NUM, ''), '-', '') AS CRDT_FULL_NUM
+		                        , MAX(CRDT_GBN) AS CRDT_GBN
+		                     FROM ABA500T WITH (NOLOCK)
+		                   GROUP BY COMP_CODE, REPLACE(uniLITE.fnCipherDecrypt(CRDT_FULL_NUM, ''), '-', '')
+		                   ) B ON B.COMP_CODE     = A.COMP_CODE
+		                      AND B.CRDT_FULL_NUM = REPLACE(uniLITE.fnCipherDecrypt(A.CREDIT_NUM, ''), '-', '')
+		 WHERE A.COMP_CODE    = #{S_COMP_CODE}
+		   AND A.PROOF_KIND IN ('53', '68')
+		   AND B.CRDT_GBN    = '1'
+		   AND A.PUB_DATE   &gt;= #{FR_PUB_DATE}
+		   AND A.PUB_DATE   &lt;= #{TO_PUB_DATE}
+		<if test="BILL_DIVI_CODE != &quot;00&quot;">  
+		   AND A.BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+		</if>
+		 GROUP BY A.BILL_DIVI_CODE, uniLITE.fnCipherDecrypt(A.CREDIT_NUM, ''), A.COMPANY_NUM, A.COMP_CODE, B.CRDT_GBN
+		 ORDER BY A.COMPANY_NUM
+	</select>
+
+	<select id="atx326ukrServiceImpl.selectCashListFirst" parameterType="Map" resultType="rMap">
+		--atx326ukr.Catx326ukr[fnatx326QStd] atx326T조회 - 조세특례제한법에 의한 현금영수증 수취명세
+		SELECT FR_PUB_DATE
+		     , TO_PUB_DATE
+		     , BILL_DIVI_CODE
+		     , CASH_DIVI
+		     , SEQ
+		   --, uniLITE.fnCipherDecrypt(MEM_NUM, 'C') AS MEM_NUM 
+		     , uniLITE.fnCipherDecrypt(MEM_NUM, '') AS MEM_NUM 
+		     , '' CUSTOM_CODE  
+		  -- , SUBSTRING(A.COMP_NUM, 1, 3) + '-' + SUBSTRING(A.COMP_NUM, 4, 2) + '-' + SUBSTRING(A.COMP_NUM, 6, 5) AS COMP_NUM 
+		     , A.COMP_NUM
+		     , A.BUSI_CNT 
+		     , SUM(ISNULL(SUPPLY_AMT_I,0)) AS SUPPLY_AMT_I
+		     , SUM(ISNULL(TAX_AMT_I, 0)) AS TAX_AMT_I 
+		     , '' AS UPDATE_DB_USER 
+		     , GETDATE() AS UPDATE_DB_TIME
+		     , COMP_CODE
+		     , '' AS SAVE_FLAG
+		  FROM ATX325T   A  WITH (NOLOCK)
+		 WHERE COMP_CODE      = #{S_COMP_CODE}
+		   AND (CASH_DIVI ='2' OR CASH_DIVI='3' OR CASH_DIVI='4')
+		   AND FR_PUB_DATE    = #{FR_PUB_DATE}
+		   AND TO_PUB_DATE    = #{TO_PUB_DATE}
+		<if test="BILL_DIVI_CODE != &quot;00&quot;">  
+		   AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+		</if>
+		 GROUP BY A.FR_PUB_DATE, TO_PUB_DATE, A.COMP_NUM, A.BILL_DIVI_CODE, CASH_DIVI
+		        , SEQ, uniLITE.fnCipherDecrypt(MEM_NUM, ''),  A.BUSI_CNT, A.COMP_CODE
+		 ORDER BY A.COMP_NUM
+	</select>
+	
+	<select id="atx326ukrServiceImpl.selectCashListSecond" parameterType="Map" resultType="rMap">
+		--atx326ukr.Catx326ukr[fnatx326QStd] ATX100T에서 현금매입정보 가져온다
+    
+		SELECT X.FR_PUB_DATE
+		     , X.TO_PUB_DATE
+		     , X.CASH_DIVI
+		     , X.BILL_DIVI_CODE 
+		   --, CONVERT(NUMERIC(5), 0) AS SEQ 
+		     , ''                     AS MEM_NUM 
+		     , ''                     AS CUSTOM_CODE  
+		     , ''                     AS COMP_NUM  
+		     , SUM(X.BUSI_CNT)        AS BUSI_CNT
+		     , SUM(X.SUPPLY_AMT_I)    AS SUPPLY_AMT_I
+		     , SUM(X.TAX_AMT_I)       AS TAX_AMT_I
+		     , ''                     AS UPDATE_DB_USER
+		     , GETDATE()              AS UPDATE_DB_TIME
+		     , X.COMP_CODE
+		     , 'N' AS SAVE_FLAG
+		  FROM (SELECT CONVERT(NVARCHAR(8),'') AS FR_PUB_DATE  
+		             , CONVERT(NVARCHAR(8),'') AS TO_PUB_DATE  
+		             , CASE WHEN  (A.PROOF_KIND = '62' OR A.PROOF_KIND = '69' OR A.PROOF_KIND = '71') THEN CONVERT(NVARCHAR(1), '2')
+		                    WHEN ((A.PROOF_KIND = '53' OR A.PROOF_KIND = '68' OR A.PROOF_KIND = '70') AND B.CRDT_GBN = '3') THEN CONVERT(NVARCHAR(1), '3')
+		                    WHEN ((A.PROOF_KIND = '53' OR A.PROOF_KIND = '68' OR A.PROOF_KIND = '70') AND B.CRDT_GBN = '4') THEN CONVERT(NVARCHAR(1), '4')
+		                END AS CASH_DIVI
+		             , A.BILL_DIVI_CODE 
+		             , COUNT(1) AS BUSI_CNT  
+		             , SUM(ISNULL(A.SUPPLY_AMT_I,0)) AS SUPPLY_AMT_I  
+		             , SUM(ISNULL(A.TAX_AMT_I, 0)) AS TAX_AMT_I 
+		             , A.COMP_CODE 
+		          FROM            ATX100T   A  WITH (NOLOCK)
+		               LEFT  JOIN (SELECT COMP_CODE
+		                                , REPLACE(uniLITE.fnCipherDecrypt(CRDT_FULL_NUM, ''), '-', '') AS CRDT_FULL_NUM
+		                                , MAX(CRDT_GBN) AS CRDT_GBN
+		                             FROM ABA500T WITH (NOLOCK)
+		                            GROUP BY COMP_CODE, REPLACE(uniLITE.fnCipherDecrypt(CRDT_FULL_NUM, ''), '-', '')
+		                           ) B ON B.COMP_CODE     = A.COMP_CODE
+		                              AND B.CRDT_FULL_NUM = REPLACE(uniLITE.fnCipherDecrypt(A.CREDIT_NUM, ''), '-', '')
+		         WHERE A.COMP_CODE  = #{S_COMP_CODE}
+		           AND  ((A.PROOF_KIND ='62') OR (A.PROOF_KIND ='69') OR (A.PROOF_KIND ='71') OR ((A.PROOF_KIND='53' OR A.PROOF_KIND='68') AND (B.CRDT_GBN = '3' OR B.CRDT_GBN = '4')))
+		           AND    A.PUB_DATE  &gt;= #{FR_PUB_DATE}
+		           AND    A.PUB_DATE  &lt;= #{TO_PUB_DATE}
+		      <if test="BILL_DIVI_CODE != &quot;00&quot;">  
+			       AND    A.BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+			  </if>
+		         GROUP BY A.BILL_DIVI_CODE, A.PROOF_KIND, A.COMP_CODE, B.CRDT_GBN) X
+		 GROUP BY X.FR_PUB_DATE, X.TO_PUB_DATE, X.CASH_DIVI, X.BILL_DIVI_CODE, X.COMP_CODE
+	</select>
+	
+	<select id="atx326ukrServiceImpl.selectFormHeader" parameterType="Map" resultType="rMap" >
+		SELECT ISNULL(D.DIV_FULL_NAME,'') AS COMP_NAME
+		     , ISNULL(SUBSTRING(D.COMPANY_NUM,1,3) + '-' + SUBSTRING(D.COMPANY_NUM,4,2) + '-' + SUBSTRING(D.COMPANY_NUM,6,5),'') COMPANY_NUM
+		     , ISNULL(D.REPRE_NAME,'')    AS REPRE_NAME
+		     , ISNULL((SELECT COMP_OWN_NO 
+	                     FROM BOR100T WITH (NOLOCK)
+	                    WHERE COMP_CODE = #{COMP_CODE}),'') AS REPRE_NO
+	         , ISNULL((SELECT SUM(ISNULL(BUSI_CNT,0)) 
+	                     FROM ATX325T   WITH (NOLOCK)
+	                    WHERE COMP_CODE   = #{COMP_CODE}
+				    <if test="BILL_DIVI_CODE != '00'">
+					      AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+					</if>
+	                      AND CASH_DIVI   = '1'
+	                      AND FR_PUB_DATE = #{FR_PUB_DATE}
+	                      AND TO_PUB_DATE = #{TO_PUB_DATE}), 0) CREDIT_CNT
+	         , ISNULL((SELECT SUM(SUPPLY_AMT_I) 
+	                     FROM ATX325T WITH (NOLOCK)
+	                    WHERE COMP_CODE   = #{COMP_CODE}
+					<if test="BILL_DIVI_CODE != '00'">
+						  AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+					</if>
+	                      AND CASH_DIVI   = '1'
+	                      AND FR_PUB_DATE = #{FR_PUB_DATE}
+	                      AND TO_PUB_DATE = #{TO_PUB_DATE}), 0) CREDIT_SUPPLY_AMT
+	         , ISNULL((SELECT SUM(TAX_AMT_I) 
+	                     FROM ATX325T WITH (NOLOCK)
+	                    WHERE COMP_CODE   = #{COMP_CODE}
+					<if test="BILL_DIVI_CODE != '00'">
+						  AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+					</if>
+	                      AND CASH_DIVI   = '1'
+	                      AND FR_PUB_DATE = #{FR_PUB_DATE}
+	                      AND TO_PUB_DATE = #{TO_PUB_DATE}), 0) CREDIT_TAX_AMT
+	         , ISNULL((SELECT SUM(ISNULL(BUSI_CNT,0)) 
+	                     FROM ATX325T WITH (NOLOCK)
+	                    WHERE COMP_CODE   = #{COMP_CODE}
+					<if test="BILL_DIVI_CODE != '00'">
+						  AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+					</if>
+	                      AND CASH_DIVI   = '2'
+	                      AND FR_PUB_DATE = #{FR_PUB_DATE}
+	                      AND TO_PUB_DATE = #{TO_PUB_DATE}), 0) CASH_CNT
+	         , ISNULL((SELECT SUM(SUPPLY_AMT_I) 
+	                     FROM ATX325T WITH (NOLOCK)
+	                    WHERE COMP_CODE   = #{COMP_CODE}
+					<if test="BILL_DIVI_CODE != '00'">
+						  AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+					</if>
+	                      AND CASH_DIVI   = '2'
+	                      AND FR_PUB_DATE = #{FR_PUB_DATE}
+	                      AND TO_PUB_DATE = #{TO_PUB_DATE}), 0) CASH_SUPPLY_AMT
+	         , ISNULL((SELECT SUM(TAX_AMT_I) 
+	                     FROM ATX325T   WITH (NOLOCK)
+	                    WHERE COMP_CODE   = #{COMP_CODE}
+					<if test="BILL_DIVI_CODE != '00'">
+						  AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+					</if>
+	                      AND CASH_DIVI   = '2'
+	                      AND FR_PUB_DATE = #{FR_PUB_DATE}
+	                      AND TO_PUB_DATE = #{TO_PUB_DATE}), 0) CASH_TAX_AMT
+	         , ISNULL((SELECT SUM(ISNULL(BUSI_CNT,0)) 
+	                     FROM ATX325T WITH (NOLOCK)
+	                    WHERE COMP_CODE   = #{COMP_CODE}
+					<if test="BILL_DIVI_CODE != '00'">
+						  AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+					</if>
+	                      AND CASH_DIVI   = '3'
+	                      AND FR_PUB_DATE = #{FR_PUB_DATE}
+	                      AND TO_PUB_DATE = #{TO_PUB_DATE}), 0) CREDIT_CNT2
+	         , ISNULL((SELECT SUM(SUPPLY_AMT_I) 
+	                     FROM ATX325T WITH (NOLOCK)
+	                    WHERE COMP_CODE   = #{COMP_CODE}
+					<if test="BILL_DIVI_CODE != '00'">
+						  AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+					</if>
+	                      AND CASH_DIVI   = '3'
+	                      AND FR_PUB_DATE = #{FR_PUB_DATE}
+	                      AND TO_PUB_DATE = #{TO_PUB_DATE}), 0) CREDIT_SUPPLY_AMT2
+	         , ISNULL((SELECT SUM(TAX_AMT_I) 
+	                     FROM ATX325T WITH (NOLOCK)
+	                    WHERE COMP_CODE   = #{COMP_CODE}
+					<if test="BILL_DIVI_CODE != '00'">
+						  AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+					</if>
+	                      AND CASH_DIVI   = '3'
+	                      AND FR_PUB_DATE = #{FR_PUB_DATE}
+	                      AND TO_PUB_DATE = #{TO_PUB_DATE}), 0) CREDIT_TAX_AMT2
+	         , ISNULL((SELECT SUM(BUSI_CNT)
+	                     FROM ATX325T WITH (NOLOCK)
+	                    WHERE COMP_CODE   = #{COMP_CODE}
+					<if test="BILL_DIVI_CODE != '00'">
+						  AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+					</if>
+	                      AND CASH_DIVI   = '4'
+	                      AND FR_PUB_DATE = #{FR_PUB_DATE}
+	                      AND TO_PUB_DATE = #{TO_PUB_DATE}), 0) CREDIT_CNT3
+	         , ISNULL((SELECT SUM(SUPPLY_AMT_I) 
+	                     FROM ATX325T WITH (NOLOCK)
+	                    WHERE COMP_CODE   = #{COMP_CODE}
+					<if test="BILL_DIVI_CODE != '00'">
+						  AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+					</if>
+	                      AND CASH_DIVI   = '4'
+	                      AND FR_PUB_DATE = #{FR_PUB_DATE}
+	                      AND TO_PUB_DATE = #{TO_PUB_DATE}), 0) CREDIT_SUPPLY_AMT3
+	         , ISNULL((SELECT SUM(TAX_AMT_I) 
+	                     FROM ATX325T WITH (NOLOCK)
+	                    WHERE COMP_CODE   = #{COMP_CODE}
+					<if test="BILL_DIVI_CODE != '00'">
+						  AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+					</if>
+	                      AND CASH_DIVI   = '4'
+	                      AND FR_PUB_DATE = #{FR_PUB_DATE}
+	                      AND TO_PUB_DATE = #{TO_PUB_DATE}), 0) CREDIT_TAX_AMT3
+	         , 0   AS SEQ_2
+	         , ''  AS MEM_NUM_2
+	         , ''  AS COMP_NUM_2
+	         , 0   AS BUSI_CNT_2
+	         , 0   AS SUPPLY_AMT_I_2
+	         , 0   AS TAX_AMT_I_2
+	         , '1' AS GUBUN
+	      FROM BOR120T D WITH (NOLOCK)
+	     WHERE D.COMP_CODE = #{COMP_CODE}
+	    <choose>
+		    <when test="BILL_DIVI_CODE =='00'">
+		           AND D.DIV_CODE = (SELECT BILL_DIVI_CODE 
+		                               FROM ABA100T   WITH (NOLOCK)
+		                              WHERE COMP_CODE = #{COMP_CODE})
+			</when>
+		    <otherwise>
+		           AND D.DIV_CODE = #{BILL_DIVI_CODE}
+		    </otherwise>
+	    </choose>
+	</select>
+	
+	<select id="atx326ukrServiceImpl.selectCompInfo" parameterType="Map" resultType="rMap" >
+		SELECT SEQ
+	          , uniLITE.fnCipherDecrypt(A.MEM_NUM, 'C') MEM_NUM
+	          , (SUBSTRING(COMP_NUM, 1, 3) + '-' + SUBSTRING(COMP_NUM, 4, 2) + '-' + SUBSTRING(COMP_NUM, 6, 5)) AS COMP_NUM 
+	          , A.BUSI_CNT 
+	          , SUPPLY_AMT_I
+	          , TAX_AMT_I
+	          , '1' AS GUBUN
+	       FROM ATX325T A  WITH (NOLOCK)
+	      WHERE COMP_CODE   = #{COMP_CODE}
+	        AND CASH_DIVI   = '1'
+	        AND FR_PUB_DATE = #{FR_PUB_DATE}
+	        AND TO_PUB_DATE = #{TO_PUB_DATE}
+	    <if test="BILL_DIVI_CODE != '00'">
+	        AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+	    </if>
+	     ORDER BY SEQ, BUSI_DATE, COMP_NUM
+	</select>
+	
+	<insert id="atx326ukrServiceImpl.insertDetail" parameterType="Map">    	
+		--atx326ukr.Catx326ukr[fnatx326Save] Query02
+		INSERT INTO atx325t
+		     ( FR_PUB_DATE
+		     , TO_PUB_DATE
+		     , BILL_DIVI_CODE
+		     , CASH_DIVI
+		     , SEQ
+		     , MEM_NUM
+		     , COMP_NUM
+		     , BUSI_CNT
+		     , SUPPLY_AMT_I
+		     , TAX_AMT_I
+		     , INSERT_DB_USER
+		     , INSERT_DB_TIME
+		     , UPDATE_DB_USER
+		     , UPDATE_DB_TIME
+		     , COMP_CODE
+		     ) 
+		VALUES
+		     ( #{FR_PUB_DATE}
+		     , #{TO_PUB_DATE}
+		     , #{BILL_DIVI_CODE}
+		     , #{CASH_DIVI}
+		     , #{SEQ}
+		     , uniLITE.fnCipherEncrypt(#{MEM_NUM}, '')
+		     , #{COMP_NUM}
+		     , #{BUSI_CNT}
+		     , #{SUPPLY_AMT_I}
+		     , #{TAX_AMT_I}
+		     , #{S_USER_ID}
+		     , GETDATE()
+		     , #{S_USER_ID}
+		     , GETDATE()
+		     , #{S_COMP_CODE}
+		     )
+	</insert>
+		
+	<update id="atx326ukrServiceImpl.updateDetail" parameterType="Map">		
+		--atx326ukr.Catx326ukr[fnatx326Save] Query02
+		UPDATE atx325t
+		   SET MEM_NUM        = uniLITE.fnCipherEncrypt(#{MEM_NUM}, '')
+		     , CUSTOM_CODE    = #{CUSTOM_CODE}
+		     , COMP_NUM       = #{COMP_NUM}
+		     , BUSI_CNT       = #{BUSI_CNT}
+		     , SUPPLY_AMT_I   = #{SUPPLY_AMT_I}
+		     , TAX_AMT_I      = #{TAX_AMT_I}
+		     , UPDATE_DB_USER = #{S_USER_ID}
+		     , UPDATE_DB_TIME = GETDATE()
+		 WHERE FR_PUB_DATE    = #{FR_PUB_DATE}
+		   AND TO_PUB_DATE    = #{TO_PUB_DATE}
+		   AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+		   AND CASH_DIVI      = #{CASH_DIVI}
+		   AND SEQ            = #{SEQ}
+		   AND COMP_CODE      = #{S_COMP_CODE}
+	</update>
+	
+	<update id="atx326ukrServiceImpl.deleteDetail" parameterType="Map">
+		--atx326ukr.Catx326ukr[fnatx326Save] Query01
+		--재참조분 저장시 기존 데이타(ATX326T) 삭제
+		DELETE ATX325T
+		WHERE  COMP_CODE   = #{S_COMP_CODE}
+		AND    FR_PUB_DATE = #{FR_PUB_DATE} 
+		AND    TO_PUB_DATE = #{TO_PUB_DATE}
+		AND    BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+	</update>
+	
+	<select id="atx326ukrServiceImpl.selectList2" resultType="rMap" parameterType="Map">
+		--atx326ukr.Catx326rkr [fnatx326r2] Query01
+	    SELECT A.COMP_CODE
+	         , A.DIV_CODE
+	         , A.PUB_DATE
+	         , SUM(A.SUPPLY_AMT_I)         AS  SUPPLY_AMT_I
+	         , SUM(A.TAX_AMT_I)            AS  TAX_AMT_I
+	         , COUNT(*)                    AS  CNT
+	         , C.CUSTOM_FULL_NAME
+	         , C.COMPANY_NUM
+	         , CASE WHEN B.REF_CODE1       = 'F' THEN unilite.fnCipherDecrypt(A.CREDIT_NUM,'')
+	                                             ELSE unilite.fnCipherDecrypt(A.CREDIT_NUM,'C')
+	            END CREDIT_NO
+	         , D.DIV_NAME
+	         , D.COMPANY_NUM               AS  DIV_NUM
+	      FROM            ATX100T A WITH (NOLOCK)
+	           INNER JOIN BSA100T B WITH (NOLOCK) ON A.COMP_CODE     = B.COMP_CODE
+	                                             AND A.PROOF_KIND    = B.SUB_CODE
+	                                             AND B.MAIN_CODE     = 'A022'
+	                                             AND B.REF_CODE1     = #{PROOF_KIND}
+	                                             AND B.REF_CODE3     = '1'
+	           INNER JOIN BCM100T C WITH (NOLOCK) ON A.COMP_CODE     = C.COMP_CODE
+	                                             AND A.CUSTOM_CODE   = C.CUSTOM_CODE
+	           INNER JOIN BOR120T D WITH (NOLOCK) ON A.COMP_CODE     = D.COMP_CODE
+	                                             AND A.DIV_CODE      = D.DIV_CODE
+		 WHERE A.PUB_DATE   &gt;= #{FR_PUB_DATE}
+	       AND A.PUB_DATE   &lt;= #{TO_PUB_DATE}
+	       AND A.BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+	       AND A.COMP_CODE      = #{S_COMP_CODE}
+	     GROUP BY A.COMP_CODE
+	         , A.DIV_CODE
+	         , A.PUB_DATE
+	         , A.SUPPLY_AMT_I
+	         , A.TAX_AMT_I
+	         , C.CUSTOM_FULL_NAME
+	         , C.COMPANY_NUM
+	         , CASE WHEN B.REF_CODE1       = 'F' THEN unilite.fnCipherDecrypt(A.CREDIT_NUM,'')
+	                                             ELSE unilite.fnCipherDecrypt(A.CREDIT_NUM,'C')
+	            End
+	         , D.DIV_NAME
+	         , D.COMPANY_NUM
+	     ORDER BY A.PUB_DATE
+	</select>
+	
+	<select id="atx326ukrServiceImpl.selectFileList" resultType="rMap" parameterType="Map">
+	    -- atx326ukrServiceImpl.selectFileList
+		SELECT MEM_NUM, COUNT(1) CNT
+		  FROM ATX325T
+		 WHERE COMP_CODE      = #{COMP_CODE}
+		   AND FR_PUB_DATE    = #{FR_PUB_DATE} + '01'
+		   AND TO_PUB_DATE = CONVERT(VARCHAR(8), DATEADD(D, -1, DATEADD(MM, 1, #{TO_PUB_DATE} + '01')), 112)
+		   AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+		 GROUP BY MEM_NUM
+	</select>
+
+	<update id="atx326ukrServiceImpl.updateDecrypto" parameterType="Map">
+	    -- atx326ukrServiceImpl.updateDecrypto
+		UPDATE ATX325T
+		   SET MEM_NUM_JOB    = #{MEM_NUM}
+		 WHERE COMP_CODE      = #{COMP_CODE}
+		   AND FR_PUB_DATE    = #{FR_PUB_DATE} + '01' 
+		   AND TO_PUB_DATE    = CONVERT(VARCHAR(8), DATEADD(D, -1, DATEADD(MM, 1, #{TO_PUB_DATE} + '01')), 112)
+		   AND BILL_DIVI_CODE = #{BILL_DIVI_CODE}
+		   AND MEM_NUM        = #{ORG_MEM_NUM} 
+	</update>
+	
+	<select id="atx326ukrServiceImpl.fnGetFileText" resultType="rMap" parameterType="Map">
+		DECLARE @COMP_CODE              NVARCHAR(08)            -- 법인코드
+		      , @FR_PUB_DATE            NVARCHAR(08)            -- 계산서일 FROM
+		      , @TO_PUB_DATE            NVARCHAR(08)            -- 계산서일 TO
+		      , @BILL_DIV_CODE          NVARCHAR(08)            -- 신고사업장코드
+		      , @TAX_BASE               NVARCHAR(09)            --
+		      , @PROV_DATE              NVARCHAR(8)             -- 제출년월일
+		      , @KEY_VALUE              NVARCHAR(20)            -- (필수) KEY 문자열
+		      , @LANG_TYPE              NVARCHAR(02)            -- (필수) 다국어처리
+		      , @USER_ID                NVARCHAR(100)            -- 사용자아이디
+		      , @RETURN_TEXT            NVARCHAR(MAX)      -- 파일내용
+		      , @FILE_NAME              NVARCHAR(20)       -- 파일명
+		      , @ERROR_DESC             NVARCHAR(1000)     -- Error Description
+		
+		SET @COMP_CODE     = #{S_COMP_CODE}
+		SET @FR_PUB_DATE   = #{FR_PUB_DATE}
+		SET @TO_PUB_DATE   = #{TO_PUB_DATE}
+		SET @BILL_DIV_CODE = #{BILL_DIVI_CODE}
+		SET @TAX_BASE      = ''
+		SET @PROV_DATE     = #{WRITE_DATE}
+		SET @KEY_VALUE     = ''
+		SET @LANG_TYPE     = 'KR'
+		SET @USER_ID       = #{S_USER_ID}
+		SET @RETURN_TEXT   = ''
+		SET @ERROR_DESC    = ''
+		 
+		EXEC USP_ACCNT_ATX326UKR_fnatx326File @COMP_CODE, @FR_PUB_DATE, @TO_PUB_DATE, @BILL_DIV_CODE, @TAX_BASE, @PROV_DATE, @KEY_VALUE, @LANG_TYPE, @USER_ID, @RETURN_TEXT OUTPUT, @FILE_NAME OUTPUT, @ERROR_DESC OUTPUT
+		
+		SELECT @RETURN_TEXT AS RETURN_TEXT, @FILE_NAME AS FILE_NAME, @ERROR_DESC AS ERROR_DESC
+	</select>
+</mapper>

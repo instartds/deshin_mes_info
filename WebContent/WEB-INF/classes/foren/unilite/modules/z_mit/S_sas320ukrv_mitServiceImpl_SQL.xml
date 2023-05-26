@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_sas320ukrv_mitServiceImpl">
+	
+	<select id="s_sas320ukrv_mitServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		DECLARE @CompCode       NVARCHAR(08)   /* 법인코드            */
+	          , @DivCode        NVARCHAR(08)   /* 사업장코드          */
+	          , @RepairDateFr     NVARCHAR(08)   /* 수리견적일기간Fr    */
+	          , @RepairDateTo     NVARCHAR(08)   /* 수리견적일기간To    */
+	
+	          , @UserId         NVARCHAR(100)  /* 사용자ID            */
+	          , @RefItem        NVARCHAR(01)   /* 명칭 참조 유형      */
+	
+	    SET @CompCode     = #{S_COMP_CODE}
+	    SET @DivCode      = #{DIV_CODE}
+	    SET @RepairDateFr = #{REPAIR_DATE_FR}
+	    SET @RepairDateTo = #{REPAIR_DATE_TO}
+	
+	    SET @UserId     = #{S_USER_ID}
+	
+	    /* 명칭 참조 유형 */
+	    SELECT TOP 1 @RefItem = REF_ITEM
+	      FROM BSA300T WITH (NOLOCK)
+	     WHERE USER_ID = @UserId
+	
+	    SET @RefItem = ISNULL(@RefItem, N'0')
+	
+	    /* 조회 */
+	    SELECT A.COMP_CODE                                      /* 법인코드       */
+	         , A.DIV_CODE                                       /* 사업장         */
+	         , A.REPAIR_NUM                                     /* 수리번호       */
+	         , A.REPAIR_DATE                                    /* 수리일         */
+	         , B.CUSTOM_CODE                                    /* 거래처         */
+			 , CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+			        WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+			                            ELSE C1.CUSTOM_NAME
+			    END AS CUSTOM_NAME                              /* 거래처명       */
+	         , B.ITEM_CODE                                      /* 품목코드       */
+	         , CASE WHEN @RefItem = '1' THEN C2.ITEM_NAME1
+			        WHEN @RefItem = '2' THEN C2.ITEM_NAME2
+			                            ELSE C2.ITEM_NAME
+			    END AS ITEM_NAME                                /* 품목명         */
+			 , ISNULL(C2.SPEC,'') AS SPEC                       /* 규격           */
+	         , B.SERIAL_NO                                      /* Serial No      */
+	         , A.INSPEC_PRSN                                    /* 검사담당자     */
+	         , C3.USER_NAME                                     /* 검사담당자명   */
+	         , A.BAD_REMARK                                     /* 불량내용       */
+			 , A.INSPEC_FLAG                                    /* 검사여부       */
+			 , A.INSPEC_DATE                                    /* 검사일      */
+			 , B.AS_STATUS										/* 진행상태       */
+			 , A.RECEIPT_NUM                                    /* 접수번효       */
+			 , A.REPAIR_RANK
+			 , (SELECT CASE WHEN COUNT(*) = 0 THEN '완료' ELSE '미완료' END  
+			      FROM SAS310T S1 WITH (NOLOCK) 
+				  LEFT JOIN BPR100T S2 WITH (NOLOCK)  ON S2.COMP_CODE = S1.COMP_CODE
+				                                     AND S2.ITEM_CODE = S1.ITEM_CODE 
+				 WHERE S1.COMP_CODE = @CompCode 
+				   AND S1.DIV_CODE  = @DivCode 
+				   AND S1.REPAIR_NUM = A.REPAIR_NUM 
+				   AND S2.STOCK_CARE_YN = 'Y'
+				   AND ISNULL(S1.INOUT_NUM, '') = '' ) AS INOUT_CNT
+	      FROM            SAS300T A  WITH (NOLOCK)
+	           INNER JOIN SAS100T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+	                                              AND B.DIV_CODE     = A.DIV_CODE
+	                                              AND B.RECEIPT_NUM  = A.RECEIPT_NUM
+	           INNER JOIN BCM100T C1 WITH (NOLOCK) ON C1.COMP_CODE   = B.COMP_CODE
+	                                              AND C1.CUSTOM_CODE = B.CUSTOM_CODE
+	           INNER JOIN BPR100T C2 WITH (NOLOCK) ON C2.COMP_CODE   = B.COMP_CODE
+	                                              AND C2.ITEM_CODE   = B.ITEM_CODE
+			   LEFT  JOIN BSA300T C3 WITH (NOLOCK) ON C3.COMP_CODE   = A.COMP_CODE
+			                                      AND C3.USER_ID     = A.INSPEC_PRSN
+	     WHERE A.COMP_CODE  = @CompCode
+	       AND A.DIV_CODE   = @DivCode
+	       
+	       AND A.REPAIR_DATE &gt;= @RepairDateFr
+	       AND A.REPAIR_DATE &lt;= @RepairDateTo
+		   <if test="@foren.Ognl@isNotEmpty(INSPEC_FLAG)">
+		     <if test="INSPEC_FLAG == &quot;Y&quot;">
+		        AND   A.INSPEC_FLAG = 'Y'
+		        	<if test="@foren.Ognl@isNotEmpty(INSPEC_PRSN)">
+				   AND   A.INSPEC_PRSN = #{INSPEC_PRSN}	
+				  </if>
+		      </if>
+		      <if test="INSPEC_FLAG == &quot;N&quot;">
+		        AND   A.INSPEC_FLAG in ('N', 'R')
+		      </if>
+		   </if>
+		   
+	     ORDER BY A.COMP_CODE, A.DIV_CODE, A.REPAIR_DATE, A.REPAIR_NUM
+		
+	</select>
+	
+	<update id="s_sas320ukrv_mitServiceImpl.updateList" parameterType="Map">	
+		DECLARE @INSPEC_FLAG NVARCHAR(10)
+			  , @INSPEC_DATE NVARCHAR(8)
+		SET  @INSPEC_FLAG = #{INSPEC_FLAG}
+		SET  @INSPEC_DATE = #{INSPEC_DATE}
+		IF ISNULL(@INSPEC_DATE,'') =''
+			SET @INSPEC_DATE = CONVERT(VARCHAR(8), GETDATE(), 112)
+		
+		UPDATE SAS300T
+			SET 
+				   INSPEC_FLAG = #{INSPEC_FLAG}
+				  ,INSPEC_PRSN = #{INSPEC_PRSN}
+				  ,INSPEC_DATE = @INSPEC_DATE
+				  ,BAD_REMARK  = #{BAD_REMARK}
+				  ,UPDATE_DB_USER = #{S_USER_ID}
+				  ,UPDATE_DB_TIME = GETDATE()
+			WHERE  COMP_CODE  = #{S_COMP_CODE}
+			  AND  DIV_CODE   = #{DIV_CODE}	
+			  AND REPAIR_NUM = #{REPAIR_NUM}
+			  
+		/* 검사 이력 입력 */
+		INSERT INTO SAS320T (
+			  COMP_CODE		
+			, DIV_CODE        
+			, REPAIR_NUM     
+			, INSPEC_PRSN     
+			, INSPEC_DATE     
+			, BAD_REMARK      
+			, INSPEC_FLAG     
+			, INSERT_DB_USER	
+			, INSERT_DB_TIME	
+			, UPDATE_DB_USER	
+			, UPDATE_DB_TIME	
+		) VALUES (
+			  #{S_COMP_CODE}		
+			, #{DIV_CODE}        
+			, #{REPAIR_NUM}     
+			, #{INSPEC_PRSN}     
+			, @INSPEC_DATE   
+			, #{BAD_REMARK}      
+			, #{INSPEC_FLAG}  
+			, #{S_USER_ID}
+			, GETDATE()
+			, #{S_USER_ID}
+			, GETDATE()
+		)
+	</update>
+	<delete id="s_sas320ukrv_mitServiceImpl.updateStatus" parameterType="Map">
+		UPDATE SAS100T
+		 SET   AS_STATUS = #{AS_STATUS}
+		 	  
+		      ,UPDATE_DB_USER = #{S_USER_ID}
+			  ,UPDATE_DB_TIME = GETDATE()
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND DIV_CODE = #{DIV_CODE}	
+		   AND RECEIPT_NUM = #{RECEIPT_NUM}
+	</delete>
+</mapper>

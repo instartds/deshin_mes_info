@@ -1,0 +1,432 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mpo120ukrvServiceImpl">
+					
+	<select id="mpo120ukrvServiceImpl.selectMasterList" parameterType="Map" resultType="rMap">
+	/* mpo120ukrv.Cmpo120ukrv[fnMpo120QStd] Query01 */
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+    
+    DECLARE @CompCode       NVARCHAR(08) /* 법인코드                */
+          , @UserId         NVARCHAR(100) /* 사용자ID      */
+          , @LangType       NVARCHAR(2)  /* 언어구분                */
+          , @RefItem        NVARCHAR(01) /* 명칭 참조 유형            */
+          , @DateFormat     NVARCHAR(10) /* 날짜 포맷 유형 설정     */
+                
+    SET @CompCode = #{S_COMP_CODE}
+    SET @UserId   = #{S_USER_ID}
+    SET @LangType = #{S_LANG_CODE}   
+    
+    /* 명칭 참조 유형 */
+    SELECT TOP 1 @RefItem = REF_ITEM
+      FROM BSA300T WITH (NOLOCK)
+     WHERE USER_ID = @UserId
+    
+    SET @RefItem = ISNULL(@RefItem, N'0')
+    
+    /* 날짜 포맷 유형 설정 */
+    SELECT TOP 1 @DateFormat = CODE_NAME
+      FROM BSA100T WITH (NOLOCK)
+     WHERE COMP_CODE = @CompCode
+       AND MAIN_CODE = N'B044'
+       AND REF_CODE1 = N'Y'
+     
+    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+    /* 데이터 조회 */
+    SELECT CAST(' ' AS BIT) 		AS CHK    
+         , A.ORDER_NUM    
+         , A.CUSTOM_CODE    
+         , C.CUSTOM_NAME    
+         , (CASE WHEN ISNULL(A.ORDER_DATE, '') = ''
+                 THEN ''
+                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.ORDER_DATE, 1, 4))
+                                                         , 'MM'  , SUBSTRING(A.ORDER_DATE, 5, 2))
+                                                         , 'DD'  , SUBSTRING(A.ORDER_DATE, 7, 2))
+             END)       			AS ORDER_DATE
+         , A.ORDER_TYPE    
+         , SUM(B.ORDER_O) 			AS SUM_ORDER    
+         , A.MONEY_UNIT    
+         , A.AGREE_STATUS    
+         , A.AGREE_PRSN    
+         , A.AGREE_DATE    
+         , A.ORDER_PRSN    
+         , A.RECEIPT_TYPE    
+         , A.REMARK    
+         , A.COMP_CODE    
+         , A.DIV_CODE    
+      FROM            MPO100T A WITH (NOLOCK)    
+           INNER JOIN MPO200T B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE    
+                                             AND B.DIV_CODE    = A.DIV_CODE    
+                                             AND B.ORDER_NUM   = A.ORDER_NUM    
+           INNER JOIN BCM100T C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE    
+                                             AND C.CUSTOM_CODE = A.CUSTOM_CODE
+           LEFT  JOIN BSA100T D WITH (NOLOCK) ON A.COMP_CODE   = D.COMP_CODE
+--                                             AND A.DIV_CODE    = D.REF_CODE4				--연세대 로직
+                                             AND A.ORDER_PRSN  = D.SUB_CODE
+                                             AND D.MAIN_CODE   = 'M201'
+										     AND D.SUB_CODE   != '$'
+     WHERE A.COMP_CODE       = @CompCode
+       AND A.DRAFT_YN        = 'N'
+       AND B.CONTROL_STATUS != '9'
+       
+	<if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">    
+	       AND A.ORDER_TYPE      = #{ORDER_TYPE}
+	</if>  
+	<if test="@foren.Ognl@isNotEmpty(ORDER_PRSN)">    
+	       AND A.ORDER_PRSN      = #{ORDER_PRSN}
+	</if>  
+	<!--2021.08 표준화 작업 Start-->
+	<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+		AND A.CUSTOM_CODE = #{CUSTOM_CODE}
+	</if>
+	<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+		AND A.CUSTOM_CODE LIKE #{CUSTOM_CODE} + '%'
+	</if>
+	<if test="@foren.Ognl@isEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+		AND		(@RefItem       = N'0' AND C.CUSTOM_NAME  LIKE N'%' + #{CUSTOM_NAME} + N'%')
+			OR	(@RefItem       = N'1' AND C.CUSTOM_NAME1 LIKE N'%' + #{CUSTOM_NAME} + N'%')
+			OR	(@RefItem       = N'2' AND C.CUSTOM_NAME2 LIKE N'%' + #{CUSTOM_NAME} + N'%')
+	</if>
+	<!--2021.08 표준화 작업 End-->
+	<if test="@foren.Ognl@isNotEmpty(AGREE_STATUS)">    
+	       AND A.AGREE_STATUS    = #{AGREE_STATUS}
+	</if>  
+	
+	<if test="@foren.Ognl@isNotEmpty(AGREE_PRSN1)">    
+	       AND #{AGREE_PRSN1} IN (A.AGREE_PRSN, ISNULL(D.REF_CODE3, ''))
+	</if>  
+	<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">    
+	       AND A.DIV_CODE        = #{DIV_CODE}
+	</if>  
+	<if test="@foren.Ognl@isNotEmpty(ORDER_DATE_FR)">    
+	       AND A.ORDER_DATE     &gt;= #{ORDER_DATE_FR}
+	</if>  
+	<if test="@foren.Ognl@isNotEmpty(ORDER_DATE_TO)">
+	       AND A.ORDER_DATE     &lt;= #{ORDER_DATE_TO}
+	</if>
+    
+    --AND ((@UserId = '') OR (@UserId IN (ISNULL(D.REF_CODE1, ''), ISNULL(D.REF_CODE3, ''))))
+    
+     GROUP BY C.CUSTOM_NAME , A.ORDER_DATE,  A.ORDER_TYPE, A.ORDER_NUM , A.MONEY_UNIT    
+            , A.AGREE_STATUS, A.AGREE_PRSN,  A.AGREE_DATE, A.ORDER_PRSN, A.RECEIPT_TYPE    
+            , A.REMARK,       A.CUSTOM_CODE, A.COMP_CODE,  A.DIV_CODE    
+     ORDER BY A.ORDER_NUM     
+
+    SET ARITHABORT OFF
+    SET NOCOUNT OFF
+END
+</select>
+<select id="mpo120ukrvServiceImpl.selectDetailList" parameterType="Map" resultType="rMap">
+/* mpo120ukrv.Cmpo120ukrv[fnMpo120QRef] Query01 */
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+    
+    DECLARE @CompCode       NVARCHAR(08) /* 법인코드                */
+          , @UserId         NVARCHAR(100) /* 사용자ID                */
+          , @LangType       NVARCHAR(2)  /* 언어구분                */
+          , @RefItem        NVARCHAR(01) /* 명칭 참조 유형            */
+          , @DateFormat     NVARCHAR(10) /* 날짜 포맷 유형 설정     */
+                
+    SET @CompCode = #{S_COMP_CODE}
+    SET @UserId   = #{S_USER_ID}
+    SET @LangType = #{S_LANG_CODE}  
+    
+    /* 명칭 참조 유형 */
+    SELECT TOP 1 @RefItem = REF_ITEM
+      FROM BSA300T WITH (NOLOCK)
+     WHERE USER_ID = @UserId
+    
+    SET @RefItem = ISNULL(@RefItem, N'0')
+    
+    /* 날짜 포맷 유형 설정 */
+    SELECT TOP 1 @DateFormat = CODE_NAME
+      FROM BSA100T WITH (NOLOCK)
+     WHERE COMP_CODE = @CompCode
+       AND MAIN_CODE = N'B044'
+       AND REF_CODE1 = N'Y'
+    
+    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+    /* 데이터 조회 */
+    SELECT A.ITEM_CODE    
+         , (CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+                 WHEN @RefItem = '2' THEN B.ITEM_NAME2
+                                     ELSE B.ITEM_NAME
+             END) 				AS ITEM_NAME    
+         , B.SPEC    
+         , A.ORDER_UNIT_Q    
+         , A.ORDER_UNIT_P    
+         , A.ORDER_O    
+         , (CASE WHEN ISNULL(A.DVRY_DATE, '') = ''
+                 THEN ''
+                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.DVRY_DATE, 1, 4))
+                                                         , 'MM'  , SUBSTRING(A.DVRY_DATE, 5, 2))
+                                                         , 'DD'  , SUBSTRING(A.DVRY_DATE, 7, 2))
+             END) 				AS DVRY_DATE
+         , A.REMARK    
+         , A.PROJECT_NO    
+      FROM            MPO200T A WITH (NOLOCK)   
+           INNER JOIN BPR100T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE    
+                                             AND B.ITEM_CODE = A.ITEM_CODE    
+     WHERE A.COMP_CODE = @CompCode
+<if test="@foren.Ognl@isNotEmpty(ORDER_NUM)">     
+       AND A.ORDER_NUM = #{ORDER_NUM}
+</if>
+       AND A.CONTROL_STATUS != '9'
+       
+     ORDER BY A.ITEM_CODE    
+
+    SET ARITHABORT OFF
+    SET NOCOUNT OFF
+END
+</select>	
+	
+<!-- 20201215 뱃지기능 추가 -->
+	<update id="mpo120ukrvServiceImpl.updateAlert" parameterType="Map">
+		-- 알람정보 생성
+		BEGIN
+		    IF EXISTS(SELECT TOP 1 1
+		                FROM BSB020T WITH (NOLOCK)
+		               WHERE COMP_CODE   = #{S_COMP_CODE}
+		                 AND DIV_CODE    = #{DIV_CODE}
+		                 AND PROGRAM_ID IN ('mpo120ukrv'))
+		    BEGIN
+		    IF EXISTS(SELECT TOP 1 1
+		                FROM BSB100T WITH (NOLOCK)
+		               WHERE COMP_CODE   = #{S_COMP_CODE}
+		                 AND DIV_CODE    = #{DIV_CODE}
+		                 AND REF_VAL_1   = #{ORDER_NUM}
+		                 AND REF_VAL_2   = #{CUSTOM_CODE}
+		                 AND PROGRAM_ID IN ('mpo120ukrv'))
+		       BEGIN 
+		            UPDATE BSB100T
+		               SET ALERT_CNT = 1
+		                 , ALERT_MESSAGE = '발주번호: ' + CONVERT(NVARCHAR(20), #{ORDER_NUM}) + ' / ' + '고객: ' + CONVERT(NVARCHAR(50), #{CUSTOM_NAME})	
+							<if test="AGREE_STATUS == &quot;1&quot;">
+							   + '<![CDATA[<br>]]>' + '발주승인되었습니다'	
+							</if>	
+							<if test="AGREE_STATUS == &quot;2&quot;">
+							   + '<![CDATA[<br>]]>' + '발주승인 취소되었습니다'	
+							</if>		                   
+		                 , ALERT_MESSAGE_EN = ''
+		                 , ALERT_MESSAGE_CN = ''
+		                 , ALERT_MESSAGE_JP = ''
+		                 , ALERT_MESSAGE_VI = ''
+		                 , UPDATE_DB_USER = #{S_USER_ID}
+		                 , UPDATE_DB_TIME = GETDATE()
+		             WHERE COMP_CODE   = #{S_COMP_CODE}
+		               AND DIV_CODE    = #{DIV_CODE}
+		               AND REF_VAL_1   = #{ORDER_NUM}
+		               AND REF_VAL_2   = #{CUSTOM_CODE}
+		               AND PROGRAM_ID IN ('mpo120ukrv')
+		        END
+		    ELSE
+		        BEGIN
+		            INSERT INTO BSB100T
+		                 ( COMP_CODE         , DIV_CODE          , ALERT_USER_ID     , ALERT_TYPE        , ALERT_PROGRAM_ID
+		                 , ALERT_CNT
+		                 , PROGRAM_ID
+		                 , REF_NUM
+		                 , JSON_PARAMETER
+		                 , REF_VAL_1         , REF_VAL_2         , REF_VAL_3         , REF_VAL_4
+		                 , REF_VAL_5         , REF_VAL_6         , REF_VAL_7         , REF_VAL_8
+		                 , ALERT_MESSAGE     , ALERT_MESSAGE_EN  , ALERT_MESSAGE_CN  , ALERT_MESSAGE_JP  , ALERT_MESSAGE_VI
+		                 , REMARK
+		                 , INSERT_DB_USER    , INSERT_DB_TIME    , UPDATE_DB_USER    , UPDATE_DB_TIME )
+		            SELECT DISTINCT 
+		                   #{S_COMP_CODE}    , #{DIV_CODE}   , A.INSERT_DB_USER   , '1'               , B.ALERT_PROGRAM_ID
+		                 , 1
+		                 , 'mpo120ukrv'
+		                 ,  #{S_COMP_CODE} + #{ORDER_NUM} + REPLICATE('0', 20 - LEN(CONVERT(VARCHAR(20), #{ORDER_NUM}))) + CONVERT(VARCHAR(08), #{CUSTOM_CODE})
+		                 , '{"DIV_CODE":"' + #{DIV_CODE} + '","ORDER_NUM":"' + CONVERT(VARCHAR(20), #{ORDER_NUM}) + '","CUSTOM_CODE":"' + #{CUSTOM_CODE} + '"}'
+		                 , #{ORDER_NUM}     , #{CUSTOM_CODE}      , NULL              , NULL
+		                 , NULL         , NULL              , NULL              , NULL
+		                 , '발주번호: ' + CONVERT(NVARCHAR(20), #{ORDER_NUM}) + ' / ' + '고객: ' + CONVERT(NVARCHAR(50), #{CUSTOM_NAME})	
+							<if test="AGREE_STATUS == &quot;1&quot;">
+							   + '<![CDATA[<br>]]>' + '발주승인되었습니다'	
+							</if>	
+							<if test="AGREE_STATUS == &quot;2&quot;">
+							   + '<![CDATA[<br>]]>' + '발주승인 취소되었습니다'	
+							</if>		                                   		                   
+		                 , ''
+		                 , ''
+		                 , ''
+		                 , ''
+		                 , ''
+		                 , #{S_USER_ID}       , GETDATE()        , #{S_USER_ID}      , GETDATE()
+		              FROM  MPO100T A WITH (NOLOCK)              
+		                   INNER JOIN BSB020T B WITH (NOLOCK) ON B.COMP_CODE  = A.COMP_CODE
+		                                                     AND B.DIV_CODE   = A.DIV_CODE
+		                                                     AND B.PROGRAM_ID =  'mpo120ukrv'
+		             WHERE A.COMP_CODE   = #{S_COMP_CODE}
+		               AND A.DIV_CODE    = #{DIV_CODE}
+					   AND A.ORDER_NUM   = #{ORDER_NUM}
+					   AND A.CUSTOM_CODE = #{CUSTOM_CODE}		                 
+
+		        END
+		    END
+		END
+	</update>
+		
+<select id="mpo120ukrvServiceImpl.AgreeUpdate" parameterType="Map" resultType="rMap">
+
+BEGIN
+	DECLARE @AGREE_STATUS    NVARCHAR(02)
+	DECLARE @ORDER_TYPE    	 NVARCHAR(02)
+	SET @ORDER_TYPE   	 =   #{ORDER_TYPE}    /* 발주형태*/
+	SET @AGREE_STATUS    =   #{AGREE_STATUS}    /* 승인상태*/
+
+/* 입력 변수*/
+    DECLARE @COMP_CODE              NVARCHAR(16)           /* 회사코드 */
+          , @DIV_CODE               NVARCHAR(08)           /* 사업장코드  */
+          , @CUSTOM_CODE            NVARCHAR(08)           /* 외주처코드  */
+          , @ORDER_NUM              NVARCHAR(20)           /* 오더번호  */
+
+/* 일반 변수*/
+    DECLARE @OrderNum               NVARCHAR(20)           /* 오더번호  */
+          , @OrderSeq               NUMERIC(04,0)          /* 오더순번  */
+          , @ItemCode               NVARCHAR(08)           /* 품목코드  */
+          , @ErrorCode              NVARCHAR(20)           /* 에러코드  */
+          , @ErrorDesc              NVARCHAR(1000)         /* 에러메세지  */
+
+    SET @COMP_CODE     = #{COMP_CODE}
+    SET @DIV_CODE      = #{DIV_CODE}
+    SET @CUSTOM_CODE   = #{CUSTOM_CODE}
+    SET @ORDER_NUM     = #{ORDER_NUM}
+
+    SET @ErrorCode = ''
+    SET @ErrorDesc = ''
+    
+    IF @AGREE_STATUS    = '2'
+	
+	  SELECT TOP 1 @ErrorCode = '63009'
+	   FROM MPO200T WITH(NOLOCK) 
+		WHERE ORDER_NUM    = #{ORDER_NUM}
+	      AND CUSTOM_CODE  = #{CUSTOM_CODE}
+	      AND COMP_CODE    = #{COMP_CODE}
+	      AND DIV_CODE     = #{DIV_CODE}
+	      AND CONTROL_STATUS != '1'
+	      
+	  IF ISNULL(@ErrorCode,'') != ''
+	  BEGIN
+	  	GOTO ERROR_HANDLER
+	  END     
+	  
+    
+    
+	IF @AGREE_STATUS    = '1'
+		BEGIN
+			UPDATE MPO100T
+			   SET AGREE_STATUS = N'2'
+			     , AGREE_PRSN   = #{AGREE_PRSN}
+			     , AGREE_DATE   = #{AGREE_DATE}
+			     , UPDATE_DB_USER  = #{S_USER_ID}
+ 				 , UPDATE_DB_TIME = GETDATE()
+			 WHERE ORDER_NUM    = #{ORDER_NUM}
+			   AND CUSTOM_CODE  = #{CUSTOM_CODE}
+			   AND COMP_CODE    = #{COMP_CODE}
+			   AND DIV_CODE     = #{DIV_CODE}
+		END
+	
+	IF @AGREE_STATUS    = '2'
+	
+	     BEGIN
+			UPDATE MPO100T
+			   SET AGREE_STATUS = N'1'
+			     , AGREE_PRSN   = #{AGREE_PRSN}
+			     , AGREE_DATE   = NULL
+			     , UPDATE_DB_USER  = #{S_USER_ID}
+ 				 , UPDATE_DB_TIME = GETDATE()
+			 WHERE ORDER_NUM    = #{ORDER_NUM}
+			   AND CUSTOM_CODE  = #{CUSTOM_CODE}
+			   AND COMP_CODE    = #{COMP_CODE}
+			   AND DIV_CODE     = #{DIV_CODE}
+		END
+/*mpo120ukrv.Cmpo120ukrv[fnMpo120Save] Query05*/
+
+IF @ORDER_TYPE    = '4'
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+/*  1. 외주 출고예약 설정*/
+    BEGIN
+        DECLARE CUR_001227 CURSOR FOR
+            SELECT A.ORDER_NUM, A.ORDER_SEQ, A.ITEM_CODE
+            FROM   MPO200T A WITH (NOLOCK)
+            WHERE  A.COMP_CODE   = @COMP_CODE
+            AND    A.DIV_CODE    = @DIV_CODE
+            AND    A.CUSTOM_CODE = @CUSTOM_CODE
+            AND    A.ORDER_NUM   = @ORDER_NUM
+
+        OPEN CUR_001227
+        FETCH NEXT FROM CUR_001227 INTO @OrderNum, @OrderSeq, @ItemCode
+        WHILE (@@FETCH_STATUS = 0)
+        BEGIN
+       /*   1-1. 자재출고여부 Check  (에러: 54620, 출고가 진행 되어 출고예약 정보를 수정할 수 없습니다.)*/
+            IF EXISTS (SELECT TOP 1 1
+                       FROM   BTR100T WITH (NOLOCK)
+                       WHERE  INOUT_TYPE  = N'2'
+                       AND    COMP_CODE   = @COMP_CODE
+                       AND    DIV_CODE    = @DIV_CODE
+                       AND    ORDER_NUM   = @OrderNum
+                       AND    ORDER_SEQ   = @OrderSeq)
+            BEGIN
+                SET @ErrorCode = '54620'
+
+                GOTO ERROR_HANDLER
+            END
+
+         /* 1-2. 외주 출고예약정보 삭제	*/
+            DELETE FROM MCL200T
+            WHERE  COMP_CODE   = @COMP_CODE
+            AND    DIV_CODE    = @DIV_CODE
+            AND    CUSTOM_CODE = @CUSTOM_CODE
+            AND    ORDER_NUM   = @OrderNum
+            AND    ORDER_SEQ   = @OrderSeq
+
+         /* 1-3. 외주 출고예약정보 생성 */
+            INSERT INTO MCL200T
+            (      COMP_CODE       , DIV_CODE        , CUSTOM_CODE     , ORDER_NUM       , ORDER_SEQ
+                 , PATH_CODE       , ITEM_CODE       , ORDER_ITEM_CODE , ORDER_DATE      , NEED_Q
+                 , ALLOC_Q         , OUTSTOCK_Q      , UNIT_Q          , LOSS_RATE       , SEQ
+                 , CONTROL_STATUS  , REF_ITEM_CODE   , EXCHG_YN        , PROJECT_NO      , REMARK
+                 , UPDATE_DB_USER  , UPDATE_DB_TIME )
+            SELECT COMP_CODE       , DIV_CODE        , CUSTOM_CODE     , ORDER_NUM       , ORDER_SEQ
+                 , PATH_CODE       , ITEM_CODE       , ORDER_ITEM_CODE , ORDER_DATE      , NEED_Q
+                 , ALLOC_Q         , OUTSTOCK_Q      , UNIT_Q          , LOSS_RATE       , SEQ
+                 , CONTROL_STATUS  , REF_ITEM_CODE   , EXCHG_YN        , PROJECT_NO      , REMARK
+                 , UPDATE_DB_USER  , UPDATE_DB_TIME
+            FROM   uniLITE.fnGetSCMaterials(@COMP_CODE, @DIV_CODE, @CUSTOM_CODE, @OrderNum, @OrderSeq)
+
+            FETCH NEXT FROM CUR_001227 INTO @OrderNum, @OrderSeq, @ItemCode
+        END
+        CLOSE CUR_001227
+        DEALLOCATE CUR_001227
+    END    /* End of step 1.*/
+    
+/* 2. Error Handler 처리 */
+ERROR_HANDLER:
+    SET NOCOUNT OFF
+    SET ARITHABORT OFF
+    SELECT ISNULL(@ErrorCode, '') AS ERROR_CODE, ISNULL(@ErrorDesc, '') AS ERROR_DESC
+END		
+		
+END
+
+</select>
+
+<select id="mpo120ukrvServiceImpl.checkCompCode" parameterType="Map" resultType="rMap">
+		    SELECT A.COMP_CODE, A.COMP_NAME
+		    FROM              BOR100T   A  WITH (NOLOCK)
+		           LEFT  JOIN BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE    = #{S_COMP_CODE}    
+		                                                AND M1.MAIN_CODE    = 'B107'
+		                                                AND M1.SUB_CODE     = '20'         
+		    WHERE (A.COMP_CODE      &gt; ''        AND ISNULL(M1.REF_CODE1, 'N') = 'Y')
+		       OR (A.COMP_CODE      = #{S_COMP_CODE}  AND ISNULL(M1.REF_CODE1, 'N') = 'N')
+</select>	
+	
+</mapper>

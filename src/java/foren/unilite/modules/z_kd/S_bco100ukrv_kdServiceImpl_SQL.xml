@@ -1,0 +1,1303 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_bco100ukrv_kdService">
+	<select id="s_bco100ukrv_kdService.selectPersonDept" parameterType="Map" resultType="rMap">
+        SELECT  H.DEPT_CODE
+              , H.DEPT_NAME
+        FROM                HUM100T   H  WITH (NOLOCK)
+            WHERE   H.COMP_CODE        = #{S_COMP_CODE}
+              AND   H.PERSON_NUMB      = #{PERSON_NUMB}
+    </select>
+
+    <select id="s_bco100ukrv_kdService.selectCustomData" parameterType="Map" resultType="rMap">
+        SELECT  A.RECEIPT_DAY
+              , A.DELIVERY_METH
+        FROM                BCM100T   A  WITH (NOLOCK)
+            WHERE   A.COMP_CODE        = #{S_COMP_CODE}
+              AND   A.CUSTOM_CODE      = #{CUSTOM_CODE}
+    </select>
+
+	<select id="s_bco100ukrv_kdService.fnGetLastPriceInfo" parameterType="Map" resultType="rMap">
+    <![CDATA[    	
+        DECLARE @COMP_CODE       NVARCHAR(10)
+              , @DIV_CODE        NVARCHAR(20)
+              , @TYPE            NVARCHAR(1)
+              , @CUSTOM_CODE     NVARCHAR(20)
+              , @ITEM_CODE       NVARCHAR(20)
+              , @MONEY_UNIT      NVARCHAR(3)
+              , @ORDER_UNIT      NVARCHAR(3)
+              , @APLY_START_DATE NVARCHAR(8)
+              , @ITEM_P          NUMERIC(18,6)
+              , @PRICE_TYPE      NVARCHAR(1)
+              , @NEW_ITEM_FREFIX NVARCHAR(10)
+              , @ITEM_NAME2      NVARCHAR(200)
+              , @SPEC2           NVARCHAR(50)                            
+        SET @COMP_CODE       = #{S_COMP_CODE}
+        SET @DIV_CODE        = #{DIV_CODE}
+        SET @TYPE            = #{TYPE}
+        SET @CUSTOM_CODE     = #{CUSTOM_CODE}
+        SET @ITEM_CODE       = #{ITEM_CODE}
+        SET @MONEY_UNIT      = #{MONEY_UNIT}
+        SET @ORDER_UNIT      = #{ORDER_UNIT}
+        SET @APLY_START_DATE = #{APLY_START_DATE}
+        SET @ITEM_P          = #{ITEM_P}
+        SET @PRICE_TYPE      = #{PRICE_TYPE}
+        SET @NEW_ITEM_FREFIX = #{NEW_ITEM_FREFIX}
+        SET @ITEM_NAME2      = #{ITEM_NAME2}
+        SET @SPEC2           = #{SPEC2}
+
+
+        IF @ITEM_CODE <> ''
+        BEGIN
+          EXEC UNILITE.USP_GetItemP @COMP_CODE
+                                  , @DIV_CODE
+                                  , @TYPE
+                                  , @CUSTOM_CODE
+                                  , @ITEM_CODE
+                                  , @MONEY_UNIT
+                                  , @ORDER_UNIT
+                                  , @APLY_START_DATE
+                                  , @ITEM_P            OUTPUT
+                                  , @PRICE_TYPE        OUTPUT
+        END
+        ELSE
+        BEGIN
+          --신규품목
+  				SELECT @ITEM_P = SUBSTRING(MAX(S1.APLY_START_DATE+CONVERT(VARCHAR,S1.ITEM_P)), 9, 30), @PRICE_TYPE = '1'
+  				FROM S_BCO110T_KD S1
+  					 INNER JOIN S_BCO100T_KD S2 ON S1.COMP_CODE=S2.COMP_CODE AND S1.DIV_CODE=S2.DIV_CODE AND S1.P_REQ_NUM=S2.P_REQ_NUM
+  				WHERE S1.COMP_CODE=@COMP_CODE
+  				AND S1.NEW_ITEM_FREFIX <> ''
+  				AND S1.CUSTOM_CODE = @CUSTOM_CODE
+  				AND S1.NEW_ITEM_FREFIX = @NEW_ITEM_FREFIX
+  				AND S1.ITEM_NAME2=@ITEM_NAME2
+  				AND S1.SPEC2 = @SPEC2
+  				AND S1.CONFIRM_YN='Y'
+  				AND S2.GW_FLAG='3'
+  				GROUP BY S1.COMP_CODE, S1.DIV_CODE, S1.NEW_ITEM_FREFIX, S1.ITEM_NAME2, S1.SPEC2, S1.CUSTOM_CODE
+  				        
+        END
+
+        SELECT ISNULL(@ITEM_P,0)          AS ITEM_P
+             , ISNULL(@PRICE_TYPE,'')     AS PRICE_TYPE
+    ]]>             
+    </select>
+
+    <select id="s_bco100ukrv_kdService.selectGwData" parameterType="Map" resultType="rMap">
+        SELECT  GW_FLAG
+          FROM  S_BCO100T_KD    A WITH (NOLOCK)
+            WHERE   A.COMP_CODE      = #{S_COMP_CODE}
+              AND   A.P_REQ_NUM      = #{P_REQ_NUM}
+    </select>
+
+	<select id="s_bco100ukrv_kdService.selectList" parameterType="Map" resultType="rMap">
+        BEGIN
+               SET NOCOUNT ON
+               SET ARITHABORT ON
+
+               DECLARE @ST_DATE     NVARCHAR(08)
+                     , @TO_DATE     NVARCHAR(08)
+
+               -- 0.회사정보에서 회계시작년월 찾기
+               SELECT @ST_DATE = LEFT(FN_DATE, 6)
+                 FROM BOR100T WITH (NOLOCK)
+
+               -- 1. 현재 시스템일자
+               SELECT @TO_DATE = CONVERT(NVARCHAR(8), GETDATE(), 112)
+
+               -- 2. 날짜 포맷 유형 설정 ------------------------------------------------------------------------------------------
+               DECLARE @DateFormat         NVARCHAR(01)
+                     , @TimeFormat         NVARCHAR(01)
+
+               SELECT TOP 1 @DateFormat = SUBSTRING(CODE_NAME, 5, 1)
+               FROM   BSA100T WITH (NOLOCK)
+               WHERE  COMP_CODE  = #{S_COMP_CODE}
+               AND    MAIN_CODE  = 'B044'
+               AND    REF_CODE1  = 'Y'
+
+               SET @DateFormat = ISNULL(@DateFormat, '.')
+               SET @TimeFormat = ISNULL(@TimeFormat, ':')
+
+            -- 4. Main Query
+            SELECT A.P_REQ_NUM,
+                   A.COMP_CODE,
+                   A.DIV_CODE,
+                   A.TREE_CODE,
+                   C.TREE_NAME,
+                   A.PERSON_NUMB,
+                   ISNULL(D.NAME, '')       AS PERSON_NAME,
+                   A.TYPE,
+                   B.MONEY_UNIT,
+                   A.P_REQ_DATE,
+                   B.APLY_START_DATE,
+                   A.GW_FLAG,
+                   B.SER_NO,
+                   B.CUSTOM_CODE,
+                   B.CUSTOM_NAME,
+                   B.MAKER_CODE,
+                   B.MAKER_NAME,
+                   B.NEW_ITEM_FREFIX,
+                   B.ITEM_CODE,
+                   B.ITEM_NAME,
+                   B.PRICE_TYPE,
+                   B.ORDER_UNIT,
+                   B.ITEM_P,
+                   B.PACK_ITEM_P,
+                   B.PRE_ITEM_P,
+                   --20191224 수정: if 종전단가 != 0 이면 단가차액=단가-종전단가, else 단가차액 = 0
+                   CASE WHEN ISNULL(B.PRE_ITEM_P, 0) = 0 THEN 0
+                        ELSE B.ITEM_P - B.PRE_ITEM_P 
+                   END                                                                         AS DIFFER_UNIT_P,
+                   B.HS_CODE,
+                   H.HS_NAME,
+                   B.PAY_TERMS,
+                   B.TERMS_PRICE,
+                   B.DELIVERY_METH,
+                   B.CH_REASON,
+                   CASE B.OEM_YN     WHEN 'Y'    THEN    '1' ELSE '0' END                       AS OEM_YN,
+                   B.OEM_APLY_YN,
+                   CASE B.[12199_YN] WHEN 'Y'    THEN    '1' ELSE '0' END                       AS [12199_YN],
+                   CASE B.[13199_YN] WHEN 'Y'    THEN    '1' ELSE '0' END                       AS [13199_YN],
+                   CASE B.[14199_YN] WHEN 'Y'    THEN    '1' ELSE '0' END                       AS [14199_YN],
+                   CASE B.[13301_YN] WHEN 'Y'    THEN    '1' ELSE '0' END                       AS [13301_YN],
+                   B.OEM_ITEM_CODE,
+                   B.SPEC,
+                   B.CAR_TYPE,
+                   B.STOCK_UNIT,
+                   B.CUSTOM_FULL_NAME,
+                   B.ADD01_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD01_CUSTOM_CODE ) AS ADD01_CUSTOM_NAME,
+                   B.ADD02_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD02_CUSTOM_CODE ) AS ADD02_CUSTOM_NAME,
+                   B.ADD03_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD03_CUSTOM_CODE ) AS ADD03_CUSTOM_NAME,
+                   B.ADD04_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD04_CUSTOM_CODE ) AS ADD04_CUSTOM_NAME,
+                   B.ADD05_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD05_CUSTOM_CODE ) AS ADD05_CUSTOM_NAME,
+                   B.ADD06_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD06_CUSTOM_CODE ) AS ADD06_CUSTOM_NAME,
+                   B.ADD07_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD07_CUSTOM_CODE ) AS ADD07_CUSTOM_NAME,
+                   B.ADD08_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD08_CUSTOM_CODE ) AS ADD08_CUSTOM_NAME,
+                   B.ADD09_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD09_CUSTOM_CODE ) AS ADD09_CUSTOM_NAME,
+                   B.ADD10_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD10_CUSTOM_CODE ) AS ADD10_CUSTOM_NAME,
+                   B.ADD11_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD11_CUSTOM_CODE ) AS ADD11_CUSTOM_NAME,
+                   B.ADD12_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD12_CUSTOM_CODE ) AS ADD12_CUSTOM_NAME,
+                   B.ADD13_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD13_CUSTOM_CODE ) AS ADD13_CUSTOM_NAME,
+                   B.ADD14_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD14_CUSTOM_CODE ) AS ADD14_CUSTOM_NAME,
+                   B.ADD15_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD15_CUSTOM_CODE ) AS ADD15_CUSTOM_NAME,
+                   B.ADD16_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD16_CUSTOM_CODE ) AS ADD16_CUSTOM_NAME,
+                   B.ADD17_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD17_CUSTOM_CODE ) AS ADD17_CUSTOM_NAME,
+                   B.ADD18_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD18_CUSTOM_CODE ) AS ADD18_CUSTOM_NAME,
+                   B.ADD19_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD19_CUSTOM_CODE ) AS ADD19_CUSTOM_NAME,
+                   B.ADD20_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD20_CUSTOM_CODE ) AS ADD20_CUSTOM_NAME,
+                   B.ADD21_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD21_CUSTOM_CODE ) AS ADD21_CUSTOM_NAME,
+                   B.ADD22_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD22_CUSTOM_CODE ) AS ADD22_CUSTOM_NAME,
+                   B.REMARK,
+                   B.CONFIRM_YN,
+                   B.RENEWAL_YN,
+                   A.INSERT_DB_USER,
+                   A.INSERT_DB_TIME,
+                   A.UPDATE_DB_USER,
+                   A.UPDATE_DB_TIME,
+                   A.TEMPC_01,
+                   A.TEMPC_02,
+                   A.TEMPC_03,
+                   A.TEMPN_01,
+                   A.TEMPN_02,
+                   A.TEMPN_03,
+                   B.ITEM_NAME2,
+                   B.SPEC2,
+                   B.CAR_TYPE2,
+                   B.NEW_CAR_TYPE,
+                   B.STOCK_UNIT2,
+                   B.CUSTOM_NAME2,
+                   B.CUSTOM_FULL_NAME2,
+                   B.NS_FLAG,
+                   A.P_REQ_TYPE,
+                   B.CUSTOM_CODE AS OLD_CUSTOM_CODE,
+                   B.CUSTOM_NAME AS OLD_CUSTOM_NAME
+            FROM S_BCO100T_KD A WITH (NOLOCK)
+                INNER JOIN S_BCO110T_KD B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                       AND B.P_REQ_NUM   = A.P_REQ_NUM
+                LEFT  JOIN BSA210T      C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                       AND C.TREE_CODE   = A.TREE_CODE
+                LEFT  JOIN HUM100T      D WITH (NOLOCK) ON D.COMP_CODE   = A.COMP_CODE
+                                                       AND D.PERSON_NUMB = A.PERSON_NUMB
+                LEFT  JOIN BPR100T      H WITH (NOLOCK) ON H.ITEM_CODE   = B.ITEM_CODE
+                                                       AND H.COMP_CODE   = B.COMP_CODE
+            WHERE A.COMP_CODE = #{S_COMP_CODE}
+              AND A.DIV_CODE = #{DIV_CODE}
+              AND A.P_REQ_NUM = #{P_REQ_NUM}
+
+--              AND ISNULL(A.GW_FLAG, 'N') IN('N', '2')
+            <if test="@foren.Ognl@isNotEmpty(P_REQ_TYPE)">
+              AND A.P_REQ_TYPE = #{P_REQ_TYPE}
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(TREE_CODE)">
+              AND A.TREE_CODE = #{TREE_CODE}
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+              AND A.PERSON_NUMB = #{PERSON_NUMB}
+            </if>
+			<if test="@foren.Ognl@isNotEmpty(TYPE)">
+              AND A.TYPE = #{TYPE}
+            </if>
+            SET ARITHABORT OFF
+            SET NOCOUNT OFF
+
+        END
+	</select>
+
+	<select id="s_bco100ukrv_kdService.copyReqNumList" parameterType="Map" resultType="rMap">
+        BEGIN
+               SET NOCOUNT ON
+               SET ARITHABORT ON
+
+               DECLARE @ST_DATE     NVARCHAR(08)
+                     , @TO_DATE     NVARCHAR(08)
+
+               -- 0.회사정보에서 회계시작년월 찾기
+               SELECT @ST_DATE = LEFT(FN_DATE, 6)
+                 FROM BOR100T WITH (NOLOCK)
+
+               -- 1. 현재 시스템일자
+               SELECT @TO_DATE = CONVERT(NVARCHAR(8), GETDATE(), 112)
+
+               -- 2. 날짜 포맷 유형 설정 ------------------------------------------------------------------------------------------
+               DECLARE @DateFormat         NVARCHAR(01)
+                     , @TimeFormat         NVARCHAR(01)
+
+               SELECT TOP 1 @DateFormat = SUBSTRING(CODE_NAME, 5, 1)
+               FROM   BSA100T WITH (NOLOCK)
+               WHERE  COMP_CODE  = #{S_COMP_CODE}
+               AND    MAIN_CODE  = 'B044'
+               AND    REF_CODE1  = 'Y'
+
+               SET @DateFormat = ISNULL(@DateFormat, '.')
+               SET @TimeFormat = ISNULL(@TimeFormat, ':')
+
+            -- 4. Main Query
+            SELECT A.P_REQ_NUM,
+                   A.COMP_CODE,
+                   A.DIV_CODE,
+                   A.TREE_CODE,
+                   C.TREE_NAME,
+                   A.PERSON_NUMB,
+                   ISNULL(D.NAME, '')       AS PERSON_NAME,
+                   A.TYPE,
+                   B.MONEY_UNIT,
+                   A.P_REQ_DATE,
+                   B.APLY_START_DATE,
+                   A.GW_FLAG,
+                   B.SER_NO,
+                   B.CUSTOM_CODE,
+                   B.CUSTOM_NAME,
+                   B.MAKER_CODE,
+                   B.MAKER_NAME,
+                   B.NEW_ITEM_FREFIX,
+                   B.ITEM_CODE,
+                   B.ITEM_NAME,
+                   B.PRICE_TYPE,
+                   B.ORDER_UNIT,
+                   B.ITEM_P,
+                   B.PACK_ITEM_P,
+                   B.PRE_ITEM_P,
+                   B.HS_CODE,
+                   H.HS_NAME,
+                   B.PAY_TERMS,
+                   B.TERMS_PRICE,
+                   B.DELIVERY_METH,
+                   B.CH_REASON,
+                   CASE B.OEM_YN     WHEN 'Y'    THEN    '1' ELSE '0' END                       AS OEM_YN,
+                   B.OEM_APLY_YN,
+                   CASE B.[12199_YN] WHEN 'Y'    THEN    '1' ELSE '0' END                       AS [12199_YN],
+                   CASE B.[13199_YN] WHEN 'Y'    THEN    '1' ELSE '0' END                       AS [13199_YN],
+                   CASE B.[14199_YN] WHEN 'Y'    THEN    '1' ELSE '0' END                       AS [14199_YN],
+                   CASE B.[13301_YN] WHEN 'Y'    THEN    '1' ELSE '0' END                       AS [13301_YN],
+                   B.OEM_ITEM_CODE,
+                   B.SPEC,
+                   B.CAR_TYPE,
+                   B.STOCK_UNIT,
+                   B.CUSTOM_FULL_NAME,
+                   B.ADD01_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD01_CUSTOM_CODE ) AS ADD01_CUSTOM_NAME,
+                   B.ADD02_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD02_CUSTOM_CODE ) AS ADD02_CUSTOM_NAME,
+                   B.ADD03_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD03_CUSTOM_CODE ) AS ADD03_CUSTOM_NAME,
+                   B.ADD04_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD04_CUSTOM_CODE ) AS ADD04_CUSTOM_NAME,
+                   B.ADD05_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD05_CUSTOM_CODE ) AS ADD05_CUSTOM_NAME,
+                   B.ADD06_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD06_CUSTOM_CODE ) AS ADD06_CUSTOM_NAME,
+                   B.ADD07_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD07_CUSTOM_CODE ) AS ADD07_CUSTOM_NAME,
+                   B.ADD08_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD08_CUSTOM_CODE ) AS ADD08_CUSTOM_NAME,
+                   B.ADD09_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD09_CUSTOM_CODE ) AS ADD09_CUSTOM_NAME,
+                   B.ADD10_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD10_CUSTOM_CODE ) AS ADD10_CUSTOM_NAME,
+                   B.ADD11_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD11_CUSTOM_CODE ) AS ADD11_CUSTOM_NAME,
+                   B.ADD12_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD12_CUSTOM_CODE ) AS ADD12_CUSTOM_NAME,
+                   B.ADD13_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD13_CUSTOM_CODE ) AS ADD13_CUSTOM_NAME,
+                   B.ADD14_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD14_CUSTOM_CODE ) AS ADD14_CUSTOM_NAME,
+                   B.ADD15_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD15_CUSTOM_CODE ) AS ADD15_CUSTOM_NAME,
+                   B.ADD16_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD16_CUSTOM_CODE ) AS ADD16_CUSTOM_NAME,
+                   B.ADD17_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD17_CUSTOM_CODE ) AS ADD17_CUSTOM_NAME,
+                   B.ADD18_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD18_CUSTOM_CODE ) AS ADD18_CUSTOM_NAME,
+                   B.ADD19_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD19_CUSTOM_CODE ) AS ADD19_CUSTOM_NAME,
+                   B.ADD20_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD20_CUSTOM_CODE ) AS ADD20_CUSTOM_NAME,
+                   B.ADD21_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD21_CUSTOM_CODE ) AS ADD21_CUSTOM_NAME,
+                   B.ADD22_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD22_CUSTOM_CODE ) AS ADD22_CUSTOM_NAME,
+                   B.REMARK,
+                   B.CONFIRM_YN,
+                   B.RENEWAL_YN,
+                   A.INSERT_DB_USER,
+                   A.INSERT_DB_TIME,
+                   A.UPDATE_DB_USER,
+                   A.UPDATE_DB_TIME,
+                   A.TEMPC_01,
+                   A.TEMPC_02,
+                   A.TEMPC_03,
+                   A.TEMPN_01,
+                   A.TEMPN_02,
+                   A.TEMPN_03,
+                   B.ITEM_NAME2,
+                   B.SPEC2,
+                   B.CAR_TYPE2,
+                   B.NEW_CAR_TYPE,
+                   B.STOCK_UNIT2,
+                   B.CUSTOM_NAME2,
+                   B.CUSTOM_FULL_NAME2,
+                   B.NS_FLAG,
+                   A.P_REQ_TYPE,
+<!-- 20191219 최근 단가 가져오기 위한 로직 -->
+                   Z.ITEM_P          AS BPR400T_ITEM_P
+            FROM S_BCO100T_KD A WITH (NOLOCK)
+                INNER JOIN S_BCO110T_KD B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                       AND B.P_REQ_NUM   = A.P_REQ_NUM
+                LEFT  JOIN BSA210T      C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                       AND C.TREE_CODE   = A.TREE_CODE
+                LEFT  JOIN HUM100T      D WITH (NOLOCK) ON D.COMP_CODE   = A.COMP_CODE
+                                                       AND D.PERSON_NUMB = A.PERSON_NUMB
+                LEFT  JOIN BPR100T      H WITH (NOLOCK) ON H.ITEM_CODE   = B.ITEM_CODE
+                                                       AND H.COMP_CODE   = B.COMP_CODE
+<!-- 20191219 최근 단가 가져오기 위한 로직 -->
+                LEFT  JOIN BPR400T      Z WITH (NOLOCK) ON Z.COMP_CODE   = A.COMP_CODE
+                                                       --20191224 수정
+                                                       AND (Z.DIV_CODE   = A.DIV_CODE OR Z.DIV_CODE = '*')
+                                                       AND Z.TYPE        = A.TYPE
+                                                       AND Z.ITEM_CODE   = B.ITEM_CODE
+                                                       AND Z.CUSTOM_CODE = B.CUSTOM_CODE
+                                                       AND Z.MONEY_UNIT  = B.MONEY_UNIT
+                                                       AND Z.ORDER_UNIT  = B.ORDER_UNIT
+                                                       AND Z.APLY_START_DATE = (SELECT MAX(APLY_START_DATE)
+                                                                                FROM BPR400T WITH(NOLOCK)
+                                                                               WHERE COMP_CODE   = A.COMP_CODE
+                                                                                 --20191224 수정
+                                                                                 AND (DIV_CODE   = A.DIV_CODE OR DIV_CODE = '*')
+                                                                                 AND TYPE        = A.TYPE
+                                                                                 AND ITEM_CODE   = B.ITEM_CODE
+                                                                                 AND CUSTOM_CODE = B.CUSTOM_CODE
+                                                                                 AND MONEY_UNIT  = B.MONEY_UNIT
+                                                                                 AND ORDER_UNIT  = B.ORDER_UNIT)
+             WHERE  A.DIV_CODE        = #{DIV_CODE}
+<!-- 20191218 참조팝업의 부서 필수 제거로 있을 경우에만 조건으로 검색하도록 수정 -->
+              <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+               AND  A.TREE_CODE       = #{DEPT_CODE}
+              </if>
+              <if test="@foren.Ognl@isNotEmpty(P_REQ_TYPE)">
+               AND  A.P_REQ_TYPE      = #{P_REQ_TYPE}
+              </if>
+               <if test="@foren.Ognl@isNotEmpty(TYPE)">
+               AND  A.TYPE            = #{TYPE}
+               </if>
+               <if test="@foren.Ognl@isNotEmpty(APLY_START_DATE_FR)">
+               AND  A.APLY_START_DATE &gt;= #{APLY_START_DATE_FR}
+               </if>
+               <if test="@foren.Ognl@isNotEmpty(APLY_START_DATE_TO)">
+               AND  A.APLY_START_DATE &lt;= #{APLY_START_DATE_TO}
+               </if>
+               <if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+               AND  A.PERSON_NUMB     = #{PERSON_NUMB}
+               </if>
+               <if test="@foren.Ognl@isNotEmpty(P_REQ_NUM)">
+               AND  A.P_REQ_NUM       LIKE #{P_REQ_NUM} + '%'
+               </if>
+               --20191218 조회조건 추가: P_REQ_DATE_FR, P_REQ_DATE_TO
+               <if test="@foren.Ognl@isNotEmpty(P_REQ_DATE_FR)">
+               AND  A.P_REQ_DATE      &gt;= #{P_REQ_DATE_FR}
+               </if>
+               <if test="@foren.Ognl@isNotEmpty(P_REQ_DATE_TO)">
+               AND  A.P_REQ_DATE      &lt;= #{P_REQ_DATE_TO}
+               </if>
+               
+            --20191218 정렬순서 설정
+            ORDER BY A.P_REQ_NUM, B.SER_NO
+            SET ARITHABORT OFF
+            SET NOCOUNT OFF
+        END
+    </select>
+
+	<select id="s_bco100ukrv_kdService.selectReqNumList" parameterType="Map" resultType="rMap">
+        BEGIN
+            SET ARITHABORT ON
+            SET NOCOUNT ON
+
+            SELECT  A.P_REQ_NUM
+                   ,A.COMP_CODE
+                   ,A.DIV_CODE
+                   ,A.TREE_CODE
+                   ,C.TREE_NAME
+                   ,A.PERSON_NUMB
+                   ,ISNULL(D.NAME, '')       AS PERSON_NAME
+                   ,A.TYPE
+                   ,B.MONEY_UNIT
+                   ,A.P_REQ_DATE
+                   ,B.APLY_START_DATE
+                   ,A.GW_FLAG
+                   ,A.INSERT_DB_USER
+                   ,A.INSERT_DB_TIME
+                   ,A.UPDATE_DB_USER
+                   ,A.UPDATE_DB_TIME
+                   ,B.ITEM_CODE
+                   ,B.ITEM_NAME
+                   ,B.SPEC
+                   ,B.CUSTOM_NAME
+                   ,B.ITEM_P
+                   ,A.P_REQ_TYPE
+              FROM  S_BCO100T_KD A
+                INNER JOIN S_BCO110T_KD B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                       AND B.P_REQ_NUM   = A.P_REQ_NUM
+                LEFT  JOIN BSA210T      C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                       AND C.TREE_CODE   = A.TREE_CODE
+                LEFT  JOIN HUM100T      D WITH (NOLOCK) ON D.COMP_CODE   = A.COMP_CODE
+                                                       AND D.PERSON_NUMB = A.PERSON_NUMB
+             WHERE  A.DIV_CODE        = #{DIV_CODE}
+               AND  A.TREE_CODE       = #{DEPT_CODE}
+               <if test="@foren.Ognl@isNotEmpty(TYPE)">
+               AND  A.TYPE            = #{TYPE}
+               </if>
+               <if test="@foren.Ognl@isNotEmpty(APLY_START_DATE_FR)">
+               AND  A.APLY_START_DATE &gt;= #{APLY_START_DATE_FR}
+               </if>
+               <if test="@foren.Ognl@isNotEmpty(APLY_START_DATE_TO)">
+               AND  A.APLY_START_DATE &lt;= #{APLY_START_DATE_TO}
+               </if>
+               <if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+               AND  A.PERSON_NUMB     = #{PERSON_NUMB}
+               </if>
+               <if test="@foren.Ognl@isNotEmpty(P_REQ_NUM)">
+               AND  A.P_REQ_NUM       LIKE  '%' + #{P_REQ_NUM} + '%'
+               </if>
+               <if test="@foren.Ognl@isNotEmpty(P_REQ_TYPE)">
+               AND  A.P_REQ_TYPE      = #{P_REQ_TYPE}
+               </if>
+              AND ISNULL(A.GW_FLAG, 'N') IN('N', '2')
+
+            SET ARITHABORT OFF
+            SET NOCOUNT OFF
+        END
+    </select>
+
+	<select id="s_bco100ukrv_kdService.selectMasterCheck" parameterType="Map" resultType="rMap">
+        SELECT P_REQ_NUM
+          FROM S_BCO100T_KD WITH (NOLOCK)
+         WHERE COMP_CODE = #{S_COMP_CODE}
+           AND DIV_CODE  = #{DIV_CODE}
+           AND P_REQ_NUM = #{P_REQ_NUM}
+           AND TYPE = #{TYPE}
+           AND MONEY_UNIT = #{MONEY_UNIT}
+           AND P_REQ_DATE = #{P_REQ_DATE}
+           AND APLY_START_DATE = #{APLY_START_DATE}
+         <if test="@foren.Ognl@isNotEmpty(TREE_CODE)">
+           AND TREE_CODE = #{TREE_CODE}
+         </if>
+         <if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+           AND PERSON_NUMB = #{PERSON_NUMB}
+         </if>
+    </select>
+
+    <select id="s_bco100ukrv_kdService.selectPreSeqSelect" parameterType="Map" resultType="rMap">
+    	BEGIN
+               SET NOCOUNT ON
+               SET ARITHABORT ON
+
+               DECLARE @ST_DATE     NVARCHAR(08)
+                     , @TO_DATE     NVARCHAR(08)
+
+               -- 0.회사정보에서 회계시작년월 찾기
+               SELECT @ST_DATE = LEFT(FN_DATE, 6)
+                 FROM BOR100T WITH (NOLOCK)
+
+               -- 1. 현재 시스템일자
+               SELECT @TO_DATE = CONVERT(NVARCHAR(8), GETDATE(), 112)
+
+               -- 2. 날짜 포맷 유형 설정 ------------------------------------------------------------------------------------------
+               DECLARE @DateFormat         NVARCHAR(01)
+                     , @TimeFormat         NVARCHAR(01)
+
+               SELECT TOP 1 @DateFormat = SUBSTRING(CODE_NAME, 5, 1)
+               FROM   BSA100T WITH (NOLOCK)
+               WHERE  COMP_CODE  = #{S_COMP_CODE}
+               AND    MAIN_CODE  = 'B044'
+               AND    REF_CODE1  = 'Y'
+
+               SET @DateFormat = ISNULL(@DateFormat, '.')
+               SET @TimeFormat = ISNULL(@TimeFormat, ':')
+
+            -- 4. Main Query
+            SELECT A.P_REQ_NUM,
+                   A.COMP_CODE,
+                   A.DIV_CODE,
+                   A.TREE_CODE,
+                   A.PERSON_NUMB,
+                   A.TYPE,
+                   B.MONEY_UNIT,
+                   A.P_REQ_DATE,
+                   B.APLY_START_DATE,
+                   A.GW_FLAG,
+                   B.SER_NO,
+                   B.CUSTOM_CODE,
+                   B.CUSTOM_NAME2,
+                   B.NEW_ITEM_FREFIX,
+                   B.ITEM_CODE,
+                   B.ITEM_NAME2,
+                   B.PRICE_TYPE,
+                   B.ORDER_UNIT,
+                   B.ITEM_P,
+                   B.PACK_ITEM_P,
+                   B.PRE_ITEM_P,
+                   B.HS_CODE,
+                   B.PAY_TERMS,
+                   B.TERMS_PRICE,
+                   B.DELIVERY_METH,
+                   B.CH_REASON,
+                   CASE B.OEM_YN     WHEN 'Y'    THEN    '1' ELSE '0' END                       AS OEM_YN,
+                   B.OEM_APLY_YN,
+                   CASE B.[12199_YN] WHEN 'Y'    THEN    '1' ELSE '0' END                       AS [12199_YN],
+                   CASE B.[13199_YN] WHEN 'Y'    THEN    '1' ELSE '0' END                       AS [13199_YN],
+                   CASE B.[14199_YN] WHEN 'Y'    THEN    '1' ELSE '0' END                       AS [14199_YN],
+                   CASE B.[13301_YN] WHEN 'Y'    THEN    '1' ELSE '0' END                       AS [13301_YN],
+                   B.OEM_ITEM_CODE,
+                   B.SPEC2,
+                   B.NEW_CAR_TYPE,
+                   B.CAR_TYPE2,
+                   B.STOCK_UNIT2,
+                   B.CUSTOM_FULL_NAME2,
+                   B.ADD01_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD01_CUSTOM_CODE ) AS ADD01_CUSTOM_NAME,
+                   B.ADD02_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD02_CUSTOM_CODE ) AS ADD02_CUSTOM_NAME,
+                   B.ADD03_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD03_CUSTOM_CODE ) AS ADD03_CUSTOM_NAME,
+                   B.ADD04_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD04_CUSTOM_CODE ) AS ADD04_CUSTOM_NAME,
+                   B.ADD05_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD05_CUSTOM_CODE ) AS ADD05_CUSTOM_NAME,
+                   B.ADD06_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD06_CUSTOM_CODE ) AS ADD06_CUSTOM_NAME,
+                   B.ADD07_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD07_CUSTOM_CODE ) AS ADD07_CUSTOM_NAME,
+                   B.ADD08_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD08_CUSTOM_CODE ) AS ADD08_CUSTOM_NAME,
+                   B.ADD09_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD09_CUSTOM_CODE ) AS ADD09_CUSTOM_NAME,
+                   B.ADD10_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD10_CUSTOM_CODE ) AS ADD10_CUSTOM_NAME,
+                   B.ADD11_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD11_CUSTOM_CODE ) AS ADD11_CUSTOM_NAME,
+                   B.ADD12_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD12_CUSTOM_CODE ) AS ADD12_CUSTOM_NAME,
+                   B.ADD13_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD13_CUSTOM_CODE ) AS ADD13_CUSTOM_NAME,
+                   B.ADD14_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD14_CUSTOM_CODE ) AS ADD14_CUSTOM_NAME,
+                   B.ADD15_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD15_CUSTOM_CODE ) AS ADD15_CUSTOM_NAME,
+                   B.ADD16_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD16_CUSTOM_CODE ) AS ADD16_CUSTOM_NAME,
+                   B.ADD17_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD17_CUSTOM_CODE ) AS ADD17_CUSTOM_NAME,
+                   B.ADD18_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD18_CUSTOM_CODE ) AS ADD18_CUSTOM_NAME,
+                   B.ADD19_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD19_CUSTOM_CODE ) AS ADD19_CUSTOM_NAME,
+                   B.ADD20_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD20_CUSTOM_CODE ) AS ADD20_CUSTOM_NAME,
+                   B.ADD21_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD21_CUSTOM_CODE ) AS ADD21_CUSTOM_NAME,
+                   B.ADD22_CUSTOM_CODE,
+                   (SELECT X.CUSTOM_NAME
+                      FROM BCM100T X
+                     WHERE X.COMP_CODE   = B.COMP_CODE
+                       AND X.CUSTOM_CODE = B.ADD22_CUSTOM_CODE ) AS ADD22_CUSTOM_NAME,
+                   B.REMARK,
+                   B.CONFIRM_YN,
+                   B.RENEWAL_YN,
+                   A.INSERT_DB_USER,
+                   A.INSERT_DB_TIME,
+                   A.UPDATE_DB_USER,
+                   A.UPDATE_DB_TIME,
+                   A.TEMPC_01,
+                   A.TEMPC_02,
+                   A.TEMPC_03,
+                   A.TEMPN_01,
+                   A.TEMPN_02,
+                   A.TEMPN_03,
+                   B.ITEM_NAME2,
+                   B.SPEC2,
+                   B.CAR_TYPE2,
+                   B.NEW_CAR_TYPE,
+                   B.STOCK_UNIT2,
+                   B.CUSTOM_NAME2,
+                   B.CUSTOM_FULL_NAME2,
+                   B.NS_FLAG,
+                   A.P_REQ_TYPE
+            FROM S_BCO100T_KD A WITH (NOLOCK)
+                INNER JOIN S_BCO110T_KD B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                       AND B.P_REQ_NUM   = A.P_REQ_NUM
+            WHERE A.COMP_CODE = #{S_COMP_CODE}
+              AND A.DIV_CODE = #{DIV_CODE}
+              AND A.P_REQ_NUM = #{P_REQ_NUM}
+              AND B.SER_NO = #{SER_NO}
+
+            SET ARITHABORT OFF
+            SET NOCOUNT OFF
+
+        END
+    </select>
+
+    <update id="s_bco100ukrv_kdService.spAutoNum" parameterType="Map" statementType="CALLABLE">
+        {call SP_GetAutoNumComp (
+            #{COMP_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{DIV_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{TABLE_ID, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{PREFIX, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{BASIS_DATE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{AUTO_TYPE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+            #{KEY_NUMBER, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+        )}
+    </update>
+
+    <insert id="s_bco100ukrv_kdService.insertMaster" parameterType="Map">
+        INSERT INTO S_BCO100T_KD
+            (   P_REQ_NUM,
+                COMP_CODE,
+                DIV_CODE,
+                TREE_CODE,
+                PERSON_NUMB,
+                TYPE,
+                MONEY_UNIT,
+                P_REQ_DATE,
+                APLY_START_DATE,
+                GW_FLAG,
+                GW_DOC,
+                P_REQ_TYPE,
+                INSERT_DB_USER,
+                INSERT_DB_TIME
+            )
+         VALUES
+            (   #{P_REQ_NUM},
+                #{S_COMP_CODE},
+                #{DIV_CODE},
+                #{TREE_CODE},
+                #{PERSON_NUMB},
+                #{TYPE},
+                #{MONEY_UNIT},
+                #{P_REQ_DATE},
+                #{APLY_START_DATE},
+                #{GW_FLAG},
+                #{GW_DOC},
+                #{P_REQ_TYPE},
+                #{S_USER_ID},
+                GETDATE()
+            )
+    </insert>
+
+	<select id="s_bco100ukrv_kdService.selectMaxSeq" parameterType="Map" resultType="int">
+		SELECT ISNULL(MAX(SER_NO), 0)                 AS SER_NO
+          FROM S_BCO110T_KD WITH (NOLOCK)
+         WHERE COMP_CODE = #{S_COMP_CODE}
+           AND P_REQ_NUM = #{P_REQ_NUM}
+	</select>
+
+	<select id="s_bco100ukrv_kdService.makeDraftNum" parameterType="Map" resultType="rMap">
+	   UPDATE S_BCO100T_KD
+           SET DRAFT_NO        = #{DRAFT_NO},
+               UPDATE_DB_USER  = #{S_USER_ID},
+               UPDATE_DB_TIME  = GETDATE()
+         WHERE COMP_CODE       = #{S_COMP_CODE}
+           AND DIV_CODE        = #{DIV_CODE}
+           AND P_REQ_NUM       = #{P_REQ_NUM}
+          
+	</select>
+
+    <insert id="s_bco100ukrv_kdService.insertDetail" parameterType="Map">
+    <![CDATA[    
+      SET NOCOUNT ON
+      BEGIN
+        INSERT INTO S_BCO110T_KD
+            (   COMP_CODE,
+                DIV_CODE,
+                P_REQ_NUM,
+                SER_NO,
+                CUSTOM_CODE,
+                CUSTOM_NAME,
+                MAKER_CODE,
+                MAKER_NAME,
+                NEW_ITEM_FREFIX,
+                ITEM_CODE,
+                ITEM_NAME,
+                PRICE_TYPE,
+                ORDER_UNIT,
+                ITEM_P,
+                PACK_ITEM_P,
+                PRE_ITEM_P,
+                HS_CODE,
+                PAY_TERMS,
+                TERMS_PRICE,
+                DELIVERY_METH,
+                CH_REASON,
+                OEM_YN,
+                OEM_APLY_YN,
+                [12199_YN],
+                [13199_YN],
+                [14199_YN],
+                [13301_YN],
+                OEM_ITEM_CODE,
+                SPEC,
+                CAR_TYPE,
+                STOCK_UNIT,
+                CUSTOM_FULL_NAME,
+                ADD01_CUSTOM_CODE,
+                ADD02_CUSTOM_CODE,
+                ADD03_CUSTOM_CODE,
+                ADD04_CUSTOM_CODE,
+                ADD05_CUSTOM_CODE,
+                ADD06_CUSTOM_CODE,
+                ADD07_CUSTOM_CODE,
+                ADD08_CUSTOM_CODE,
+                ADD09_CUSTOM_CODE,
+                ADD10_CUSTOM_CODE,
+                ADD11_CUSTOM_CODE,
+                ADD12_CUSTOM_CODE,
+                ADD13_CUSTOM_CODE,
+                ADD14_CUSTOM_CODE,
+                ADD15_CUSTOM_CODE,
+                ADD16_CUSTOM_CODE,
+                ADD17_CUSTOM_CODE,
+                ADD18_CUSTOM_CODE,
+                ADD19_CUSTOM_CODE,
+                ADD20_CUSTOM_CODE,
+                ADD21_CUSTOM_CODE,
+                ADD22_CUSTOM_CODE,
+                REMARK,
+                CONFIRM_YN,
+                RENEWAL_YN,
+                INSERT_DB_USER,
+                INSERT_DB_TIME,
+                ITEM_NAME2,
+                SPEC2,
+                CAR_TYPE2,
+                NEW_CAR_TYPE,
+                STOCK_UNIT2,
+                CUSTOM_NAME2,
+                CUSTOM_FULL_NAME2,
+                NS_FLAG,
+                MONEY_UNIT,
+                APLY_START_DATE
+            )
+         VALUES
+            (   #{S_COMP_CODE},
+                #{S_DIV_CODE},
+                #{P_REQ_NUM},
+                #{SER_NO},
+                #{CUSTOM_CODE},
+                #{CUSTOM_NAME},
+                #{MAKER_CODE},
+                #{MAKER_NAME},
+                #{NEW_ITEM_FREFIX},
+                #{ITEM_CODE},
+                #{ITEM_NAME},
+                #{PRICE_TYPE},
+                #{ORDER_UNIT},
+                #{ITEM_P},
+                #{PACK_ITEM_P},
+                #{PRE_ITEM_P},
+                #{HS_CODE},
+                #{PAY_TERMS},
+                #{TERMS_PRICE},
+                #{DELIVERY_METH},
+                #{CH_REASON},
+                CASE WHEN #{OEM_YN}     = 'true' THEN 'Y' ELSE 'N' END,
+                #{OEM_APLY_YN},                
+                CASE WHEN #{12199_YN}   = 'true' THEN 'Y' ELSE 'N' END,
+                CASE WHEN #{13199_YN}   = 'true' THEN 'Y' ELSE 'N' END,
+                CASE WHEN #{14199_YN}   = 'true' THEN 'Y' ELSE 'N' END,
+                CASE WHEN #{13301_YN}   = 'true' THEN 'Y' ELSE 'N' END,
+                #{OEM_ITEM_CODE},
+                #{SPEC},
+                #{CAR_TYPE},
+                #{STOCK_UNIT},
+                #{CUSTOM_FULL_NAME},
+                #{ADD01_CUSTOM_CODE},
+                #{ADD02_CUSTOM_CODE},
+                #{ADD03_CUSTOM_CODE},
+                #{ADD04_CUSTOM_CODE},
+                #{ADD05_CUSTOM_CODE},
+                #{ADD06_CUSTOM_CODE},
+                #{ADD07_CUSTOM_CODE},
+                #{ADD08_CUSTOM_CODE},
+                #{ADD09_CUSTOM_CODE},
+                #{ADD10_CUSTOM_CODE},
+                #{ADD11_CUSTOM_CODE},
+                #{ADD12_CUSTOM_CODE},
+                #{ADD13_CUSTOM_CODE},
+                #{ADD14_CUSTOM_CODE},
+                #{ADD15_CUSTOM_CODE},
+                #{ADD16_CUSTOM_CODE},
+                #{ADD17_CUSTOM_CODE},
+                #{ADD18_CUSTOM_CODE},
+                #{ADD19_CUSTOM_CODE},
+                #{ADD20_CUSTOM_CODE},
+                #{ADD21_CUSTOM_CODE},
+                #{ADD22_CUSTOM_CODE},
+                #{REMARK},
+                #{CONFIRM_YN},
+                #{RENEWAL_YN},
+                #{S_USER_ID},
+                GETDATE(),
+                #{ITEM_NAME2},
+                #{SPEC2},
+                #{CAR_TYPE2},
+                #{NEW_CAR_TYPE},
+                #{STOCK_UNIT2},
+                #{CUSTOM_NAME2},
+                #{CUSTOM_FULL_NAME2},
+                #{NS_FLAG},
+                #{MONEY_UNIT},
+                #{APLY_START_DATE}
+            )
+
+        END
+        SET NOCOUNT OFF
+        
+        --품목코드없는 의뢰에 대해 이전단가 업데이트 로직 추가 180514
+        UPDATE  A SET PRE_ITEM_P = ISNULL(B.PRE_ITEM_P,0)
+        FROM	S_BCO110T_KD A
+        		INNER JOIN S_BCO100T_KD A2 WITH (NOLOCK) ON A.COMP_CODE=A2.COMP_CODE AND A.DIV_CODE=A2.DIV_CODE AND A.P_REQ_NUM=A2.P_REQ_NUM
+        		LEFT JOIN (
+        					SELECT S1.COMP_CODE, S1.DIV_CODE, S1.MONEY_UNIT, S2.CUSTOM_CODE,  S2.ITEM_NAME, S2.SPEC, S1.TYPE, SUBSTRING(MAX(S2.APLY_START_DATE + CONVERT(VARCHAR, S2.ITEM_P)), 9, 30) AS PRE_ITEM_P
+        					FROM S_BCO100T_KD S1 WITH (NOLOCK)
+        						 INNER JOIN S_BCO110T_KD S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.P_REQ_NUM=S2.P_REQ_NUM
+        					WHERE S1.COMP_CODE  = #{S_COMP_CODE}
+        					AND S1.DIV_CODE     = #{S_DIV_CODE}
+                  AND S2.CONFIRM_YN = 'Y'
+                  AND S1.GW_FLAG='3'           
+        					AND S2.CUSTOM_CODE <> ''
+        					AND S1.P_REQ_NUM   <> #{P_REQ_NUM}
+        					GROUP BY S1.COMP_CODE, S1.DIV_CODE, S1.MONEY_UNIT, S2.CUSTOM_CODE, S2.ITEM_NAME, S2.SPEC, S1.TYPE		
+        		) B ON A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE=B.DIV_CODE AND A.CUSTOM_CODE=B.CUSTOM_CODE AND A.ITEM_NAME=B.ITEM_NAME AND A.SPEC=B.SPEC AND A2.TYPE=B.TYPE
+        WHERE A.COMP_CODE=#{S_COMP_CODE}
+        AND A.DIV_CODE   = #{S_DIV_CODE}
+        AND A.ITEM_CODE  = ''
+        AND A.ITEM_NAME <> ''
+        AND A.SPEC      <> ''
+        AND A.P_REQ_NUM  = #{P_REQ_NUM}
+        AND A.SER_NO     = #{SER_NO}
+        AND A.PRE_ITEM_P = 0
+    ]]>
+    </insert>
+
+    <update id="s_bco100ukrv_kdService.updateMaster" parameterType="Map">
+        UPDATE S_BCO100T_KD
+           SET TREE_CODE       = #{TREE_CODE},
+               PERSON_NUMB     = #{PERSON_NUMB},
+               TYPE            = #{TYPE},
+               MONEY_UNIT      = #{MONEY_UNIT},
+               P_REQ_DATE      = #{P_REQ_DATE},
+               APLY_START_DATE = #{APLY_START_DATE},
+               GW_FLAG         = #{GW_FLAG},
+               UPDATE_DB_USER  = #{S_USER_ID},
+               UPDATE_DB_TIME  = GETDATE()
+         WHERE COMP_CODE       = #{S_COMP_CODE}
+           AND DIV_CODE        = #{DIV_CODE}
+           AND P_REQ_NUM       = #{P_REQ_NUM}
+    </update>
+
+    <update id="s_bco100ukrv_kdService.updateDetail" parameterType="Map">
+        UPDATE S_BCO110T_KD
+           SET CUSTOM_CODE          = #{CUSTOM_CODE},
+               CUSTOM_NAME          = #{CUSTOM_NAME},
+               MAKER_CODE           = #{MAKER_CODE},
+               MAKER_NAME           = #{MAKER_NAME},
+               ITEM_CODE            = #{ITEM_CODE},
+               ITEM_NAME            = #{ITEM_NAME},
+               NEW_ITEM_FREFIX      = #{NEW_ITEM_FREFIX},
+               PRICE_TYPE           = #{PRICE_TYPE},
+               ORDER_UNIT           = #{ORDER_UNIT},
+               ITEM_P               = #{ITEM_P},
+               PACK_ITEM_P          = #{PACK_ITEM_P},
+               PRE_ITEM_P           = #{PRE_ITEM_P},
+               HS_CODE              = #{HS_CODE},
+               PAY_TERMS            = #{PAY_TERMS},
+               TERMS_PRICE          = #{TERMS_PRICE},
+               DELIVERY_METH        = #{DELIVERY_METH},
+               CH_REASON            = #{CH_REASON},
+               OEM_YN               = CASE WHEN #{OEM_YN}     = 'true' THEN 'Y' ELSE 'N' END,
+               OEM_APLY_YN          = #{OEM_APLY_YN},
+               [12199_YN]           = CASE WHEN #{12199_YN}   = 'true' THEN 'Y' ELSE 'N' END,
+               [13199_YN]           = CASE WHEN #{13199_YN}   = 'true' THEN 'Y' ELSE 'N' END,
+               [14199_YN]           = CASE WHEN #{14199_YN}   = 'true' THEN 'Y' ELSE 'N' END,
+               [13301_YN]           = CASE WHEN #{13301_YN}   = 'true' THEN 'Y' ELSE 'N' END,
+               OEM_ITEM_CODE        = #{OEM_ITEM_CODE},
+               SPEC                 = #{SPEC},
+               CAR_TYPE             = #{CAR_TYPE},
+               STOCK_UNIT           = #{STOCK_UNIT},
+               CUSTOM_FULL_NAME     = #{CUSTOM_FULL_NAME},
+               ADD01_CUSTOM_CODE    = #{ADD01_CUSTOM_CODE},
+               ADD02_CUSTOM_CODE    = #{ADD02_CUSTOM_CODE},
+               ADD03_CUSTOM_CODE    = #{ADD03_CUSTOM_CODE},
+               ADD04_CUSTOM_CODE    = #{ADD04_CUSTOM_CODE},
+               ADD05_CUSTOM_CODE    = #{ADD05_CUSTOM_CODE},
+               ADD06_CUSTOM_CODE    = #{ADD06_CUSTOM_CODE},
+               ADD07_CUSTOM_CODE    = #{ADD07_CUSTOM_CODE},
+               ADD08_CUSTOM_CODE    = #{ADD08_CUSTOM_CODE},
+               ADD09_CUSTOM_CODE    = #{ADD09_CUSTOM_CODE},
+               ADD10_CUSTOM_CODE    = #{ADD10_CUSTOM_CODE},
+               ADD11_CUSTOM_CODE    = #{ADD11_CUSTOM_CODE},
+               ADD12_CUSTOM_CODE    = #{ADD12_CUSTOM_CODE},
+               ADD13_CUSTOM_CODE    = #{ADD13_CUSTOM_CODE},
+               ADD14_CUSTOM_CODE    = #{ADD14_CUSTOM_CODE},
+               ADD15_CUSTOM_CODE    = #{ADD15_CUSTOM_CODE},
+               ADD16_CUSTOM_CODE    = #{ADD16_CUSTOM_CODE},
+               ADD17_CUSTOM_CODE    = #{ADD17_CUSTOM_CODE},
+               ADD18_CUSTOM_CODE    = #{ADD18_CUSTOM_CODE},
+               ADD19_CUSTOM_CODE    = #{ADD19_CUSTOM_CODE},
+               ADD20_CUSTOM_CODE    = #{ADD20_CUSTOM_CODE},
+               ADD21_CUSTOM_CODE    = #{ADD21_CUSTOM_CODE},
+               ADD22_CUSTOM_CODE    = #{ADD22_CUSTOM_CODE},
+               REMARK               = #{REMARK},
+               CONFIRM_YN           = #{CONFIRM_YN},
+               RENEWAL_YN           = #{RENEWAL_YN},
+               UPDATE_DB_USER       = #{S_USER_ID},
+               UPDATE_DB_TIME       = GETDATE(),
+               ITEM_NAME2           = #{ITEM_NAME2},
+               SPEC2                = #{SPEC2},
+               CAR_TYPE2            = #{CAR_TYPE2},
+               NEW_CAR_TYPE         = #{NEW_CAR_TYPE},
+               STOCK_UNIT2          = #{STOCK_UNIT2},
+               CUSTOM_NAME2         = #{CUSTOM_NAME2},
+               CUSTOM_FULL_NAME2    = #{CUSTOM_FULL_NAME2},
+               NS_FLAG              = #{NS_FLAG},
+               MONEY_UNIT    = #{MONEY_UNIT},
+               APLY_START_DATE              = #{APLY_START_DATE}
+         WHERE COMP_CODE            = #{S_COMP_CODE}
+           AND DIV_CODE             = #{S_DIV_CODE}
+           AND P_REQ_NUM            = #{P_REQ_NUM}
+           AND SER_NO               = #{SER_NO}
+    </update>
+
+    <select id="s_bco100ukrv_kdService.beforeDeleteCheck" parameterType="Map" resultType="String">
+        SELECT TOP 1 P_REQ_NUM
+          FROM S_BCO110T_KD  A WITH (NOLOCK)
+         WHERE A.COMP_CODE      = #{S_COMP_CODE}
+           AND DIV_CODE         = #{S_DIV_CODE}
+           AND A.P_REQ_NUM      = #{P_REQ_NUM}
+    </select>
+
+    <delete id="s_bco100ukrv_kdService.deleteMaster" parameterType="Map">
+        DELETE FROM S_BCO100T_KD
+         WHERE COMP_CODE = #{S_COMP_CODE}
+           AND DIV_CODE = #{S_DIV_CODE}
+           AND P_REQ_NUM = #{P_REQ_NUM}
+    </delete>
+
+    <delete id="s_bco100ukrv_kdService.deleteDetail" parameterType="Map">
+        DELETE FROM S_BCO110T_KD
+         WHERE COMP_CODE = #{S_COMP_CODE}
+           AND DIV_CODE  = #{S_DIV_CODE}
+           AND P_REQ_NUM = #{P_REQ_NUM}
+           AND SER_NO    = #{SER_NO}
+    </delete>
+
+	<select id="s_bco100ukrv_kdService.wb22List" parameterType="Map" resultType="comboItem">
+		/*s_bco100ukrv_kdService.wb22List*/
+		SELECT SUB_CODE AS 'value'
+			 , CODE_NAME AS 'text'
+			-- , TYPE_LEVEL AS 'option'
+			 , SUB_CODE + CODE_NAME search
+			 , REF_CODE1 AS refCode1
+			 , REF_CODE2 AS refCode2
+		FROM BSA100T WITH (NOLOCK)
+		WHERE COMP_CODE = #{S_COMP_CODE}
+		 AND MAIN_CODE  = 'WB22'
+		 AND SUB_CODE  != '$'
+		ORDER BY SORT_SEQ, SUB_CODE
+	</select>
+
+	 <update id="s_bco100ukrv_kdService.updateMaster1" parameterType="Map">
+        UPDATE S_BCO100T_KD
+           SET P_REQ_TYPE = #{P_REQ_TYPE},
+                 TYPE            = #{TYPE},
+                 UPDATE_DB_USER  = #{S_USER_ID},
+                 UPDATE_DB_TIME  = GETDATE()
+         WHERE COMP_CODE       = #{S_COMP_CODE}
+           AND DIV_CODE        = #{DIV_CODE}
+           AND P_REQ_NUM       = #{P_REQ_NUM}
+    </update>
+
+
+
+
+
+<!-- 20191216 추가 -->
+    <select id="s_bco100ukrv_kdService.getPreItemP" parameterType="Map" resultType="double">
+		/* s_bco100ukrv_kdService.getPreItemP */
+		SELECT ITEM_P
+		  FROM BPR400T WITH(NOLOCK)
+		 WHERE COMP_CODE   = #{COMP_CODE}
+		   AND DIV_CODE    = #{DIV_CODE}
+		   AND TYPE        = #{TYPE}
+		   AND ITEM_CODE   = #{ITEM_CODE}
+		   AND CUSTOM_CODE = #{CUSTOM_CODE}
+		   AND MONEY_UNIT  = #{MONEY_UNIT}
+		   AND ORDER_UNIT  = #{ORDER_UNIT}
+		   AND APLY_START_DATE = (SELECT MAX(APLY_START_DATE)
+		                            FROM BPR400T WITH(NOLOCK)
+		                           WHERE COMP_CODE   = #{COMP_CODE}
+		                             AND DIV_CODE    = #{DIV_CODE}
+		                             AND TYPE        = #{TYPE}
+		                             AND ITEM_CODE   = #{ITEM_CODE}
+		                             AND CUSTOM_CODE = #{CUSTOM_CODE}
+		                             AND MONEY_UNIT  = #{MONEY_UNIT}
+		                             AND ORDER_UNIT  = #{ORDER_UNIT})
+    </select>
+</mapper>

@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="gac300skrvServiceImpl">
+	<select id="gac300skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		    DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+		          , @UserId			NVARCHAR(100)	/* 사용자ID		*/
+		          , @LangType		NVARCHAR(2)		/* 언어구분		*/
+		          , @RefItem		NVARCHAR(01)
+		          , @DateFormat		NVARCHAR(10)
+		
+		    DECLARE @DivCode        NVARCHAR(08)    /* 사업장       */
+		          , @AccidentDateFr NVARCHAR(08)    /* 사고일FR     */        
+		          , @AccidentDateTo NVARCHAR(08)    /* 사고일TO     */
+		
+		    SET @CompCode = #{S_COMP_CODE}
+		    SET @UserId   = #{S_USER_ID}
+		    SET @LangType = #{S_LANG_CODE}
+		
+		    SET @DivCode        = #{DIV_CODE}
+    		SET @AccidentDateFr = #{ACCIDENT_DATE_FR}
+    		SET @AccidentDateTo = #{ACCIDENT_DATE_TO}
+		
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+		
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+		
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		      FROM BSA100T WITH (NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+		       AND MAIN_CODE = N'B044'
+		       AND REF_CODE1 = N'Y'
+		
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		    /* 데이터 조회 */
+		    SELECT A.COMP_CODE                                                  /* 법인코드         */
+		         , A.DIV_CODE                                                   /* 사업장           */
+		         , A.ACCIDENT_NUM                                               /* 사고번호         */
+		         , ISNULL(RH.ROUTE_GROUP, '999'       ) AS ROUTE_GROUP          /* 노선그룹         */  
+		         , ISNULL(C3.CODE_NAME  , A.ROUTE_CODE) AS ROUTE_GROUP_NAME     /* 노선그룹명       */
+		         , A.ROUTE_CODE                                                 /* 노선코드         */
+		         , ISNULL(R.ROUTE_NUM   , A.ROUTE_CODE) AS ROUTE_NUM            /* 노선번호         */
+		         , A.DRIVER_CODE                                                /* 기사코드         */            
+		         , H1.NAME                                                      /* 성명             */            
+		         , A.EXPERIENCE_PERIOD                                          /* 경력             */
+		         , (CASE WHEN ISNULL(H1.JOIN_DATE, '') = ''
+		                 THEN ''
+		                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(H1.JOIN_DATE, 1, 4))
+		                                                         , 'MM'  , SUBSTRING(H1.JOIN_DATE, 5, 2))
+		                                                         , 'DD'  , SUBSTRING(H1.JOIN_DATE, 7, 2))
+		             END) AS JOIN_DATE                                          /* 입사일           */
+		         , (CASE WHEN ISNULL(A.ACCIDENT_DATE, '') = ''
+		                 THEN ''
+		                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.ACCIDENT_DATE, 1, 4))
+		                                                         , 'MM'  , SUBSTRING(A.ACCIDENT_DATE, 5, 2))
+		                                                         , 'DD'  , SUBSTRING(A.ACCIDENT_DATE, 7, 2))
+		             END) AS ACCIDENT_DATE                                      /* 사고일           */
+		         , V.VEHICLE_NAME                                               /* 차량명           */
+		         , A.ACCIDENT_DIV                                               /* 사고구분코드     */
+		         , C1.CODE_NAME     AS ACCIDENT_DIV_NAME                        /* 사고구분         */  
+		         , A.ACCIDENT_PLACE                                             /* 사고장소         */
+		         , A.DRIVER_FAULT                                               /* 운전자과실코드   */
+		         , C2.CODE_NAME     AS DRIVER_FAULT_NAME                        /* 운전자과실       */    
+		         , SUM(A.P01) AS P01                                            /* 인적집계-사망    */
+		         , SUM(A.P02) AS P02                                            /* 인적집계-중상    */
+		         , SUM(A.P03) AS P03                                            /* 인적집계-경상    */
+		         , SUM(A.P01 + A.P02 + A.P03)   AS SUM_PERSON_CNT               /* 인적집계-합계    */
+		         , SUM(A.PERSON_AMT)            AS PERSON_AMT                   /* 금액집계-대인    */
+		         , SUM(A.SELF_COMPANY_PAYMENT)  AS SELF_COMPANY_PAYMENT         /* 금액집계-자차    */
+		         , SUM(A.TOTAL_PAYMENT)         AS TOTAL_PAYMENT                /* 금액집계-대물    */
+		         , SUM(A.TOTAL_EXPECT_AMOUNT)   AS TOTAL_EXPECT_AMOUNT          /* 금액집계-추산액  */
+		         , SUM(A.PERSON_AMT + A.SELF_COMPANY_PAYMENT+ A.TOTAL_PAYMENT + A.TOTAL_EXPECT_AMOUNT) AS SUM_AMOUNT          /* 금액집계-합계    */
+		         , SUM(A.SELF_FAULT)            AS SELF_FAULT 
+		         , 0                            AS SAFETY_INDEX                 /* 사고지수         */
+		      FROM (SELECT A.COMP_CODE
+		                 , A.DIV_CODE
+		                 , A.ACCIDENT_NUM
+		                 , A.ACCIDENT_DATE
+		                 , A.ROUTE_CODE
+		                 , A.VEHICLE_CODE
+		                 , A.DRIVER_CODE
+		                 , A.EXPERIENCE_PERIOD
+		                 , A.DRIVER_FAULT
+		                 , A.ACCIDENT_DIV
+		                 , A.ACCIDENT_PLACE
+		                 , A.MANAGE_DATE
+		                 , (CASE WHEN B.DEGREE_INJURY = '001' THEN 1 ELSE 0 END) AS P01 --사망
+		                 , (CASE WHEN B.DEGREE_INJURY = '002' THEN 1 ELSE 0 END) AS P02 --중상
+		                 , (CASE WHEN B.DEGREE_INJURY = '003' THEN 1 ELSE 0 END) AS P03 --경상
+		                 , B.PAYMENT                AS PERSON_AMT 
+		                 , 0                        AS TOTAL_PAYMENT
+		                 , 0                        AS SELF_COMPANY_PAYMENT
+		                 , B.TOTAL_EXPECT_AMOUNT    AS TOTAL_EXPECT_AMOUNT
+		                 , 0                        AS SELF_FAULT
+		              FROM            GAC100T A WITH (NOLOCK)
+		                   INNER JOIN GAC110T B WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+		                                                     AND B.DIV_CODE     = A.DIV_CODE
+		                                                     AND B.ACCIDENT_NUM = A.ACCIDENT_NUM
+		             WHERE A.COMP_CODE      = @CompCode
+		               AND A.DIV_CODE       = @DivCode
+		               AND A.ACCIDENT_DATE &gt;= @AccidentDateFr
+		               AND A.ACCIDENT_DATE &lt;= @AccidentDateTo
+		               <if test="@foren.Ognl@isNotEmpty(ACCIDENT_DIV)">					
+					        AND A.ACCIDENT_DIV IN
+								 <foreach collection="ACCIDENT_DIV" item="item" separator="," close=")" open="(">
+					              		 #{item}
+					        	</foreach>									
+					   </if>
+		               <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+		               AND A.ROUTE_CODE    = #{ROUTE_CODE}
+		               </if>
+		               <if test="@foren.Ognl@isNotEmpty(DRIVER_CODE)">
+		               AND A.DRIVER_CODE   = #{DRIVER_CODE}
+		               </if>
+		
+		            UNION ALL
+		            SELECT A.COMP_CODE
+		                 , A.DIV_CODE
+		                 , A.ACCIDENT_NUM
+		                 , A.ACCIDENT_DATE
+		                 , A.ROUTE_CODE
+		                 , A.VEHICLE_CODE
+		                 , A.DRIVER_CODE
+		                 , A.EXPERIENCE_PERIOD
+		                 , A.DRIVER_FAULT
+		                 , A.ACCIDENT_DIV
+		                 , A.ACCIDENT_PLACE
+		                 , A.MANAGE_DATE
+		                 , 0 AS P01
+		                 , 0 AS P02
+		                 , 0 AS P03
+		                 , 0 AS PERSON_AMT 
+		                 , B.TOTAL_PAYMENT          AS TOTAL_PAYMENT
+		                 , B.SELF_COMPANY_PAYMENT   AS SELF_COMPANY_PAYMENT
+		                 , B.TOTAL_EXPECT_AMOUNT    AS TOTAL_EXPECT_AMOUNT
+		                 , B.SELF_FAULT             AS SELF_FAULT
+		              FROM            GAC100T A WITH (NOLOCK)
+		                   INNER JOIN GAC120T B WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+		                                                     AND B.DIV_CODE     = A.DIV_CODE
+		                                                     AND B.ACCIDENT_NUM = A.ACCIDENT_NUM
+		             WHERE A.COMP_CODE      = @CompCode
+		               AND A.DIV_CODE       = @DivCode
+		               AND A.ACCIDENT_DATE &gt;= @AccidentDateFr
+		               AND A.ACCIDENT_DATE &lt;= @AccidentDateTo
+		               <if test="@foren.Ognl@isNotEmpty(ACCIDENT_DIV)">					
+					        AND A.ACCIDENT_DIV IN
+								 <foreach collection="ACCIDENT_DIV" item="item" separator="," close=")" open="(">
+					              		 #{item}
+					        	</foreach>									
+					   </if>
+		               <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+		               AND A.ROUTE_CODE    = #{ROUTE_CODE}
+		               </if>
+		               <if test="@foren.Ognl@isNotEmpty(DRIVER_CODE)">
+		               AND A.DRIVER_CODE   = #{DRIVER_CODE}
+		               </if>
+		               
+		               
+		               ) A
+		           LEFT  JOIN GRT100T R  WITH (NOLOCK) ON R.COMP_CODE    = A.COMP_CODE
+		                                              AND R.DIV_CODE     = A.DIV_CODE
+		                                              AND R.ROUTE_CODE   = A.ROUTE_CODE
+		           LEFT  JOIN GRT110T RH WITH (NOLOCK) ON RH.COMP_CODE         = A.COMP_CODE
+		                                              AND RH.DIV_CODE          = A.DIV_CODE
+		                                              AND RH.ROUTE_CODE        = A.ROUTE_CODE
+		                                              AND RH.ROUTE_START_DATE &lt;= A.ACCIDENT_DATE
+		                                              AND RH.ROUTE_END_DATE   &gt;= A.ACCIDENT_DATE
+		           LEFT  JOIN GVE100T V  WITH (NOLOCK) ON V.COMP_CODE    = A.COMP_CODE
+		                                              AND V.DIV_CODE     = A.DIV_CODE
+		                                              AND V.VEHICLE_CODE = A.VEHICLE_CODE
+		           LEFT  JOIN HUM100T H1 WITH (NOLOCK) ON H1.COMP_CODE   = A.COMP_CODE
+		                                              AND H1.DIV_CODE    = A.DIV_CODE
+		                                              AND H1.PERSON_NUMB = A.DRIVER_CODE
+		           LEFT  JOIN BSA100T C1 WITH (NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE
+		                                              AND C1.MAIN_CODE   = 'GA04'
+		                                              AND C1.SUB_CODE    = A.ACCIDENT_DIV
+		           LEFT  JOIN BSA100T C2 WITH (NOLOCK) ON C2.COMP_CODE   = A.COMP_CODE
+		                                              AND C2.MAIN_CODE   = 'GA11'
+		                                              AND C2.SUB_CODE    = A.DRIVER_FAULT
+		           LEFT  JOIN BSA100T C3 WITH (NOLOCK) ON C3.COMP_CODE   = RH.COMP_CODE
+		                                              AND C3.MAIN_CODE   = 'GO16'
+		                                              AND C3.SUB_CODE    = RH.ROUTE_GROUP
+		                                              
+		           WHERE A.COMP_CODE = @CompCode
+		           <if test="@foren.Ognl@isNotEmpty(ROUTE_GROUP)">
+				   AND RH.ROUTE_GROUP = #{ROUTE_GROUP}
+				   </if>
+		     GROUP BY A.COMP_CODE       , A.DIV_CODE        , A.ACCIDENT_NUM    , RH.ROUTE_GROUP    , C3.CODE_NAME 
+		            , A.ROUTE_CODE      , R.ROUTE_NUM       , A.DRIVER_CODE     , H1.NAME           , A.EXPERIENCE_PERIOD
+		            , H1.JOIN_DATE      , A.ACCIDENT_DATE   , V.VEHICLE_NAME    , A.ACCIDENT_DIV    , C1.CODE_NAME
+		            , A.ACCIDENT_PLACE  , A.DRIVER_FAULT    , C2.CODE_NAME
+		     ORDER BY ISNULL(RH.ROUTE_GROUP, '999'), R.ROUTE_NUM, H1.NAME, A.ACCIDENT_DATE
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+
+
+		
+	</select>
+	
+</mapper>

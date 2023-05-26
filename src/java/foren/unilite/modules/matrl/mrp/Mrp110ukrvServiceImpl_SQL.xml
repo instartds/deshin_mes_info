@@ -1,0 +1,238 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="Mrp110ukrvService">
+	
+	<select id="Mrp110ukrvService.checkMrpData" parameterType="Map" resultType="rMap">
+		SELECT COUNT(*) AS DATA_CNT            
+		  FROM MRP300T WITH(NOLOCK)
+		 WHERE COMP_CODE     = #{S_COMP_CODE}
+		   AND DIV_CODE      = #{DIV_CODE}
+		   AND ORDER_PLAN_YN = 'N' 		
+	</select>
+	
+	
+	<select id="Mrp110ukrvService.planYear" parameterType="Map" resultType="rMap">
+    --'계획년도의 주간 카렌더가 존재 하는지 확인
+    --sgp200ukrv.Csgp200ukrv[fnSgp200Week] Query14
+    SELECT CAL_NO
+         , START_DATE
+      FROM BCM420T 
+     WHERE COMP_CODE = #{S_COMP_CODE}
+       AND CAL_TYPE = '3' 
+       AND GETDATE() BETWEEN START_DATE AND END_DATE
+     ORDER BY CAL_NO
+    </select>
+    
+    <select id="Mrp110ukrvService.baseDate" parameterType="Map" resultType="rMap">
+    -- MRP 전개,확정,예시일자 구하기
+    BEGIN
+          DECLARE  @COMP_CODE  NVARCHAR(08)
+    			  ,@DIV_CODE   NVARCHAR(08)
+          
+          SET @COMP_CODE  = #{S_COMP_CODE}
+          SET @DIV_CODE   = #{DIV_CODE}
+
+		  SELECT (
+				SELECT  TOP 1 MRP_DATE                                                                                                                  
+				FROM    MRP320T WITH(NOLOCK)                                                                                                            
+				WHERE   COMP_CODE = @COMP_CODE                                                                                              
+				AND     DIV_CODE  = @DIV_CODE                                                                                                
+				ORDER BY MRP_CONTROL_NUM DESC
+				) AS MRP_DATE
+				,
+				(
+				SELECT  CASE WHEN ISNULL(ref_code2, '0') = '1' THEN unilite.fnProdDateAdd(CONVERT(NVARCHAR(08), GETDATE(), 112), ISNULL(REF_CODE1, 0))  
+							ELSE CONVERT(NVARCHAR(08), GETDATE() + CONVERT(INTEGER, ISNULL(REF_CODE1, '0')), 112)                                      
+						END                                                                                                                             
+				FROM    BSA100T WITH(NOLOCK)                                                                                                            
+				WHERE   COMP_CODE = @COMP_CODE                                                                                              
+				AND     MAIN_CODE = 'M400' AND SUB_CODE = '2'
+				) AS FIXDATE
+				,
+				(
+				SELECT  CASE WHEN ISNULL(ref_code2, '0') = '1' THEN unilite.fnProdDateAdd(CONVERT(NVARCHAR(08), GETDATE(), 112), ISNULL(REF_CODE1, 0))  
+							ELSE CONVERT(NVARCHAR(08), GETDATE() + CONVERT(INTEGER, ISNULL(REF_CODE1, '0')), 112)                                      
+						END                                                                                                                             
+				FROM    BSA100T WITH(NOLOCK)                                                                                                            
+				WHERE   COMP_CODE = @COMP_CODE                                                                                               
+				AND     MAIN_CODE = 'M400' AND SUB_CODE = '3'
+				) AS INDIDATE    
+    
+          SET NOCOUNT ON
+          SET ARITHABORT ON
+    END
+    </select>
+    
+    <select id="Mrp110ukrvService.baseYN" parameterType="Map" resultType="rMap">
+    -- 재고 및 값 반영 여부
+	BEGIN		
+		DECLARE  @COMP_CODE  NVARCHAR(08)
+		  
+		SET @COMP_CODE  = #{S_COMP_CODE}
+	
+		SELECT MIN(CASE WHEN SUB_CODE = '10' THEN REF_CODE1 ELSE NULL END) AS WH_STOCK_YN  
+			 , MIN(CASE WHEN SUB_CODE = '20' THEN REF_CODE1 ELSE NULL END) AS SAFETY_STOCK_YN
+			 , MIN(CASE WHEN SUB_CODE = '30' THEN REF_CODE1 ELSE NULL END) AS INSTOCK_PLAN_YN
+			 , MIN(CASE WHEN SUB_CODE = '40' THEN REF_CODE1 ELSE NULL END) AS OUTSTOCK_PLAN_YN  
+			 , MIN(CASE WHEN SUB_CODE = '50' THEN REF_CODE1 ELSE NULL END) AS SUB_STOCK_YN
+			 , MIN(CASE WHEN SUB_CODE = '60' THEN REF_CODE1 ELSE NULL END) AS REL_PLAN_YN                                 
+		  FROM BSA100T WITH (NOLOCK)                                 
+		 WHERE COMP_CODE =  @COMP_CODE                   
+		   AND MAIN_CODE =  'M406' 
+		   AND SUB_CODE != '$'             
+		   AND SUB_CODE  IN (N'10', N'20', N'30', N'40', N'50', N'60')     
+ 					   
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+	
+	END
+    </select> 
+    
+    
+    
+    <select id="Mrp110ukrvService.spCall" parameterType="Map" resultType="rMap">
+    BEGIN
+        --  입력변수
+        DECLARE     @COMP_CODE          NVARCHAR(08),           -- 법인코드
+                    @DIV_CODE           NVARCHAR(08),           -- 사업장
+                    @WORK_SHOP_CODE     NVARCHAR(20),           -- 작업장
+                    @PLAN_PRSN          NVARCHAR(02),           -- MRP 담당자
+                    @BASE_DATE          NVARCHAR(08),           -- 기준일자
+                    @FIRM_DATE          NVARCHAR(08),           -- 확정일자
+                    @PLAN_DATE          NVARCHAR(08),           -- 예시일자
+                    @PAB_STOCK_YN       NVARCHAR(01),           -- 가용재고 감안여부
+                    @WH_STOCK_YN        NVARCHAR(01),           -- 현재고 감안여부
+                    @SAFETY_STOCK_YN    NVARCHAR(01),           -- 안전재고 감안여부
+                    @INSTOCK_PLAN_YN    NVARCHAR(01),           -- 입고예정 감안여부
+                    @OUTSTOCK_PLAN_YN   NVARCHAR(01),           -- 출고예정 감안여부
+                    @SUB_STOCK_YN       NVARCHAR(01),           -- 외주재고 감안여부
+                    @REL_PLAN_YN        NVARCHAR(01),           -- 미확정 계획오더 감안여부
+                    @OPEN_DEL_YN        NVARCHAR(01),           -- 미전환 계획오더 삭제여부
+                    @UPDATE_DB_USER     NVARCHAR(100)            -- 수정자 사용자 ID
+        SET @COMP_CODE          = #{S_COMP_CODE}       -- 법인코드
+        SET @DIV_CODE           = #{DIV_CODE}          -- 사업장
+        SET @WORK_SHOP_CODE     = #{WORK_SHOP_CODE}    -- 작업장
+        SET @BASE_DATE          = #{BASE_DATE}         -- 기준일
+        SET @FIRM_DATE          = #{FIRM_DATE}         -- 확정일
+        SET @PLAN_DATE          = #{PLAN_DATE}         -- 예시일
+        SET @PLAN_PRSN          = #{PLAN_PRSN}         -- 담당자
+        SET @PAB_STOCK_YN       = #{PAB_STOCK_YN}      -- 가용재고
+        SET @WH_STOCK_YN        = #{WH_STOCK_YN}       -- 현재고
+        SET @SAFETY_STOCK_YN    = #{SAFETY_STOCK_YN}   -- 안전재고
+        SET @INSTOCK_PLAN_YN    = #{INSTOCK_PLAN_YN}   -- 입고예정
+        SET @OUTSTOCK_PLAN_YN   = #{OUTSTOCK_PLAN_YN}  -- 출고예정
+        SET @SUB_STOCK_YN       = #{SUB_STOCK_YN}      -- 외주재고
+        SET @REL_PLAN_YN        = #{REL_PLAN_YN}       -- 미확정 전환오더
+        SET @OPEN_DEL_YN        = #{OPEN_DEL_YN}       -- 미확정 전환오더 삭제여부
+        SET @UPDATE_DB_USER     = #{S_USER_ID}         -- 사용자
+        DECLARE     @ERR_DESC           NVARCHAR(2000),         -- 에러 메세지
+                    @MRP_DATE           NVARCHAR(08)            -- MRP 전개일자
+        SET @ERR_DESC = '0;'
+        SET @MRP_DATE = CONVERT(NVARCHAR(08), GETDATE(), 112)
+        IF  ISNULL(@PLAN_DATE, '') = ''
+            SET @PLAN_DATE = @FIRM_DATE
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+        -----------------------------------------------------------------------------------------------------------------------
+        --      1. 입력변수 Validation Check                                (uniLITE.SP_MRP_ValidationCheck)
+        --          1-1. Validation Check
+        --          1-2. 환경설정
+        DECLARE     @MRP_CONTROL_NUM        NVARCHAR(20)
+        EXEC SP_MRP_ValidationCheck    @COMP_CODE, @DIV_CODE, @PLAN_PRSN, @MRP_DATE, @BASE_DATE, @FIRM_DATE, @PLAN_DATE,
+                                       @PAB_STOCK_YN, @WH_STOCK_YN, @SAFETY_STOCK_YN, @INSTOCK_PLAN_YN, @OUTSTOCK_PLAN_YN,
+                                       @SUB_STOCK_YN, @REL_PLAN_YN, @OPEN_DEL_YN, @UPDATE_DB_USER,
+                                       @MRP_CONTROL_NUM OUTPUT, @ERR_DESC OUTPUT
+        IF  SUBSTRING(@ERR_DESC, 1, CHARINDEX(';', @ERR_DESC)) != '0;'      -- 입력변수 Validation 에러 발생시, 작업 종료
+        BEGIN
+            GoTo ERR_RETURN
+        End
+        -----------------------------------------------------------------------------------------------------------------------
+        --      3. LLC 산정
+        --          3-1. MPS 품목으로 부터 BOM 전개를 수행하여 각 품목별 LLC 정보를 생성한다.
+        DECLARE     @MAX_LLC        INTEGER
+        EXEC SP_MRP_MakeLLC @COMP_CODE, @DIV_CODE, @PLAN_PRSN, @MRP_DATE, @BASE_DATE, @FIRM_DATE, @PLAN_DATE,
+                            @PAB_STOCK_YN, @WH_STOCK_YN, @SAFETY_STOCK_YN, @INSTOCK_PLAN_YN, @OUTSTOCK_PLAN_YN,
+                            @SUB_STOCK_YN, @REL_PLAN_YN, @OPEN_DEL_YN, @UPDATE_DB_USER,
+                            @MRP_CONTROL_NUM, @MAX_LLC OUTPUT, @ERR_DESC OUTPUT
+    
+        IF  SUBSTRING(@ERR_DESC, 1, CHARINDEX(';', @ERR_DESC)) != '0;'      -- 입력변수 Validation 에러 발생시, 작업 종료
+        BEGIN
+            GoTo ERR_RETURN
+        End
+        -----------------------------------------------------------------------------------------------------------------------
+        --      4. LLC 레벨 단위로 MRP 전개
+        --          4-1. 낮은 LLC부터 높은 LLC로 단계별 전개
+        DECLARE     @CUR_LLC        INTEGER
+        SET @CUR_LLC = 0
+        WHILE   (@CUR_LLC &lt;= @MAX_LLC)
+        BEGIN
+            -- 소요량 전개
+            EXEC SP_MRP_RequirementsExplosion   @COMP_CODE, @DIV_CODE, @PLAN_PRSN, @MRP_DATE, @BASE_DATE, @FIRM_DATE, @PLAN_DATE,
+                                                @PAB_STOCK_YN, @WH_STOCK_YN, @SAFETY_STOCK_YN, @INSTOCK_PLAN_YN, @OUTSTOCK_PLAN_YN,
+                                                @SUB_STOCK_YN, @REL_PLAN_YN, @OPEN_DEL_YN, @UPDATE_DB_USER,
+                                                @MRP_CONTROL_NUM, @CUR_LLC, @ERR_DESC OUTPUT
+            IF  SUBSTRING(@ERR_DESC, 1, CHARINDEX(';', @ERR_DESC)) != '0;'      -- 입력변수 Validation 에러 발생시, 작업 종료
+            BEGIN
+                GoTo ERR_RETURN
+            End
+            -- 총소요량 산정
+            EXEC SP_MRP_GrossRequirements   @COMP_CODE, @DIV_CODE, @PLAN_PRSN, @MRP_DATE, @BASE_DATE, @FIRM_DATE, @PLAN_DATE,
+                                            @PAB_STOCK_YN, @WH_STOCK_YN, @SAFETY_STOCK_YN, @INSTOCK_PLAN_YN, @OUTSTOCK_PLAN_YN,
+                                            @SUB_STOCK_YN, @REL_PLAN_YN, @OPEN_DEL_YN, @UPDATE_DB_USER,
+                                            @MRP_CONTROL_NUM, @CUR_LLC, @ERR_DESC OUTPUT
+            IF  SUBSTRING(@ERR_DESC, 1, CHARINDEX(';', @ERR_DESC)) != '0;'      -- 입력변수 Validation 에러 발생시, 작업 종료
+            BEGIN
+                GoTo ERR_RETURN
+            End
+            -- 순소요량, 계획발주량 산정
+            EXEC SP_MRP_PlannedOrderReleases    @COMP_CODE, @DIV_CODE, @PLAN_PRSN, @MRP_DATE, @BASE_DATE, @FIRM_DATE, @PLAN_DATE,
+                                                @PAB_STOCK_YN, @WH_STOCK_YN, @SAFETY_STOCK_YN, @INSTOCK_PLAN_YN, @OUTSTOCK_PLAN_YN,
+                                                @SUB_STOCK_YN, @REL_PLAN_YN, @OPEN_DEL_YN, @UPDATE_DB_USER,
+                                                @MRP_CONTROL_NUM, NULL, @CUR_LLC, @ERR_DESC OUTPUT
+           IF  SUBSTRING(@ERR_DESC, 1, CHARINDEX(';', @ERR_DESC)) != '0;'      -- 입력변수 Validation 에러 발생시, 작업 종료
+            BEGIN
+                GoTo ERR_RETURN
+            End
+            -- Lot Sizing 초과 MRP 레코드에 대한 분할
+            EXEC SP_MRP_InsertMRPRecord @COMP_CODE, @DIV_CODE, @PLAN_PRSN, @MRP_DATE, @BASE_DATE, @FIRM_DATE, @PLAN_DATE,
+                                        @PAB_STOCK_YN, @WH_STOCK_YN, @SAFETY_STOCK_YN, @INSTOCK_PLAN_YN, @OUTSTOCK_PLAN_YN,
+                                        @SUB_STOCK_YN, @REL_PLAN_YN, @OPEN_DEL_YN, @UPDATE_DB_USER,
+                                        @MRP_CONTROL_NUM, @CUR_LLC, @ERR_DESC OUTPUT
+            IF  SUBSTRING(@ERR_DESC, 1, CHARINDEX(';', @ERR_DESC)) != '0;'      -- 입력변수 Validation 에러 발생시, 작업 종료
+            BEGIN
+                GoTo ERR_RETURN
+            End
+           -- 발주방침 적용
+           EXEC SP_MRP_OrderPolicy @COMP_CODE, @DIV_CODE, @PLAN_PRSN, @MRP_DATE, @BASE_DATE, @FIRM_DATE, @PLAN_DATE,
+                                   @PAB_STOCK_YN, @WH_STOCK_YN, @SAFETY_STOCK_YN, @INSTOCK_PLAN_YN, @OUTSTOCK_PLAN_YN,
+                                   @SUB_STOCK_YN, @REL_PLAN_YN, @OPEN_DEL_YN, @UPDATE_DB_USER,
+                                   @MRP_CONTROL_NUM, @CUR_LLC, @ERR_DESC OUTPUT
+            IF  SUBSTRING(@ERR_DESC, 1, CHARINDEX(';', @ERR_DESC)) != '0;'      -- 입력변수 Validation 에러 발생시, 작업 종료
+            BEGIN
+                GoTo ERR_RETURN
+            End
+            SET @CUR_LLC = @CUR_LLC + 1
+        End
+        EXEC SP_MRP_OrderDistribution   @COMP_CODE, @DIV_CODE, @PLAN_PRSN, @MRP_DATE, @BASE_DATE, @FIRM_DATE, @PLAN_DATE,
+                                        @PAB_STOCK_YN, @WH_STOCK_YN, @SAFETY_STOCK_YN, @INSTOCK_PLAN_YN, @OUTSTOCK_PLAN_YN,
+                                        @SUB_STOCK_YN, @REL_PLAN_YN, @OPEN_DEL_YN, @UPDATE_DB_USER,
+                                        @MRP_CONTROL_NUM, @ERR_DESC OUTPUT
+        IF  SUBSTRING(@ERR_DESC, 1, CHARINDEX(';', @ERR_DESC)) != '0;'      -- 입력변수 Validation 에러 발생시, 작업 종료
+            BEGIN
+                GoTo ERR_RETURN
+            End
+        EXEC SP_MRP_Closing @COMP_CODE, @DIV_CODE, @PLAN_PRSN, @MRP_DATE, @BASE_DATE, @FIRM_DATE, @PLAN_DATE,
+                            @PAB_STOCK_YN, @WH_STOCK_YN, @SAFETY_STOCK_YN, @INSTOCK_PLAN_YN, @OUTSTOCK_PLAN_YN,
+                            @SUB_STOCK_YN, @REL_PLAN_YN, @OPEN_DEL_YN, @UPDATE_DB_USER,
+                            @MRP_CONTROL_NUM, @ERR_DESC OUTPUT
+        ERR_RETURN:
+           SET ARITHABORT OFF
+           SET NOCOUNT OFF
+           IF CHARINDEX(';', @ERR_DESC) &gt; 0
+               SELECT SUBSTRING(@ERR_DESC, 1, CHARINDEX(';', @ERR_DESC) - 1)           AS ERROR_CODE
+                    , SUBSTRING(@ERR_DESC, CHARINDEX(';', @ERR_DESC), LEN(@ERR_DESC))  AS ERROR_DESC
+           ELSE
+               SELECT TOP 1 '' ERROR_CODE, '' ERROR_DESC
+    END     	
+    </select> 
+</mapper>

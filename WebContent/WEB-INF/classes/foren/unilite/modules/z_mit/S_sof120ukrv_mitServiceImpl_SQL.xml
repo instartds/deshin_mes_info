@@ -1,0 +1,311 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_sof120ukrv_mitServiceImpl">
+	<select id="s_sof120ukrv_mitServiceImpl.selectDetailList" parameterType="Map" resultType="rMap">
+		--20200310 수정: 조회시 오래 걸리는 현상 발생하여 수정
+		DECLARE @COMP_CODE NVARCHAR(08)
+		      , @DIV_CODE  NVARCHAR(02)
+
+		   SET @COMP_CODE = #{S_COMP_CODE}
+		   SET @DIV_CODE  = #{DIV_CODE}
+
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.ORDER_NUM
+		     , B.SER_NO
+		     , A.ORDER_DATE
+		     , A.CUSTOM_CODE
+		     , M3.CUSTOM_NAME
+		     , B.ITEM_CODE
+		     , M1.ITEM_NAME
+		     , B.ORDER_Q
+		     , B.ORDER_Q                                             AS ORDER_Q_CAL
+		     , B.ORDER_UNIT
+		     , B.DVRY_DATE
+		     , M2.LOT_NO
+		     , M2.LOT_NO                                             AS LOT_NO_ORI
+		     , UNILITE.fnGetUserDateComp(A.COMP_CODE, M5.INOUT_DATE) AS ITEM_INSTOCK_DATE
+		     , M4.DVRY_CUST_NM
+		     , M4.BARCODE                                            AS WH_CELL_CODE
+		     --20191120 작업지시번호, 내부비고 추가
+		     , M6.WKORD_NUM
+		     , B.REMARK_INTER
+		     --20191205 스펙, 도면번호, 최초납기, 출력여부 추가
+		     , M1.SPEC
+		     , M1.SPEC_NUM
+		     , B.INIT_DVRY_DATE
+		     --20200129 가용재고 가져오기 위한 로직 추가
+		     --, Z1.STOCK_Q                                            AS PAB_STOCK_Q
+		     --, CASE WHEN (SELECT TOP 1 1 FROM PABSTOCK_V WHERE COMP_CODE=B.COMP_CODE AND DIV_CODE=B.DIV_CODE AND ITEM_CODE=B.ITEM_CODE) = 1 THEN 'Y' ELSE 'N' END AS PAB_STOCK_YN
+			 , CASE WHEN ISNULL(Z1.CNT,0) > 0 THEN 'Y' ELSE 'N' END PAB_STOCK_YN
+		    -- , CASE WHEN ISNULL(M2.PRINT_YN, '') = '' THEN 'N'
+		    --        ELSE ISNULL(M2.PRINT_YN, 'N')
+		    --   END                                                   AS PRINT_YN
+		     , B.PO_NUM
+		     , B.PO_SEQ
+		     , B.REMARK
+			 , CONVERT(VARCHAR(19),M2.UPDATE_DB_TIME,120) AS UPDATE_DB_TIME
+		  FROM       SOF100T A  WITH(NOLOCK)
+		  INNER JOIN SOF110T B  WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+		                                    AND A.DIV_CODE  = B.DIV_CODE
+		                                    AND A.ORDER_NUM = B.ORDER_NUM
+		  LEFT  JOIN BPR100T M1 WITH(NOLOCK) ON B.COMP_CODE = M1.COMP_CODE
+		                                    AND B.ITEM_CODE = M1.ITEM_CODE
+		  LEFT  JOIN S_SOF120T_MIT M2 WITH(NOLOCK) ON B.COMP_CODE = M2.COMP_CODE
+		                                          AND B.DIV_CODE  = M2.DIV_CODE
+		                                          AND B.ORDER_NUM = M2.ORDER_NUM
+		                                          AND B.SER_NO    = M2.ORDER_SEQ
+		  LEFT  JOIN BCM100T M3 WITH(NOLOCK) ON A.COMP_CODE   = M3.COMP_CODE
+		                                    AND A.CUSTOM_CODE = M3.CUSTOM_CODE
+		  LEFT JOIN SCM100T M4 WITH (NOLOCK) ON A.COMP_CODE=M4.COMP_CODE AND A.CUSTOM_CODE=M4.CUSTOM_CODE AND B.DVRY_CUST_CD=CONVERT(VARCHAR, M4.DVRY_CUST_SEQ)
+		  LEFT JOIN (
+		              SELECT  S1.COMP_CODE, S1.DIV_CODE, S1.INOUT_DATE, S2.ORDER_NUM, S2.SER_NO, S1.ORDER_NUM AS WKORD_NUM, S1.BASIS_NUM AS PRODT_NUM, S1.LOT_NO
+		                FROM       BTR100T S1 WITH (NOLOCK)
+		                INNER JOIN PMP100T S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.DIV_CODE=S2.DIV_CODE AND S1.ORDER_NUM=S2.WKORD_NUM AND S1.ITEM_CODE=S2.ITEM_CODE AND S2.LINE_END_YN='Y'
+		               WHERE S1.COMP_CODE  = @COMP_CODE
+		                 AND S1.DIV_CODE   = @DIV_CODE
+		                 AND S1.CREATE_LOC = '1'
+		                 AND ISNULL(S1.ORDER_NUM,'') != ''
+		                 AND S1.INOUT_TYPE = '1'
+		                 AND ISNULL(S2.ORDER_NUM,'') != ''
+		                 AND S1.WH_CODE    = '1350'
+		  ) M5 ON M2.COMP_CODE=M5.COMP_CODE AND M2.DIV_CODE=M5.DIV_CODE AND M2.ORDER_NUM=M5.ORDER_NUM AND M2.ORDER_SEQ=M5.SER_NO AND M2.LOT_NO=M5.LOT_NO
+		  LEFT JOIN (
+		              SELECT S1.COMP_CODE, S1.DIV_CODE, S1.SO_NUM AS ORDER_NUM, S1.SO_SEQ
+		                   , MAX(S1.WKORD_NUM) + CASE WHEN COUNT(1)-1 &gt; 0 THEN ' 외 '+ CONVERT(VARCHAR, COUNT(1)) +'건' ELSE '' END AS WKORD_NUM
+		                FROM       PMP100T S1 WITH (NOLOCK)
+		                INNER JOIN BPR200T S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.DIV_CODE=S2.DIV_CODE AND S1.ITEM_CODE=S2.ITEM_CODE
+		               WHERE S1.COMP_CODE    = @COMP_CODE
+		                 AND S1.DIV_CODE     = @DIV_CODE
+		                 AND S1.LINE_END_YN  = 'Y'
+		                 AND S2.ITEM_ACCOUNT = '10'
+		                 AND ISNULL(S1.SO_NUM,'') != ''
+		               GROUP BY S1.COMP_CODE, S1.DIV_CODE, S1.SO_NUM, S1.SO_SEQ
+		  ) M6  ON B.COMP_CODE=M6.COMP_CODE AND B.DIV_CODE=M6.DIV_CODE AND B.ORDER_NUM=M6.ORDER_NUM AND B.SER_NO=M6.SO_SEQ
+		  --20200129 가용재고 가져오기 위한 로직 추가
+		  LEFT JOIN ( 
+				SELECT COMP_CODE, DIV_CODE, ITEM_CODE, COUNT(1) AS CNT
+				FROM PABSTOCK_V
+				WHERE COMP_CODE=@COMP_CODE
+				AND DIV_CODE=@DIV_CODE
+				GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE
+		    ) Z1 ON Z1.COMP_CODE = B.COMP_CODE
+		        AND Z1.DIV_CODE  = B.DIV_CODE
+		        AND Z1.ITEM_CODE = B.ITEM_CODE
+
+		 WHERE A.COMP_CODE   = @COMP_CODE
+		   AND A.DIV_CODE    = @DIV_CODE
+		<if test="@foren.Ognl@isNotEmpty(DVRY_DATE_FR)">
+		   AND A.ORDER_DATE &gt;= #{DVRY_DATE_FR}       --20200313 수정: dvry_date -> order_date
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(DVRY_DATE_TO)">
+		   AND A.ORDER_DATE &lt;= #{DVRY_DATE_TO}       --20200313 수정: dvry_date -> order_date
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ORDER_DATE_FR)">
+		   AND CONVERT(NVARCHAR(08), A.INSERT_DB_TIME, 112) &gt;= #{ORDER_DATE_FR}       --20200313 수정: order_date -> insert_db_time
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ORDER_DATE_TO)">
+		   AND CONVERT(NVARCHAR(08), A.INSERT_DB_TIME, 112) &lt;= #{ORDER_DATE_TO}       --20200313 수정: order_date -> insert_db_time
+		</if>		
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		   AND B.ITEM_CODE    LIKE #{ITEM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+		   AND M1.ITEM_NAME   LIKE #{ITEM_NAME} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ORDER_NUM)">
+		   AND A.ORDER_NUM    LIKE '%' + #{ORDER_NUM} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+		   AND A.CUSTOM_CODE  LIKE #{CUSTOM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+		   AND M3.CUSTOM_NAME LIKE #{CUSTOM_NAME} + '%'
+		</if>
+<!-- 20200128 조회조건 변경 -->
+		   AND ISNULL(M2.CONFIRM_YN, 'N') = #{CONFIRM_YN}
+<!-- 20191120 출고준비(COMPLETE_YN) 필드 관련로직, 20200129 수정: (ISNULL(M2.LOT_NO, '') = ''에서 (ISNULL(M2.LOT_NO, '*') = '*'로 -->
+		<if test="COMPLETE_YN == &quot;1&quot;">
+		   AND (ISNULL(M2.LOT_NO, '*') = '*' AND ISNULL(M6.WKORD_NUM, '') = '')	--미완료
+		</if>
+		<if test="COMPLETE_YN == &quot;2&quot;">
+		   AND (ISNULL(M2.LOT_NO, '*') != '*' OR ISNULL(M6.WKORD_NUM, '') != '')	--완료
+		</if>
+		--AND B.ORDER_Q - B.OUTSTOCK_Q > 0		/* 출고완료된 수주건의 경우에도 lot 지정된것을 수정할 수 있으므로 일단 주석 */
+		AND B.ORDER_STATUS != 'Y'
+		ORDER BY A.ORDER_NUM, B.SER_NO
+	</select>
+
+
+	<update id="s_sof120ukrv_mitServiceImpl.updateDetail" parameterType="Map">
+		/* s_sof120ukrv_mitServiceImpl.updateDetail */
+		--20200129 LOT_NO 값 없을 떄 '*' 넣기 위한 로직 추가
+		DECLARE @LOT_NO NVARCHAR(20)
+		SET     @LOT_NO = #{LOT_NO}
+
+		IF(ISNULL(@LOT_NO, '') = '')
+		BEGIN
+		    SET @LOT_NO = '*'
+		END
+
+		MERGE INTO S_SOF120T_MIT                            A
+		USING ( SELECT #{S_COMP_CODE}  AS COMP_CODE
+		             , #{DIV_CODE}     AS DIV_CODE
+		             , #{ORDER_NUM}    AS ORDER_NUM
+		             , #{SER_NO}       AS SER_NO
+		             , #{LOT_NO_ORI}   AS LOT_NO_ORI
+		      )                                             B       ON B.COMP_CODE  = A.COMP_CODE
+		                                                           AND B.DIV_CODE   = A.DIV_CODE
+		                                                           AND B.ORDER_NUM  = A.ORDER_NUM
+		                                                           AND B.SER_NO     = A.ORDER_SEQ
+		                                                           AND B.LOT_NO_ORI = A.LOT_NO
+		WHEN MATCHED THEN
+		UPDATE 
+		   SET LOT_NO         = @LOT_NO
+		<if test="CONFIRM_YN == &quot;Y&quot;">
+		     , CONFIRM_YN     = 'N'
+		</if>
+		<if test="CONFIRM_YN != &quot;Y&quot;">
+		     , CONFIRM_YN     = 'Y'
+		</if>
+		     , UPDATE_DB_USER = #{S_USER_ID}
+		     , UPDATE_DB_TIME = GETDATE()
+
+		WHEN NOT MATCHED THEN
+		    INSERT (
+		             COMP_CODE
+		           , DIV_CODE
+		           , ORDER_NUM
+		           , ORDER_SEQ
+		           , LOT_NO
+		           , ITEM_CODE
+		           , ALLOT_Q
+		           --20200129 추가
+		           , CONFIRM_YN
+		           , INSERT_DB_USER
+		           , INSERT_DB_TIME
+		           , UPDATE_DB_USER
+		           , UPDATE_DB_TIME
+		    ) VALUES (
+		             #{S_COMP_CODE}
+		           , #{DIV_CODE}
+		           , #{ORDER_NUM}
+		           , #{SER_NO}
+		           , @LOT_NO
+		           , #{ITEM_CODE}
+		           , CASE WHEN @LOT_NO='*' THEN 0 ELSE 1 END
+		           --20200129 추가
+		<if test="CONFIRM_YN == &quot;Y&quot;">
+		           , 'N'
+		</if>
+		<if test="CONFIRM_YN != &quot;Y&quot;">
+		           , 'Y'
+		</if>
+		           , #{S_USER_ID}
+		           , GETDATE()
+		           , #{S_USER_ID}
+		           , GETDATE()
+		    );
+	</update>
+
+	<update id="s_sof120ukrv_mitServiceImpl.deleteDetail" parameterType="Map">
+		/* s_sof120ukrv_mitServiceImpl.deleteDetail */
+		DELETE S_SOF120T_MIT
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND DIV_CODE  = #{DIV_CODE}
+		   AND ORDER_NUM = #{ORDER_NUM}
+		   AND ORDER_SEQ = #{SER_NO}
+		   AND LOT_NO    = #{LOT_NO}
+	</update>
+
+
+
+
+
+
+
+
+
+<!-- 출력 데이터 조회 쿼리 -->
+	<select id="s_sof120ukrv_mitServiceImpl.printList" parameterType="Map" resultType="rMap">
+		/* s_sof120ukrv_mitServiceImpl.printList */
+		UPDATE A
+		   SET A.PRINT_YN       = 'Y'
+		     , A.UPDATE_DB_USER = #{S_USER_ID}
+		     , A.UPDATE_DB_TIME = GETDATE()
+		  FROM       S_SOF120T_MIT                      A
+		  INNER JOIN uniLITE.fnSplit(#{KEY_VALUE}, ',') Z ON Z.VALUE = A.ORDER_NUM + CONVERT(NVARCHAR, A.ORDER_SEQ) + A.LOT_NO
+		 WHERE A.COMP_CODE   = #{S_COMP_CODE}
+		   AND A.DIV_CODE    = #{DIV_CODE}
+
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.ORDER_NUM
+		     , B.SER_NO
+		     , A.ORDER_DATE
+		     , A.CUSTOM_CODE
+		     , M3.CUSTOM_NAME
+		     , B.ITEM_CODE
+		     , M1.ITEM_NAME
+		     , B.ORDER_Q
+		     , B.ORDER_Q                                             AS ORDER_Q_CAL
+		     , B.ORDER_UNIT
+		     , B.DVRY_DATE
+		     , M2.LOT_NO
+		     , M2.LOT_NO                                             AS LOT_NO_ORI
+		     , UNILITE.fnGetUserDateComp(A.COMP_CODE, M5.INOUT_DATE) AS ITEM_INSTOCK_DATE
+		     , M4.DVRY_CUST_NM
+		     , M4.BARCODE                                            AS WH_CELL_CODE
+		     --20191120 작업지시번호, 내부비고 추가
+		     , M6.WKORD_NUM
+		     , B.REMARK_INTER
+		     --20191205 스펙, 도면번호, 최초납기, 출력여부 추가
+		     , M1.SPEC
+		     , M1.SPEC_NUM
+		     , B.INIT_DVRY_DATE
+		     , ISNULL(M2.PRINT_YN, 'N')                              AS PRINT_YN
+		     , B.REMARK
+		  FROM       SOF100T A  WITH(NOLOCK)
+		  INNER JOIN SOF110T B  WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+		                                    AND A.DIV_CODE  = B.DIV_CODE
+		                                    AND A.ORDER_NUM = B.ORDER_NUM
+		  LEFT  JOIN BPR100T M1 WITH(NOLOCK) ON B.COMP_CODE = M1.COMP_CODE
+		                                    AND B.ITEM_CODE = M1.ITEM_CODE
+		  LEFT  JOIN S_SOF120T_MIT M2 WITH(NOLOCK) ON B.COMP_CODE = M2.COMP_CODE
+		                                          AND B.DIV_CODE  = M2.DIV_CODE
+		                                          AND B.ORDER_NUM = M2.ORDER_NUM
+		                                          AND B.SER_NO    = M2.ORDER_SEQ
+		  LEFT  JOIN BCM100T M3 WITH(NOLOCK) ON A.COMP_CODE   = M3.COMP_CODE
+		                                    AND A.CUSTOM_CODE = M3.CUSTOM_CODE
+		  LEFT JOIN SCM100T M4 WITH (NOLOCK) ON A.COMP_CODE=M4.COMP_CODE AND A.CUSTOM_CODE=M4.CUSTOM_CODE AND B.DVRY_CUST_CD=CONVERT(VARCHAR, M4.DVRY_CUST_SEQ)
+		  LEFT JOIN (
+						SELECT  S1.COMP_CODE, S1.DIV_CODE, S1.INOUT_DATE, S2.ORDER_NUM, S2.SER_NO, S1.ORDER_NUM AS WKORD_NUM, S1.BASIS_NUM AS PRODT_NUM, S1.LOT_NO
+						FROM BTR100T S1 WITH (NOLOCK)
+							 INNER JOIN PMP100T S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.DIV_CODE=S2.DIV_CODE AND S1.ORDER_NUM=S2.WKORD_NUM AND S1.ITEM_CODE=S2.ITEM_CODE AND S2.LINE_END_YN='Y'
+						WHERE S1.COMP_CODE=#{S_COMP_CODE}
+						AND S1.DIV_CODE=#{DIV_CODE}
+						AND S1.CREATE_LOC='1'
+						AND ISNULL(S1.ORDER_NUM,'') != ''
+						AND S1.INOUT_TYPE='1'
+						AND ISNULL(S2.ORDER_NUM,'') != ''
+						AND S1.WH_CODE = '1350'
+		  
+		  ) M5 ON M2.COMP_CODE=M5.COMP_CODE AND M2.DIV_CODE=M5.DIV_CODE AND M2.ORDER_NUM=M5.ORDER_NUM AND M2.ORDER_SEQ=M5.SER_NO AND M2.LOT_NO=M5.LOT_NO
+		  LEFT JOIN (
+			SELECT S1.COMP_CODE, S1.DIV_CODE, S1.SO_NUM AS ORDER_NUM, S1.SO_SEQ
+				 , MAX(S1.WKORD_NUM) + CASE WHEN COUNT(1)-1 &gt; 0 THEN ' 외 '+ CONVERT(VARCHAR, COUNT(1)) +'건' ELSE '' END AS WKORD_NUM
+			FROM PMP100T S1 WITH (NOLOCK)
+				 INNER JOIN BPR200T S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.DIV_CODE=S2.DIV_CODE AND S1.ITEM_CODE=S2.ITEM_CODE
+			WHERE S1.COMP_CODE=#{S_COMP_CODE}
+			AND S1.DIV_CODE=#{DIV_CODE}
+			AND S1.LINE_END_YN='Y'
+			AND S2.ITEM_ACCOUNT='10'
+			AND ISNULL(S1.SO_NUM,'')  != ''
+			GROUP BY S1.COMP_CODE, S1.DIV_CODE, S1.SO_NUM, S1.SO_SEQ
+		  
+		  ) M6  ON B.COMP_CODE=M6.COMP_CODE AND B.DIV_CODE=M6.DIV_CODE AND B.ORDER_NUM=M6.ORDER_NUM AND B.SER_NO=M6.SO_SEQ
+		  INNER JOIN uniLITE.fnSplit(#{KEY_VALUE}, ',') AS Z ON Z.VALUE = A.ORDER_NUM + CONVERT(NVARCHAR, B.SER_NO) + M2.LOT_NO
+		 WHERE A.COMP_CODE   = #{S_COMP_CODE}
+		   AND A.DIV_CODE    = #{DIV_CODE}
+	</select>
+</mapper>

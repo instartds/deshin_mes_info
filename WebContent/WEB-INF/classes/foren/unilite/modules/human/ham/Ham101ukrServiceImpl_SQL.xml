@@ -1,0 +1,415 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ham101ukrServiceImpl">
+		
+	<select id="ham101ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">		
+	BEGIN
+	        SET NOCOUNT ON
+	        SET ARITHABORT ON
+	    
+	    --  [ 날짜 포맷 유형 설정 ] -------------------------------------------------------------------------------------------
+	        DECLARE         @DateFormat         NVARCHAR(10)
+	    
+	        SELECT TOP 1 @DateFormat = M1.CODE_NAME						
+	        FROM   BSA100T M1 WITH (NOLOCK)
+	        WHERE  M1.COMP_CODE = #{S_COMP_CODE}
+	        AND    M1.MAIN_CODE = N'B044'
+	        AND    M1.REF_CODE1 = N'Y'
+				    
+	        SET @DateFormat = ISNULL(@DateFormat, 'YYYY/MM/DD')			
+	    
+	        SELECT 
+	        		'1'								  	  AS GUBUN 
+				  ,	H.PERSON_NUMB                         AS PERSON_NUMB          -- 사번
+				  , H.NAME                                AS NAME                 -- 성명
+				  , unilite.fnCipherDecrypt(H.REPRE_NUM, 'A') AS REPRE_NUM        -- 주민번호
+				  , H.DIV_CODE                            AS DIV_CODE             -- 사업장
+				  , H.SECT_CODE							  AS BILL_DIV_CODE        -- 신고사업장	
+				  , H.DEPT_CODE                           AS DEPT_CODE            -- 부서
+				  , H.DEPT_NAME							  AS DEPT_NAME
+				  , CASE WHEN ISNULL(H.JOIN_DATE, '') = '00000000' THEN ''
+	                     ELSE REPLACE(
+	                          REPLACE(
+	                          REPLACE(@DateFormat, 'YYYY', SUBSTRING(H.JOIN_DATE, 1, 4))
+	                                             , 'MM'  , SUBSTRING(H.JOIN_DATE, 5, 2))
+	                                             , 'DD'  , SUBSTRING(H.JOIN_DATE, 7, 2))
+	                END                                   AS JOIN_DATE            -- 입사일
+	              , CASE WHEN ISNULL(H.RETR_DATE, '') = '00000000' THEN ''
+	                     ELSE REPLACE(
+	                          REPLACE(
+	                          REPLACE(@DateFormat, 'YYYY', SUBSTRING(H.RETR_DATE, 1, 4))
+	                                             , 'MM'  , SUBSTRING(H.RETR_DATE, 5, 2))
+	                                             , 'DD'  , SUBSTRING(H.RETR_DATE, 7, 2))
+	                END                                   AS RETR_DATE            -- 퇴사일
+				  , H.RETR_RESN            											-- 퇴사사유
+				  , ISNULL(E1.CUSTOM_CODE, '')            AS BANK_CODE1           -- 계좌1_은행코드
+				  , ISNULL(E1.CUSTOM_NAME, '')            AS BANK_NAME1           -- 계좌1_은행명
+				  , ISNULL(uniLITE.fnCipherDecrypt(H.BANK_ACCOUNT1, ''), '') AS BANK_ACCOUNT1 -- 계좌1_계좌번호
+				  --, '***************' 										AS BANK_ACCOUNT_CP	
+				  , ISNULL(H.BANKBOOK_NAME, '')								AS BANKBOOK_NAME1       -- 예금주1
+				   	   
+    		   
+              FROM            HUM100T   H  WITH (NOLOCK)
+    		   		              
+	               LEFT  JOIN BCM100T   E1 WITH (NOLOCK) ON E1.COMP_CODE        = H.COMP_CODE
+	                                                    AND E1.CUSTOM_CODE      = H.BANK_CODE1
+	                                                    AND E1.CUSTOM_TYPE      = '4'	               
+	              
+			 WHERE  H.COMP_CODE       = #{S_COMP_CODE}
+			 AND PAY_GUBUN2 = '1'
+			 <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">					
+	          AND  H.DIV_CODE    IN
+				<foreach collection="DIV_CODE" item="item" separator="," close=")" open="(">
+				 	  #{item}
+				</foreach>									
+	    	</if> 
+	    	<if test="@foren.Ognl@isNotEmpty(DEPTS)">
+		      AND H.DEPT_CODE	 IN
+			 	<foreach collection="DEPTS" item="item" separator="," close=")" open="(">
+	          		 #{item}
+	    	 </foreach>
+			</if>	 
+			<if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">								--사원
+			   AND H.PERSON_NUMB  = #{PERSON_NUMB}
+			</if>                                                   
+	        <if test="@foren.Ognl@isNotEmpty(ANN_FR_DATE)">
+			   AND H.JOIN_DATE 		&gt;= #{ANN_FR_DATE}			-- 입사일 FR
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ANN_TO_DATE)">
+			   AND H.JOIN_DATE 		&lt;= #{ANN_TO_DATE}			-- 입사일 TO
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(FR_RETR)">
+			   AND H.RETR_DATE 		&gt;= #{FR_RETR}				-- 퇴사일 FR
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(TO_RETR)">
+			   AND H.RETR_DATE 		&lt;= #{TO_RETR}				-- 퇴사일 TO
+			</if>   
+			<if test="RDO_TYPE == 1">
+			   AND H.RETR_DATE = '00000000' 						-- 재직구분
+			</if>
+		    <if test="RDO_TYPE == 00000000">
+			   AND H.RETR_DATE &gt; #{RDO_TYPE}
+			</if>    
+			<if test="@foren.Ognl@isNotEmpty(SEX_CODE)">
+			   AND H.SEX_CODE  			= #{SEX_CODE}				-- 성별
+			</if>    						
+			
+			<if test="CHKCNT == &quot;Y&quot;">				
+		 	  UNION ALL
+		 	  SELECT '2'					AS  GUBUN
+		 	  		,''
+		 	  		,''
+		 	  		,''
+		 	  		,DIV_CODE
+		 	  		,''	
+		 	  		,'합계'
+		 	  		,CONVERT(NVARCHAR(5),COUNT(COMP_CODE)) + '명' 		AS	DEPT_CODE		--합계를 단지 부서 필드에 뿌린다.
+		 	  		,''
+		 	  		,''
+		 	  		,''
+		 	  		,''
+		 	  		,''
+		 	  		,''
+		 	  		,''
+		 	  					 	  		
+		 	    FROM	HUM100T
+		 	   WHERE  COMP_CODE       = #{S_COMP_CODE}
+			 	  AND PAY_GUBUN2 = '1'
+				 <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">					
+		          AND  H.DIV_CODE    IN
+					<foreach collection="DIV_CODE" item="item" separator="," close=")" open="(">
+					 	  #{item}
+					</foreach>									
+		    	</if> 
+		    	<if test="@foren.Ognl@isNotEmpty(DEPTS)">
+			      AND DEPT_CODE	 IN
+				 	<foreach collection="DEPTS" item="item" separator="," close=")" open="(">
+		          		 #{item}
+		    	  	</foreach>
+				</if>	 
+				<if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">								--사원
+				   AND PERSON_NUMB  = #{PERSON_NUMB}
+				</if>                                                   
+		        <if test="@foren.Ognl@isNotEmpty(ANN_FR_DATE)">
+				   AND JOIN_DATE 		&gt;= #{ANN_FR_DATE}			-- 입사일 FR
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(ANN_TO_DATE)">
+				   AND JOIN_DATE 		&lt;= #{ANN_TO_DATE}			-- 입사일 TO
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(FR_RETR)">
+				   AND RETR_DATE 		&gt;= #{FR_RETR}				-- 퇴사일 FR
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(TO_RETR)">
+				   AND RETR_DATE 		&lt;= #{TO_RETR}				-- 퇴사일 TO
+				</if>   
+				<if test="RDO_TYPE == 1">
+				   AND RETR_DATE = '00000000' 						-- 재직구분
+				</if>
+			    <if test="RDO_TYPE == 00000000">
+				   AND RETR_DATE &gt; #{RDO_TYPE}
+				</if>    
+				<if test="@foren.Ognl@isNotEmpty(SEX_CODE)">
+				   AND SEX_CODE  			= #{SEX_CODE}				-- 성별
+				</if>
+			GROUP BY COMP_CODE, DIV_CODE				 	    
+			</if>
+			 ORDER BY H.DIV_CODE, H.DEPT_CODE, JOIN_DATE ,NAME, PERSON_NUMB  			
+			SET NOCOUNT OFF
+        SET ARITHABORT OFF
+    END                      
+	</select>
+	
+	<select id="ham101ukrServiceImpl.divList" parameterType="Map" resultType="rMap">
+		SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+		SELECT DIV_CODE 
+		  FROM BOR120T WITH (NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}		  
+	</select>
+	
+	<select id="ham101ukrServiceImpl.existsHam800t" parameterType="Map" resultType="rMap">
+		SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+		SELECT COUNT(COMP_CODE) 	AS	CNT
+		  FROM HAM800T WITH (NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND PERSON_NUMB = #{PERSON_NUMB}
+	</select>
+	
+	<insert id="ham101ukrServiceImpl.insertList"  parameterType="rMap">
+		/* ham101ukrServiceImpl.insertList */		
+		INSERT INTO HUM100T(
+			 COMP_CODE
+			,PERSON_NUMB
+			,NAME
+			,REPRE_NUM
+			,DIV_CODE
+			,SECT_CODE
+			,DEPT_CODE
+			,DEPT_NAME
+			,JOIN_DATE
+			<if test="@foren.Ognl@isNotEmpty(RETR_DATE)">
+			,RETR_DATE
+			</if>
+			,RETR_RESN
+			,BANK_CODE1
+			,BANK_ACCOUNT1
+			,SEX_CODE			
+			,NATION_CODE			
+			,POST_CODE
+			,JOIN_CODE
+			,MAKE_SALE
+			,PAY_GUBUN
+			,PAY_GUBUN2
+			,BANKBOOK_NAME
+			,INSERT_DB_TIME
+			,INSERT_DB_USER
+			,UPDATE_DB_TIME
+			,UPDATE_DB_USER
+		)
+		VALUES(
+			 #{S_COMP_CODE}
+			,#{PERSON_NUMB}
+			,#{NAME}
+			, uniLITE.fnCipherEncrypt(#{REPRE_NUM},'') 
+			,#{DIV_CODE}      
+			,#{BILL_DIV_CODE}     
+			,#{DEPT_CODE}     
+			,#{DEPT_NAME}     
+			,#{JOIN_DATE}
+			<if test="@foren.Ognl@isNotEmpty(RETR_DATE)">     
+			,#{RETR_DATE}  
+			</if>
+			,#{RETR_RESN}     
+			,#{BANK_CODE1}    
+			,uniLITE.fnCipherEncrypt(#{BANK_ACCOUNT1}, '') 
+			,#{SEX_CODE}
+			,''
+			,''     
+			,''     
+			,''     
+			,'2'
+			,'1'
+			,#{BANKBOOK_NAME1}
+			,GETDATE()
+			,#{S_USER_ID}
+			,GETDATE()
+			,#{S_USER_ID}			
+		)
+	</insert>
+
+	<update id="ham101ukrServiceImpl.updateList"  parameterType="rMap">
+		/* ham101ukrServiceImpl.updateList */
+		UPDATE HUM100T
+				SET 
+				 NAME 	    	= #{NAME}
+				,REPRE_NUM  	= uniLITE.fnCipherEncrypt(#{REPRE_NUM},'') 
+				,DIV_CODE		= #{DIV_CODE}		
+				,SECT_CODE		= #{BILL_DIV_CODE}		
+				,DEPT_CODE		= #{DEPT_CODE}		
+				,DEPT_NAME		= #{DEPT_NAME}		
+				,JOIN_DATE		= #{JOIN_DATE}
+				<if test="@foren.Ognl@isNotEmpty(RETR_DATE)">	
+				,RETR_DATE		= #{RETR_DATE}
+				</if>		
+				,RETR_RESN		= #{RETR_RESN}		
+				,BANK_CODE1		= #{BANK_CODE1}		
+				,BANK_ACCOUNT1 	= uniLITE.fnCipherEncrypt(#{BANK_ACCOUNT1}, '')
+				,BANKBOOK_NAME  = #{BANKBOOK_NAME1}
+				,SEX_CODE		= #{SEX_CODE}
+		WHERE COMP_CODE = #{S_COMP_CODE}
+		  AND PERSON_NUMB = #{PERSON_NUMB}
+	</update>
+	
+	<delete id="ham101ukrServiceImpl.deleteList"  parameterType="Map">
+		/* ham101ukrServiceImpl.deleteList */
+		DELETE HUM100T
+             WHERE COMP_CODE = #{S_COMP_CODE}
+               AND PERSON_NUMB = #{PERSON_NUMB}  
+	</delete>
+
+
+
+	<!-- 체크로직 -->
+	<select id="ham101ukrServiceImpl.getAutoCustomCode" parameterType="Map" resultType="rMap">        
+        DECLARE @COMP_CODE NVARCHAR(10), @sAUTO_CUSTOM_CODE NVARCHAR(20)
+            SET @COMP_CODE = #{S_COMP_CODE}
+           EXEC uniLITE.USP_GetCustomCode @COMP_CODE, @sAUTO_CUSTOM_CODE OUTPUT
+
+         SELECT @sAUTO_CUSTOM_CODE  AS  CUSTOM_CODE
+    </select>   
+
+	<select id="ham101ukrServiceImpl.checkTopNum" parameterType="Map" resultType="rMap">
+        SELECT  CUSTOM_CODE
+          FROM BCM100T WITH (NOLOCK)
+         WHERE COMP_CODE = #{S_COMP_CODE}
+           AND REPLACE(unilite.fnCipherDecrypt(TOP_NUM, 'A'),'-','') = #{REPRE_NUM}
+    </select>
+
+	<select id="ham101ukrServiceImpl.checkBankBookNum" parameterType="Map" resultType="rMap">
+        SELECT  CUSTOM_CODE
+          FROM BCM130T WITH (NOLOCK)
+         WHERE COMP_CODE = #{S_COMP_CODE}
+           AND REPLACE(unilite.fnCipherDecrypt(BANKBOOK_NUM, 'B'),'-','') = #{BANK_ACCOUNT}
+    </select>
+
+
+
+	<!-- BCM100T와 INSERT / UPDATE / DELETE -->
+	<insert id="ham101ukrServiceImpl.insertListAutoCustom" parameterType="Map">
+	    INSERT INTO BCM100T
+	         ( 
+	              COMP_CODE
+	            , CUSTOM_CODE
+	            , CUSTOM_TYPE
+	            , CUSTOM_NAME
+	            , CUSTOM_FULL_NAME
+	            , TOP_NUM
+	            , BUSINESS_TYPE
+	            , USE_YN
+	            , START_DATE
+	            , AGENT_TYPE
+	            , BILL_PUBLISH_TYPE
+	            , INSERT_DB_USER
+	            , INSERT_DB_TIME
+	            , UPDATE_DB_USER
+	            , UPDATE_DB_TIME
+	         ) 
+	    VALUES
+	         (  #{S_COMP_CODE}
+	          , #{PERSON_NUMB}
+	          , '1'
+	          , #{NAME}
+	          , #{NAME}
+	          , uniLITE.fnCipherEncrypt(#{REPRE_NUM}, '')
+	          , '3'
+	          , 'Y'
+	          , GETDATE()
+	          , (SELECT TOP 1 SUB_CODE FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND REF_CODE4 = '1')
+	          , '1'
+	          , #{S_USER_ID}
+	          , GETDATE()
+	          , #{S_USER_ID}
+	          , GETDATE()
+	         )
+    </insert>
+ 
+     <update id="ham101ukrServiceImpl.updateListAutoCustom" parameterType="Map">
+	    /* hpb100ukrServiceImpl.updateList */
+	    UPDATE BCM100T
+	       SET CUSTOM_NAME     = #{NAME}
+	         , TOP_NUM         = uniLITE.fnCipherEncrypt(#{REPRE_NUM}, '')
+	         , UPDATE_DB_USER  = #{S_USER_ID}
+	         , UPDATE_DB_TIME  = GETDATE()
+	     WHERE CUSTOM_CODE     = #{PERSON_NUMB}
+	       AND COMP_CODE       = #{S_COMP_CODE}
+    </update>
+
+    <delete id="ham101ukrServiceImpl.deleteListAutoCustom" parameterType="Map">
+	    DELETE BCM100T 
+         WHERE COMP_CODE	= #{S_COMP_CODE}
+           AND CUSTOM_CODE	= #{PERSON_NUMB}
+    </delete>
+
+
+
+ 	<!-- BCM130T INSERT / UPDATE / DELETE -->
+    <insert id="ham101ukrServiceImpl.insertListAutoBankAccount" parameterType="Map">
+	    /* hpb100ukrServiceImpl.insertList */
+	    DECLARE @BOOK_CODE NVARCHAR(MAX)
+	    	  , @BOOK_NAME NVARCHAR(MAX)
+	        SET @BOOK_CODE = #{BOOK_CODE}
+	        SET @BOOK_NAME = #{BOOK_NAME}
+	        
+	    INSERT INTO BCM130T
+	         ( 
+	              COMP_CODE
+	            , CUSTOM_CODE
+	            , BOOK_CODE
+	            , BOOK_NAME
+	            , BANK_CODE
+	            , BANKBOOK_NUM
+	            , BANKBOOK_NAME
+	            , MAIN_BOOK_YN
+	            , INSERT_DB_USER
+	            , INSERT_DB_TIME
+	            , UPDATE_DB_USER
+	            , UPDATE_DB_TIME
+	         ) 
+	    VALUES
+	         (  #{S_COMP_CODE}
+	          , #{PERSON_NUMB}
+	          , (SELECT ISNULL(MAX(BOOK_CODE),'0') FROM BCM130T WHERE COMP_CODE = #{S_COMP_CODE} AND CUSTOM_CODE = #{PERSON_NUMB}) + 1
+	          , CASE WHEN ISNULL(@BOOK_NAME, '') != '' 	THEN	@BOOK_NAME + '[' + right(#{BANK_ACCOUNT_DEC}, 5) + ']'
+	          		 								  	ELSE	''
+	            END 
+	          , ISNULL(@BOOK_CODE, '')
+	          , uniLITE.fnCipherEncrypt(#{BANK_ACCOUNT1}, '')
+	          , #{BANKBOOK_NAME1}
+	          , 'Y'
+	          , #{S_USER_ID}
+	          , GETDATE()
+	          , #{S_USER_ID}
+	          , GETDATE()
+	         )
+    </insert>
+    
+    <update id="ham101ukrServiceImpl.updateListAutoBankAccount" parameterType="Map">
+	    /* hpb100ukrServiceImpl.updateList */
+	    UPDATE BCM130T
+	       SET 
+	           BOOK_NAME        = (#{BANK_NAME1} + '(' + right(#{BANK_ACCOUNT1_EXPOS}, 5) + ')')
+	         , BANK_CODE        = #{BANK_CODE1}
+	         , BANKBOOK_NUM     = uniLITE.fnCipherEncrypt(#{BANK_ACCOUNT1}, '')
+	         , BANKBOOK_NAME    = #{NAME}
+	         , UPDATE_DB_USER   = #{S_USER_ID}
+	         , UPDATE_DB_TIME   = GETDATE()
+	     WHERE COMP_CODE     = #{S_COMP_CODE}
+	       AND CUSTOM_CODE   = #{PERSON_NUMB}
+	       AND BANKBOOK_NUM  = #{BANK_ACCOUNT1}
+    </update>
+    
+    <delete id="ham101ukrServiceImpl.deleteListAutoBankAccount" parameterType="Map">
+    	DELETE BCM130T 
+         WHERE COMP_CODE	= #{S_COMP_CODE}
+           AND CUSTOM_CODE	= #{PERSON_NUMB}
+    </delete>
+</mapper>

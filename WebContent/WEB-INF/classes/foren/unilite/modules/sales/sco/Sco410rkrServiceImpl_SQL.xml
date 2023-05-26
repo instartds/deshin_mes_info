@@ -1,0 +1,422 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sco410rkrServiceImpl">
+					
+	<select id="sco410rkrServiceImpl.selectPrimaryDataList" parameterType="Map" resultType="rMap">
+	/* 거래처별잔액현황디테일조회*/
+ BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		/*  [ 변수선언 ]  */
+		    DECLARE         @COMP_CODE          NVARCHAR(08)
+		                  , @DIV_CODE           NVARCHAR(10) 
+		                  , @FR_DATE            NVARCHAR(8) 
+		                  , @TO_DATE            NVARCHAR(8) 
+		                  , @CUSTOM_CODE        NVARCHAR(20)  
+		                  , @ACCNT              NVARCHAR(08) 
+		
+		                  , @BasisMonth         NVARCHAR(06)
+		                  , @MaxMonth           NVARCHAR(06)
+		                  , @StMonth            NVARCHAR(02)
+		                  , @QRY_YEAR           NVARCHAR(04)
+		                  , @CompanyCode        NVARCHAR(08)
+		
+		                  , @BaseDate           NVARCHAR(06)
+		
+		/*  [ 변수 값 할당 ]  */
+		    SET @COMP_CODE    = #{COMP_CODE}
+		    SET @DIV_CODE     = #{DIV_CODE}
+		    SET @FR_DATE      = #{FR_DATE}
+		    SET @TO_DATE      = #{TO_DATE}
+		
+		
+		    SET @CUSTOM_CODE  = #{CUSTOM_CODE}
+		    SET @ACCNT        = #{ACCNT}
+		
+		    SET @QRY_YEAR     = LEFT(@FR_DATE, 4)
+		    SET @BaseDate     = '201508'
+		
+		/*  [ 자사코드 참조 ]  */
+		    SELECT  @CompanyCode = CODE_NAME
+		    FROM    BSA100T WITH (NOLOCK)  
+		    WHERE   COMP_CODE = @COMP_CODE
+		    AND     MAIN_CODE = 'T000'
+		    AND     SUB_CODE  = 'T000'
+		
+		/*  [ 이월금액 기초월 참조 ]  */
+		    SELECT  @StMonth = SUBSTRING(FN_DATE,5,2)
+		    FROM    BOR100T WITH (NOLOCK)
+		    WHERE   COMP_CODE = @COMP_CODE
+		
+		    SELECT  @BasisMonth = MAX(A.AC_DATE)
+		    FROM    AGB200T A  WITH (NOLOCK)
+		    WHERE   A.COMP_CODE  = @COMP_CODE
+		    AND     A.AC_DATE   &lt;= @QRY_YEAR + @StMonth
+		    AND     LEN(A.AC_DATE) = 6
+				
+		    SET @BasisMonth = CASE WHEN @BasisMonth &lt; @BaseDate THEN @BaseDate
+		                           ELSE SUBSTRING(ISNULL(@BasisMonth, '190001'), 1, 6)
+		                      END
+		
+		/*  [ 임시 테이블 처리 ]  */
+		    DECLARE     @TypeKey                NVARCHAR(20)
+		
+		    SET @TypeKey  = REPLACE(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(30), GETDATE(), 121), '-', ''), ':', ''), '.', ''), ' ', '')
+		
+		    IF NOT EXISTS   (
+		                    SELECT TOP 1 1
+		                    FROM   T_SCO410SKRV1 WITH (NOLOCK)
+		                    WHERE  TYPE_KEY LIKE LEFT(@TypeKey, 8) + '%'
+		                    )
+		    BEGIN
+		        TRUNCATE TABLE T_SCO410SKRV1
+		    END
+		
+		/*  [ 데이터 생성 ]  */
+		
+		IF @BasisMonth = @BaseDate 
+		    /* 1.1 이월금액(회계기초데이터)  */
+		    INSERT  INTO T_SCO410SKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE , AC_DATE     , SLIP_NUM     , SLIP_SEQ
+		                             , REMARK  , DR_AMT_I , CR_AMT_I , JAN_AMT_I, CHR_SLIP_NUM, CHR_SLIP_SEQ)
+		    SELECT  
+		            @TypeKey                                                                     AS TYPE_KEY
+		          , N'9'                                                                         AS TYPE_FLAG
+		          , A.COMP_CODE                                                                  AS COMP_CODE
+		          , A.DIV_CODE                                                                   AS DIV_CODE
+		          , ''                                                                           AS AC_DATE
+		          , 0                                                                            AS SLIP_NUM
+		          , 0                                                                            AS SLIP_SEQ
+		          , N'전기(월) 이월 금액'                                                        AS REMARK
+				  , ISNULL(SUM(ISNULL(A.DR_AMT_I , 0)), 0)                                       AS DR_AMT_I
+				  , ISNULL(SUM(ISNULL(A.CR_AMT_I , 0)), 0)                                       AS CR_AMT_I
+		          , ISNULL(SUM(CASE C.JAN_DIVI WHEN '1' THEN ISNULL(A.DR_AMT_I, 0.0) - ISNULL(A.CR_AMT_I, 0.0)
+		                                       WHEN '2' THEN ISNULL(A.CR_AMT_I, 0.0) - ISNULL(A.DR_AMT_I, 0.0)
+		                       END), 0)                                                          AS JAN_AMT_I
+		          , REPLICATE('0', 7 - LEN(CONVERT(NVARCHAR(7), 0))) + (CONVERT(NVARCHAR(7), 0)) AS CHR_SLIP_NUM
+		          , REPLICATE('0', 5 - LEN(CONVERT(NVARCHAR(5), 0))) + (CONVERT(NVARCHAR(5), 0)) AS CHR_SLIP_SEQ
+		    FROM               AGB200T  A  WITH (NOLOCK)
+				    LEFT  JOIN BCM100T  B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+				                                         AND B.CUSTOM_CODE = CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+		                                                                          WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2 
+		                                                                     END
+				    INNER JOIN ABA400T  C  WITH (NOLOCK) ON  C.COMP_CODE  = A.COMP_CODE
+				                                         AND C.ACCNT      = A.ACCNT
+				                                         AND C.ACCNT_SPEC = '80'
+		                                                 AND C.ACCNT      = @ACCNT
+		    WHERE   A.COMP_CODE        = @COMP_CODE
+		    AND     A.DIV_CODE         = @DIV_CODE
+		    AND     A.AC_DATE         &gt;= '201503'
+		    AND     A.AC_DATE         &lt;  @BaseDate
+		    AND     B.CUSTOM_CODE      = @CUSTOM_CODE
+		    GROUP BY A.COMP_CODE, A.DIV_CODE, C.JAN_DIVI
+		
+		ELSE
+			/* 1.1 이월금액(회계기초데이터)  */
+			INSERT  INTO T_SCO410SKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE , AC_DATE     , SLIP_NUM     , SLIP_SEQ
+									 , REMARK  , DR_AMT_I , CR_AMT_I , JAN_AMT_I, CHR_SLIP_NUM, CHR_SLIP_SEQ)
+			SELECT  
+					@TypeKey                                                                     AS TYPE_KEY
+				  , N'9'                                                                         AS TYPE_FLAG
+				  , A.COMP_CODE                                                                  AS COMP_CODE
+				  , A.DIV_CODE                                                                   AS DIV_CODE
+				  , ''                                                                           AS AC_DATE
+				  , 0                                                                            AS SLIP_NUM
+				  , 0                                                                            AS SLIP_SEQ
+				  , N'전기(월) 이월 금액'                                                        AS REMARK
+				  , ISNULL(SUM(ISNULL(A.DR_AMT_I , 0)), 0)                                       AS DR_AMT_I
+				  , ISNULL(SUM(ISNULL(A.CR_AMT_I , 0)), 0)                                       AS CR_AMT_I
+				  , ISNULL(SUM(CASE C.JAN_DIVI WHEN '1' THEN ISNULL(A.DR_AMT_I, 0.0) - ISNULL(A.CR_AMT_I, 0.0)
+											   WHEN '2' THEN ISNULL(A.CR_AMT_I, 0.0) - ISNULL(A.DR_AMT_I, 0.0)
+							   END), 0)                                                          AS JAN_AMT_I
+				  , REPLICATE('0', 7 - LEN(CONVERT(NVARCHAR(7), 0))) + (CONVERT(NVARCHAR(7), 0)) AS CHR_SLIP_NUM
+				  , REPLICATE('0', 5 - LEN(CONVERT(NVARCHAR(5), 0))) + (CONVERT(NVARCHAR(5), 0)) AS CHR_SLIP_SEQ
+			FROM               AGB200T  A  WITH (NOLOCK)
+					LEFT  JOIN BCM100T  B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+														 AND B.CUSTOM_CODE = CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+																				  WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2 
+																			 END
+					INNER JOIN ABA400T  C  WITH (NOLOCK) ON  C.COMP_CODE  = A.COMP_CODE
+														 AND C.ACCNT      = A.ACCNT
+														 AND C.ACCNT_SPEC = '80'
+														 AND C.ACCNT      = @ACCNT
+			WHERE   A.COMP_CODE        = @COMP_CODE
+			AND     A.DIV_CODE         = @DIV_CODE
+			AND     A.AC_DATE          = @BasisMonth
+			AND     B.CUSTOM_CODE      = @CUSTOM_CODE
+			GROUP BY A.COMP_CODE, A.DIV_CODE, A.AC_DATE, C.JAN_DIVI
+		
+			/* 1.1 이월금액(매출액)  */
+			INSERT  INTO T_SCO410SKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE , AC_DATE     , SLIP_NUM     , SLIP_SEQ
+									 , REMARK  , DR_AMT_I , CR_AMT_I , JAN_AMT_I, CHR_SLIP_NUM, CHR_SLIP_SEQ)
+			SELECT  
+					@TypeKey                                                                     AS TYPE_KEY
+				  , N'9'                                                                         AS TYPE_FLAG
+				  , A.COMP_CODE                                                                  AS COMP_CODE
+				  , A.DIV_CODE                                                                   AS DIV_CODE
+				  , ''                                                                           AS AC_DATE
+				  , 0                                                                            AS SLIP_NUM
+				  , 0                                                                            AS SLIP_SEQ
+				  , N'전기(월) 이월 금액'                                                        AS REMARK
+				  , ISNULL(SUM(ISNULL(A.COLLECT_AMT, 0)), 0)         AS DR_AMT_I
+				  , 0                                                                            AS CR_AMT_I
+				  , ISNULL(SUM(ISNULL(A.COLLECT_AMT, 0)), 0)         AS JAN_AMT_I
+				  , REPLICATE('0', 7 - LEN(CONVERT(NVARCHAR(7), 0))) + (CONVERT(NVARCHAR(7), 0)) AS CHR_SLIP_NUM
+				  , REPLICATE('0', 5 - LEN(CONVERT(NVARCHAR(5), 0))) + (CONVERT(NVARCHAR(5), 0)) AS CHR_SLIP_SEQ
+			FROM               SCO100T  A  WITH (NOLOCK)
+					INNER JOIN SSA100T  A1 WITH (NOLOCK, INDEX(SSA100T_IDX01)) 
+														 ON  A1.COMP_CODE  = A.COMP_CODE
+														 AND A1.DIV_CODE   = A.DIV_CODE
+														 AND A1.BILL_NUM   = A.BILL_NUM
+					LEFT  JOIN BCM100T  B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+														 AND B.CUSTOM_CODE = A.CUSTOM_CODE
+			WHERE   A.COMP_CODE        = @COMP_CODE
+			AND     A.DIV_CODE         = @DIV_CODE
+			AND     A1.SALE_DATE      &gt;= @BasisMonth
+			AND     A1.SALE_DATE      &lt;  @FR_DATE
+			AND     B.CUSTOM_CODE      = @CUSTOM_CODE
+            AND   ( 
+                   ( A1.SALE_DATE BETWEEN '20100101' AND '20160831')   -- 외상
+                OR ( A1.SALE_DATE >= '20160901' AND A.COLLECT_TYPE = '40')
+                  )
+			GROUP BY A.COMP_CODE, A.DIV_CODE
+		
+			/* 1.1 이월금액(수금액)  */
+			INSERT  INTO T_SCO410SKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE , AC_DATE     , SLIP_NUM     , SLIP_SEQ
+									 , REMARK  , DR_AMT_I , CR_AMT_I , JAN_AMT_I, CHR_SLIP_NUM, CHR_SLIP_SEQ)
+			SELECT  
+					@TypeKey                                                                     AS TYPE_KEY
+				  , N'9'                                                                         AS TYPE_FLAG
+				  , A.COMP_CODE                                                                  AS COMP_CODE
+				  , A.DIV_CODE                                                                   AS DIV_CODE
+				  , ''                                                                           AS AC_DATE
+				  , 0                                                                            AS SLIP_NUM
+				  , 0                                                                            AS SLIP_SEQ
+				  , N'전기(월) 이월 금액'                                                        AS REMARK
+				  , 0                                                                            AS DR_AMT_I
+				  , ISNULL(SUM(ISNULL(A.CR_AMT_I, 0)), 0)                                           AS CR_AMT_I
+				  , ISNULL(SUM(ISNULL(A.CR_AMT_I, 0)), 0) * (-1)                                    AS JAN_AMT_I
+				  , REPLICATE('0', 7 - LEN(CONVERT(NVARCHAR(7), 0))) + (CONVERT(NVARCHAR(7), 0)) AS CHR_SLIP_NUM
+				  , REPLICATE('0', 5 - LEN(CONVERT(NVARCHAR(5), 0))) + (CONVERT(NVARCHAR(5), 0)) AS CHR_SLIP_SEQ
+			FROM               AGB200T  A  WITH (NOLOCK)
+					LEFT  JOIN BCM100T  B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+														 AND B.CUSTOM_CODE = CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+																				  WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2 
+																			 END
+					INNER JOIN ABA400T  C  WITH (NOLOCK) ON  C.COMP_CODE   = A.COMP_CODE
+														 AND C.ACCNT       = A.ACCNT
+														 AND C.ACCNT_SPEC  = '80'
+														 AND C.ACCNT      = @ACCNT
+			WHERE   A.COMP_CODE        = @COMP_CODE
+			AND     A.DIV_CODE         = @DIV_CODE
+			AND     A.AC_DATE         &gt;= @BasisMonth
+			AND     A.AC_DATE         &lt;  @FR_DATE
+			AND     B.CUSTOM_CODE      = @CUSTOM_CODE
+			GROUP BY A.COMP_CODE, A.DIV_CODE
+		
+			/* 2.1 매출액  */
+			INSERT  INTO T_SCO410SKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE , AC_DATE     , SLIP_NUM     , SLIP_SEQ
+									 , REMARK  , DR_AMT_I , CR_AMT_I , JAN_AMT_I, CHR_SLIP_NUM, CHR_SLIP_SEQ)
+			SELECT  
+					@TypeKey                                                                     AS TYPE_KEY
+				  , N'1'                                                                         AS TYPE_FLAG
+				  , A.COMP_CODE                                                                  AS COMP_CODE
+				  , A.DIV_CODE                                                                   AS DIV_CODE
+				  , A1.SALE_DATE                                                                 AS AC_DATE
+				  , 0                                                                            AS SLIP_NUM
+				  , 0                                                                            AS SLIP_SEQ
+				  , N'외상매출'                                                                  AS REMARK
+				  , ISNULL(SUM(ISNULL(A.COLLECT_AMT, 0)), 0)         AS DR_AMT_I
+				  , 0                                                                            AS CR_AMT_I
+				  , ISNULL(SUM(ISNULL(A.COLLECT_AMT, 0)), 0)         AS JAN_AMT_I
+				  , REPLICATE('0', 7 - LEN(CONVERT(NVARCHAR(7), 0))) + (CONVERT(NVARCHAR(7), 0)) AS CHR_SLIP_NUM
+				  , REPLICATE('0', 5 - LEN(CONVERT(NVARCHAR(5), 0))) + (CONVERT(NVARCHAR(5), 0)) AS CHR_SLIP_SEQ
+			FROM               SCO100T  A  WITH (NOLOCK)
+					INNER JOIN SSA100T  A1 WITH (NOLOCK, INDEX(SSA100T_IDX01)) 
+														 ON  A1.COMP_CODE  = A.COMP_CODE
+														 AND A1.DIV_CODE   = A.DIV_CODE
+														 AND A1.BILL_NUM   = A.BILL_NUM
+					LEFT  JOIN BCM100T  B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+														 AND B.CUSTOM_CODE = A.CUSTOM_CODE
+			WHERE   A.COMP_CODE        = @COMP_CODE
+			AND     A.DIV_CODE         = @DIV_CODE
+			AND     A1.SALE_DATE      &gt;= @FR_DATE
+			AND     A1.SALE_DATE      &lt;= @TO_DATE
+			AND     B.CUSTOM_CODE      = @CUSTOM_CODE
+			AND     A.COLLECT_TYPE     = '40'
+			GROUP BY A.COMP_CODE, A.DIV_CODE, A1.SALE_DATE
+		
+			/* 3.1 수금액  */
+			INSERT  INTO T_SCO410SKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE , AC_DATE     , SLIP_NUM     , SLIP_SEQ
+									 , REMARK  , DR_AMT_I , CR_AMT_I , JAN_AMT_I, CHR_SLIP_NUM, CHR_SLIP_SEQ)
+			SELECT  
+					@TypeKey                                                                     AS TYPE_KEY
+				  , N'1'                                                                         AS TYPE_FLAG
+				  , A.COMP_CODE                                                                  AS COMP_CODE
+				  , A.DIV_CODE                                                                   AS DIV_CODE
+				  , A.AC_DATE                                                                    AS AC_DATE
+				  , A.SLIP_NUM                                                                   AS SLIP_NUM
+				  , A.SLIP_SEQ                                                                   AS SLIP_SEQ
+				  , A.REMARK                                                                     AS REMARK
+				  , 0                                                                            AS DR_AMT_I
+				  , ISNULL(A.AMT_I, 0)                                                           AS CR_AMT_I
+				  , ISNULL(A.AMT_I, 0) * (-1)                                                    AS JAN_AMT_I
+				  , REPLICATE('0', 7 - LEN(CONVERT(NVARCHAR(7), A.SLIP_NUM))) + (CONVERT(NVARCHAR(7), A.SLIP_NUM)) AS CHR_SLIP_NUM
+				  , REPLICATE('0', 5 - LEN(CONVERT(NVARCHAR(5), A.SLIP_SEQ))) + (CONVERT(NVARCHAR(5), A.SLIP_SEQ)) AS CHR_SLIP_SEQ
+			FROM               AGJ210T  A  WITH (NOLOCK)
+					LEFT  JOIN BCM100T  B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+														 AND B.CUSTOM_CODE = CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+																				  WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2 
+																			 END
+					INNER JOIN ABA400T  C  WITH (NOLOCK) ON  C.COMP_CODE   = A.COMP_CODE
+														 AND C.ACCNT       = A.ACCNT
+														 AND C.ACCNT_SPEC  = '80'
+														 AND C.ACCNT      = @ACCNT
+			WHERE   A.COMP_CODE        = @COMP_CODE
+			AND     A.DIV_CODE         = @DIV_CODE
+			AND     A.AC_DATE         &gt;= @FR_DATE
+			AND     A.AC_DATE         &lt;= @TO_DATE
+		    AND     A.DR_CR            = '2'
+			AND    (A.MOD_DIVI IS NULL OR A.MOD_DIVI = '')
+			AND     B.CUSTOM_CODE      = @CUSTOM_CODE
+		
+		    /* 4.1 이월금액합계 */
+			INSERT  INTO T_SCO410SKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE , AC_DATE     , SLIP_NUM     , SLIP_SEQ
+									 , REMARK  , DR_AMT_I , CR_AMT_I , JAN_AMT_I, CHR_SLIP_NUM, CHR_SLIP_SEQ)
+			SELECT  
+					@TypeKey                                                                     AS TYPE_KEY
+				  , N'0'                                                                         AS TYPE_FLAG
+				  , A.COMP_CODE                                                                  AS COMP_CODE
+				  , A.DIV_CODE                                                                   AS DIV_CODE
+				  , ''                                                                           AS AC_DATE
+				  , 0                                                                            AS SLIP_NUM
+				  , 0                                                                            AS SLIP_SEQ
+				  , N'전기(월) 이월 금액'                                                        AS REMARK
+				  , ISNULL(SUM(ISNULL(A.DR_AMT_I , 0)), 0)                                       AS DR_AMT_I
+				  , ISNULL(SUM(ISNULL(A.CR_AMT_I , 0)), 0)                                       AS CR_AMT_I
+				  , ISNULL(SUM(ISNULL(A.JAN_AMT_I, 0)), 0)                                       AS JAN_AMT_I
+				  , REPLICATE('0', 7 - LEN(CONVERT(NVARCHAR(7), 0))) + (CONVERT(NVARCHAR(7), 0)) AS CHR_SLIP_NUM
+				  , REPLICATE('0', 5 - LEN(CONVERT(NVARCHAR(5), 0))) + (CONVERT(NVARCHAR(5), 0)) AS CHR_SLIP_SEQ
+		    FROM    T_SCO410SKRV1 A WITH (NOLOCK)
+		    WHERE   A.TYPE_KEY  = @TypeKey
+		    AND     A.TYPE_FLAG = '9'
+		    GROUP BY A.COMP_CODE, A.DIV_CODE
+		
+		    IF @@ROWCOUNT = 0
+		    BEGIN
+				INSERT  INTO T_SCO410SKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE , AC_DATE     , SLIP_NUM     , SLIP_SEQ
+										 , REMARK  , DR_AMT_I , CR_AMT_I , JAN_AMT_I, CHR_SLIP_NUM, CHR_SLIP_SEQ)
+				SELECT  
+						@TypeKey                                                                     AS TYPE_KEY
+					  , N'0'                                                                         AS TYPE_FLAG
+					  , ''                                                                           AS COMP_CODE
+					  , ''                                                                           AS DIV_CODE
+					  , ''                                                                           AS AC_DATE
+					  , 0                                                                            AS SLIP_NUM
+					  , 0                                                                            AS SLIP_SEQ
+					  , N'전기(월) 이월 금액'                                                        		 AS REMARK
+					  , 0                                                                            AS DR_AMT_I
+					  , 0                                                                            AS CR_AMT_I
+					  , 0                                                                            AS JAN_AMT_I
+					  , REPLICATE('0', 7 - LEN(CONVERT(NVARCHAR(7), 0))) + (CONVERT(NVARCHAR(7), 0)) AS CHR_SLIP_NUM
+					  , REPLICATE('0', 5 - LEN(CONVERT(NVARCHAR(5), 0))) + (CONVERT(NVARCHAR(5), 0)) AS CHR_SLIP_SEQ
+		    END
+		
+		    /* 4.2 누적계산 */
+		    DECLARE      @JanAmtI            NUMERIC(30,6)               -- 누적금액
+		    
+		    SET          @JanAmtI          = 0
+		
+		    UPDATE A
+		    SET    @JanAmtI    = ISNULL(@JanAmtI, 0) + A.DR_AMT_I - A.CR_AMT_I
+		         , A.JAN_AMT_I = @JanAmtI
+		    FROM   T_SCO410SKRV1 A WITH (NOLOCK, INDEX(T_SCO410SKRV1_IDX00))
+		    WHERE  TYPE_KEY = @TypeKey;
+			DECLARE	  @DR_AMT_I numeric(30,6)
+			, @CR_AMT_I numeric(30,6)
+			
+			/*  법인명 호출  */
+			DECLARE         @COMP_NAME          NVARCHAR(30)
+
+			SELECT  @COMP_NAME = COMP_NAME
+			  FROM  BOR100T WITH (NOLOCK)  
+			 WHERE  COMP_CODE = @COMP_CODE
+
+	SELECT @DR_AMT_I = DR_AMT_I, @CR_AMT_I = CR_AMT_I
+	FROM T_SCO410SKRV1
+	WHERE TYPE_FLAG = '0'
+	AND   TYPE_KEY = @TypeKey;
+
+	WITH SUM_T AS (
+					SELECT ROW_NUMBER() OVER(ORDER BY TYPE_FLAG,AC_DATE) AS ROW_NO
+					--, CASE WHEN TYPE_FLAG = 0 THEN LEFT(@FR_DATE,6) 
+					--						  ELSE LEFT(AC_DATE,6) END AC_MONTH
+					, LEFT(AC_DATE,6) AS AC_MONTH
+					, * 
+					FROM T_SCO410SKRV1 
+					WHERE TYPE_KEY = @TypeKey AND TYPE_FLAG != '9'
+					)
+	SELECT CASE WHEN GROUPING(COMP_CODE) = 0 AND GROUPING(DIV_CODE) = 0 AND GROUPING(AC_DATE) = 1 AND GROUPING(REMARK) = 1 AND GROUPING(AC_MONTH)= 0 THEN '2' 
+																																					 ELSE '1' END TYPE_CLASS
+	, COMP_CODE
+	, DIV_CODE
+	, AC_MONTH
+	, CASE WHEN GROUPING(COMP_CODE) = 0 AND GROUPING(DIV_CODE) = 0 AND GROUPING(AC_DATE) = 1 AND GROUPING(REMARK) = 1 AND GROUPING(AC_MONTH)= 0 THEN '' 
+																																			    ELSE	CASE WHEN AC_DATE = '' THEN  '' ELSE SUBSTRING(AC_DATE, 1, 4) + '.' +
+																																						SUBSTRING(AC_DATE, 5, 2) + '.' + 
+																																						SUBSTRING(AC_DATE, 7, 2) END
+																																			    END AC_DATE
+																																					          
+	, CASE WHEN GROUPING(COMP_CODE) = 0 AND GROUPING(DIV_CODE) = 0 AND GROUPING(AC_DATE) = 1 AND GROUPING(REMARK) = 1 AND GROUPING(AC_MONTH)= 0 THEN '소계(월)'
+																																				 ELSE REMARK END REMARK
+	, SUM(DR_AMT_I) AS DR_AMT_I
+	, SUM(CR_AMT_I) AS CR_AMT_I
+	, CASE WHEN GROUPING(COMP_CODE) = 0 AND GROUPING(DIV_CODE) = 0 AND GROUPING(AC_DATE) = 1 AND GROUPING(REMARK) = 1 AND GROUPING(AC_MONTH)= 0 THEN 0
+																																				ELSE SUM(JAN_AMT_I) END JAN_AMT_I
+	, CASE WHEN GROUPING(COMP_CODE) = 0 AND GROUPING(DIV_CODE) = 0 AND GROUPING(AC_DATE) = 1 AND GROUPING(REMARK) = 1 AND GROUPING(AC_MONTH)= 0 THEN AC_MONTH+'31' 
+																																			    ELSE AC_DATE END ORD_DATE
+	, @COMP_NAME AS COMP_NAME	/* 법인명 */																																	    
+	FROM
+	(
+		SELECT TYPE_FLAG, COMP_CODE, DIV_CODE, AC_DATE, REMARK
+		,  CASE WHEN TYPE_FLAG = '0' THEN 0 ELSE SUM(DR_AMT_I) END DR_AMT_I
+		,  CASE WHEN TYPE_FLAG = '0' THEN 0 ELSE SUM(CR_AMT_I) END CR_AMT_I
+		, SUM(JAN_AMT_I) AS JAN_AMT_I
+		, LEFT(AC_DATE,6) AS AC_MONTH
+		FROM T_SCO410SKRV1
+		WHERE TYPE_KEY = @TypeKey
+		AND TYPE_FLAG != '9'
+		GROUP BY COMP_CODE, DIV_CODE, AC_DATE, REMARK, TYPE_FLAG , LEFT(AC_DATE,6)	
+	) A
+	GROUP BY COMP_CODE, DIV_CODE, AC_MONTH, AC_DATE, REMARK  WITH ROLLUP
+	HAVING  (GROUPING(COMP_CODE) = 0 AND GROUPING(DIV_CODE) = 0 AND GROUPING(AC_DATE) = 1 AND GROUPING(REMARK) = 1 AND GROUPING(AC_MONTH)= 0 AND MAX(A.TYPE_FLAG) != '0')
+	     OR (GROUPING(COMP_CODE) = 0 AND GROUPING(DIV_CODE) = 0 AND GROUPING(AC_DATE) = 0 AND GROUPING(REMARK) = 0 AND GROUPING(AC_MONTH)= 0)
+		 
+	UNION ALL
+	
+	SELECT    TYPE_CLASS
+			, COMP_CODE
+			, DIV_CODE
+			, AC_MONTH
+			, '' AS AC_DATE
+			, '누    계'
+			, MAX(RUN_DR_AMT_I) - @DR_AMT_I AS DR_AMT_I
+			, MAX(RUN_CR_AMT_I) - @CR_AMT_I AS CR_AMT_I
+			, MAX(RUN_DR_AMT_I)-MAX(RUN_CR_AMT_I) AS JAN_AMT_I
+			, AC_MONTH+'31' AS ORD_DATE
+			, @COMP_NAME AS COMP_NAME	/* 법인명 */	
+	FROM (
+		SELECT  '3' AS TYPE_CLASS, MAX(A.TYPE_FLAG) AS TYPE_FLAG, A.COMP_CODE, A.DIV_CODE, A.AC_MONTH, A.AC_DATE, '누    계' AS REMARK, SUM(B.DR_AMT_I) AS RUN_DR_AMT_I, SUM(B.CR_AMT_I) AS RUN_CR_AMT_I
+		FROM SUM_T A
+		INNER JOIN SUM_T B ON A.ROW_NO		&gt;= B.ROW_NO
+		GROUP BY  A.COMP_CODE, A.DIV_CODE, A.AC_MONTH, A.AC_DATE, A.REMARK 
+		) A
+	WHERE A.TYPE_FLAG != 0
+	GROUP BY COMP_CODE, DIV_CODE, AC_MONTH, TYPE_CLASS
+	ORDER BY AC_MONTH, ORD_DATE, TYPE_CLASS
+		
+		
+		
+	END
+	</select>
+</mapper>

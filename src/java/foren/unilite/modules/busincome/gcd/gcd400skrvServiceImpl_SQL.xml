@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="gcd400skrvService">
+	<select id="gcd400skrvService.selectList" parameterType="Map" resultType="rMap">
+		SELECT ISNULL(R.ROUTE_NUM  ,'') AS ROUTE_NUM
+		     , A.VEHICLE_CODE 
+		     , V.VEHICLE_NAME
+		     , V.VEHICLE_REGIST_NO
+		     , ISNULL(T.OFFICE_CODE,'') AS OFFICE_CODE
+		     , ISNULL(T.ROUTE_GROUP,'') AS ROUTE_GROUP
+		     , A.ROUTE_CODE
+		     , A.DRIVER_CODE
+		     , (CASE WHEN ISNULL(A.DRIVER_NAME,'') = '' THEN '공통운전자' ELSE A.DRIVER_NAME END) AS DRIVER_NAME
+		     , ROW_NUMBER() OVER(PARTITION BY A.ROUTE_CODE ORDER BY ISNULL(R.ROUTE_NUM,''), SUM(A.CARD_AMOUNT + A.CASH_AMOUNT)) AS ROUTE_ROWNUM
+		     , SUM(A.CARD_AMOUNT + A.CASH_AMOUNT)                                                                               AS DAY_AMOUNT
+		     , ISNULL(F.OPERATION_COUNT,0)                                                                                      AS RUN_COUNT_CNT
+		     , AVG(A.CARD_AMOUNT + A.CASH_AMOUNT)                                                                               AS VEHICLE_AVG
+		     , (CASE WHEN SUM(COUNT(A.VEHICLE_CODE )) OVER(PARTITION BY A.ROUTE_CODE) != 0
+		             THEN AVG(A.CARD_AMOUNT + A.CASH_AMOUNT) - (SUM(SUM(A.CARD_AMOUNT + A.CASH_AMOUNT)) OVER(PARTITION BY A.ROUTE_CODE)
+		                                                      / SUM(COUNT(A.VEHICLE_CODE)) OVER(PARTITION BY A.ROUTE_CODE)) 
+		             ELSE 0
+		         END)                                                                                                           AS VEHICLE_AVG_COMP
+		  FROM (SELECT A.COMP_CODE
+			         , A.DIV_CODE
+			         , A.PAYMENT_DATE
+			         , MAX(A.ROUTE_CODE)   AS ROUTE_CODE
+			         , A.VEHICLE_CODE
+			         , SUM(A.CARD_AMOUNT)  AS CARD_AMOUNT
+			         , SUM(A.CASH_AMOUNT)  AS CASH_AMOUNT
+			         , MAX(A.DRIVER_CODE)  AS DRIVER_CODE
+			         , MAX(A.DRIVER_NAME)  AS DRIVER_NAME
+			      FROM (SELECT A.COMP_CODE
+			                 , A.DIV_CODE
+			                 , A.PAYMENT_DATE AS PAYMENT_DATE
+			                 , ''             AS ROUTE_CODE
+			                 , A.VEHICLE_CODE
+			                 , A.TOTAL_AMOUNT AS CARD_AMOUNT
+			                 , 0              AS CASH_AMOUNT
+			                 , A.DRIVER_CODE
+			                 , H.NAME         AS DRIVER_NAME
+			              FROM           GCD100T A WITH (NOLOCK)
+			                   LEFT JOIN HUM100T H WITH (NOLOCK) ON H.COMP_CODE   = A.COMP_CODE
+			                                                    AND H.PERSON_NUMB = A.DRIVER_CODE
+		                 WHERE A.COMP_CODE      = #{S_COMP_CODE}
+		                   AND A.DIV_CODE       = #{DIV_CODE}
+		                   AND A.PAYMENT_DATE  &gt;= #{DEPOSIT_DATE_FR}
+			               AND A.PAYMENT_DATE  &lt;= #{DEPOSIT_DATE_TO}
+			            UNION ALL
+			            SELECT COMP_CODE
+			                 , DIV_CODE
+			                 , DEPOSIT_DATE AS PAYMENT_DATE
+			                 , ROUTE_CODE 
+			                 , VEHICLE_CODE
+			                 , 0            AS CARD_AMOUNT
+			                 , DEPOSIT_CASH AS CASH_AMOUNT
+			                 , ''           AS DRIVER_CODE
+			                 , ''           AS DRIVER_NAME
+			              FROM GCH100T WITH (NOLOCK)
+			             WHERE COMP_CODE        = #{S_COMP_CODE}
+		                   AND DIV_CODE         = #{DIV_CODE}
+		                   AND DEPOSIT_DATE    &gt;= #{DEPOSIT_DATE_FR}
+			               AND DEPOSIT_DATE    &lt;= #{DEPOSIT_DATE_TO}
+			               AND NOTINSERVICE_YN != 'Y') A
+			             GROUP BY A.COMP_CODE, A.DIV_CODE, A.PAYMENT_DATE, A.VEHICLE_CODE) A
+		       LEFT  JOIN GRT110T T WITH (NOLOCK) ON T.COMP_CODE    = A.COMP_CODE
+		                                         AND T.DIV_CODE     = A.DIV_CODE
+		                                         AND T.ROUTE_CODE   = A.ROUTE_CODE
+		                                         AND A.PAYMENT_DATE BETWEEN T.ROUTE_START_DATE AND T.ROUTE_END_DATE
+		       LEFT  JOIN GRT100T R WITH (NOLOCK) ON R.COMP_CODE    = A.COMP_CODE
+		                                         AND R.DIV_CODE     = A.DIV_CODE
+		                                         AND R.ROUTE_CODE   = A.ROUTE_CODE
+		       LEFT  JOIN GVE100T V WITH (NOLOCK) ON V.COMP_CODE    = A.COMP_CODE
+					 				             AND V.DIV_CODE		= A.DIV_CODE
+										         AND V.VEHICLE_CODE	= A.VEHICLE_CODE
+		       LEFT  JOIN (SELECT A.COMP_CODE
+		                        , A.DIV_CODE
+		                        , A.VEHICLE_CODE
+		                        , A.DRIVER_CODE
+		                        , COUNT(A.DRIVER_CODE) AS OPERATION_COUNT
+		                     FROM GCD100T A WITH (NOLOCK)
+		                    WHERE A.COMP_CODE      = #{S_COMP_CODE}
+		                      AND A.DIV_CODE       = #{DIV_CODE}
+		                      AND A.PAYMENT_DATE  &gt;= #{DEPOSIT_DATE_FR}
+			                  AND A.PAYMENT_DATE  &lt;= #{DEPOSIT_DATE_TO}
+			                GROUP BY A.COMP_CODE, A.DIV_CODE, A.VEHICLE_CODE, A.DRIVER_CODE) F ON F.COMP_CODE    = A.COMP_CODE
+			                                                                                  AND F.DIV_CODE     = A.DIV_CODE
+			                                                                                  AND F.VEHICLE_CODE = A.VEHICLE_CODE   
+			                                                                                  AND F.DRIVER_CODE  = A.DRIVER_CODE
+		 WHERE A.COMP_CODE	  = #{S_COMP_CODE}
+		   AND A.DIV_CODE 	  = #{DIV_CODE}
+		  <if test="@foren.Ognl@isNotEmpty(OFFICE_CODE)">
+		   AND ISNULL(T.OFFICE_CODE,'') = #{OFFICE_CODE}
+		  </if> 
+		  <if test="@foren.Ognl@isNotEmpty(ROUTE_GROUP)">
+		   AND ISNULL(T.ROUTE_GROUP,'') = #{ROUTE_GROUP}
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+		   AND A.ROUTE_CODE   = #{ROUTE_CODE}
+		  </if>	
+		  <if test="@foren.Ognl@isNotEmpty(VEHICLE_CODE)">
+		   AND A.VEHICLE_CODE = #{VEHICLE_CODE}
+		  </if> 
+		  <if test="@foren.Ognl@isNotEmpty(VEHICLE_NAME)">
+		   AND V.VEHICLE_NAME LIKE '%' + #{VEHICLE_NAME} + '%'
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(DRIVER_CODE)">
+		   AND A.DRIVER_CODE = #{DRIVER_CODE}
+		  </if>
+		 GROUP BY ISNULL(R.ROUTE_NUM  ,'')
+		        , ISNULL(T.OFFICE_CODE,'')
+		        , ISNULL(T.ROUTE_GROUP,'')
+		        , A.ROUTE_CODE
+		        , A.VEHICLE_CODE 
+		        , V.VEHICLE_NAME
+		        , V.VEHICLE_REGIST_NO
+		        , A.DRIVER_CODE
+		        , A.DRIVER_NAME
+		        , F.OPERATION_COUNT
+		 ORDER BY ISNULL(T.OFFICE_CODE,'')
+		  <if test="SORT_TYPE == 1">
+		        , DAY_AMOUNT
+		  </if>
+		  <if test="SORT_TYPE == 2">
+		        , DAY_AMOUNT DESC
+		  </if>
+	</select>		
+</mapper>

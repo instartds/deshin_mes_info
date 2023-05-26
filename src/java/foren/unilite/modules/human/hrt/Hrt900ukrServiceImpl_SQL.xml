@@ -1,0 +1,888 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="hrt900ukrServiceImpl">
+
+<select id="hrt900ukrServiceImpl.selectList1" parameterType="Map" resultType="rMap">		
+    	--hrt900ukrServiceImpl.selectList1
+    	--[DB형]
+		SELECT A.COMP_CODE
+			 , A.PERSON_NUMB
+			 , B.NAME
+			 , B.JOIN_DATE																--가입일자
+			 , C.RETR_PENSION_KIND							AS ANN_KIND					--연금종류
+			 , MAX(LEFT(C.RETR_DATE, 4))					AS SAVING_YEAR				--적립년도
+			 , SUM(ISNULL(D.YEAR_TOTAL_RETR_ANNU_I, 0))	    AS SAVING_AMT				--(기)적립금액(전년도퇴직금)
+	 
+			 , ISNULL(E.PRE_YEAR_RETR_ANNU_I, 0)			AS EST_TOTAL_AMT			--추계총액(전년도와의 차이금액)
+
+			 , SUM(ISNULL(D.YEAR_TOTAL_RETR_ANNU_I, 0))
+			 + ISNULL(E.PRE_YEAR_RETR_ANNU_I, 0)
+			 - ISNULL(A.DC_PAY_AMT, 0)						AS TOTAL_ORI_RETR_ANNU_I	--퇴직금총액(전년도퇴직금 + 전년도와의 차이금액 - DC적립액중도인출일자)
+
+			 , CASE WHEN B.JOIN_DATE = C.JOIN_DATE
+	       			THEN ''
+		 			ELSE B.JOIN_DATE
+	 			END											AS BE_CALC_FR_DATE			--퇴직급여 기정산기간(시작)
+			 , CASE WHEN B.JOIN_DATE = C.JOIN_DATE
+	       			THEN ''
+					ELSE CONVERT(NVARCHAR(08), DATEADD(DAY, -1, CONVERT(NVARCHAR(08), C.JOIN_DATE, 112)), 112)
+				END											AS BE_CALC_TO_DATE			--퇴직급여 기정산기간(종료)
+
+			 , MIN(C.JOIN_DATE)								AS RETIRE_CALC_FR_DATE		--퇴직추계액산출기간(시작)
+			 , MAX(C.RETR_DATE)								AS RETIRE_CALC_TO_DATE		--퇴직추계액산출기간(종료)
+			 , A.DC_PAY_AMT																--DC적립액중도인출금액
+			 , A.DC_PAY_DATE															--DC적립액중도인출일자
+			 , 0											AS QUARTER_1
+			 , 0											AS QUARTER_2
+			 , 0											AS QUARTER_3
+			 , ISNULL(E.PRE_YEAR_RETR_ANNU_I, 0)			AS QUARTER_4
+
+			 , A.ACCOUNT_CUSTOM_CODE_1												--연금계좌취급자 거래처코드1
+			 , F.CUSTOM_NAME								AS CUSTOM_NAME_1		--연금계좌취급자 거래처명1
+			 , CASE WHEN ISNULL(A.SAVING_START_MONTH_1, '') = ''
+					THEN ''
+	 				ELSE A.SAVING_START_MONTH_1 + '01'
+				END											AS SAVING_START_MONTH_1	--비고
+			 , A.REMARK
+
+		  FROM      HRT900T A WITH(NOLOCK) 
+		  LEFT JOIN HUM100T B WITH(NOLOCK)  ON B.COMP_CODE          = A.COMP_CODE
+										   AND B.PERSON_NUMB        = A.PERSON_NUMB
+		 INNER JOIN HRT500T C WITH(NOLOCK)  ON C.COMP_CODE          = A.COMP_CODE
+										   AND C.PERSON_NUMB        = A.PERSON_NUMB
+										   AND C.RETR_PENSION_KIND  = A.ANN_KIND
+										   AND LEFT(C.RETR_DATE, 4) = A.SAVING_YEAR
+
+		  LEFT JOIN (
+						SELECT A.COMP_CODE
+							 , A.PERSON_NUMB
+							 , A.RETR_PENSION_KIND
+							 , SUM(A.ORI_RETR_ANNU_I) AS YEAR_TOTAL_RETR_ANNU_I
+							 , LEFT(A.RETR_DATE, 4)   AS RETR_DATE
+						  FROM HRT500T A WITH(NOLOCK)
+						 WHERE A.COMP_CODE            = #{S_COMP_CODE}
+						   AND A.RETR_PENSION_KIND    = 'DB'
+						   AND LEFT(A.RETR_DATE, 4) &lt; #{PAY_YYYY}
+						 GROUP BY A.COMP_CODE, A.PERSON_NUMB, A.RETR_PENSION_KIND, LEFT(A.RETR_DATE, 4)
+					) D ON D.COMP_CODE          = C.COMP_CODE
+						AND D.PERSON_NUMB       = C.PERSON_NUMB
+						AND D.RETR_PENSION_KIND = C.RETR_PENSION_KIND
+						AND D.RETR_DATE       &lt; LEFT(C.RETR_DATE, 4)
+
+		  LEFT JOIN (
+						SELECT A.COMP_CODE
+							 , A.PERSON_NUMB
+							 , A.RETR_PENSION_KIND
+							 , A.ORI_RETR_ANNU_I         AS PRE_YEAR_RETR_ANNU_I
+							 , MAX(LEFT(A.RETR_DATE, 4)) AS PRE_RETR_YEAR
+						  FROM      HRT500T A WITH(NOLOCK)
+						 WHERE A.COMP_CODE          = #{S_COMP_CODE}
+						   AND A.RETR_PENSION_KIND  = 'DB'
+						   AND LEFT(A.RETR_DATE, 4) =  (
+															SELECT MAX(LEFT(RETR_DATE, 4))
+															  FROM HRT500T
+															 WHERE COMP_CODE              = #{S_COMP_CODE}
+															   AND LEFT(RETR_DATE, 4) &lt;= #{PAY_YYYY}
+															   AND RETR_PENSION_KIND      = A.RETR_PENSION_KIND
+															   AND PERSON_NUMB            = A.PERSON_NUMB
+														  )
+						 GROUP BY A.COMP_CODE, A.PERSON_NUMB, A.RETR_PENSION_KIND, A.ORI_RETR_ANNU_I
+					) E ON E.COMP_CODE         = C.COMP_CODE
+					   AND E.PERSON_NUMB       = C.PERSON_NUMB
+					   AND E.RETR_PENSION_KIND = C.RETR_PENSION_KIND
+
+		   LEFT JOIN BCM100T F WITH (NOLOCK) ON F.COMP_CODE   = A.COMP_CODE
+											AND F.CUSTOM_CODE = A.ACCOUNT_CUSTOM_CODE_1
+
+		  WHERE A.COMP_CODE              = #{S_COMP_CODE}
+			AND C.RETR_PENSION_KIND      = 'DB'
+			AND LEFT(C.RETR_DATE, 4) &lt;= #{PAY_YYYY}
+		   <if test ="@foren.Ognl@isNotEmpty(DIV_CODE)">
+            AND B.DIV_CODE  = #{DIV_CODE}
+	       </if>
+	       <if test ="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+	        AND B.DEPT_CODE = #{DEPT_CODE}
+	       </if>
+	       <if test ="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+	        AND A.PERSON_NUMB = #{PERSON_NUMB}
+	       </if>
+    
+		  GROUP BY A.COMP_CODE, A.PERSON_NUMB, B.NAME, B.JOIN_DATE, C.RETR_PENSION_KIND, E.PRE_YEAR_RETR_ANNU_I
+				 , A.DC_PAY_AMT, A.DC_PAY_DATE, B.JOIN_DATE, C.JOIN_DATE
+				 , A.ACCOUNT_CUSTOM_CODE_1, F.CUSTOM_NAME, A.SAVING_START_MONTH_1, A.REMARK
+
+
+		UNION ALL
+
+		--[DC형]
+		SELECT A.COMP_CODE
+			 , A.PERSON_NUMB
+			 , B.NAME
+			 , B.JOIN_DATE																	--가입일자
+			 , C.RETR_PENSION_KIND								AS ANN_KIND					--연금종류
+			 , LEFT(C.RETR_DATE, 4)								AS SAVING_YEAR				--적립년도
+			 , ISNULL(D.PRE_YEAR_RETR_ANNU_I, 0)				AS SAVING_AMT				--(기)적립금액(전년도퇴직금)
+			 , SUM(ISNULL(C.ORI_RETR_ANNU_I, 0))				AS EST_TOTAL_AMT			--추계총액(전년도와의 차이금액)
+
+			 , ISNULL(D.PRE_YEAR_RETR_ANNU_I, 0)
+			 + SUM(ISNULL(C.ORI_RETR_ANNU_I, 0))
+			 - ISNULL(A.DC_PAY_AMT, 0)						    AS TOTAL_ORI_RETR_ANNU_	--퇴직금총액(전년도퇴직금 + 전년도와의 차이금액 - DC적립액중도인출일자)
+
+
+			 , CASE WHEN B.JOIN_DATE = C.JOIN_DATE
+	         		THEN ''
+			 		ELSE B.JOIN_DATE
+		 		END											AS BE_CALC_FR_DATE			--퇴직급여 기정산기간(시작)
+	  		 , CASE WHEN B.JOIN_DATE = C.JOIN_DATE
+	        		THEN ''
+					ELSE CONVERT(NVARCHAR(08), DATEADD(DAY, -1, CONVERT(NVARCHAR(08), C.JOIN_DATE, 112)), 112)
+				END											AS BE_CALC_TO_DATE			--퇴직급여 기정산기간(종료)
+
+	  		 , C.JOIN_DATE									AS RETIRE_CALC_FR_DATE		--퇴직추계액산출기간(시작)
+	  		 , MAX(C.RETR_DATE)								AS RETIRE_CALC_TO_DATE		--퇴직추계액산출기간(종료)
+  			 , A.DC_PAY_AMT																--DC적립액중도인출금액
+  			 , A.DC_PAY_DATE															--DC적립액중도인출일자
+
+  			 , CASE WHEN C.RETR_PENSION_KIND = 'DC'
+         			THEN ISNULL(M1.QUAT_RETR_ANNU_I_1, 0)
+         			WHEN C.RETR_PENSION_KIND = 'DB'
+         			THEN 0
+		 			ELSE 0
+				END											AS QUARTER_1
+  			 , CASE WHEN C.RETR_PENSION_KIND = 'DC'
+        			THEN ISNULL(M2.QUAT_RETR_ANNU_I_2, 0)
+         			WHEN C.RETR_PENSION_KIND = 'DB'
+         			THEN 0
+					ELSE 0
+				END											AS QUARTER_2
+ 			 , CASE WHEN C.RETR_PENSION_KIND = 'DC'
+					THEN ISNULL(M3.QUAT_RETR_ANNU_I_3, 0)
+         			WHEN C.RETR_PENSION_KIND = 'DB'
+         			THEN 0
+					ELSE 0
+				END											AS QUARTER_3
+ 			 , CASE WHEN C.RETR_PENSION_KIND = 'DC'
+			 	    THEN ISNULL(M4.QUAT_RETR_ANNU_I_4, 0)
+				    WHEN C.RETR_PENSION_KIND = 'DB'
+				    THEN SUM(ISNULL(C.ORI_RETR_ANNU_I, 0))
+				    ELSE 0
+			    END											AS QUARTER_4
+	 
+ 			 , A.ACCOUNT_CUSTOM_CODE_1											--연금계좌취급자 거래처코드1
+ 			 , E.CUSTOM_NAME AS CUSTOM_NAME_1									--연금계좌취급자 거래처명1
+ 			 , CASE WHEN ISNULL(A.SAVING_START_MONTH_1, '') = ''
+			 	    THEN ''
+				    ELSE A.SAVING_START_MONTH_1 + '01'
+			    END     									AS SAVING_START_MONTH_1
+			 , A.REMARK
+
+		  FROM      HRT900T A WITH(NOLOCK) 
+		  LEFT JOIN HUM100T B WITH(NOLOCK)  ON B.COMP_CODE   	    = A.COMP_CODE
+										   AND B.PERSON_NUMB        = A.PERSON_NUMB
+		 INNER JOIN HRT500T C WITH(NOLOCK)  ON C.COMP_CODE          = A.COMP_CODE
+										   AND C.PERSON_NUMB        = A.PERSON_NUMB
+										   AND C.RETR_PENSION_KIND  = A.ANN_KIND
+										   AND LEFT(C.RETR_DATE, 4) = A.SAVING_YEAR
+
+		LEFT JOIN (
+					SELECT A.COMP_CODE
+						 , A.PERSON_NUMB
+						 , A.RETR_PENSION_KIND
+						 , SUM(A.ORI_RETR_ANNU_I) AS PRE_YEAR_RETR_ANNU_I
+						-- , LEFT(A.RETR_DATE, 4) AS PRE_RETR_DATE
+					  FROM HRT500T A WITH(NOLOCK)
+					 WHERE A.COMP_CODE          = #{S_COMP_CODE}
+					   AND A.RETR_PENSION_KIND  = 'DC'
+					   AND LEFT(A.RETR_DATE, 4) &lt; (
+														 SELECT MAX(LEFT(RETR_DATE, 4))
+														   FROM HRT500T WITH(NOLOCK)
+														  WHERE COMP_CODE          = #{S_COMP_CODE}
+														    AND RETR_PENSION_KIND  = 'DC'
+														    AND LEFT(RETR_DATE, 4) = #{PAY_YYYY}
+															AND PERSON_NUMB        = A.PERSON_NUMB
+															AND RETR_PENSION_KIND  = A.RETR_PENSION_KIND
+													   )
+					GROUP BY A.COMP_CODE, A.PERSON_NUMB, A.RETR_PENSION_KIND
+					       --, LEFT(A.RETR_DATE, 4)
+				  ) D ON D.COMP_CODE          = C.COMP_CODE
+				     AND D.PERSON_NUMB        = C.PERSON_NUMB
+				 	 AND D.RETR_PENSION_KIND  = C.RETR_PENSION_KIND
+				 	 --AND D.PRE_RETR_DATE    &lt; LEFT(C.RETR_DATE, 4)
+
+
+			 LEFT JOIN (
+						SELECT COMP_CODE
+							 , PERSON_NUMB
+							 , LEFT(RETR_DATE, 6) AS RETR_QUARTER_1
+							 , SUM(ORI_RETR_ANNU_I) AS QUAT_RETR_ANNU_I_1
+						  FROM HRT500T WITH(NOLOCK)
+						 WHERE COMP_CODE 					  = #{S_COMP_CODE}
+						   AND RETR_PENSION_KIND 			  = 'DC'
+						   AND SUBSTRING(RETR_DATE, 5, 2) &gt;= '01'
+						   AND SUBSTRING(RETR_DATE, 5, 2) &lt;= '03'
+						 GROUP BY COMP_CODE, PERSON_NUMB, LEFT(RETR_DATE, 6)
+						) M1 ON M1.COMP_CODE    = A.COMP_CODE
+							AND M1.PERSON_NUMB  = A.PERSON_NUMB
+							AND LEFT(M1.RETR_QUARTER_1, 4)  = LEFT(C.RETR_DATE, 4)
+
+			 LEFT JOIN (
+						SELECT COMP_CODE
+							 , PERSON_NUMB
+							 , LEFT(RETR_DATE, 6) 	AS RETR_QUARTER_2
+							 , SUM(ORI_RETR_ANNU_I) AS QUAT_RETR_ANNU_I_2
+						  FROM HRT500T WITH(NOLOCK)
+						 WHERE COMP_CODE                      = #{S_COMP_CODE}
+						   AND RETR_PENSION_KIND 		      = 'DC'
+						   AND SUBSTRING(RETR_DATE, 5, 2) &gt;= '04'
+						   AND SUBSTRING(RETR_DATE, 5, 2) &lt;= '06'
+						 GROUP BY COMP_CODE, PERSON_NUMB, LEFT(RETR_DATE, 6)
+						) M2 ON M2.COMP_CODE          	   = A.COMP_CODE
+							AND M2.PERSON_NUMB        	   = A.PERSON_NUMB
+							AND LEFT(M2.RETR_QUARTER_2, 4) = LEFT(C.RETR_DATE, 4)
+
+			 LEFT JOIN (
+						SELECT COMP_CODE
+							 , PERSON_NUMB
+							 , LEFT(RETR_DATE, 6)   AS RETR_QUARTER_3
+							 , SUM(ORI_RETR_ANNU_I) AS QUAT_RETR_ANNU_I_3
+						  FROM HRT500T WITH(NOLOCK)
+						 WHERE COMP_CODE                      = #{S_COMP_CODE}
+						   AND RETR_PENSION_KIND 			  = 'DC'
+						   AND SUBSTRING(RETR_DATE, 5, 2) &gt;= '07'
+						   AND SUBSTRING(RETR_DATE, 5, 2) &lt;= '09'
+						 GROUP BY COMP_CODE, PERSON_NUMB, LEFT(RETR_DATE, 6)
+						) M3 ON M3.COMP_CODE          	   = A.COMP_CODE
+							AND M3.PERSON_NUMB        	   = A.PERSON_NUMB
+							AND LEFT(M3.RETR_QUARTER_3, 4) = LEFT(C.RETR_DATE, 4)
+
+			 LEFT JOIN (
+						SELECT COMP_CODE
+							 , PERSON_NUMB
+							 , LEFT(RETR_DATE, 6)   AS RETR_QUARTER_4
+							 , SUM(ORI_RETR_ANNU_I) AS QUAT_RETR_ANNU_I_4
+						  FROM HRT500T WITH(NOLOCK)
+						 WHERE COMP_CODE                   	  = #{S_COMP_CODE}
+						   AND RETR_PENSION_KIND 			  = 'DC'
+						   AND SUBSTRING(RETR_DATE, 5, 2) &gt;= '10'
+						   AND SUBSTRING(RETR_DATE, 5, 2) &lt;= '12'
+						 GROUP BY COMP_CODE, PERSON_NUMB, LEFT(RETR_DATE, 6)
+						) M4 ON M4.COMP_CODE          	   = A.COMP_CODE
+							AND M4.PERSON_NUMB        	   = A.PERSON_NUMB
+							AND LEFT(M4.RETR_QUARTER_4, 4) = LEFT(C.RETR_DATE, 4)
+
+			 LEFT JOIN BCM100T E WITH (NOLOCK) ON E.COMP_CODE   = A.COMP_CODE
+											  AND E.CUSTOM_CODE = A.ACCOUNT_CUSTOM_CODE_1
+
+
+		 WHERE A.COMP_CODE          = #{S_COMP_CODE}
+		   AND C.RETR_PENSION_KIND  = 'DC'
+		   AND LEFT(C.RETR_DATE, 4) = #{PAY_YYYY}
+		   <if test ="@foren.Ognl@isNotEmpty(DIV_CODE)">
+            AND B.DIV_CODE  = #{DIV_CODE}
+	       </if>
+	       <if test ="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+	        AND B.DEPT_CODE = #{DEPT_CODE}
+	       </if>
+	       <if test ="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+	        AND A.PERSON_NUMB = #{PERSON_NUMB}
+	       </if>
+ 
+		 GROUP BY A.COMP_CODE, A.PERSON_NUMB, B.NAME, B.JOIN_DATE
+				 , C.RETR_PENSION_KIND, D.PRE_YEAR_RETR_ANNU_I, LEFT(C.RETR_DATE, 4)	
+				 , A.DC_PAY_AMT, A.DC_PAY_DATE, B.JOIN_DATE, C.JOIN_DATE
+				 , M1.QUAT_RETR_ANNU_I_1, M2.QUAT_RETR_ANNU_I_2, M3.QUAT_RETR_ANNU_I_3, M4.QUAT_RETR_ANNU_I_4
+				 , A.ACCOUNT_CUSTOM_CODE_1, E.CUSTOM_NAME, A.SAVING_START_MONTH_1, A.REMARK
+
+		ORDER BY  A.PERSON_NUMB
+       
+</select>
+
+<select id="hrt900ukrServiceImpl.selectList2" parameterType="Map" resultType="rMap">		
+    	--hrt900ukrServiceImpl.selectList2
+    	--[DB형]
+		SELECT A.COMP_CODE
+			 , A.PERSON_NUMB
+			 , B.NAME
+			 , B.JOIN_DATE																--가입일자
+			 , C.RETR_PENSION_KIND							AS ANN_KIND					--연금종류
+			 , (LEFT(C.RETR_DATE, 4))						AS SAVING_YEAR				--적립년도
+
+			 , SUM(ISNULL(D.YEAR_TOTAL_RETR_ANNU_I, 0))     AS SAVING_AMT				--(기)적립금액
+			 , ISNULL(C.ORI_RETR_ANNU_I, 0)					AS EST_TOTAL_AMT			--추계총액
+
+			 , SUM(ISNULL(D.YEAR_TOTAL_RETR_ANNU_I, 0))
+			 + ISNULL(C.ORI_RETR_ANNU_I, 0) 
+			 - ISNULL(A.DC_PAY_AMT, 0)						AS TOTAL_ORI_RETR_ANNU_I	--퇴직금총액(전년도퇴직금 + 전년도와의 차이금액 - DC적립액중도인출일자)
+
+			 , CASE WHEN B.JOIN_DATE = C.JOIN_DATE
+	       			THEN ''
+		 			ELSE B.JOIN_DATE
+	 			END											AS BE_CALC_FR_DATE			--퇴직급여 기정산기간(시작)
+			 , CASE WHEN B.JOIN_DATE = C.JOIN_DATE
+	       			THEN ''
+					ELSE CONVERT(NVARCHAR(08), DATEADD(DAY, -1, CONVERT(NVARCHAR(08), C.JOIN_DATE, 112)), 112)
+				END											AS BE_CALC_TO_DATE			--퇴직급여 기정산기간(종료)
+
+			 , MIN(C.JOIN_DATE)								AS RETIRE_CALC_FR_DATE		--퇴직추계액산출기간(시작)
+			 , MAX(C.RETR_DATE)								AS RETIRE_CALC_TO_DATE		--퇴직추계액산출기간(종료)
+			 , A.DC_PAY_AMT																--DC적립액중도인출금액
+			 , A.DC_PAY_DATE															--DC적립액중도인출일자
+			 , 0											AS QUARTER_1
+			 , 0											AS QUARTER_2
+			 , 0											AS QUARTER_3
+			 , ISNULL(C.ORI_RETR_ANNU_I, 0)					AS QUARTER_4
+
+			 , A.ACCOUNT_CUSTOM_CODE_1												--연금계좌취급자 거래처코드1
+			 , F.CUSTOM_NAME								AS CUSTOM_NAME_1		--연금계좌취급자 거래처명1
+			 , CASE WHEN ISNULL(A.SAVING_START_MONTH_1, '') = ''
+					THEN ''
+	 				ELSE A.SAVING_START_MONTH_1 + '01'
+				END											AS SAVING_START_MONTH_1	--비고
+			 , A.REMARK
+
+		  FROM      HRT900T A WITH(NOLOCK) 
+		  LEFT JOIN HUM100T B WITH(NOLOCK)  ON B.COMP_CODE          = A.COMP_CODE
+										   AND B.PERSON_NUMB        = A.PERSON_NUMB
+		 INNER JOIN HRT500T C WITH(NOLOCK)  ON C.COMP_CODE          = A.COMP_CODE
+										   AND C.PERSON_NUMB        = A.PERSON_NUMB
+										   AND C.RETR_PENSION_KIND  = A.ANN_KIND
+										   AND LEFT(C.RETR_DATE, 4) = A.SAVING_YEAR
+
+		  LEFT JOIN (
+						SELECT A.COMP_CODE
+							 , A.PERSON_NUMB
+							 , A.RETR_PENSION_KIND
+							 , SUM(A.ORI_RETR_ANNU_I) AS YEAR_TOTAL_RETR_ANNU_I
+							 , LEFT(A.RETR_DATE, 4)   AS RETR_DATE
+						  FROM HRT500T A WITH(NOLOCK)
+						 WHERE A.COMP_CODE            = #{S_COMP_CODE}
+						   AND A.RETR_PENSION_KIND    = 'DB'
+						   AND LEFT(A.RETR_DATE, 4)   &lt; #{PAY_YYYY}
+						 GROUP BY A.COMP_CODE, A.PERSON_NUMB, A.RETR_PENSION_KIND, LEFT(A.RETR_DATE, 4)
+					) D ON D.COMP_CODE          = C.COMP_CODE
+						AND D.PERSON_NUMB       = C.PERSON_NUMB
+						AND D.RETR_PENSION_KIND = C.RETR_PENSION_KIND
+						AND D.RETR_DATE         &lt; LEFT(C.RETR_DATE, 4)
+
+		  LEFT JOIN BCM100T F WITH (NOLOCK) ON F.COMP_CODE   = A.COMP_CODE
+										   AND F.CUSTOM_CODE = A.ACCOUNT_CUSTOM_CODE_1
+
+		 WHERE A.COMP_CODE              = #{S_COMP_CODE}
+		   AND C.RETR_PENSION_KIND      = 'DB'
+		   AND LEFT(C.RETR_DATE, 4)    &lt;= #{PAY_YYYY}
+	        
+		 GROUP BY A.COMP_CODE, A.PERSON_NUMB, B.NAME, B.JOIN_DATE, C.RETR_PENSION_KIND
+			    , (LEFT(C.RETR_DATE, 4))
+				, C.ORI_RETR_ANNU_I
+				, A.DC_PAY_AMT, A.DC_PAY_DATE
+				, B.JOIN_DATE, C.JOIN_DATE
+				, A.ACCOUNT_CUSTOM_CODE_1, F.CUSTOM_NAME, A.SAVING_START_MONTH_1, A.REMARK
+
+
+		UNION ALL
+		
+		--[DC형]
+		--A
+		SELECT COMP_CODE
+     		 , PERSON_NUMB
+			 , NAME
+			 , JOIN_DATE
+			 , ANN_KIND
+			 , SAVING_YEAR
+			 , SUM(SAVING_AMT) AS SAVING_AMT
+			 , EST_TOTAL_AMT
+			 , TOTAL_ORI_RETR_ANNU_I-- AS TOTAL_ORI_RETR_ANNU_I
+		
+			 , BE_CALC_FR_DATE
+			 , BE_CALC_TO_DATE
+			 , RETIRE_CALC_FR_DATE
+			 , RETIRE_CALC_TO_DATE
+			 
+			 , DC_PAY_AMT																--DC적립액중도인출금액
+		  	 , DC_PAY_DATE
+		
+			 , QUARTER_1
+			 , QUARTER_2
+			 , QUARTER_3
+			 , QUARTER_4
+		
+			 , ACCOUNT_CUSTOM_CODE_1
+			 , CUSTOM_NAME_1
+			 , SAVING_START_MONTH_1
+			 , REMARK
+ 		FROM (
+ 				--B
+				SELECT A.COMP_CODE
+					 , A.PERSON_NUMB
+					 , B.NAME
+					 , B.JOIN_DATE																	--가입일자
+					 , C.RETR_PENSION_KIND								AS ANN_KIND					--연금종류
+					 , LEFT(C.RETR_DATE, 4)								AS SAVING_YEAR				--적립년도
+					 , ISNULL(D.PRE_YEAR_RETR_ANNU_I, 0)				AS SAVING_AMT				--(기)적립금액(전년도퇴직금)
+					 , SUM(ISNULL(C.ORI_RETR_ANNU_I, 0))				AS EST_TOTAL_AMT			--추계총액
+		
+					 , ISNULL(D.PRE_YEAR_RETR_ANNU_I, 0)
+					 + SUM(ISNULL(C.ORI_RETR_ANNU_I, 0))
+					  -ISNULL(A.DC_PAY_AMT, 0)							AS TOTAL_ORI_RETR_ANNU_I	--퇴직금총액(전년도퇴직금 + 전년도와의 차이금액 - DC적립액중도인출일자)
+		
+		
+					 , CASE WHEN B.JOIN_DATE = C.JOIN_DATE
+			         		THEN ''
+					 		ELSE B.JOIN_DATE
+				 		END											AS BE_CALC_FR_DATE			--퇴직급여 기정산기간(시작)
+			  	--	 , CASE WHEN B.JOIN_DATE = C.JOIN_DATE
+			    --    		THEN ''
+				--			ELSE CONVERT(NVARCHAR(08), DATEADD(DAY, -1, CONVERT(NVARCHAR(08), C.JOIN_DATE, 112)), 112)
+				--		END											AS BE_CALC_TO_DATE			--퇴직급여 기정산기간(종료)
+				
+			  		 , CASE WHEN B.JOIN_DATE = C.JOIN_DATE
+			        		THEN ''
+							ELSE CASE WHEN ISNULL(A.DC_PAY_DATE, '') = ''
+							          THEN CASE WHEN ISNULL(F.MAX_DC_PAY_DATE, '') = ''
+									            THEN CONVERT(NVARCHAR(08), DATEADD(DAY, -1, CONVERT(NVARCHAR(08), C.JOIN_DATE, 112)), 112)
+												ELSE CASE WHEN LEFT(C.RETR_DATE, 4)	&lt; LEFT(F.MAX_DC_PAY_DATE, 4) 
+												          THEN CONVERT(NVARCHAR(08), DATEADD(DAY, -1, CONVERT(NVARCHAR(08), C.JOIN_DATE, 112)), 112)
+														  ELSE ISNULL(F.MAX_DC_PAY_DATE, '')
+													  END 
+											END
+		
+									  ELSE A.DC_PAY_DATE
+								  END 
+						END											AS BE_CALC_TO_DATE			--퇴직급여 기정산기간(종료)
+		
+			  		 , C.JOIN_DATE									AS RETIRE_CALC_FR_DATE		--퇴직추계액산출기간(시작)
+			  		 , MAX(C.RETR_DATE)								AS RETIRE_CALC_TO_DATE		--퇴직추계액산출기간(종료)
+		  			 , A.DC_PAY_AMT																--DC적립액중도인출금액
+		  			 , A.DC_PAY_DATE															--DC적립액중도인출일자
+		
+		  			 , ISNULL(M1.QUAT_RETR_ANNU_I_1, 0)				AS QUARTER_1
+		  			 , ISNULL(M2.QUAT_RETR_ANNU_I_2, 0)				AS QUARTER_2
+		 			 , ISNULL(M3.QUAT_RETR_ANNU_I_3, 0)				AS QUARTER_3
+		 			 , ISNULL(M4.QUAT_RETR_ANNU_I_4, 0)				AS QUARTER_4
+			 
+		 			 , A.ACCOUNT_CUSTOM_CODE_1													--연금계좌취급자 거래처코드1
+		 			 , E.CUSTOM_NAME AS CUSTOM_NAME_1											--연금계좌취급자 거래처명1
+		 			 , CASE WHEN ISNULL(A.SAVING_START_MONTH_1, '') = ''
+					 	    THEN ''
+						    ELSE A.SAVING_START_MONTH_1 + '01'
+					    END     									AS SAVING_START_MONTH_1
+					 , A.REMARK
+		
+				  FROM      HRT900T A WITH(NOLOCK) 
+				  LEFT JOIN HUM100T B WITH(NOLOCK)  ON B.COMP_CODE   	    = A.COMP_CODE
+												   AND B.PERSON_NUMB        = A.PERSON_NUMB
+				 INNER JOIN HRT500T C WITH(NOLOCK)  ON C.COMP_CODE          = A.COMP_CODE
+												   AND C.PERSON_NUMB        = A.PERSON_NUMB
+												   AND C.RETR_PENSION_KIND  = A.ANN_KIND
+												   AND LEFT(C.RETR_DATE, 4) = A.SAVING_YEAR
+		
+				  LEFT JOIN (
+							   SELECT A.COMP_CODE
+								    , A.PERSON_NUMB
+									, A.RETR_PENSION_KIND
+									, SUM(A.ORI_RETR_ANNU_I) AS PRE_YEAR_RETR_ANNU_I
+									, LEFT(A.RETR_DATE, 4)   AS PRE_RETR_DATE
+								FROM HRT500T A WITH(NOLOCK)
+							   WHERE A.COMP_CODE          = #{S_COMP_CODE}
+							     AND A.RETR_PENSION_KIND  = 'DC'
+							     AND LEFT(A.RETR_DATE, 4) &lt; (
+																SELECT MAX(LEFT(RETR_DATE, 4))
+																  FROM HRT500T WITH(NOLOCK)
+																 WHERE COMP_CODE         = #{S_COMP_CODE}
+																   AND RETR_PENSION_KIND = 'DC'
+																   AND PERSON_NUMB       = A.PERSON_NUMB
+																   AND RETR_PENSION_KIND = A.RETR_PENSION_KIND
+																)
+							  GROUP BY A.COMP_CODE, A.PERSON_NUMB, A.RETR_PENSION_KIND, LEFT(A.RETR_DATE, 4)
+						   ) D ON D.COMP_CODE          = C.COMP_CODE
+						      AND D.PERSON_NUMB        = C.PERSON_NUMB
+						 	  AND D.RETR_PENSION_KIND  = C.RETR_PENSION_KIND
+						 	  AND D.PRE_RETR_DATE      &lt; LEFT(C.RETR_DATE, 4)
+		
+		
+				  LEFT JOIN (
+								SELECT COMP_CODE
+									 , PERSON_NUMB
+									 , LEFT(RETR_DATE, 6)   AS RETR_QUARTER_1
+									 , SUM(ORI_RETR_ANNU_I) AS QUAT_RETR_ANNU_I_1
+								  FROM HRT500T WITH(NOLOCK)
+								 WHERE COMP_CODE 				   = #{S_COMP_CODE}
+								   AND RETR_PENSION_KIND 		   = 'DC'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &gt;= '01'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &lt;= '03'
+								 GROUP BY COMP_CODE, PERSON_NUMB, LEFT(RETR_DATE, 6)
+							) M1 ON M1.COMP_CODE               = A.COMP_CODE
+								AND M1.PERSON_NUMB             = A.PERSON_NUMB
+								AND LEFT(M1.RETR_QUARTER_1, 4) = LEFT(C.RETR_DATE, 4)
+		
+				  LEFT JOIN (
+								SELECT COMP_CODE
+									 , PERSON_NUMB
+									 , LEFT(RETR_DATE, 6) 	AS RETR_QUARTER_2
+									 , SUM(ORI_RETR_ANNU_I) AS QUAT_RETR_ANNU_I_2
+								  FROM HRT500T WITH(NOLOCK)
+								 WHERE COMP_CODE                   = #{S_COMP_CODE}
+								   AND RETR_PENSION_KIND 		   = 'DC'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &gt;= '04'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &lt;= '06'
+								 GROUP BY COMP_CODE, PERSON_NUMB, LEFT(RETR_DATE, 6)
+							) M2 ON M2.COMP_CODE          	   = A.COMP_CODE
+								AND M2.PERSON_NUMB        	   = A.PERSON_NUMB
+								AND LEFT(M2.RETR_QUARTER_2, 4) = LEFT(C.RETR_DATE, 4)
+		
+				  LEFT JOIN (
+								SELECT COMP_CODE
+									 , PERSON_NUMB
+									 , LEFT(RETR_DATE, 6)   AS RETR_QUARTER_3
+									 , SUM(ORI_RETR_ANNU_I) AS QUAT_RETR_ANNU_I_3
+								  FROM HRT500T WITH(NOLOCK)
+								 WHERE COMP_CODE                   = #{S_COMP_CODE}
+								   AND RETR_PENSION_KIND 		   = 'DC'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &gt;= '07'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &lt;= '09'
+								 GROUP BY COMP_CODE, PERSON_NUMB, LEFT(RETR_DATE, 6)
+							) M3 ON M3.COMP_CODE          	   = A.COMP_CODE
+								AND M3.PERSON_NUMB        	   = A.PERSON_NUMB
+								AND LEFT(M3.RETR_QUARTER_3, 4) = LEFT(C.RETR_DATE, 4)
+		
+				  LEFT JOIN (
+								SELECT COMP_CODE
+									 , PERSON_NUMB
+									 , LEFT(RETR_DATE, 6)   AS RETR_QUARTER_4
+									 , SUM(ORI_RETR_ANNU_I) AS QUAT_RETR_ANNU_I_4
+								  FROM HRT500T WITH(NOLOCK)
+								 WHERE COMP_CODE                   = #{S_COMP_CODE}
+								   AND RETR_PENSION_KIND 		   = 'DC'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &gt;= '10'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &lt;= '12'
+								 GROUP BY COMP_CODE, PERSON_NUMB, LEFT(RETR_DATE, 6)
+							) M4 ON M4.COMP_CODE          	   = A.COMP_CODE
+								AND M4.PERSON_NUMB        	   = A.PERSON_NUMB
+								AND LEFT(M4.RETR_QUARTER_4, 4) = LEFT(C.RETR_DATE, 4)
+		
+				  LEFT JOIN BCM100T E WITH (NOLOCK) ON E.COMP_CODE   = A.COMP_CODE
+												   AND E.CUSTOM_CODE = A.ACCOUNT_CUSTOM_CODE_1
+												   
+				  LEFT JOIN (
+				  
+							SELECT A.COMP_CODE   
+							     , A.PERSON_NUMB
+								 , MAX(ISNULL(A.DC_PAY_DATE, '')) AS MAX_DC_PAY_DATE
+							  FROM HRT900T A
+							   WHERE A.COMP_CODE = #{S_COMP_CODE}
+							     AND A.ANN_KIND = 'DC'
+								 AND A.SAVING_YEAR &lt; #{PAY_YYYY}
+								 GROUP BY A.COMP_CODE, A.PERSON_NUMB
+							) F  ON F.COMP_CODE   = A.COMP_CODE
+				                AND F.PERSON_NUMB = A.PERSON_NUMB
+		
+		
+				 WHERE A.COMP_CODE          = #{S_COMP_CODE}
+				   AND C.RETR_PENSION_KIND  = 'DC'
+				   AND LEFT(C.RETR_DATE, 4) &lt; #{PAY_YYYY}
+		         <if test ="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		         	AND B.DIV_CODE  = #{DIV_CODE}
+		         </if>
+			     <if test ="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+			     	AND B.DEPT_CODE = #{DEPT_CODE}
+			     </if>
+			     <if test ="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+			     	AND A.PERSON_NUMB = #{PERSON_NUMB}
+		       	 </if>
+				 GROUP BY A.COMP_CODE, A.PERSON_NUMB, B.NAME, B.JOIN_DATE
+						, C.RETR_PENSION_KIND				 
+						, LEFT(C.RETR_DATE, 4)	
+						, D.PRE_YEAR_RETR_ANNU_I
+						, A.DC_PAY_AMT, A.DC_PAY_DATE
+						, B.JOIN_DATE, C.JOIN_DATE
+						, M1.QUAT_RETR_ANNU_I_1, M2.QUAT_RETR_ANNU_I_2, M3.QUAT_RETR_ANNU_I_3, M4.QUAT_RETR_ANNU_I_4
+						, A.ACCOUNT_CUSTOM_CODE_1, E.CUSTOM_NAME, A.SAVING_START_MONTH_1, A.REMARK
+						, F.MAX_DC_PAY_DATE
+						
+				UNION ALL
+				
+				--C
+				SELECT A.COMP_CODE
+					 , A.PERSON_NUMB
+					 , B.NAME
+					 , B.JOIN_DATE																	--가입일자
+					 , C.RETR_PENSION_KIND								AS ANN_KIND					--연금종류
+					 , LEFT(C.RETR_DATE, 4)								AS SAVING_YEAR				--적립년도
+					 , ISNULL(D.PRE_YEAR_RETR_ANNU_I, 0)				AS SAVING_AMT				--(기)적립금액(전년도퇴직금)
+					 , SUM(ISNULL(C.ORI_RETR_ANNU_I, 0))				AS EST_TOTAL_AMT			--추계총액
+		
+					 , ISNULL(D.PRE_YEAR_RETR_ANNU_I, 0)
+					 + SUM(ISNULL(C.ORI_RETR_ANNU_I, 0))
+					  -ISNULL(A.DC_PAY_AMT, 0)							AS TOTAL_ORI_RETR_ANNU_	--퇴직금총액(전년도퇴직금 + 전년도와의 차이금액 - DC적립액중도인출일자)
+		
+		
+					 , CASE WHEN B.JOIN_DATE = C.JOIN_DATE
+			         		THEN ''
+					 		ELSE B.JOIN_DATE
+				 		END											AS BE_CALC_FR_DATE			--퇴직급여 기정산기간(시작)
+			  	--	 , CASE WHEN B.JOIN_DATE = C.JOIN_DATE
+			    --    		THEN ''
+				--			ELSE CONVERT(NVARCHAR(08), DATEADD(DAY, -1, CONVERT(NVARCHAR(08), C.JOIN_DATE, 112)), 112)
+				--		END											AS BE_CALC_TO_DATE			--퇴직급여 기정산기간(종료)
+				
+			  		 , CASE WHEN B.JOIN_DATE = C.JOIN_DATE
+			        		THEN ''
+							ELSE CASE WHEN MAX(ISNULL(F.DC_PAY_DATE, '')) = ''
+							          THEN CONVERT(NVARCHAR(08), DATEADD(DAY, -1, CONVERT(NVARCHAR(08), C.JOIN_DATE, 112)), 112)
+									  ELSE MAX(ISNULL(F.DC_PAY_DATE, ''))
+								  END
+						END											AS BE_CALC_TO_DATE			--퇴직급여 기정산기간(종료)
+		
+			  		 , C.JOIN_DATE									AS RETIRE_CALC_FR_DATE		--퇴직추계액산출기간(시작)
+			  		 , MAX(C.RETR_DATE)								AS RETIRE_CALC_TO_DATE		--퇴직추계액산출기간(종료)
+		  			 , A.DC_PAY_AMT																--DC적립액중도인출금액
+		  			 , A.DC_PAY_DATE															--DC적립액중도인출일자
+		
+		  			 , ISNULL(M1.QUAT_RETR_ANNU_I_1, 0)				AS QUARTER_1
+		  			 , ISNULL(M2.QUAT_RETR_ANNU_I_2, 0)				AS QUARTER_2
+		 			 , ISNULL(M3.QUAT_RETR_ANNU_I_3, 0)				AS QUARTER_3
+		 			 , ISNULL(M4.QUAT_RETR_ANNU_I_4, 0)				AS QUARTER_4
+			 
+		 			 , A.ACCOUNT_CUSTOM_CODE_1													--연금계좌취급자 거래처코드1
+		 			 , E.CUSTOM_NAME AS CUSTOM_NAME_1											--연금계좌취급자 거래처명1
+		 			 , CASE WHEN ISNULL(A.SAVING_START_MONTH_1, '') = ''
+					 	    THEN ''
+						    ELSE A.SAVING_START_MONTH_1 + '01'
+					    END     									AS SAVING_START_MONTH_1
+					 , A.REMARK
+		
+				  FROM      HRT900T A WITH(NOLOCK) 
+				  LEFT JOIN HUM100T B WITH(NOLOCK)  ON B.COMP_CODE   	    = A.COMP_CODE
+												   AND B.PERSON_NUMB        = A.PERSON_NUMB
+				 INNER JOIN HRT500T C WITH(NOLOCK)  ON C.COMP_CODE          = A.COMP_CODE
+												   AND C.PERSON_NUMB        = A.PERSON_NUMB
+												   AND C.RETR_PENSION_KIND  = A.ANN_KIND
+												   AND LEFT(C.RETR_DATE, 4) = A.SAVING_YEAR
+		
+				  LEFT JOIN (
+							   SELECT A.COMP_CODE
+								    , A.PERSON_NUMB
+									, A.RETR_PENSION_KIND
+									, SUM(A.ORI_RETR_ANNU_I) AS PRE_YEAR_RETR_ANNU_I
+								FROM HRT500T A WITH(NOLOCK)
+							   WHERE A.COMP_CODE          = #{S_COMP_CODE}
+							     AND A.RETR_PENSION_KIND  = 'DC'
+							     AND LEFT(A.RETR_DATE, 4) &lt; (
+																SELECT MAX(LEFT(RETR_DATE, 4))
+																  FROM HRT500T WITH(NOLOCK)
+																 WHERE COMP_CODE          = #{S_COMP_CODE}
+																   AND RETR_PENSION_KIND  = 'DC'
+																   AND LEFT(RETR_DATE, 4) = #{PAY_YYYY}
+																   AND PERSON_NUMB        = A.PERSON_NUMB
+																   AND RETR_PENSION_KIND  = A.RETR_PENSION_KIND
+																)
+							  GROUP BY A.COMP_CODE, A.PERSON_NUMB, A.RETR_PENSION_KIND
+						   ) D ON D.COMP_CODE          = C.COMP_CODE
+						      AND D.PERSON_NUMB        = C.PERSON_NUMB
+						 	  AND D.RETR_PENSION_KIND  = C.RETR_PENSION_KIND
+						 	  --AND D.PRE_RETR_DATE    &lt; LEFT(C.RETR_DATE, 4)
+		
+		
+				  LEFT JOIN (
+								SELECT COMP_CODE
+									 , PERSON_NUMB
+									 , LEFT(RETR_DATE, 6)   AS RETR_QUARTER_1
+									 , SUM(ORI_RETR_ANNU_I) AS QUAT_RETR_ANNU_I_1
+								  FROM HRT500T WITH(NOLOCK)
+								 WHERE COMP_CODE 				   = #{S_COMP_CODE}
+								   AND RETR_PENSION_KIND 		   = 'DC'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &gt;= '01'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &lt;= '03'
+								 GROUP BY COMP_CODE, PERSON_NUMB, LEFT(RETR_DATE, 6)
+							) M1 ON M1.COMP_CODE               = A.COMP_CODE
+								AND M1.PERSON_NUMB             = A.PERSON_NUMB
+								AND LEFT(M1.RETR_QUARTER_1, 4) = LEFT(C.RETR_DATE, 4)
+		
+				  LEFT JOIN (
+								SELECT COMP_CODE
+									 , PERSON_NUMB
+									 , LEFT(RETR_DATE, 6) 	AS RETR_QUARTER_2
+									 , SUM(ORI_RETR_ANNU_I) AS QUAT_RETR_ANNU_I_2
+								  FROM HRT500T WITH(NOLOCK)
+								 WHERE COMP_CODE                   = #{S_COMP_CODE}
+								   AND RETR_PENSION_KIND 		   = 'DC'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &gt;= '04'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &lt;= '06'
+								 GROUP BY COMP_CODE, PERSON_NUMB, LEFT(RETR_DATE, 6)
+							) M2 ON M2.COMP_CODE          	   = A.COMP_CODE
+								AND M2.PERSON_NUMB        	   = A.PERSON_NUMB
+								AND LEFT(M2.RETR_QUARTER_2, 4) = LEFT(C.RETR_DATE, 4)
+		
+				  LEFT JOIN (
+								SELECT COMP_CODE
+									 , PERSON_NUMB
+									 , LEFT(RETR_DATE, 6)   AS RETR_QUARTER_3
+									 , SUM(ORI_RETR_ANNU_I) AS QUAT_RETR_ANNU_I_3
+								  FROM HRT500T WITH(NOLOCK)
+								 WHERE COMP_CODE                   = #{S_COMP_CODE}
+								   AND RETR_PENSION_KIND 		   = 'DC'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &gt;= '07'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &lt;= '09'
+								 GROUP BY COMP_CODE, PERSON_NUMB, LEFT(RETR_DATE, 6)
+							) M3 ON M3.COMP_CODE          	   = A.COMP_CODE
+								AND M3.PERSON_NUMB        	   = A.PERSON_NUMB
+								AND LEFT(M3.RETR_QUARTER_3, 4) = LEFT(C.RETR_DATE, 4)
+		
+				  LEFT JOIN (
+								SELECT COMP_CODE
+									 , PERSON_NUMB
+									 , LEFT(RETR_DATE, 6)   AS RETR_QUARTER_4
+									 , SUM(ORI_RETR_ANNU_I) AS QUAT_RETR_ANNU_I_4
+								  FROM HRT500T WITH(NOLOCK)
+								 WHERE COMP_CODE                   = #{S_COMP_CODE}
+								   AND RETR_PENSION_KIND 		   = 'DC'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &gt;= '10'
+								   AND SUBSTRING(RETR_DATE, 5, 2) &lt;= '12'
+								 GROUP BY COMP_CODE, PERSON_NUMB, LEFT(RETR_DATE, 6)
+							) M4 ON M4.COMP_CODE          	   = A.COMP_CODE
+								AND M4.PERSON_NUMB        	   = A.PERSON_NUMB
+								AND LEFT(M4.RETR_QUARTER_4, 4) = LEFT(C.RETR_DATE, 4)
+		
+				  LEFT JOIN BCM100T E WITH (NOLOCK) ON E.COMP_CODE   = A.COMP_CODE
+												   AND E.CUSTOM_CODE = A.ACCOUNT_CUSTOM_CODE_1
+												   
+				  LEFT JOIN HRT900T F WITH (NOLOCK) ON F.COMP_CODE   = A.COMP_CODE
+				                                   AND F.PERSON_NUMB = A.PERSON_NUMB
+												   AND F.ANN_KIND = A.ANN_KIND
+												   AND F.SAVING_YEAR &lt; #{PAY_YYYY}
+		
+		
+				 WHERE A.COMP_CODE          = #{S_COMP_CODE}
+				   AND C.RETR_PENSION_KIND  = 'DC'
+				   AND LEFT(C.RETR_DATE, 4) = #{PAY_YYYY}
+		         <if test ="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		         	AND B.DIV_CODE  = #{DIV_CODE}
+		         </if>
+			     <if test ="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+			     	AND B.DEPT_CODE = #{DEPT_CODE}
+			     </if>
+			     <if test ="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+			     	AND A.PERSON_NUMB = #{PERSON_NUMB}
+		       	 </if>
+				 GROUP BY A.COMP_CODE, A.PERSON_NUMB, B.NAME, B.JOIN_DATE
+						, C.RETR_PENSION_KIND				 
+						, LEFT(C.RETR_DATE, 4)	
+						, D.PRE_YEAR_RETR_ANNU_I
+						, A.DC_PAY_AMT, A.DC_PAY_DATE
+						, B.JOIN_DATE, C.JOIN_DATE
+						, M1.QUAT_RETR_ANNU_I_1, M2.QUAT_RETR_ANNU_I_2, M3.QUAT_RETR_ANNU_I_3, M4.QUAT_RETR_ANNU_I_4
+						, A.ACCOUNT_CUSTOM_CODE_1, E.CUSTOM_NAME, A.SAVING_START_MONTH_1, A.REMARK
+		) X
+
+	GROUP BY COMP_CODE, PERSON_NUMB, NAME, JOIN_DATE, ANN_KIND
+	           , SAVING_YEAR, EST_TOTAL_AMT
+			   , TOTAL_ORI_RETR_ANNU_I
+			   , DC_PAY_AMT, DC_PAY_DATE
+			   , BE_CALC_FR_DATE, BE_CALC_TO_DATE, RETIRE_CALC_FR_DATE, RETIRE_CALC_TO_DATE
+			   , QUARTER_1, QUARTER_2, QUARTER_3, QUARTER_4
+			   , ACCOUNT_CUSTOM_CODE_1, CUSTOM_NAME_1, SAVING_START_MONTH_1, REMARK
+
+  
+	 	 ORDER BY A.COMP_CODE, A.PERSON_NUMB, C.RETR_PENSION_KIND, LEFT(C.RETR_DATE, 4)
+       
+</select>
+
+	
+<insert id="hrt900ukrServiceImpl.insertDetail" parameterType="Map">
+    --hrt900ukrServiceImpl.insertDetail
+    INSERT INTO HRT900T
+    (
+    	COMP_CODE
+      , PERSON_NUMB
+      , JOIN_DATE
+      , ANN_KIND
+      , SAVING_YEAR
+      , SAVING_AMT
+      , EST_TOTAL_AMT
+      , BE_CALC_FR_DATE
+      , BE_CALC_TO_DATE
+      , RETIRE_CALC_FR_DATE
+      , RETIRE_CALC_TO_DATE
+      , DC_PAY_AMT
+      , DC_PAY_DATE
+      , QUARTER_1
+      , QUARTER_2
+      , QUARTER_3
+      , QUARTER_4
+      , ACCOUNT_CUSTOM_CODE_1
+      , SAVING_START_MONTH_1
+      , ACCOUNT_CUSTOM_CODE_2
+      , SAVING_START_MONTH_2
+      , ACCOUNT_CUSTOM_CODE_3
+      , SAVING_START_MONTH_3
+      , ACCOUNT_CUSTOM_CODE_4
+      , SAVING_START_MONTH_4
+      , REMARK
+      , INSERT_DB_USER
+      , INSERT_DB_TIME
+      , UPDATE_DB_USER
+      , UPDATE_DB_TIME
+    ) 
+    VALUES
+    (
+    	#{S_COMP_CODE}
+      , #{PERSON_NUMB}
+      , #{JOIN_DATE}
+      , #{ANN_KIND}
+      , #{SAVING_YEAR}
+      , #{SAVING_AMT}
+      , #{EST_TOTAL_AMT}
+      , #{BE_CALC_FR_DATE}
+      , #{BE_CALC_TO_DATE}
+      , #{RETIRE_CALC_FR_DATE}
+      , #{RETIRE_CALC_TO_DATE}
+      , #{DC_PAY_AMT}
+      , #{DC_PAY_DATE}
+      , #{QUARTER_1}
+      , #{QUARTER_2}
+      , #{QUARTER_3}
+      , #{QUARTER_4}
+      , #{ACCOUNT_CUSTOM_CODE_1}
+      , LEFT(#{SAVING_START_MONTH_1}, 6)
+      , #{ACCOUNT_CUSTOM_CODE_2}
+      , LEFT(#{SAVING_START_MONTH_2}, 6)
+      , #{ACCOUNT_CUSTOM_CODE_3}
+      , LEFT(#{SAVING_START_MONTH_3}, 6)
+      , #{ACCOUNT_CUSTOM_CODE_4}
+      , LEFT(#{SAVING_START_MONTH_4}, 6)
+      , #{REMARK}
+      , #{S_USER_ID}
+      , GETDATE()
+      , #{S_USER_ID}
+      , GETDATE()
+    )
+
+</insert>
+
+<update id="hrt900ukrServiceImpl.updateDetail" parameterType="Map">    
+    --hrt900ukrServiceImpl.updateDetail
+    UPDATE HRT900T
+       SET DC_PAY_AMT            = #{DC_PAY_AMT}
+         , DC_PAY_DATE           = #{DC_PAY_DATE}
+         , ACCOUNT_CUSTOM_CODE_1 = #{ACCOUNT_CUSTOM_CODE_1}
+         , SAVING_START_MONTH_1  = LEFT(#{SAVING_START_MONTH_1}, 6)
+         , REMARK                = #{REMARK}
+     WHERE COMP_CODE   = #{S_COMP_CODE}
+       AND PERSON_NUMB = #{PERSON_NUMB}
+       AND ANN_KIND    = #{ANN_KIND}
+       AND SAVING_YEAR = #{SAVING_YEAR}
+        
+   </update> 
+
+<update id="hrt900ukrServiceImpl.deleteDetail" parameterType="Map">
+    --hrt900ukrServiceImpl.deleteDetail"
+    DELETE FROM HRT900T
+     WHERE COMP_CODE    = #{S_COMP_CODE}
+       AND PERSON_NUMB  = #{PERSON_NUMB}
+       AND ANN_KIND     = #{ANN_KIND}
+       AND SAVING_YEAR  = #{SAVING_YEAR}
+</update>	
+
+
+
+</mapper>

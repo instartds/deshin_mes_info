@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="agd121ukrServiceImpl">
+	<select id="agd121ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	--agd120ukr.Cagd120ukr[fnAgd120QStd] QUERY01
+	BEGIN
+	    SET NOCOUNT    ON
+	    SET ARITHABORT ON
+	
+	---- I. 준비 ---------------------------------------------------------------------------------------------------------------------- 
+	
+	    /*------------------------------------------------------------------------*/
+	    /* 1.1. (파라메터)변수 선언                                               */
+	    /*------------------------------------------------------------------------*/
+	    DECLARE @COMP_CODE              NVARCHAR(08)        --(필수) 법인코드
+	          , @FR_PUB_DATE            NVARCHAR(08)        --(필수) FROM 계산서일
+	          , @TO_PUB_DATE            NVARCHAR(08)        --(필수) TO   계산서일
+	          , @DIV_CODE               NVARCHAR(08)        --(선택) 사업장
+	          , @FR_CUSTOM_CODE         NVARCHAR(08)        --(선택) FROM 거래처코드
+	          , @TO_CUSTOM_CODE         NVARCHAR(08)        --(선택) TO   거래처코드
+	          , @ACCOUNT_TYPE           NVARCHAR(02)        --(선택) 매입유형
+	          , @ISSUE_EXPECTED_DATE    NVARCHAR(08)        --(필수) 지급예정일
+	          , @DATE_OPTION            NVARCHAR(01)        --(필수) 전표일 생성옵션
+	          , @PROC_DATE              NVARCHAR(08)        --(선택) 실행일
+	          , @INPUT_USER_ID          NVARCHAR(100)        --(필수) 로그인사용자ID
+	          , @INPUT_DATE             NVARCHAR(08)        --(필수) 시스템일자
+	          , @AP_STS                 NVARCHAR(01)        --(선택) 전표승인여부
+	          , @WORK                   NVARCHAR(04)        --(필수) 작업구분
+	          , @CHANGE_BASIS_NUM       NVARCHAR(20)        --(선택) 매입전표번호
+	          , @FR_INSERT_DATE         NVARCHAR(08)        --(선택) FROM 입력일
+	          , @TO_INSERT_DATE         NVARCHAR(08)        --(선택) TO   입력일
+	          , @INSERT_DB_USER         NVARCHAR(20)        --(선택) 입력자
+	          , @DEPT_CODE              NVARCHAR(20)        --(선택) 입력부서
+	
+	    /*------------------------------------------------------------------------*/
+	    /* 2.1. 변수값 정의                                                       */
+	    /*------------------------------------------------------------------------*/
+	    SET     @COMP_CODE              = #{S_COMP_CODE}
+	    SET     @FR_PUB_DATE            = #{PUB_DATE_FR}
+	    SET     @TO_PUB_DATE            = #{PUB_DATE_TO}
+	    SET     @DIV_CODE               = #{DIV_CODE}
+	    SET     @FR_CUSTOM_CODE         = #{CUSTOM_CODE_FR}
+	    SET     @TO_CUSTOM_CODE         = #{CUSTOM_CODE_TO}
+	    SET     @ACCOUNT_TYPE           = #{ACCOUNT_TYPE}
+	    SET     @ISSUE_EXPECTED_DATE    = #{ISSUE_EXPECTED_DATE}
+	    SET     @DATE_OPTION            = #{PUB_DATE}						--1:계산서일, 2:실행일
+	    SET     @PROC_DATE              = #{WORK_DATE}
+	    SET     @INPUT_USER_ID          = #{S_USER_ID}
+	    SET     @INPUT_DATE             = datename(yyyy, getdate())+datename(mm, getdate())+datename(dd, getdate());
+	    SET     @AP_STS                 = #{AP_STS}
+		<if test="WORK_DIVI == &quot;1&quot;"> 
+		    SET     @WORK               = 'PROC'		--Proc:자동기표, Canc:기표취소
+		</if>
+		<if test="WORK_DIVI == &quot;2&quot;"> 
+		    SET     @WORK               = 'CANC'		--Proc:자동기표, Canc:기표취소
+		</if>
+	    SET     @CHANGE_BASIS_NUM       = ''
+	    SET     @FR_INSERT_DATE         = #{INSERT_DATE_FR}
+	    SET     @TO_INSERT_DATE         = #{INSERT_DATE_TO}
+	    SET     @INSERT_DB_USER         = #{CHARGE_CODE}
+	    SET     @DEPT_CODE              = #{DEPT_CODE}
+	
+	    /*------------------------------------------------------------------------*/
+	    /* 3.1. 자동기표대상 데이터 조회                                          */
+	    /*------------------------------------------------------------------------*/
+	    SELECT  DISTINCT
+	            CONVERT(BIT, 0)                 AS CHOICE
+	         ,  @FR_PUB_DATE                    AS FR_PUB_DATE
+	         ,  @TO_PUB_DATE                    AS TO_PUB_DATE
+	         ,  @FR_CUSTOM_CODE                 AS FR_CUSTOM_CODE
+	         ,  @TO_CUSTOM_CODE                 AS TO_CUSTOM_CODE
+	         ,  @ACCOUNT_TYPE                   AS ACCOUNT_TYPE
+	         ,  @INPUT_USER_ID                  AS INPUT_USER_ID
+	         ,  @INPUT_DATE                     AS INPUT_DATE
+	    
+	         ,  A.COMP_CODE
+	         ,  A.DIV_CODE
+	         ,  A.CHANGE_BASIS_NUM
+	         ,  uniLITE.fnGetUserDateComp(A.COMP_CODE, A.BILL_DATE)             AS BILL_DATE
+	         ,  ISNULL(A.BILL_TYPE  , '')                                       AS PROOF_KIND
+	         ,  A.ACCOUNT_TYPE                                                  AS ACCOUNT_TYPE_VW
+	         ,  A.CUSTOM_CODE
+	         ,  ISNULL(B.CUSTOM_NAME, '')                                       AS CUSTOM_NAME
+	         ,  uniLITE.fnGetUserDateComp(A.COMP_CODE, A.ISSUE_EXPECTED_DATE)   AS ISSUE_EXPECTED_DATE
+	         ,  A.AMOUNT_I
+	         ,  A.VAT_AMOUNT_O
+	         ,  ISNULL(A.AMOUNT_I   , 0 ) + ISNULL(A.VAT_AMOUNT_O, 0)           AS AMOUNT_TOT_I
+	         ,  A.BILL_DIV_CODE
+	         ,  A.DEPT_CODE
+	         ,  A.DEPT_NAME
+	         ,  ISNULL((SELECT LEFT(ITEM_NAME, 20) 
+	                    FROM   BPR100T WITH (NOLOCK)
+	                    WHERE  COMP_CODE = A.COMP_CODE
+	                    AND    ITEM_CODE = (SELECT TOP 1 ITEM_CODE 
+	                                        FROM   MAP200T WITH (NOLOCK)
+	                                        WHERE  COMP_CODE        = A.COMP_CODE
+	                                        AND    CHANGE_BASIS_NUM = A.CHANGE_BASIS_NUM 
+	                                        AND    CUSTOM_CODE      = A.CUSTOM_CODE 
+	                                        AND    DIV_CODE         = A.DIV_CODE)), '') +
+				CASE WHEN M1.CUSTOM_PRSN_SEQ &lt; 0 THEN ''
+					 ELSE ' (' + (SELECT CUSTOM_PRSN
+								   FROM MAP200T M3
+								  WHERE M3.COMP_CODE        = A.COMP_CODE
+									AND M3.DIV_CODE         = A.DIV_CODE
+									AND M3.BILL_DIV_CODE    = A.BILL_DIV_CODE
+									AND M3.CUSTOM_CODE      = A.CUSTOM_CODE
+									AND M3.CHANGE_BASIS_NUM = A.CHANGE_BASIS_NUM
+									AND M3.CHANGE_BASIS_SEQ = M1.CUSTOM_PRSN_SEQ) + ')' END		AS REMARK
+	         ,  uniLITE.fnGetUserDateComp(A.COMP_CODE, A.EX_DATE)               AS EX_DATE
+	         ,  CASE WHEN A.EX_NUM = 0 THEN NULL ELSE A.EX_NUM END              AS EX_NUM
+	         ,  ISNULL(C.AP_STS     , '')                                       AS AP_STS
+	         ,  CONVERT(NVARCHAR, A.INSERT_DB_TIME, 120)                        AS INSERT_DB_TIME
+	    FROM           MAP100T  AS A  WITH (NOLOCK)
+	        LEFT  JOIN BCM100T  AS B  WITH (NOLOCK) ON  B.COMP_CODE         = A.COMP_CODE
+	                                                AND B.CUSTOM_CODE       = A.CUSTOM_CODE 
+ 	        LEFT  JOIN (SELECT COMP_CODE
+                             , EX_DATE
+                             , EX_NUM
+                             , AP_STS
+                          FROM AGJ110T WITH (NOLOCK)
+                         WHERE COMP_CODE  = @COMP_CODE
+                           AND INPUT_PATH = '40'
+                           AND (MOD_DIVI IS NULL OR MOD_DIVI = '')
+                         GROUP BY COMP_CODE, EX_DATE, EX_NUM, AP_STS) C ON C.COMP_CODE    = A.COMP_CODE
+			                                                           AND C.EX_DATE      = A.EX_DATE
+			                                                           AND C.EX_NUM       = A.EX_NUM
+	        LEFT  JOIN (-- MAP100T에 UPDATE_DB_USER에는 디폴드 UNILITE값이 들어가서 상세 페이지와 조인
+	                    SELECT
+	                           M1.COMP_CODE
+	                         , M1.DIV_CODE
+	                         , M1.BILL_DIV_CODE
+	                         , M1.CUSTOM_CODE
+	                         , M1.CHANGE_BASIS_NUM
+	                         , MAX(M2.UPDATE_DB_USER) AS UPDATE_DB_USER
+							 , MIN(CASE WHEN ISNULL(M2.CUSTOM_PRSN, '') != '' THEN M2.CHANGE_BASIS_SEQ ELSE -1 END)	AS CUSTOM_PRSN_SEQ
+	                    FROM              MAP100T AS M1 WITH(NOLOCK)
+	                           INNER JOIN MAP200T AS M2 WITH(NOLOCK) ON  M2.COMP_CODE        = M1.COMP_CODE
+	                                                                 AND M2.DIV_CODE         = M1.DIV_CODE
+	                                                                 AND M2.BILL_DIV_CODE    = M1.BILL_DIV_CODE
+	                                                                 AND M2.CUSTOM_CODE      = M1.CUSTOM_CODE
+	                                                                 AND M2.CHANGE_BASIS_NUM = M1.CHANGE_BASIS_NUM
+	                    WHERE  M1.COMP_CODE  = @COMP_CODE
+	                    AND    M1.BILL_DATE &gt;= @FR_PUB_DATE
+	                    AND    M1.BILL_DATE &lt;= @TO_PUB_DATE
+	                    GROUP BY M1.COMP_CODE, M1.DIV_CODE, M1.BILL_DIV_CODE, M1.CUSTOM_CODE, M1.CHANGE_BASIS_NUM
+	                   ) AS M1 ON  M1.COMP_CODE        = A.COMP_CODE
+	                           AND M1.DIV_CODE         = A.DIV_CODE
+	                           AND M1.BILL_DIV_CODE    = A.BILL_DIV_CODE
+	                           AND M1.CUSTOM_CODE      = A.CUSTOM_CODE
+	                           AND M1.CHANGE_BASIS_NUM = A.CHANGE_BASIS_NUM
+	        LEFT  JOIN BSA100T  AS M5 WITH (NOLOCK) ON  M5.COMP_CODE        = M1.COMP_CODE
+	                                                AND M5.MAIN_CODE        = 'A009'
+	                                                AND M5.REF_CODE1        = M1.UPDATE_DB_USER
+	        LEFT  JOIN BSA300T  AS M6 WITH (NOLOCK) ON  M6.COMP_CODE        = M5.COMP_CODE
+	                                                AND M6.USER_ID          = M5.REF_CODE1
+	    WHERE A.COMP_CODE               =       @COMP_CODE
+	    AND   A.BILL_DATE              &gt;=       @FR_PUB_DATE
+	    AND   A.BILL_DATE              &lt;=       @TO_PUB_DATE
+	    AND   ((ISNULL(A.EX_DATE , '')  =       ''                      AND
+	            ISNULL(A.EX_NUM  , 0 )  =       0                       AND
+	            ISNULL(A.AGREE_YN,'N') !=       'Y'                     AND @WORK = 'PROC')
+	    OR     (ISNULL(A.EX_DATE , '') !=       ''                      AND @WORK = 'CANC'))
+	    AND   ((C.AP_STS                =       @AP_STS                 AND @AP_STS           != '') OR (@AP_STS           = ''))
+	    AND   ((A.DIV_CODE              =       @DIV_CODE               AND @DIV_CODE         != '') OR (@DIV_CODE         = ''))
+	    AND   ((A.CUSTOM_CODE          &gt;=       @FR_CUSTOM_CODE         AND @FR_CUSTOM_CODE   != '') OR (@FR_CUSTOM_CODE   = ''))
+	    AND   ((A.CUSTOM_CODE          &lt;=       @TO_CUSTOM_CODE         AND @TO_CUSTOM_CODE   != '') OR (@TO_CUSTOM_CODE   = ''))
+	    AND   ((A.ACCOUNT_TYPE          =       @ACCOUNT_TYPE           AND @ACCOUNT_TYPE     != '') OR (@ACCOUNT_TYPE     = ''))
+	--    AND   ((A.CHANGE_BASIS_NUM   LIKE '%' + @CHANGE_BASIS_NUM + '%' AND @CHANGE_BASIS_NUM != '') OR (@CHANGE_BASIS_NUM = ''))
+	    AND   ((CONVERT(NVARCHAR(8), A.INSERT_DB_TIME,112) &gt;= @FR_INSERT_DATE AND @FR_INSERT_DATE != '') OR (@FR_INSERT_DATE = ''))
+	    AND   ((CONVERT(NVARCHAR(8), A.INSERT_DB_TIME,112) &lt;= @TO_INSERT_DATE AND @TO_INSERT_DATE != '') OR (@TO_INSERT_DATE = ''))
+	    AND   ((M5.SUB_CODE             =       @INSERT_DB_USER         AND @INSERT_DB_USER   != '') OR (@INSERT_DB_USER   = ''))
+	    AND   ((M6.DEPT_CODE            =       @DEPT_CODE              AND @DEPT_CODE        != '') OR (@DEPT_CODE        = ''))
+	
+	    SET NOCOUNT    OFF
+	    SET ARITHABORT OFF
+	END
+	</select>
+	
+	
+	
+	<insert id="agd121ukrServiceImpl.insertLogTable" parameterType="Map">     
+		INSERT L_AGD120T
+			(
+				  KEY_VALUE 
+				, COMP_CODE		
+				, DIV_CODE		
+				, BILL_DIV_CODE		
+				, CUSTOM_CODE		
+				, CHANGE_BASIS_NUM		
+				, INSERT_DB_USER
+				, INSERT_DB_TIME
+				, UPDATE_DB_USER
+				, UPDATE_DB_TIME
+			)
+			VALUES
+			(
+				  #{KEY_VALUE}
+				, #{S_COMP_CODE}
+				, #{DIV_CODE}
+				, #{BILL_DIV_CODE}
+				, #{CUSTOM_CODE}
+				, #{CHANGE_BASIS_NUM}		
+				, #{S_USER_ID}
+				, GETDATE()
+				, #{S_USER_ID}
+				, GETDATE()
+			)
+	</insert>
+	
+	
+	<update id="agd121ukrServiceImpl.runAutoSlip" parameterType="Map" statementType="CALLABLE">
+		{call uniLITE.USP_ACCNT_AutoSlip40 (
+			#{S_COMP_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DIV_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PUB_DATE_FR, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PUB_DATE_TO, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CUSTOM_CODE_FR, 	mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CUSTOM_CODE_TO, 	mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{BILL_TYPE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{EXPECTED_DATE,	mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PUB_DATE,			mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{WORK_DATE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_USER_ID, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{SYS_DATE,			mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CHANGE_BASIS_NUM,	mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{KEY_VALUE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{LANG_TYPE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CALL_PATH,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{EBYN_MESSAGE,		mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ERROR_DESC, 		mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String},
+			#{SLIP_KEY_VALUE, 	mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update> 
+	
+	<update id="agd121ukrServiceImpl.cancelSlip" parameterType="Map" statementType="CALLABLE">
+		{call uniLITE.USP_ACCNT_AutoSlip40Cancel (
+			#{S_COMP_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DIV_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PUB_DATE_FR, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PUB_DATE_TO, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CUSTOM_CODE_FR, 	mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CUSTOM_CODE_TO, 	mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{BILL_TYPE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{EXPECTED_DATE,	mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PUB_DATE,			mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{WORK_DATE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_USER_ID, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{SYS_DATE,			mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CHANGE_BASIS_NUM,	mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{KEY_VALUE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{LANG_TYPE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CALL_PATH,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{EBYN_MESSAGE,		mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ERROR_DESC, 		mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update>	
+</mapper>

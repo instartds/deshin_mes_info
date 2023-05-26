@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sfa250skrvServiceImpl">
+	<select id="sfa250skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+	
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+	
+		DECLARE @COMP_CODE     NVARCHAR(08)    /* 법인코드  */
+					 ,@DIV_CODE       NVARCHAR(08)             /* 사업장 */
+					 ,@SALE_DATE_FR   NVARCHAR(08)	  /* 매출일자(FROM) */      
+				     ,@SALE_DATE_TO   NVARCHAR(08)	  /* 매출일자(TO) */
+					 ,@GUBUN            NVARCHAR(01)	  /* 조회구분('1'-매입처별/'2'-품목별) */
+					 ,@CUSTOM_CODE  	NVARCHAR(08)	  /* 매입처코드 */
+					 ,@ITEM_CODE        NVARCHAR(20)	  /* 품목코드 */
+					 ,@AGENT_TYPE       NVARCHAR(01)	  /* 고객분 */
+					 ,@ITEM_LEVEL1      NVARCHAR(20)	  /* 품목분류-대 */
+					 ,@ITEM_LEVEL2      NVARCHAR(20)	  /* 품목분류-중 */
+					 ,@ITEM_LEVEL3      NVARCHAR(20)	  /* 품목분류-소 */
+	
+	     SET @COMP_CODE   		= #{S_COMP_CODE}
+	     SET @DIV_CODE			= #{DIV_CODE}             /* 사업장 */
+		 SET @SALE_DATE_FR 		= #{SALE_DATE_FR}
+		 SET @SALE_DATE_TO 		= #{SALE_DATE_TO}
+		 SET @GUBUN             = #{GUBUN}
+	     SET @CUSTOM_CODE  		= #{CUSTOM_CODE}
+		 SET @ITEM_CODE        	= #{ITEM_CODE}
+		 SET @AGENT_TYPE        = #{AGENT_TYPE}
+		 SET @ITEM_LEVEL1      	= #{ITEM_LEVEL1}
+	     SET @ITEM_LEVEL2      	= #{ITEM_LEVEL2}
+		 SET @ITEM_LEVEL3      	= #{ITEM_LEVEL3}
+	
+		/* 조회 */
+		SELECT
+	         (CASE WHEN @GUBUN = '1' THEN B.PURCHASE_CUSTOM_CODE ELSE '' END) AS CUSTOM_CODE   /* 매입처코드 */
+			,(CASE WHEN @GUBUN = '1' THEN MAX(E.CUSTOM_NAME) ELSE '' END)                 AS CUSTOM_NAME   /* 매입처명   */
+			,(CASE WHEN @GUBUN = '2' THEN B.ITEM_CODE ELSE '' END)                       AS ITEM_CODE /* 품목코드 */
+			,(CASE WHEN @GUBUN = '2' THEN MAX(C.ITEM_NAME) ELSE '' END)              AS ITEM_NAME /* 품목명 */
+			, E.AGENT_TYPE
+			, G.ITEM_P																	AS PUR_PRICE  /*매입가*/
+			, ISNULL(H.ITEM_P, 	C.SALE_BASIS_P)											AS SALE_PRICE /*판매가*/
+			, SUM(B.SALE_Q)                                                                                      AS SALE_Q					 /* 매출수량   */
+			, CASE WHEN B.TAX_TYPE = '1' THEN SUM(ROUND(ISNULL(B.PURCHASE_P,0)/1.1, 0) * B.SALE_Q)
+					                         ELSE SUM(ISNULL(B.PURCHASE_P,0) * B.SALE_Q)  END				AS SALE_COST     /* 판매원가*/
+			, CASE WHEN B.TAX_TYPE = '1' THEN SUM(ROUND(ISNULL(B.DISCOUNT_P,0)/1.1, 0) * B.SALE_Q)
+											 ELSE SUM(ISNULL(B.DISCOUNT_P,0) * B.SALE_Q)  END				AS SAVE_MONEY    /* 할인금액*/
+			, SUM(B.TAX_AMT_O)																				AS TAX_AMT_O				 /* 부가세     */
+			, SUM(B.SALE_AMT_O)																			AS SALES_AMT_O  /* 공급가액*/
+			, SUM(B.SALE_AMT_O + B.TAX_AMT_O)															AS SALE_AMT_O	 /* 매출합계*/
+			, SUM(B.SALE_AMT_O) - (CASE WHEN B.TAX_TYPE = '1' THEN SUM(ROUND(ISNULL(B.PURCHASE_P,0)/1.1, 0) * B.SALE_Q)
+					                         ELSE SUM(ISNULL(B.PURCHASE_P,0) * B.SALE_Q)  END) AS SALES_PROFIT  /* 매출이익*/
+
+			, CASE WHEN B.TAX_TYPE = '1' THEN  CASE WHEN SUM(B.SALE_AMT_O) = 0 THEN 0 
+             								   ELSE ROUND((SUM(ROUND(ISNULL(B.PURCHASE_P,0) * B.SALE_Q/1.1, 0))) * 100 / SUM(B.SALE_AMT_O), 1)
+              								   END             
+                   						 ELSE  CASE WHEN SUM(B.SALE_AMT_O) = 0 THEN 0 
+                							   ELSE ROUND((SUM(ISNULL(B.PURCHASE_P,0) * B.SALE_Q)) * 100 / SUM(B.SALE_AMT_O), 2) 
+              								   END  
+     		  END    AS COST_RATE     /* 원가율*/
+			  
+			                           
+	
+		FROM 	     SSA100T A WITH (NOLOCK)
+		INNER JOIN SSA110T B WITH (NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+											                  AND A.DIV_CODE     = B.DIV_CODE
+											                  AND A.BILL_NUM      = B.BILL_NUM
+		INNER JOIN BPR100T C WITH (NOLOCK) ON C.COMP_CODE = B.COMP_CODE
+											                  AND C.ITEM_CODE   = B.ITEM_CODE
+		LEFT  JOIN BTR100T D WITH (NOLOCK) ON B.COMP_CODE     = D.COMP_CODE
+						                  AND B.OUT_DIV_CODE = D.DIV_CODE
+						                  AND B.INOUT_NUM      = D.INOUT_NUM
+						                  AND B.INOUT_SEQ        = D.INOUT_SEQ
+		LEFT  JOIN BCM100T E WITH (NOLOCK) ON B.COMP_CODE     = E.COMP_CODE
+										  AND B.PURCHASE_CUSTOM_CODE = E.CUSTOM_CODE
+		INNER JOIN BSA210T F WITH (NOLOCK) ON A.COMP_CODE  = F.COMP_CODE
+						                  AND A.DIV_CODE   = F.TYPE_LEVEL
+						                  AND A.DEPT_CODE  = F.TREE_CODE      		 
+		LEFT OUTER JOIN BPR400T G WITH (NOLOCK) ON B.ITEM_CODE = G.ITEM_CODE				/* 매입가 */
+												AND B.PURCHASE_CUSTOM_CODE  = G.CUSTOM_CODE												   
+												AND (CASE WHEN @DIV_CODE = '' THEN '01' ELSE B.DIV_CODE END) = G.DIV_CODE
+												AND B.COMP_CODE = G.COMP_CODE 
+												AND G.TYPE = 1
+												AND G.APLY_START_DATE = (SELECT MAX(X.APLY_START_DATE)  AS APLY_START_DATE
+																							FROM BPR400T X WITH(NOLOCK)
+																							WHERE X.COMP_CODE      = G.COMP_CODE
+																							AND X.DIV_CODE         = G.DIV_CODE 
+																							AND X.ITEM_CODE        = G.ITEM_CODE
+																							AND X.CUSTOM_CODE      = G.CUSTOM_CODE   
+																							AND X.MONEY_UNIT       = G.MONEY_UNIT
+																							AND X.ORDER_UNIT       = G.ORDER_UNIT
+																							AND X.TYPE             = G.TYPE
+																							--AND X.APLY_START_DATE &gt;= A.SALE_DATE
+																							)	
+		LEFT OUTER JOIN BPR400T H WITH (NOLOCK) ON B.ITEM_CODE = H.ITEM_CODE				/* 판매가 */
+												AND B.PURCHASE_CUSTOM_CODE  = H.CUSTOM_CODE												   
+												AND H.DIV_CODE = '*'
+												AND B.COMP_CODE = H.COMP_CODE 
+												AND H.TYPE = 2
+												AND G.APLY_START_DATE = (SELECT MAX(X.APLY_START_DATE)  AS APLY_START_DATE
+																							FROM BPR400T X WITH(NOLOCK)
+																							WHERE X.COMP_CODE      = G.COMP_CODE
+																							AND X.DIV_CODE         = G.DIV_CODE 
+																							AND X.ITEM_CODE        = G.ITEM_CODE
+																							AND X.CUSTOM_CODE      = G.CUSTOM_CODE   
+																							AND X.MONEY_UNIT       = G.MONEY_UNIT
+																							AND X.ORDER_UNIT       = G.ORDER_UNIT
+																							AND X.TYPE             = G.TYPE
+																							--AND X.APLY_START_DATE &gt;= A.SALE_DATE
+																							)	
+		WHERE A.COMP_CODE =@COMP_CODE
+		   AND A.DIV_CODE = #{DIV_CODE}
+		   AND A.SALE_DATE &gt;= @SALE_DATE_FR
+		   AND A.SALE_DATE &lt;= @SALE_DATE_TO
+		   <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+		   AND B.PURCHASE_CUSTOM_CODE = #{CUSTOM_CODE}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		   AND B.ITEM_CODE = #{ITEM_CODE}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+		   AND E.AGENT_TYPE = #{AGENT_TYPE}
+		   </if>
+	       <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">     
+		   AND F.TREE_LEVEL  LIKE (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =F.COMP_CODE AND TYPE_LEVEL=F.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)">
+			AND C.ITEM_LEVEL1 = #{ITEM_LEVEL1}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL2)">
+			AND C.ITEM_LEVEL2 = #{ITEM_LEVEL2}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL3)">
+			AND C.ITEM_LEVEL3 = #{ITEM_LEVEL3}
+		   </if>
+	
+		GROUP BY (CASE WHEN @GUBUN = '1' THEN B.PURCHASE_CUSTOM_CODE ELSE '' END)
+		               ,(CASE WHEN @GUBUN = '2' THEN B.ITEM_CODE ELSE '' END)  , B.TAX_TYPE , E.AGENT_TYPE
+		               , G.ITEM_P, ISNULL(H.ITEM_P, C.SALE_BASIS_P)
+		HAVING SUM(B.SALE_AMT_O + B.TAX_AMT_O) != 0               
+	    ORDER BY (CASE WHEN @GUBUN = '1' THEN 1 ELSE 3  END)
+	
+SET @END_TIME   = GETDATE()
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'sfa250skrv', '매입처별 판매현황 조회', @SALE_DATE_FR, @SALE_DATE_TO, @DIFF_TIME
+	
+		SET NOCOUNT OFF
+		SET ARITHABORT OFF
+	
+	END 
+	</select>	
+</mapper>

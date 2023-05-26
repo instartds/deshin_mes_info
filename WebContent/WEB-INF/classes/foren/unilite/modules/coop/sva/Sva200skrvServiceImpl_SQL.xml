@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sva200skrvServiceImpl">
+			 		
+	<select id="sva200skrvServiceImpl.gridUp" parameterType="Map" resultType="rMap">
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+    DECLARE @CompCode       NVARCHAR(08) /* 법인코드    */
+
+    SET @CompCode = #{S_COMP_CODE}
+
+ SELECT   A.COMP_CODE
+		, A.DIV_CODE
+		, A.INOUT_DATE
+		, A.POS_NO
+		, C.POS_NAME
+		, C.LOCATION
+		, ISNULL(SALE_O, 0)								AS SALE_O
+		, ISNULL(B.COLLECT_AMT, 0)						AS SALE_AMT_O
+		, ISNULL(B.COLLECT_AMT, 0) - ISNULL(SALE_O, 0) 	AS OVER_SHORTAGE
+		, A.CONFIRM
+	  --, A.CONFIRM_USER_ID
+  		, D.USER_NAME AS CONFIRM_USER_ID
+	FROM (
+		 SELECT COMP_CODE, DIV_CODE, POS_NO, INOUT_DATE, SUM(SALE_O) AS SALE_O, MAX(CONFIRM) AS CONFIRM, MAX(CONFIRM_USER_ID) AS CONFIRM_USER_ID
+		   FROM SVA200T WITH(NOLOCK) 			
+		  GROUP BY COMP_CODE, DIV_CODE, POS_NO, INOUT_DATE
+		) A 
+		LEFT JOIN SCO100T B	WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+							AND A.DIV_CODE	= B.DIV_CODE
+						
+							AND A.INOUT_DATE = B.COLLECT_DATE
+							AND A.POS_NO	= B.POS_NO -- 수정
+		LEFT JOIN BSA240T C WITH(NOLOCK) ON	A.COMP_CODE = C.COMP_CODE
+										AND A.DIV_CODE  = C.DIV_CODE
+										AND A.POS_NO	= C.POS_NO
+		LEFT OUTER JOIN BSA300T D WITH (NOLOCK) ON A.CONFIRM_USER_ID = D.USER_ID
+           								AND A.COMP_CODE    = D.COMP_CODE					
+  WHERE A.COMP_CODE = @CompCode
+    AND A.DIV_CODE  = #{DIV_CODE}
+    AND A.INOUT_DATE = #{SALE_DATE}    
+<if test="@foren.Ognl@isNotEmpty(POS_CODE)">					
+    AND A.POS_NO IN
+		<foreach collection="POS_CODE" item="item" separator="," close=")" open="(">
+          		 #{item}
+    	</foreach>									
+</if>
+
+ 
+    SET NOCOUNT OFF
+    SET ARITHABORT OFF
+END 
+    </select>
+
+<select id="sva200skrvServiceImpl.gridDown" parameterType="Map" resultType="rMap">
+	
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+    DECLARE @CompCode       NVARCHAR(08) /* 법인코드    */
+
+    SET @CompCode = #{S_COMP_CODE}
+
+	SELECT 
+	  A.COLUMN_NO
+	, A.ITEM_CODE
+	, C.ITEM_NAME
+	, B.INOUT_NUM
+	, ISNULL(B.BEFORE_CNT,A.BEFORE_CNT) AS BEFORE_CNT
+	, B.AFTER_CNT
+	, B.SALE_Q
+	, B.SALE_P
+	, B.SALE_O
+	FROM SVA100T A WITH (NOLOCK)
+	LEFT OUTER JOIN (
+			SELECT COMP_CODE, DIV_CODE, POS_NO, COLUMN_NO, SUM(SALE_Q) AS SALE_Q, SALE_P
+						, SUM(SALE_O) AS SALE_O, SUM(AFTER_CNT) AS AFTER_CNT, SUM(BEFORE_CNT) AS BEFORE_CNT, MAX(INOUT_NUM) AS INOUT_NUM
+						FROM SVA200T WITH (NOLOCK)
+						WHERE 
+							INOUT_DATE = #{SALE_DATE} 
+						GROUP BY COMP_CODE, DIV_CODE, POS_NO, COLUMN_NO, SALE_P
+					) B ON	A.COMP_CODE = B.COMP_CODE
+						AND A.DIV_CODE	= B.DIV_CODE
+						AND A.POS_NO	= B.POS_NO
+						AND A.COLUMN_NO	= B.COLUMN_NO
+	INNER JOIN unilite.BPR200T C WITH (NOLOCK) ON	A.COMP_CODE =	C.COMP_CODE
+												AND	A.DIV_CODE	=	C.DIV_CODE
+												AND A.ITEM_CODE	=	C.ITEM_CODE
+
+WHERE A.COMP_CODE = @CompCode
+			AND A.DIV_CODE = #{DIV_CODE}
+			AND A.POS_NO = #{GRID_CUSTOM_CODE}
+
+	SET NOCOUNT OFF
+	SET ARITHABORT OFF
+END
+
+</select>
+
+<select id="sva200skrvServiceImpl.billDateCheck" parameterType="Map" resultType="rMap">
+	SELECT TOP 1 1 
+	  FROM SSA300T
+	 WHERE DIV_CODE = #{DIV_CODE}
+	 AND   BILL_DATE = #{SALE_DATE}
+	</select>
+
+<update id="sva200skrvServiceImpl.setConfirm" parameterType="Map" statementType="CALLABLE">
+		 EXEC SP_VendingConfirm #{COMP_CODE}, #{DIV_CODE}, #{INOUT_DATE}, #{POS_NO}, #{USER_ID}, #{ErrorDesc}
+	</update>
+</mapper>

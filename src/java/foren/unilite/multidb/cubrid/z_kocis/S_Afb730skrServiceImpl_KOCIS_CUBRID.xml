@@ -1,0 +1,381 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_afb730skrServiceImpl_KOCIS">
+	
+	
+<select id="s_afb730skrServiceImpl_KOCIS.selectCheck" parameterType="Map" resultType="rMap">		
+	--afb730skr.Cafb730skr[fnAfb730QStd] QUERY01
+SELECT CASE WHEN ISNULL(B.DEPT_CODE, '') = '' THEN ISNULL(E.BUDG_TREE_CODE, A.DEPT_CODE)
+            ELSE ISNULL(F.BUDG_TREE_CODE, B.DEPT_CODE)
+       END                          AS DEPT_CODE
+     , M1.REF_CODE2                 AS CHARGE_GUBUN      --현업부서구분(1:회계부서, 2:현업부서)
+     , ISNULL(M2.REF_CODE1, 'Y')    AS ACCDEPT_GUBUN     --예산현황_실적부서 구분여부
+     , ISNULL(M3.REF_CODE1, 'N')    AS ACCDEPT_USEYN     --예산현황_사용예산코드만 조회
+  FROM            BSA300T AS A  WITH (NOLOCK)
+       LEFT  JOIN HUM100T AS B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+                                             AND B.PERSON_NUMB  = A.PERSON_NUMB
+       LEFT  JOIN BSA210T AS E  WITH (NOLOCK) ON E.COMP_CODE    = A.COMP_CODE
+                                             AND E.TREE_CODE    = A.DEPT_CODE
+       LEFT  JOIN BSA210T AS F  WITH (NOLOCK) ON F.COMP_CODE    = B.COMP_CODE
+                                             AND F.TREE_CODE    = B.DEPT_CODE
+       LEFT  JOIN BSA100T AS M1 WITH (NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE
+                                             AND M1.MAIN_CODE   = N'A009'
+                                             AND M1.REF_CODE1   = A.USER_ID
+       LEFT  JOIN BSA100T AS M2 WITH (NOLOCK) ON M2.COMP_CODE   = A.COMP_CODE
+                                             AND M2.MAIN_CODE   = N'A169'
+                                             AND M2.SUB_CODE    = N'60'
+       LEFT  JOIN BSA100T AS M3 WITH (NOLOCK) ON M3.COMP_CODE   = A.COMP_CODE
+                                             AND M3.MAIN_CODE   = N'A169'
+                                             AND M3.SUB_CODE    = N'61'
+ WHERE A.COMP_CODE = #{S_COMP_CODE}
+   AND A.USER_ID   = #{S_USER_ID}
+</select>	
+	
+	
+<select id="s_afb730skrServiceImpl_KOCIS.selectList" parameterType="Map" resultType="rMap">	
+	--afb730skr.Cafb730skr[fnAfb730QStd] Query02
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+    DECLARE         @COMP_CODE           NVARCHAR(08)   --법인코드
+                  , @FR_DATE             NVARCHAR(08)   --시작일
+                  , @TO_DATE             NVARCHAR(08)   --종료일
+                  , @DIV_CODE            NVARCHAR(08)   --사업장 
+                  , @PJT_CODE            NVARCHAR(08)   --프로젝트코드
+                  , @PJT_NAME            NVARCHAR(30)   --프로젝트명
+                  , @BUDG_CODE           NVARCHAR(30)   --예산코드
+                  , @FR_DEPT_CODE        NVARCHAR(08)   --시작부서
+                  , @TO_DEPT_CODE        NVARCHAR(08)   --종료부서
+                  , @USER_ID             NVARCHAR(20)   --USER ID
+
+/* --   변수 값 할당  --------------------------------------------------------------------------------------------------- */
+    SET @COMP_CODE          = #{S_COMP_CODE}
+    SET @FR_DATE            = #{FR_DATE}
+    SET @TO_DATE            = #{TO_DATE}
+    SET @PJT_CODE           = #{AC_PROJECT_CODE}
+    SET @PJT_NAME           = #{AC_PROJECT_NAME}
+    SET @BUDG_CODE          = #{BUDG_CODE}
+    SET @USER_ID            = #{S_USER_ID}
+
+/* --   초기화  -------------------------------------------------------------------------------------------------------- */
+    IF ( @FR_DATE = '*' OR @FR_DATE IS NULL )
+    BEGIN
+        SELECT  TOP 0
+                CONVERT(NVARCHAR(01)  , '')             AS TYPE_FLAG
+              , CONVERT(BIGINT, 0)                      AS SEQ
+              , CONVERT(NVARCHAR(30)  , '')             AS BUDG_CODE
+              , CONVERT(NVARCHAR(10)  , '')             AS TRANS_DATE
+              , CONVERT(NVARCHAR(10)  , '')             AS DRAFT_DATE
+              , CONVERT(NVARCHAR(200) , '')             AS DRAFT_TITLE
+              , CONVERT(NVARCHAR(100) , '')             AS CUSTOM_NAME
+              , CONVERT(NUMERIC(30, 6), 0 )             AS BUDG_CONF_I
+              , CONVERT(NUMERIC(30, 6), 0 )             AS DRAFT_AMT
+              , CONVERT(NUMERIC(30, 6), 0 )             AS DRAFT_REMIND_AMT
+              , CONVERT(NUMERIC(30, 6), 0 )             AS TRANS_AMT
+              , CONVERT(NUMERIC(30, 6), 0 )             AS NON_PAY_AMT
+              , CONVERT(NUMERIC(30, 6), 0 )             AS BUDG_BALN_I
+              , CONVERT(NVARCHAR(50)  , '')             AS REMARK
+        RETURN
+    END
+
+/* --   날짜 포맷 유형 설정  ------------------------------------------------------------------------------------------- */
+    DECLARE         @DateFormat         NVARCHAR(10)
+
+    SELECT  TOP 1 @DateFormat = CODE_NAME
+    FROM    BSA100T WITH (NOLOCK)
+    WHERE   COMP_CODE   = @COMP_CODE
+    AND     MAIN_CODE   = 'B044'
+    AND     REF_CODE1   = 'Y'
+
+    SET @DateFormat = ISNULL(@DateFormat, 'YYYY/MM/DD')
+
+
+/* --  년간예산 금액 참조하기  ------------------------------------------------------------------------------------------------- */
+    DECLARE @AFB510T TABLE  ( BUDG_CODE     NVARCHAR(30) 
+                            , BUDG_CONF_I   NUMERIC(30,6)
+                            )
+
+    INSERT INTO @AFB510T
+    SELECT  BUDG_CODE                  AS BUDG_CODE
+          , SUM(ISNULL(BUDG_CONF_I,0)) AS BUDG_CONF_I
+    FROM    AFB510T WITH (NOLOCK)
+    WHERE   COMP_CODE            = @COMP_CODE
+    AND     LEFT(BUDG_YYYYMM, 4) = uniLITE.fnGetBudgAcYyyy(COMP_CODE, @FR_DATE)
+    AND   ((BUDG_CODE LIKE @BUDG_CODE + '%'   AND @BUDG_CODE    != '')  OR (@BUDG_CODE   = ''))
+    GROUP BY BUDG_CODE
+
+/* --   예산현황_사용예산코드만 조회(A169)  -------------------------------------------------------------------------------------------------- */
+    DECLARE         @USE_BUDGYN         NVARCHAR(01)
+
+    SELECT  @USE_BUDGYN = ISNULL(REF_CODE1, 'N')
+    FROM    BSA100T WITH (NOLOCK)
+    WHERE   COMP_CODE   = @COMP_CODE
+    AND     MAIN_CODE   = N'A169'
+    AND     SUB_CODE    = N'61'
+
+/* --   사용자ID의 부서코드와 현업담당자여부(A009)  -------------------------------------------------------------------------------------------------- */
+    DECLARE         @USER_DEPT_CODE     NVARCHAR(08)
+                  , @CHARGE_GUBUN       NVARCHAR(01)
+
+    SELECT  @USER_DEPT_CODE = ISNULL(C.BUDG_TREE_CODE, A.DEPT_CODE)
+          , @CHARGE_GUBUN   = ISNULL(B.REF_CODE2, '2')
+    FROM               BSA300T A WITH (NOLOCK)
+            LEFT  JOIN BSA100T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                              AND B.MAIN_CODE = N'A009'
+                                              AND B.REF_CODE1 = A.USER_ID
+            LEFT  JOIN BSA210T C WITH (NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+                                              AND C.TREE_CODE = A.DEPT_CODE
+    WHERE   A.COMP_CODE  = @COMP_CODE
+    AND     A.USER_ID    = @USER_ID
+
+/* --   임시 테이블 처리  ---------------------------------------------------------------------------------------------- */
+    DECLARE     @TypeKey                NVARCHAR(20)
+
+    SET @TypeKey  = REPLACE(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(30), GETDATE(), 121), '-', ''), ':', ''), '.', ''), ' ', '')
+
+    IF NOT EXISTS   (
+                    SELECT TOP 1 1
+                    FROM   T_AFB730SKR1 WITH (NOLOCK)
+                    WHERE  TYPE_KEY LIKE LEFT(@TypeKey, 8) + '%'
+                    )
+    BEGIN
+        TRUNCATE TABLE T_AFB730SKR1
+    END
+
+/* --   1. 지출예산INSERT  --------------------------------------------------------------------------------------------- */
+    INSERT  INTO T_AFB730SKR1 ( TYPE_KEY, TYPE_FLAG, SEQ, BUDG_CODE, DRAFT_NO, DRAFT_TITLE, CUSTOM_NAME, BUDG_CONF_I
+                              , DRAFT_DATE, DRAFT_AMT, DRAFT_REMIND_AMT, PAY_DRAFT_NO, PAY_AMT
+                              , TRANS_SEQ, TRANS_DATE, TRANS_JOIN_DATE, TRANS_AMT, NON_PAY_AMT, BUDG_BALN_I )
+    SELECT  
+            @TypeKey, '0'
+          , ROW_NUMBER() OVER (ORDER BY T1.TRANS_DATE, T1.DRAFT_DATE, T1.DRAFT_NO)                  AS SEQ
+          , T1.BUDG_CODE                                                                            AS BUDG_CODE
+        --  기안정보
+          , T1.DRAFT_NO                                                                             AS DRAFT_NO
+          , T1.DRAFT_TITLE                                                                          AS DRAFT_TITLE
+          , T1.CUSTOM_NAME                                                                          AS CUSTOM_NAME
+          , 0                                                                                       AS BUDG_CONF_I
+          , REPLACE(
+            REPLACE(
+            REPLACE(@DateFormat, 'YYYY', SUBSTRING(T1.DRAFT_DATE, 1, 4))
+                               , 'MM'  , SUBSTRING(T1.DRAFT_DATE, 5, 2))
+                               , 'DD'  , SUBSTRING(T1.DRAFT_DATE, 7, 2))                            AS DRAFT_DATE
+          , T1.DRAFT_AMT                                                                            AS DRAFT_AMT
+          , 0                                                                                       AS DRAFT_REMIND_AMT
+        --  지출결의정보
+          , T1.PAY_DRAFT_NO                                                                         AS PAY_DRAFT_NO
+          , T1.PAY_AMT                                                                              AS PAY_AMT
+        --  이체정보
+          , T1.TRANS_SEQ                                                                            AS TRANS_SEQ
+          , REPLACE(
+            REPLACE(
+            REPLACE(@DateFormat, 'YYYY', SUBSTRING(T1.TRANS_DATE, 1, 4))
+                               , 'MM'  , SUBSTRING(T1.TRANS_DATE, 5, 2))
+                               , 'DD'  , SUBSTRING(T1.TRANS_DATE, 7, 2))                            AS TRANS_DATE
+          , T1.TRANS_DATE                                                                           AS TRANS_JOIN_DATE
+          , T1.TRANS_AMT                                                                            AS TRANS_AMT
+          , ISNULL(T1.PAY_AMT, 0) - ISNULL(T1.TRANS_AMT, 0)                                         AS NON_PAY_AMT
+          , 0                                                                                       AS BUDG_BALN_I
+    FROM                (
+                        SELECT
+                            --  기안정보
+                                A.COMP_CODE
+                              , A.DRAFT_NO
+                              , A.TITLE                             AS DRAFT_TITLE
+                              , A.DRAFT_DATE
+                              , A.DEPT_CODE
+                              , B.DRAFT_SEQ
+                              , B.BUDG_CODE
+                              , B.PJT_CODE
+                              , MAX(B.BUDG_AMT)                     AS DRAFT_AMT
+                            --  지출결의정보
+                              , D.PAY_DRAFT_NO
+                              , SUM(ISNULL(D.PAY_AMT, 0))           AS PAY_AMT
+                              , MAX(ISNULL(D.CUSTOM_NAME, ''))      AS CUSTOM_NAME
+                            --  이체정보
+                              , E.TRANS_SEQ
+                              , E.TRANS_DATE
+                              , SUM(ISNULL(E.TOT_AMT_I, 0))         AS TRANS_AMT
+                        FROM                AFB600T   A  WITH (NOLOCK)
+                                INNER JOIN  AFB610T   B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                                      AND B.DRAFT_NO    = A.DRAFT_NO
+                          
+                                   
+                               <if test="lAccDeptUse == &quot;Y&quot; and lChargeGubun == &quot;2&quot;">            
+                                
+						       INNER JOIN (SELECT COMP_CODE"
+								                 , BUDG_CODE"
+								            FROM   AFB410T WITH (NOLOCK)"
+								            WHERE  COMP_CODE = @COMP_CODE"
+								            AND    AC_YYYY   = LEFT(@FR_DATE, 4)"
+								            AND    USE_YN    = 'Y'"
+								            AND    DEPT_CODE = #{lDeptCode}
+								           )           B1               ON B1.COMP_CODE = B.COMP_CODE"
+								                                       AND B1.BUDG_CODE = B.BUDG_CODE"
+						       
+                               </if>                   
+                                           
+                                           
+                                                                      
+                                           
+                                LEFT  JOIN  BSA210T   C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE
+                                                                      AND C2.TREE_CODE  = A.DEPT_CODE
+                                LEFT  JOIN  BCM600T   C3 WITH (NOLOCK) ON C3.COMP_CODE  = B.COMP_CODE
+                                                                      AND C3.PJT_CODE   = B.PJT_CODE
+                                LEFT  JOIN  (
+                                            SELECT  X.COMP_CODE , X.PAY_DRAFT_NO    , X.SLIP_DATE
+                                                  , X.TITLE         PAY_TITLE
+                                                  , Y.SEQ           PAY_DRAFT_SEQ
+                                                  , Y.TOT_AMT_I     PAY_AMT
+                                                  , Y.BUDG_CODE , Y.PJT_CODE
+                                                  , Y.DRAFT_NO  , Y.DRAFT_SEQ
+                                                  , ISNULL(M2.CUSTOM_NAME, Y.CUSTOM_NAME) AS CUSTOM_NAME
+                                            FROM                AFB700T   X  WITH (NOLOCK)
+                                                    INNER JOIN  AFB710T   Y  WITH (NOLOCK) ON Y.COMP_CODE       = X.COMP_CODE
+                                                                                          AND Y.PAY_DRAFT_NO    = X.PAY_DRAFT_NO
+                                                    LEFT  JOIN  BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE      = X.COMP_CODE
+                                                                                          AND M1.MAIN_CODE      = 'S091'
+                                                                                          AND M1.SUB_CODE       = X.COMP_CODE
+                                                    LEFT  JOIN  BCM100T   M2 WITH (NOLOCK) ON M2.COMP_CODE      = Y.COMP_CODE
+                                                                                          AND M2.CUSTOM_CODE    = Y.CUSTOM_CODE
+                                                                                          AND M2.CUSTOM_TYPE   != '4'
+                                                    LEFT  JOIN T_GWIF     Z  WITH (NOLOCK) ON Z.GWIF_ID         = M1.REF_CODE1 + '1' + X.PAY_DRAFT_NO
+                                            WHERE   X.COMP_CODE                      = @COMP_CODE
+                                            AND     ISNULL(Z.GW_STATUS, X.STATUS)   &gt;= '0'  --미상신
+                                            AND     ISNULL(Z.GW_STATUS, X.STATUS)   != '5'  --반려
+                                            )         D                ON D.COMP_CODE       = B.COMP_CODE
+                                                                      AND D.DRAFT_NO        = B.DRAFT_NO
+                                                                      AND D.DRAFT_SEQ       = B.DRAFT_SEQ
+                                INNER JOIN  AFB900T   E  WITH (NOLOCK) ON E.COMP_CODE       = D.COMP_CODE
+                                                                      AND E.PROV_DRAFT_NO   = D.PAY_DRAFT_NO
+                                                                      AND E.PROV_DRAFT_SEQ  = D.PAY_DRAFT_SEQ
+                        WHERE   A.COMP_CODE        =        @COMP_CODE
+                        AND     E.TRANS_DATE      &gt;=        @FR_DATE
+                        AND     E.TRANS_DATE      &lt;=        @TO_DATE
+                        
+                        
+                        <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+					   		AND     A.DIV_CODE IN 
+							<foreach collection="DIV_CODE" item="item" separator="," close=")" open="(">
+								#{item}
+							</foreach>
+					   </if>
+                        
+                        
+                        AND   ((B.PJT_CODE         =        @PJT_CODE           AND @PJT_CODE     != '')  OR (@PJT_CODE     = ''))
+                        AND   ((C3.PJT_NAME     LIKE '%' +  @PJT_NAME  + '%'    AND @PJT_NAME     != '')  OR (@PJT_NAME     = ''))
+                        AND   ((B.BUDG_CODE     LIKE        @BUDG_CODE + '%'    AND @BUDG_CODE    != '')  OR (@BUDG_CODE    = ''))
+                        
+                        <if test="@foren.Ognl@isNotEmpty(DEPTS)">
+					   		AND  A.DEPT_CODE	 IN
+							<foreach collection="DEPTS" item="item" separator="," close=")" open="(">
+								#{item}
+							</foreach>
+						</if>
+                        
+                        GROUP   BY  A.COMP_CODE, A.DRAFT_NO, A.TITLE, A.DRAFT_DATE, A.DEPT_CODE, B.DRAFT_SEQ, B.BUDG_CODE
+                                  , B.PJT_CODE, E.TRANS_SEQ, E.TRANS_DATE, PAY_DRAFT_NO, PAY_AMT
+                        )         T1
+
+/* --   2. 월누적 예산금액 INSERT  --------------------------------------------------------------------------------------------- */
+    UPDATE  A
+    SET     A.BUDG_CONF_I       = B.BUDG_CONF_I + C.BUDG_CONF_I
+          , A.DRAFT_REMIND_AMT  = B.BUDG_CONF_I + C.BUDG_CONF_I - A.DRAFT_AMT
+          , A.BUDG_BALN_I       = B.BUDG_CONF_I + C.BUDG_CONF_I - A.TRANS_AMT
+    FROM                T_AFB730SKR1   A  WITH (NOLOCK)
+            LEFT  JOIN  @AFB510T       B   ON B.BUDG_CODE = A.BUDG_CODE
+            LEFT  JOIN  (
+                        SELECT  A.BUDG_CODE, B.TRANS_SEQ, B.SEQ
+                              , SUM(ISNULL(A.BUDG_CONV_I, 0) + ISNULL(A.BUDG_ASGN_I, 0) + ISNULL(A.BUDG_SUPP_I, 0) + ISNULL(A.BUDG_IWALL_I, 0))  AS BUDG_CONF_I
+                        FROM                   AFB510T A  WITH (NOLOCK)
+                                LEFT JOIN T_AFB730SKR1 B  WITH (NOLOCK) ON A.COMP_CODE = @COMP_CODE
+                                                                       AND B.BUDG_CODE = A.BUDG_CODE
+                        WHERE   A.COMP_CODE      =        @COMP_CODE
+                        AND     B.TYPE_KEY       =        @TypeKey
+                        AND     B.TYPE_FLAG      =        '0'
+                        AND     A.BUDG_YYYYMM   &gt;=        LEFT(@FR_DATE, 4)
+                        AND     A.BUDG_YYYYMM   &lt;=        LEFT(B.TRANS_JOIN_DATE, 6)
+                        AND   ((A.BUDG_CODE     LIKE      @BUDG_CODE + '%'    AND @BUDG_CODE    != '')  OR (@BUDG_CODE    = ''))
+                        
+                        
+                        <if test="@foren.Ognl@isNotEmpty(DEPTS)">
+					   		AND  A.DEPT_CODE	 IN
+							<foreach collection="DEPTS" item="item" separator="," close=")" open="(">
+								#{item}
+							</foreach>
+						</if>
+                        
+                        
+                        
+                        GROUP BY A.BUDG_CODE, B.TRANS_SEQ, B.SEQ
+                        )              C  ON C.TRANS_SEQ = A.TRANS_SEQ
+                                         AND C.SEQ       = A.SEQ
+                                         AND C.BUDG_CODE = A.BUDG_CODE
+    WHERE   A.TYPE_KEY  = @TypeKey
+    AND     A.TYPE_FLAG = '0'
+
+/* --   합계행 추가  --------------------------------------------------------------------------------------------------- */
+    -- 연간예산금액, 예산잔액
+    INSERT  INTO T_AFB730SKR1 ( TYPE_KEY, TYPE_FLAG, TRANS_DATE, BUDG_CONF_I, BUDG_BALN_I )
+    SELECT  TYPE_KEY, 'S', uniLITE.fnGetTxtLang('KOREAN', 'A0149'), BUDG_CONF_I, BUDG_BALN_I
+    FROM    (
+            SELECT  TOP 1 TYPE_KEY, TRANS_DATE, 0 AS BUDG_CONF_I, 0 AS BUDG_BALN_I
+            FROM    T_AFB730SKR1  WITH (NOLOCK)
+            WHERE   TYPE_KEY    = @TypeKey
+            AND     TYPE_FLAG   = '0'
+            ORDER BY SEQ DESC
+            ) T
+
+    -- 기안(추산)금액, 이체금액, 미지급액
+    UPDATE  A
+    SET     A.DRAFT_AMT         = B.DRAFT_AMT
+          , A.TRANS_AMT         = C.TRANS_AMT
+          , A.NON_PAY_AMT       = C.NON_PAY_AMT
+    FROM                T_AFB730SKR1   A  WITH (NOLOCK)
+            LEFT  JOIN  (-- 기안(추산)금액
+                        SELECT  TYPE_KEY, SUM(DRAFT_AMT) DRAFT_AMT
+                        FROM    (
+                                SELECT  DISTINCT TYPE_KEY, BUDG_CODE, DRAFT_NO, DRAFT_AMT, DRAFT_REMIND_AMT
+                                FROM    T_AFB730SKR1  WITH (NOLOCK)
+                                WHERE   TYPE_KEY    = @TypeKey
+                                AND     TYPE_FLAG   = '0'
+                                ) B1
+                        GROUP   BY B1.TYPE_KEY
+                        )              B  ON B.TYPE_KEY = A.TYPE_KEY
+            LEFT  JOIN  (-- 이체금액, 미지급액
+                        SELECT  TYPE_KEY, SUM(TRANS_AMT) TRANS_AMT, SUM(NON_PAY_AMT) NON_PAY_AMT
+                        FROM    T_AFB730SKR1  WITH (NOLOCK)
+                        WHERE   TYPE_KEY    = @TypeKey
+                        AND     TYPE_FLAG   = '0'
+                        GROUP   BY TYPE_KEY
+                        )              C  ON C.TYPE_KEY = A.TYPE_KEY
+    WHERE   A.TYPE_KEY  = @TypeKey
+    AND     A.TYPE_FLAG = 'S'
+
+    -- 추산잔액, 예산잔액
+
+/* --   데이터 조회  --------------------------------------------------------------------------------------------------- */
+    SELECT  TYPE_FLAG
+          , SEQ
+          , BUDG_CODE
+          , TRANS_DATE
+          , DRAFT_DATE
+          , DRAFT_TITLE
+          , CUSTOM_NAME
+          , BUDG_CONF_I
+          , DRAFT_AMT
+          , DRAFT_REMIND_AMT
+          , TRANS_AMT
+          , NON_PAY_AMT
+          , BUDG_BALN_I
+          , CONVERT(NVARCHAR(50),'') AS REMARK
+    FROM    T_AFB730SKR1  WITH (NOLOCK)
+    WHERE   TYPE_KEY    = @TypeKey
+    ORDER   BY TYPE_FLAG, SEQ
+
+    SET NOCOUNT OFF
+    SET ARITHABORT OFF
+END
+</select>
+</mapper>

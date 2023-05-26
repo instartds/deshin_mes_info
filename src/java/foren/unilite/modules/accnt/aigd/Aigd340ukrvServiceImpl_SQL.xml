@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="aigd340ukrvServiceImpl">
+    
+    <select id="aigd340ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+        --aigd340ukrv.Caigd340ukr[fnAigd340QStd] Query1
+        BEGIN
+            /*------------------------------------------------------------------------*/
+            /* 1.1. (파라메터)변수 선언                                               */
+            /*------------------------------------------------------------------------*/
+            DECLARE @COMP_CODE      NVARCHAR(08)        --(필수) 법인코드
+                  , @FR_DATE        NVARCHAR(08)        --(필수) FROM 변동일자
+                  , @TO_DATE        NVARCHAR(08)        --(필수) TO   변동일자
+                  , @ACCNT          NVARCHAR(16)        --(선택) 계정코드
+                  , @ACCNT_NAME     NVARCHAR(50)        --(선택) 계정명
+                  , @ALTER_DIVI     NVARCHAR(02)        --(선택) 변동구분
+                  , @ASST           NVARCHAR(15)        --(선택) 자산코드
+                  , @ASST_NAME      NVARCHAR(50)        --(선택) 자산명
+                  , @ASST_DIVI      NVARCHAR(01)        --(선택) 자산구분(1:고정자산, 2:부외자산)
+                  , @WORK_DIVI      NVARCHAR(01)        --(필수) 기표여부
+		          , @FR_INSERT_DATE NVARCHAR(08)        --(선택) FROM 입력일
+		          , @TO_INSERT_DATE NVARCHAR(08)        --(선택) TO   입력일
+                  , @INSERT_DB_USER NVARCHAR(20)        --(선택) 입력자
+	          	  , @DEPT_CODE      NVARCHAR(20)        --(선택) 입력부
+	          	    
+                  , @WasteDivi      NVARCHAR(01)
+        
+            /*------------------------------------------------------------------------*/
+            /* 2.1. 변수값 정의                                                       */
+            /*------------------------------------------------------------------------*/
+            SET     @COMP_CODE      = #{S_COMP_CODE}
+            SET     @FR_DATE        = #{FR_DATE}
+            SET     @TO_DATE        = #{TO_DATE}
+            SET     @ACCNT          = #{ACCNT_CODE}
+            SET     @ACCNT_NAME     = #{ACCNT_NAME}
+            SET     @ALTER_DIVI     = #{ALTER_DIVI}
+            SET     @ASST           = #{ASSET_CODE}
+            SET     @ASST_NAME      = #{ASSET_NAME}
+            SET     @ASST_DIVI      = #{ASST_DIVI}
+            SET     @WORK_DIVI      = #{WORK_DIVI}
+            SET     @WasteDivi      = REPLACE(RIGHT(@ALTER_DIVI, 1), '0', '')
+            
+        	SET     @FR_INSERT_DATE         = #{FR_INSERT_DATE}
+		    SET     @TO_INSERT_DATE         = #{TO_INSERT_DATE}
+		    SET     @INSERT_DB_USER     	= #{CHARGE_CODE}
+	    	SET     @DEPT_CODE          	= #{DEPT_CODE}
+	    	
+            SET     NOCOUNT    ON
+            SET     ARITHABORT ON
+        
+            /*------------------------------------------------------------------------*/
+            /* 2.2. 자산변동자동기표 전표기준 가져오기                                */
+            /*------------------------------------------------------------------------*/
+            DECLARE @SlipStandard   NVARCHAR(01)
+        
+            SELECT  @SlipStandard = REF_CODE1
+            FROM    BSA100T WITH (NOLOCK)
+            WHERE   COMP_CODE  = @COMP_CODE
+            AND     MAIN_CODE  = 'A146'
+            AND     SUB_CODE   = '2'
+        
+            SET     @SlipStandard = ISNULL(@SlipStandard, '2')  --1:K-GAAP, 2:K-IFRS
+        
+            /*------------------------------------------------------------------------*/
+            /* 3. 조회                                                                */
+            /*------------------------------------------------------------------------*/
+            IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#AISS500_20101124'))
+                DROP TABLE #AISS500_20101124
+        
+            SELECT  CAST(0 AS BIT)                                                  AS CHOICE
+                 ,  A.COMP_CODE
+                 ,  A.ALTER_DIVI
+                 ,  A.WASTE_DIVI
+                 ,  A.SEQ
+                 ,  A.ALTER_DIVI + RIGHT('0' + LTRIM(ISNULL(A.WASTE_DIVI, '')), 1)  AS CONV_ALTER_DIVI
+                 ,  uniLITE.fnGetUserDateComp(A.COMP_CODE, A.ALTER_DATE)            AS ALTER_DATE
+                 ,  A.ASST
+                 ,  B.ASST_NAME
+                 ,  B.ASST_DIVI
+                 ,  B.ACCNT
+                 ,  D.ACCNT_NAME
+                 ,  A.SALE_ACQ_AMT_I                                                AS ACQ_AMT_I
+                 ,  A.ALTER_AMT_I
+                 ,  A.ALTER_REASON
+                 ,  A.MONEY_UNIT
+                 ,  A.EXCHG_RATE_O
+                 ,  A.FOR_ALTER_AMT_I
+                 ,  A.SET_TYPE
+                 ,  A.PROOF_KIND
+                 ,  A.SUPPLY_AMT_I
+                 ,  A.TAX_AMT_I
+                 ,  A.CUSTOM_CODE
+                 ,  E.CUSTOM_NAME
+                 ,  uniLITE.fnGetUserDateComp(A.COMP_CODE, A.EX_DATE)               AS EX_DATE
+                 ,  CASE WHEN A.EX_NUM = 0 THEN CONVERT(NUMERIC(07, 0), NULL)
+                         ELSE A.EX_NUM
+                    END AS EX_NUM
+                 ,  F.DIV_CODE
+                 ,  ISNULL(A.AGREE_YN, 'N')                                         AS AGREE_YN
+                 ,  CONVERT(NVARCHAR(01), '')                                       AS AP_STS
+            INTO    #AISS500_20101124
+            FROM           AISS500T AS A WITH (NOLOCK)
+                INNER JOIN AISS300T AS B WITH (NOLOCK)  ON  B.COMP_CODE   = A.COMP_CODE
+                                                        AND B.ASST        = A.ASST
+                INNER JOIN AISC100T AS F WITH (NOLOCK)  ON  F.COMP_CODE   = A.COMP_CODE
+                                                        AND F.ASST        = A.ASST
+                                                        AND F.DPR_YYMM    = LEFT(A.ALTER_DATE, 6)
+                LEFT  JOIN BOR120T  AS C WITH (NOLOCK)  ON  C.COMP_CODE   = B.COMP_CODE
+                                                        AND C.DIV_CODE    = B.DIV_CODE
+                LEFT  JOIN ABA400T  AS D WITH (NOLOCK)  ON  D.COMP_CODE   = B.COMP_CODE
+                                                        AND D.ACCNT       = B.ACCNT
+                LEFT  JOIN BCM100T  AS E WITH (NOLOCK)  ON  E.COMP_CODE   = A.COMP_CODE
+                                                        AND E.CUSTOM_CODE = A.CUSTOM_CODE
+                LEFT  JOIN BSA100T  AS M1 WITH (NOLOCK) ON  M1.COMP_CODE   = A.COMP_CODE
+	                                                    AND M1.MAIN_CODE   = 'A009'
+	                                                    AND M1.REF_CODE1   = A.UPDATE_DB_USER  
+	            LEFT  JOIN BSA300T  AS M2 WITH (NOLOCK) ON  M2.COMP_CODE   = M1.COMP_CODE
+	                                                    AND M2.USER_ID     = M1.REF_CODE1                                           
+            WHERE A.COMP_CODE       = @COMP_CODE
+            AND   A.ALTER_DATE     &gt;= @FR_DATE
+            AND   A.ALTER_DATE     &lt;= @TO_DATE
+            <if test="@foren.Ognl@isNotEmpty(ASSET_CODE)">                   
+            AND   ((A.ASST       LIKE       @ASST       + '%'      AND @ASST         != '' ) OR (@ASST         = ''))
+            </if>
+            --AND   ((B.ASST_NAME  LIKE '%' + @ASST_NAME  + '%'      AND @ASST_NAME    != '' ) OR (@ASST_NAME    = ''))
+            <if test="@foren.Ognl@isNotEmpty(ALTER_DIVI)">                   
+            AND   ((A.ALTER_DIVI    = LEFT(@ALTER_DIVI, 1)         AND @ALTER_DIVI   != '' ) OR
+                   (A.ALTER_DIVI   IN ('1', '2', '3', '4')         AND @ALTER_DIVI    = '' ))
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(ALTER_DIVI)">                   
+            AND   ((A.WASTE_DIVI    = @WasteDivi                   AND @WasteDivi    != '' ) OR (@WasteDivi    = ''))
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">                    
+                AND     B.DIV_CODE IN
+                    <foreach collection="DIV_CODE" item="item" separator="," close=")" open="(">
+                     #{item}
+                    </foreach>                                  
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(ACCNT_CODE)">                    
+            AND   ((B.ACCNT      LIKE       @ACCNT      + '%'      AND @ACCNT        != '' ) OR (@ACCNT        = ''))
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(ASST_DIVI)">                    
+            AND   ((B.ASST_DIVI     = @ASST_DIVI                   AND @ASST_DIVI    != '' ) OR (@ASST_DIVI    = ''))
+            </if>
+            AND   ((     ISNULL(A.EX_DATE , '')  =       ''                      
+		            AND  ISNULL(A.EX_NUM  , 0 )  =       0                       
+		            AND  @WORK_DIVI = '1'
+		           )
+		           OR     
+		           (     ISNULL(A.EX_DATE , '') !=       ''                      
+		            AND  @WORK_DIVI = '2'
+		           )
+		          )
+            AND   ((CONVERT(NVARCHAR(8), A.INSERT_DB_TIME,112) &gt;= @FR_INSERT_DATE AND @FR_INSERT_DATE != '') OR (@FR_INSERT_DATE = ''))
+		    AND   ((CONVERT(NVARCHAR(8), A.INSERT_DB_TIME,112) &lt;= @TO_INSERT_DATE AND @TO_INSERT_DATE != '') OR (@TO_INSERT_DATE = ''))
+			AND   ((M1.SUB_CODE             =       @INSERT_DB_USER         AND @INSERT_DB_USER  != '')  OR (@INSERT_DB_USER = ''))
+	        AND   ((M2.DEPT_CODE            =       @DEPT_CODE              AND @DEPT_CODE       != '')  OR (@DEPT_CODE      = ''))
+            ORDER BY A.ALTER_DIVI, A.ALTER_DATE, A.ASST, A.SEQ
+        
+            -- -- 전표기준이 '1:K-GAAP'일 경우
+            -- IF ( @SlipStandard = '1' )
+            --     BEGIN
+            --         UPDATE  A
+            --         SET     A.AP_STS   = B.AP_STS
+            --             ,   A.DIV_CODE = B.DIV_CODE
+            --         FROM    #AISS500_20101124  AS A WITH (NOLOCK)
+            --             INNER JOIN AGJ110T     AS B WITH (NOLOCK)   ON  B.COMP_CODE = A.COMP_CODE
+            --                                                         AND B.EX_DATE   = A.EX_DATE
+            --                                                         AND B.EX_NUM    = A.EX_NUM
+            --                                                         AND (B.MOD_DIVI IS NULL OR B.MOD_DIVI = '')
+            --     END
+            -- 
+            -- -- 전표기준이 '2:K_IFRS'일 경우
+            -- ELSE
+            --     BEGIN
+            --         UPDATE  A
+            --         SET     A.AP_STS   = '2'
+            --             ,   A.DIV_CODE = B.DIV_CODE
+            --         FROM    #AISS500_20101124  AS A WITH (NOLOCK)
+            --             INNER JOIN AIGJ210T    AS B WITH (NOLOCK)   ON  B.COMP_CODE = A.COMP_CODE
+            --                                                         AND B.AC_DATE   = A.EX_DATE
+            --                                                         AND B.SLIP_NUM  = A.EX_NUM
+            --                                                         AND (B.MOD_DIVI IS NULL OR B.MOD_DIVI = '')
+            --     END
+        
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        
+            SELECT * FROM #AISS500_20101124
+        END
+    </select>
+    
+    <select id="aigd340ukrvServiceImpl.selectMsg" parameterType="Map" resultType="rMap">
+        --UBdi01Krv.CBDicKr[fnMsgDic] Query01
+        SELECT MSG_DESC AS MSG_DESC
+          FROM BSA010T   WITH (NOLOCK)                       
+         WHERE MSG_TYPE = '1'                 
+           AND MSG_NO = 'A0286'
+    </select>
+    
+    <select id="aigd340ukrvServiceImpl.selectSysdate" parameterType="Map" resultType="rMap">
+		SELECT CONVERT(NVARCHAR(8), GETDATE(), 112) AS SYS_DATE
+	</select>
+    
+    <!-- SP 호출 로직 (log tabel insert / call sp) -->
+    <insert id="aigd340ukrvServiceImpl.insertLogTable" parameterType="Map">     
+        INSERT INTO L_AIGD340T
+               (
+                 KEY_VALUE
+               , OPR_FLAG
+               , COMP_CODE
+               , ASST
+               , ALTER_DIVI
+               , WASTE_DIVI
+               , SEQ
+               , ALTER_DATE
+               , EX_DATE
+               , EX_NUM
+               , INSERT_DB_USER
+               , INSERT_DB_TIME    
+               )
+         VALUES
+               ( 
+                 #{KEY_VALUE}
+               , #{OPR_FLAG}
+               , #{COMP_CODE}
+               , #{ASST}
+               , #{ALTER_DIVI}
+               , #{WASTE_DIVI}
+               , #{SEQ}
+               , #{ALTER_DATE}
+               , #{EX_DATE}
+               , NULLIF(#{EX_NUM}, 0)
+               , #{S_USER_ID}
+               , GETDATE()        
+               ) 
+    </insert>
+    
+    <update id="cancelSlip" parameterType="Map" statementType="CALLABLE">
+        {call USP_ACCNT_AutoSlip56Cancel_IFRS(
+            #{COMP_CODE,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},    -- (필수) 법인코드
+            #{INPUT_USER_ID, mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},	-- (선택) 로그인사용자ID
+            #{INPUT_DATE,    mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},   	-- (선택) 시스템일자
+            #{KEY_VALUE,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},    -- (선택) KEY 문자열
+            #{LANG_TYPE,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},    -- (필수) 언어구분
+            #{CALL_PATH,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},    -- (필수) 호출경로(Batch, List, Each)
+            #{ERROR_DESC,    mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}     -- (반환) 에러명세
+        )}
+    </update>
+      
+    <update id="runAutoSlip" parameterType="Map" statementType="CALLABLE">
+        {call USP_ACCNT_AutoSlip56_IFRS(
+            #{COMP_CODE,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},    -- (필수) 법인코드
+            #{DATE_OPTION,   mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},  	-- (선택) 전표일 생성옵션
+            #{WORK_DATE,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},    -- (선택) 실행일
+            #{INPUT_USER_ID, mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},	-- (선택) 로그인사용자ID
+            #{INPUT_DATE,    mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},   	-- (선택) 시스템일자
+            #{KEY_VALUE,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},    -- (선택) KEY 문자열
+            #{LANG_TYPE,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},    -- (필수) 언어구분
+            #{CALL_PATH,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},    -- (필수) 호출경로(Batch, List, Each)
+            #{EBYN_MESSAGE,  mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String},    -- (반환) TRUE:메세지띄움, FALSE:메세지안띄움
+            #{ERROR_DESC,    mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String},    -- (반환) 에러명세
+            #{SLIP_KEY_VALUE,mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String} 	-- (반환) 개별자동기표일 경우 로그테이블의 KEY 문자열
+        )}
+    </update>
+</mapper>

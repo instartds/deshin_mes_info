@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sfa230skrvServiceImpl">
+	
+	<select id="sfa230skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+				SET NOCOUNT ON
+				SET ARITHABORT ON
+					
+				DECLARE @START_TIME DATETIME
+				      , @END_TIME   DATETIME
+				      , @DIFF_TIME  NUMERIC(10, 0)
+				
+				SET @START_TIME = GETDATE()
+
+					
+                DECLARE @ITEM_CODE NVARCHAR(20)
+                      , @ITEM_NAME NVARCHAR(200)
+                      , @TXTLV_L1  NVARCHAR(10)
+                      , @TXTLV_L2  NVARCHAR(10)
+                      , @TXTLV_L3  NVARCHAR(10)
+					
+                SET @ITEM_CODE  = #{ITEM_CODE}
+                SET @ITEM_NAME  = #{ITEM_NAME}
+                SET @TXTLV_L1   = #{TXTLV_L1}
+                SET @TXTLV_L2   = #{TXTLV_L2}
+                SET @TXTLV_L3   = #{TXTLV_L3}
+                					
+				DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+				      , @UserId			NVARCHAR(100)	/* 사용자ID */
+				      , @LangType		NVARCHAR(2)		/* 언어구분 */
+				      , @RefItem		NVARCHAR(01)
+				      , @DateFormat		NVARCHAR(10)
+					  , @QryOpt         NVARCHAR(01)
+					  
+				SET @CompCode = #{S_COMP_CODE}
+				SET @UserId   = #{S_USER_ID}
+				SET @LangType = #{S_LANG_CODE}
+				SET @QryOpt   = #{S_QRY_OPT}
+					
+				/* 명칭 참조 유형 */
+				SELECT TOP 1 @RefItem = REF_ITEM
+					FROM BSA300T WITH (NOLOCK)
+					WHERE COMP_CODE = @CompCode
+						AND USER_ID = @UserId
+					
+				SET @RefItem = ISNULL(@RefItem, N'0')
+					
+				/* 날짜 포맷 유형 설정 */
+				SELECT TOP 1 @DateFormat = CODE_NAME
+					FROM BSA100T WITH (NOLOCK)
+					WHERE COMP_CODE = @CompCode
+					AND MAIN_CODE = N'B044'
+					AND REF_CODE1 = N'Y'
+				SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')	
+
+	            IF EXISTS (SELECT TOP 1 1 FROM tempdb.sys.objects WHERE object_id = OBJECT_ID('tempdb..#TEMP_20170414'))        
+		            DROP TABLE #TEMP_20170414
+		            
+/*		            
+				/* 조회 */
+				SELECT
+				    A.COMP_CODE
+				   ,A.DIV_CODE 
+				   ,A.DEPT_CODE															 /* 부서*/
+				   ,E.TREE_NAME															 /* 부서명*/
+				   ,B.ITEM_CODE															 /* 품번*/
+				   ,D.ITEM_NAME															 /* 품명*/
+				   ,D.ITEM_LEVEL1														 /* 대분류*/
+				   ,D.ITEM_LEVEL2														 /* 중분류*/
+				   ,D.ITEM_LEVEL3														 /* 소분류*/
+				   ,SUM(B.SALE_Q)							  AS SALE_Q					  /* 매출수량*/
+				   ,SUM((CASE WHEN F.ITEM_ACCOUNT NOT IN ( '02', '03', '04', '05') THEN (B.SALE_AMT_O)   ELSE 0 END))
+    			   +SUM(CASE WHEN F.ITEM_ACCOUNT  = '02' OR F.ITEM_ACCOUNT  = '04' THEN (B.CONSIGNMENT_FEE * ABS(B.SALE_Q)) ELSE 0 END) AS SALES_AMT_O  /* 공급가액*/
+
+				   , CASE WHEN E.SHOP_CLASS = '1' THEN CASE WHEN F.ITEM_ACCOUNT NOT IN ('02', '03', '05') THEN (CASE WHEN B.TAX_TYPE = '1' THEN SUM(ROUND(ISNULL(B.PURCHASE_P,0)/1.1, 0) * B.SALE_Q)
+					                                                                                           ELSE SUM(ISNULL(B.PURCHASE_P,0) * B.SALE_Q)  
+                                                                                                          END)
+                                                            ELSE 0
+                                                       END
+                          WHEN E.SHOP_CLASS = '2' THEN 0
+                     END				AS SALE_COST     /* 판매원가*/
+
+                   , SUM(ISNULL(B.DISCOUNT_P,0) * B.SALE_Q) AS SAVE_MONEY
+
+                   , CASE WHEN E.SHOP_CLASS = '1' THEN  (
+                                                         SUM((CASE WHEN F.ITEM_ACCOUNT NOT IN ( '02', '03', '04', '05' ) THEN (B.SALE_AMT_O)   ELSE 0 END))
+    			                                       + SUM(CASE WHEN F.ITEM_ACCOUNT  = '02' OR F.ITEM_ACCOUNT  = '04' THEN (B.CONSIGNMENT_FEE * ABS(B.SALE_Q)) ELSE 0 END)
+                                                       - CASE WHEN F.ITEM_ACCOUNT NOT IN ('02', '03', '05') THEN  (CASE WHEN B.TAX_TYPE = '1' THEN SUM(ROUND(ISNULL(B.PURCHASE_P,0)/1.1, 0) * B.SALE_Q)
+					                                                                                              ELSE SUM(ISNULL(B.PURCHASE_P,0) * B.SALE_Q)  
+                                                                                                             END) 
+                                                              ELSE 0
+                                                         END 
+                                                         )
+                          WHEN E.SHOP_CLASS = '2' THEN (
+                                                         SUM((CASE WHEN F.ITEM_ACCOUNT NOT IN ( '02', '03', '04', '05' ) THEN (B.SALE_AMT_O)   ELSE 0 END))
+    			                                        +SUM(CASE WHEN F.ITEM_ACCOUNT  = '02' OR F.ITEM_ACCOUNT  = '04' THEN (B.CONSIGNMENT_FEE * ABS(B.SALE_Q)) ELSE 0 END)
+                                                    )
+                     END AS GROSS_PROFIT	  /* 매출이익 */		
+                                             
+                                             							 
+				   , CASE WHEN E.SHOP_CLASS = '1' THEN (
+                                                        CASE WHEN B.TAX_TYPE = '1' THEN (CASE WHEN SUM(B.SALE_AMT_O) = 0 THEN 0 
+														                                      ELSE ROUND((SUM(ROUND(ISNULL(B.PURCHASE_P,0)/1.1, 0) * B.SALE_Q)) * 100 / SUM(B.SALE_AMT_O), 2)
+												                                         END)													
+							                                 ELSE (CASE WHEN SUM(B.SALE_AMT_O) = 0 THEN 0 
+													                    ELSE ROUND((SUM(ISNULL(B.PURCHASE_P,0) * B.SALE_Q)) * 100 / SUM(B.SALE_AMT_O), 2) 
+												                   END)		
+					                                    END
+                                                       )
+                          WHEN E.SHOP_CLASS = '2' THEN 0
+                     END AS COST_RATE     /* 원가율*/
+                   , SUM((CASE WHEN F.ITEM_ACCOUNT NOT IN ( '02', '03', '04', '05') THEN (ISNULL(D.SALE_COMMON_P, 0) * ABS(B.SALE_Q))   ELSE 0 END))
+    			    +SUM(CASE WHEN F.ITEM_ACCOUNT  = '02' OR F.ITEM_ACCOUNT  = '04' THEN (B.CONSIGNMENT_FEE * ABS(B.SALE_Q)) ELSE 0 END) AS SALES_COMMON_O  /* 시중가액*/
+				   , CASE WHEN E.SHOP_CLASS = '1' THEN (
+                                                        CASE WHEN B.TAX_TYPE = '1' THEN (CASE WHEN SUM(ISNULL(D.SALE_COMMON_P, 0) * ABS(B.SALE_Q)) = 0 THEN 0 
+														                                      ELSE ROUND((SUM(ROUND(ISNULL(B.PURCHASE_P,0)/1.1, 0) * B.SALE_Q)) * 100 / SUM(ISNULL(D.SALE_COMMON_P, 0) * ABS(B.SALE_Q)), 2)
+												                                         END)													
+							                                 ELSE (CASE WHEN SUM(ISNULL(D.SALE_COMMON_P, 0) * ABS(B.SALE_Q)) = 0 THEN 0 
+													                    ELSE ROUND((SUM(ISNULL(B.PURCHASE_P,0) * B.SALE_Q)) * 100 / SUM(ISNULL(D.SALE_COMMON_P, 0) * ABS(B.SALE_Q)), 2) 
+												                   END)		
+					                                    END
+                                                       )
+                          WHEN E.SHOP_CLASS = '2' THEN 0
+                     END AS COMMON_COST_RATE     /* 시중가율 (원가금액 / 시중가금액) */
+			    INTO #TEMPTBL
+				FROM 	   SSA100T A WITH (NOLOCK, INDEX(SSA100T_IDX00))   
+				INNER JOIN SSA110T B WITH (NOLOCK, INDEX(SSA110T_IDX00)) ON A.COMP_CODE = B.COMP_CODE
+									 			                        AND A.DIV_CODE  = B.DIV_CODE
+									 			                        AND A.BILL_NUM  = B.BILL_NUM
+				INNER JOIN BPR100T D WITH (NOLOCK) ON D.COMP_CODE = B.COMP_CODE
+									 			  AND D.ITEM_CODE = B.ITEM_CODE
+  				INNER JOIN BPR200T F WITH (NOLOCK) ON F.COMP_CODE = B.COMP_CODE
+												  AND F.DIV_CODE  = B.DIV_CODE
+												  AND F.ITEM_CODE = B.ITEM_CODE				
+                INNER JOIN BSA210T E WITH (NOLOCK) ON E.COMP_CODE  = A.COMP_CODE
+												  AND E.TYPE_LEVEL = A.DIV_CODE 
+												  AND E.TREE_CODE  = A.DEPT_CODE
+  				
+  				
+				WHERE A.COMP_CODE           = @CompCode
+				AND   A.DIV_CODE            = DIV_CODE    
+			    AND    A.SALE_DATE     = SALE_DATE_FR    
+			    AND    A.SALE_DATE     = SALE_DATE_TO
+			    
+ 
+				
+				GROUP BY   A.COMP_CODE, A.DIV_CODE, A.DEPT_CODE, E.TREE_NAME, B.ITEM_CODE, D.ITEM_NAME															
+				          ,D.ITEM_LEVEL1, D.ITEM_LEVEL2, D.ITEM_LEVEL3, B.TAX_TYPE, E.SHOP_CLASS, F.ITEM_ACCOUNT
+				          
+				ORDER BY E.TREE_NAME , D.ITEM_NAME   				         		  
+			
+*/
+
+                SELECT COMP_CODE, DIV_CODE, DEPT_CODE, TREE_NAME, ITEM_CODE, ITEM_NAME, ITEM_LEVEL1, ITEM_LEVEL2, ITEM_LEVEL3
+                     , SUM(ISNULL(SALE_Q, 0))          AS SALE_Q
+                     , SUM(ISNULL(SALES_AMT_O, 0))     AS SALES_AMT_O
+                     , SUM(ISNULL(SALE_COST, 0))       AS SALE_COST
+                     , SUM(ISNULL(SAVE_MONEY, 0))      AS SAVE_MONEY
+                     , SUM(ISNULL(GROSS_PROFIT, 0))    AS GROSS_PROFIT
+                     , 0                               AS COST_RATE
+                     , SUM(ISNULL(SALE_COMMON_I, 0))   AS SALES_COMMON_O
+                INTO #TEMP_20170414
+                FROM S_SSA110TV1
+                WHERE COMP_CODE = @CompCode
+                AND   DIV_CODE  = #{DIV_CODE}
+                AND   SALE_DATE &gt;= #{SALE_DATE_FR}        
+                AND   SALE_DATE &lt;= #{SALE_DATE_TO}        
+                GROUP BY COMP_CODE, DIV_CODE, DEPT_CODE, TREE_NAME, ITEM_CODE, ITEM_NAME, ITEM_LEVEL1, ITEM_LEVEL2, ITEM_LEVEL3
+                ORDER BY COMP_CODE, DIV_CODE, DEPT_CODE
+                
+                
+				
+				IF @QryOpt = '1'
+				BEGIN
+	                SELECT COMP_CODE
+	                     , DIV_CODE
+	                     , DEPT_CODE
+	                     , TREE_NAME
+	                     , ITEM_CODE
+	                     , ITEM_NAME
+	                     , ITEM_LEVEL1
+	                     , ITEM_LEVEL2
+	                     , ITEM_LEVEL3
+	                     , SALE_Q       AS SALE_Q
+	                     , SALES_AMT_O  AS SALES_AMT_O
+	                     , SALE_COST    AS SALE_COST
+	                     , SAVE_MONEY   AS SAVE_MONEY
+	                     , GROSS_PROFIT AS GROSS_PROFIT
+	                     , CASE WHEN SALES_AMT_O = 0 THEN 0 ELSE ROUND(SALE_COST / SALES_AMT_O * 100, 2) END AS COST_RATE
+   	                     , SALES_COMMON_O AS SALES_COMMON_O
+	                     , CASE WHEN SALES_COMMON_O = 0 THEN 0 ELSE ROUND(SALE_COST / SALES_COMMON_O * 100, 2) END AS COMMON_COST_RATE
+	                FROM #TEMP_20170414
+
+                    WHERE
+			            ((ITEM_CODE   = @ITEM_CODE AND @ITEM_CODE != '') OR (@ITEM_CODE = ''))
+                    AND ((ITEM_NAME   = @ITEM_NAME AND @ITEM_NAME != '') OR (@ITEM_NAME = ''))
+                    AND ((ITEM_LEVEL1 = @TXTLV_L1  AND @TXTLV_L1  != '') OR (@TXTLV_L1  = ''))
+                    AND ((ITEM_LEVEL2 = @TXTLV_L2  AND @TXTLV_L2  != '') OR (@TXTLV_L2  = ''))
+                    AND ((ITEM_LEVEL3 = @TXTLV_L3  AND @TXTLV_L3  != '') OR (@TXTLV_L3  = ''))	  
+                    AND ((DEPT_CODE   = #{DEPT_CODE} AND #{DEPT_CODE} != '') OR (#{DEPT_CODE} = ''))              
+	                ORDER BY TREE_NAME, ITEM_NAME
+				END
+				ELSE
+				BEGIN
+	                SELECT COMP_CODE
+	                     , DIV_CODE
+	                     , DEPT_CODE
+	                     , TREE_NAME
+	                     , '' ITEM_CODE
+	                     , '' ITEM_NAME
+	                     , '' ITEM_LEVEL1
+	                     , '' ITEM_LEVEL2
+	                     , '' ITEM_LEVEL3
+	                     , SUM(SALE_Q)       AS SALE_Q
+	                     , SUM(SALES_AMT_O)  AS SALES_AMT_O
+	                     , SUM(SALE_COST)    AS SALE_COST
+	                     , SUM(SAVE_MONEY)   AS SAVE_MONEY
+	                     , SUM(GROSS_PROFIT) AS GROSS_PROFIT
+	                     , CASE WHEN SUM(ISNULL(SALES_AMT_O, 0)) = 0 THEN 0 ELSE ROUND(SUM(SALE_COST) / SUM(ISNULL(SALES_AMT_O, 0)) * 100, 2) END AS COST_RATE
+	                     , SUM(SALES_COMMON_O) AS SALES_COMMON_O
+	                     , CASE WHEN SUM(ISNULL(SALES_COMMON_O, 0)) = 0 THEN 0 ELSE ROUND(SUM(SALE_COST) / SUM(ISNULL(SALES_COMMON_O, 0)) * 100, 2) END AS COMMON_COST_RATE
+	                FROM #TEMP_20170414
+
+                    WHERE
+			            ((ITEM_CODE   = @ITEM_CODE AND @ITEM_CODE != '') OR (@ITEM_CODE = ''))
+                    AND ((ITEM_NAME   = @ITEM_NAME AND @ITEM_NAME != '') OR (@ITEM_NAME = ''))
+                    AND ((ITEM_LEVEL1 = @TXTLV_L1  AND @TXTLV_L1  != '') OR (@TXTLV_L1  = ''))
+                    AND ((ITEM_LEVEL2 = @TXTLV_L2  AND @TXTLV_L2  != '') OR (@TXTLV_L2  = ''))
+                    AND ((ITEM_LEVEL3 = @TXTLV_L3  AND @TXTLV_L3  != '') OR (@TXTLV_L3  = ''))	
+                    AND ((DEPT_CODE   = #{DEPT_CODE} AND #{DEPT_CODE} != '') OR (#{DEPT_CODE} = ''))  	                
+	                GROUP BY COMP_CODE, DIV_CODE, DEPT_CODE, TREE_NAME
+	                ORDER BY TREE_NAME, ITEM_NAME				
+				END
+				
+				   
+			SET @END_TIME   = GETDATE()
+			
+			
+			SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+			
+			EXEC uniLITE.SP_QRY_TIME 'SFA230SKRV', '부서별 제품별 판매현황 조회', #{SALE_DATE_FR}, #{SALE_DATE_TO}, @DIFF_TIME
+				         							 			 
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+		
+    </select>	
+</mapper>

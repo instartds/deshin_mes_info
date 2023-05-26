@@ -1,0 +1,593 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="qms400ukrvServiceImpl">
+<!-- 동적 그리드 구현(공통코드(p03)에서 컬럼 가져오는 로직) -->
+	<select id="qms400ukrvServiceImpl.selectColumns" parameterType="Map" resultType="rMap">
+		SELECT A.SUB_CODE
+		     , A.CODE_NAME
+		  FROM BSA100T A WITH(NOLOCK)
+		 WHERE COMP_CODE  = '${compCode}'
+		   AND MAIN_CODE  = 'P003'
+		   AND SUB_CODE  != '$'
+		   AND USE_YN     = 'Y'
+		 ORDER BY A.SORT_SEQ, A.SUB_CODE
+	</select>
+
+<!-- 조회팝업 조회 (팝업창) -->
+	<select id="qms400ukrvServiceImpl.searchWindowSelectList" parameterType="Map" resultType="rMap">
+		/* qms400ukrvServiceImpl.searchWindowSelectList */
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.INSPEC_NUM
+		     , A.INSPEC_SEQ
+		     , A.INSPEC_DATE
+		     , A.ITEM_CODE
+		     , C1.ITEM_NAME
+		     , C1.SPEC
+		     , A.INSPEC_TYPE
+		     , A.INSPEC_Q
+		     , A.INSPEC_PRSN
+		     , A.WKORD_NUM
+		     , A.LOT_NO
+		     , B.EQUIP_CODE
+		     , B1.EQU_NAME   AS EQUIP_NAME
+		     , A.REMARK
+		  FROM       QMS420T A  WITH(NOLOCK)
+		  --COMP_CODE, DIV_CODE, WKORD_NUM, PROG_WORK_CODE
+		  INNER JOIN PMP100T B  WITH(NOLOCK) ON B.COMP_CODE  = A.COMP_CODE
+		                                    AND B.DIV_CODE   = A.DIV_CODE
+		                                    AND B.WKORD_NUM  = A.WKORD_NUM
+		  --COMP_CODE, DIV_CODE, EQU_CODE_TYPE, EQU_CODE
+		  LEFT  JOIN EQU200T B1 WITH(NOLOCK) ON B1.COMP_CODE = B.COMP_CODE
+		                                    AND B1.DIV_CODE  = B.DIV_CODE
+		                                    AND B1.EQU_CODE  = B.EQUIP_CODE
+		  INNER JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+		                                    AND C1.ITEM_CODE = A.ITEM_CODE
+		 WHERE A.COMP_CODE   = #{S_COMP_CODE}
+		   AND A.DIV_CODE    = #{DIV_CODE}
+		<if test="@foren.Ognl@isNotEmpty(INSPEC_DATE)">
+		   AND A.INSPEC_DATE = #{INSPEC_DATE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(INSPEC_NUM)">
+		   AND A.INSPEC_NUM  LIKE #{INSPEC_NUM} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(INSPEC_SEQ)">
+		   AND A.INSPEC_SEQ  = #{INSPEC_SEQ}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+		   AND A.ITEM_CODE   = #{ITEM_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+		   AND A.ITEM_CODE   LIKE #{ITEM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+		   AND C1.ITEM_NAME  LIKE #{ITEM_NAME} + '%'
+		</if>
+		<!-- 20201006 추가: 조회조건 설비 관련로직 추가 -->
+		<if test="@foren.Ognl@isNotEmpty(EQU_MACH_CODE) and @foren.Ognl@isNotEmpty(EQU_MACH_NAME)">
+		   AND B.EQUIP_CODE   = #{EQU_MACH_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(EQU_MACH_CODE) and @foren.Ognl@isEmpty(EQU_MACH_NAME)">
+		   AND B.EQUIP_CODE   LIKE #{EQU_MACH_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isEmpty(EQU_MACH_CODE) and @foren.Ognl@isNotEmpty(EQU_MACH_NAME)">
+		   AND B1.EQU_NAME    LIKE #{EQU_MACH_NAME} + '%'
+		</if>
+	</select>
+
+<!-- 작업지시참조 조회쿼리 (팝업창) -->
+	<select id="qms400ukrvServiceImpl.selectWorkNum" parameterType="Map" resultType="rMap">
+		/* uniLITE5Popup.CPopup[fnGetWkordNum] Query01   조회창  */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+		    DECLARE   @CompCode     NVARCHAR(08) /* 법인코드          */
+		            , @UserId       NVARCHAR(100) /* 사용자ID         */
+		            , @LangType     NVARCHAR(2)  /* 언어구분          */
+		            , @RefItem      NVARCHAR(01) /* 명칭 참조 유형      */
+		            , @DateFormat   NVARCHAR(10) /* 날짜 포맷 유형 설정     */
+		                
+		    SET @CompCode = #{S_COMP_CODE}
+		    SET @UserId   = #{S_USER_ID}
+		    SET @LangType = #{S_LANG_CODE}
+
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		        FROM BSA300T WITH (NOLOCK)
+		        WHERE USER_ID = @UserId
+		    
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+		    
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		        FROM BSA100T WITH (NOLOCK)
+		        WHERE COMP_CODE = @CompCode
+		        AND MAIN_CODE = N'B044'
+		        AND REF_CODE1 = N'Y'
+
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+		    /* 데이터 조회 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+		       AND USER_ID   = @UserId
+
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+
+		    SELECT A.WKORD_NUM
+		         , A.ITEM_CODE
+		         , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+		                WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+		                ELSE                     C1.ITEM_NAME
+		           END                                                         AS ITEM_NAME
+		         , C1.SPEC
+		         , (CASE WHEN ISNULL(A.PRODT_WKORD_DATE, '') = ''
+		                 THEN ''
+		                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PRODT_WKORD_DATE, 1, 4))
+		                                                         , 'MM'  , SUBSTRING(A.PRODT_WKORD_DATE, 5, 2))
+		                                                         , 'DD'  , SUBSTRING(A.PRODT_WKORD_DATE, 7, 2))
+		            END)                                                       AS PRODT_WKORD_DATE
+		         , (CASE WHEN ISNULL(A.PRODT_START_DATE, '') = ''
+		                 THEN ''
+		                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PRODT_START_DATE, 1, 4))
+		                                                         , 'MM'  , SUBSTRING(A.PRODT_START_DATE, 5, 2))
+		                                                         , 'DD'  , SUBSTRING(A.PRODT_START_DATE, 7, 2))
+		            END)                                                      AS PRODT_START_DATE
+		         , (CASE WHEN ISNULL(A.PRODT_END_DATE, '') = ''
+		                 THEN ''
+		                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PRODT_END_DATE, 1, 4))
+		                                                         , 'MM'  , SUBSTRING(A.PRODT_END_DATE, 5, 2))
+		                                                         , 'DD'  , SUBSTRING(A.PRODT_END_DATE, 7, 2))
+		            END)                                                      AS PRODT_END_DATE
+		         , CASE WHEN ISNULL(A.PROG_UNIT_Q, 0) = 0 THEN 0
+		                ELSE ISNULL(A.WKORD_Q, 0) / ISNULL(A.PROG_UNIT_Q, 0)
+		           END                                                        AS WKORD_Q
+		         , A.WK_PLAN_NUM
+		         , A.DIV_CODE
+		         , A.WORK_SHOP_CODE
+		         , B.ORDER_NUM
+		         , ISNULL(B.ORDER_Q, 0)                                       AS ORDER_Q
+		         , A.REMARK
+		         , ISNULL(A.PRODT_Q, 0)                                       AS PRODT_Q
+		         , (CASE WHEN ISNULL(C.DVRY_DATE, '') = ''
+		                 THEN ''
+		                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(C.DVRY_DATE, 1, 4))
+		                                                         , 'MM'  , SUBSTRING(C.DVRY_DATE, 5, 2))
+		                                                         , 'DD'  , SUBSTRING(C.DVRY_DATE, 7, 2))
+		            END)                                                      AS DVRY_DATE
+		         , C1.STOCK_UNIT
+		         , A.PROJECT_NO
+		         , A.PJT_CODE
+		         , A.LOT_NO
+		         , A.REWORK_YN
+		         , A.STOCK_EXCHG_TYPE
+		         , B.REMARK
+		         , A.PRODT_PRSN
+		         , A.PRODT_MACH
+		         , A.PRODT_TIME
+		         , A.DAY_NIGHT
+		         , A.WKORD_PRSN
+		         , A.EQUIP_CODE
+		         , Z.EQU_NAME                                                 AS EQUIP_NAME
+		         --220201006 추가: CUSTOM_CODE, CUSTOM_NAME 가져오기 위해 SOF100T, BCM100T JOIN
+		         , D.CUSTOM_CODE
+		         , D2.CUSTOM_NAME
+		    FROM              PMP100T A  WITH (NOLOCK)
+		           LEFT  JOIN PPL100T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+		                                              AND B.DIV_CODE     = A.DIV_CODE
+		                                              AND B.WK_PLAN_NUM  = A.WK_PLAN_NUM
+		           LEFT  JOIN SOF110T C  WITH (NOLOCK) ON C.COMP_CODE    = B.COMP_CODE
+		                                              AND C.OUT_DIV_CODE = B.DIV_CODE
+		                                              AND C.ORDER_NUM    = B.ORDER_NUM
+		                                              AND C.SER_NO       = B.SEQ
+		           --220201006 추가: CUSTOM_CODE, CUSTOM_NAME 가져오기 위해 SOF100T, BCM100T JOIN
+		           LEFT  JOIN SOF100T D  WITH (NOLOCK) ON D.COMP_CODE    = C.COMP_CODE
+		                                              AND D.DIV_CODE     = C.DIV_CODE
+		                                              AND D.ORDER_NUM    = C.ORDER_NUM
+		           LEFT  JOIN BCM100T D2 WITH (NOLOCK) ON D2.COMP_CODE   = D.COMP_CODE
+		                                              AND D2.CUSTOM_CODE = D.CUSTOM_CODE
+		           INNER JOIN BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE
+		                                              AND C1.ITEM_CODE   = A.ITEM_CODE
+		           LEFT  JOIN EQU200T Z  WITH (NOLOCK) ON Z.COMP_CODE    = A.COMP_CODE
+		                                              AND Z.DIV_CODE     = A.DIV_CODE
+		                                              AND Z.EQU_CODE     = A.EQUIP_CODE
+		    WHERE A.COMP_CODE         = @CompCode
+		      AND LINE_END_YN         = 'Y'
+			<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		      AND A.DIV_CODE      = #{DIV_CODE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(WKORD_NUM)">
+		      AND A.WKORD_NUM      = #{WKORD_NUM}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		      AND A.ITEM_CODE      LIKE #{ITEM_CODE} +  '%'       /*품목코드*/
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(FR_PRODT_DATE)"> 
+		      AND A.PRODT_START_DATE &gt;=#{FR_PRODT_DATE}
+			</if> 
+			<if test="@foren.Ognl@isNotEmpty(TO_PRODT_DATE)">
+		      AND A.PRODT_START_DATE &lt;= #{TO_PRODT_DATE}
+			</if> 
+			<if test="@foren.Ognl@isNotEmpty(WORK_SHOP_CODE)">
+		      AND A.WORK_SHOP_CODE     = #{WORK_SHOP_CODE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+		      AND (CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+		                                    ELSE C1.ITEM_NAME
+		            END)             LIKE #{ITEM_NAME} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(LOT_NO)">
+		      AND A.LOT_NO       = #{LOT_NO}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(EQU_MACH_CODE) and @foren.Ognl@isNotEmpty(EQU_MACH_NAME)">
+		      AND A.EQUIP_CODE   = #{EQU_MACH_CODE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(EQU_MACH_CODE) and @foren.Ognl@isEmpty(EQU_MACH_NAME)">
+		      AND A.EQUIP_CODE   LIKE #{EQU_MACH_CODE} + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(EQU_MACH_CODE) and @foren.Ognl@isNotEmpty(EQU_MACH_NAME)">
+		      AND Z.EQU_NAME     LIKE #{EQU_MACH_NAME} + '%'
+			</if>
+		    ORDER BY A.COMP_CODE, A.DIV_CODE, A.EQUIP_CODE, A.WKORD_NUM
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+
+<!-- 작업지시참조 적용 시 Detail DATA(불량 정보) 가져오는 쿼리 -->
+	<select id="qms400ukrvServiceImpl.selectRefDetailData" parameterType="Map" resultType="rMap">
+		/* qms400ukrvServiceImpl.setRefDetailData */
+		IF EXISTS (SELECT TOP 1 1 FROM  tempdb..sysobjects WHERE id=object_id('tempdb..#TEMP_REF_DATA'))
+		    DROP TABLE #TEMP_REF_DATA
+
+		CREATE TABLE #TEMP_REF_DATA (
+		       COMP_CODE     NVARCHAR(08),
+		       INSPEC_TIME   NVARCHAR(20),
+		       P507          NVARCHAR(20),
+		       INSPEC_NUM    NVARCHAR(20),
+		       INSPEC_SEQ    INT,
+		       SORT_SEQ      INT         --20201006 추가
+		)
+
+		DECLARE @MAX_SEQ INT
+		SET     @MAX_SEQ = #{MAX_SEQ}
+
+		WHILE @MAX_SEQ >= 1
+		    BEGIN
+		        INSERT #TEMP_REF_DATA
+		        SELECT A.COMP_CODE
+		             , A.SUB_CODE            AS INSPEC_TIME
+		             , B.SUB_CODE            AS P507
+		             , ''                    AS INSPEC_NUM
+		             , @MAX_SEQ              AS INSPEC_SEQ
+		             , A.SORT_SEQ            --202010006 추가
+		          FROM      BSA100T A WITH(NOLOCK)
+		          LEFT JOIN BSA100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                          AND B.MAIN_CODE = 'P507'
+		                                          AND B.SUB_CODE  = A.REF_CODE1
+		         WHERE A.COMP_CODE  = #{S_COMP_CODE}
+		           AND A.MAIN_CODE  = 'Q043'
+		           AND A.SUB_CODE  !='$'
+
+		        SET @MAX_SEQ = @MAX_SEQ - 1
+		    END
+
+		SELECT #{DIV_CODE} AS DIV_CODE
+		     , *
+		<foreach collection="badQtyArray" item="item" separator="" close="" open="">
+		     , 0                     AS ${item}
+		</foreach>
+		     , 0                     AS SUM_BAD_QTY
+		  FROM #TEMP_REF_DATA
+		 ORDER BY COMP_CODE, DIV_CODE, INSPEC_NUM, INSPEC_SEQ, SORT_SEQ           --202010006 추가 
+	</select>
+
+
+
+<!-- Master DATA(작업지시정보) 가져오는 쿼리 -->
+	<select id="qms400ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* qms400ukrvServiceImpl.selectList */
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.INSPEC_NUM
+		     , A.INSPEC_SEQ
+		     , A.INSPEC_DATE
+		     , A.ITEM_CODE
+		     , C1.ITEM_NAME
+		     , C1.SPEC
+		     , A.INSPEC_TYPE
+		     , A.INSPEC_Q
+		     , A.INSPEC_PRSN
+		     , A.WKORD_NUM
+		     , A.LOT_NO
+		     , B.EQUIP_CODE
+		     , B1.EQU_NAME   AS EQUIP_NAME
+		     , A.REMARK
+		  FROM       QMS420T A  WITH(NOLOCK)
+		  --COMP_CODE, DIV_CODE, WKORD_NUM, PROG_WORK_CODE
+		  INNER JOIN PMP100T B  WITH(NOLOCK) ON B.COMP_CODE  = A.COMP_CODE
+		                                    AND B.DIV_CODE   = A.DIV_CODE
+		                                    AND B.WKORD_NUM  = A.WKORD_NUM
+		  --COMP_CODE, DIV_CODE, EQU_CODE_TYPE, EQU_CODE
+		  LEFT  JOIN EQU200T B1 WITH(NOLOCK) ON B1.COMP_CODE = B.COMP_CODE
+		                                    AND B1.DIV_CODE  = B.DIV_CODE
+		                                    AND B1.EQU_CODE  = B.EQUIP_CODE
+		  INNER JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+		                                    AND C1.ITEM_CODE = A.ITEM_CODE
+		 WHERE A.COMP_CODE   = #{S_COMP_CODE}
+		   AND A.DIV_CODE    = #{DIV_CODE}
+		   AND A.INSPEC_NUM  LIKE #{INSPEC_NUM} + '%'
+		<if test="@foren.Ognl@isNotEmpty(INSPEC_SEQ)">
+		   AND A.INSPEC_SEQ  = #{INSPEC_SEQ}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+		   AND A.ITEM_CODE   = #{ITEM_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+		   AND A.ITEM_CODE   LIKE #{ITEM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+		   AND C1.ITEM_NAME  LIKE #{ITEM_NAME} + '%'
+		</if>
+	</select>
+
+<!-- Detail DATA(불량 정보) 가져오는 쿼리 -->
+	<select id="qms400ukrvServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+		/* qms400ukrvServiceImpl.selectList2 */
+		SELECT A.COMP_CODE
+		     , A.SUB_CODE            AS INSPEC_TIME
+		     , B.SUB_CODE            AS P507
+		     , C.DIV_CODE
+		     , C.INSPEC_NUM
+		     , C.INSPEC_SEQ
+		     , D.INSPEC_PRSN
+		     , MAX(D.REMARK)         AS REMARK         --20201006 추가: REMARK
+		<foreach collection="badQtyArray" item="item" separator="" close="" open="">
+		     , CASE WHEN C.INSPEC_NUM = D.INSPEC_NUM
+		             AND C.INSPEC_SEQ = D.INSPEC_SEQ
+		             AND A.SUB_CODE   = D.INSPEC_TIME THEN MAX(D.${item})
+		            ELSE 0
+		       END                   AS ${item}
+		</foreach>
+		     ,
+		<foreach collection="badQtyArray" item="item" separator="+" close="" open="">
+		       CASE WHEN C.INSPEC_NUM = D.INSPEC_NUM
+		             AND C.INSPEC_SEQ = D.INSPEC_SEQ
+		             AND A.SUB_CODE   = D.INSPEC_TIME THEN MAX(ISNULL(D.${item}, 0))
+		            ELSE 0
+		       END
+		</foreach>
+		                             AS SUM_BAD_QTY
+		  FROM       BSA100T A WITH(NOLOCK)
+		  LEFT  JOIN BSA100T B WITH(NOLOCK) ON B.COMP_CODE  = A.COMP_CODE
+		                                   AND B.MAIN_CODE  = 'P507'
+		                                   AND B.SUB_CODE   = A.REF_CODE1
+		  CROSS JOIN QMS420T C WITH(NOLOCK)
+		  LEFT  JOIN (
+		              SELECT COMP_CODE
+		                   , DIV_CODE
+		                   , INSPEC_NUM
+		                   , INSPEC_SEQ
+		                   , INSPEC_TIME
+		                   , INSPEC_PRSN
+		                   , REMARK              --20201006 추가: REMARK
+		<foreach collection="badQtyArray2" item="item" separator="" close="" open="">
+		                   , SUM([${item}]) AS BAD_${item}
+		</foreach>
+		                FROM QMS430T WITH(NOLOCK)
+		                PIVOT(
+		                        SUM(BAD_INSPEC_Q) FOR BAD_INSPEC_CODE IN (
+		<foreach collection="badQtyArray2" item="item" separator="," close="" open="">
+		                                                                   [${item}]
+		</foreach>
+		                                                                 )
+		                      ) AS PVT
+		               GROUP BY COMP_CODE, DIV_CODE, INSPEC_NUM, INSPEC_SEQ, INSPEC_TIME, INSPEC_PRSN, REMARK         --20201006 추가: REMARK
+		              ) D
+		                 ON D.COMP_CODE   = C.COMP_CODE
+		                AND D.DIV_CODE    = C.DIV_CODE
+		                AND D.INSPEC_NUM  = C.INSPEC_NUM
+		                AND D.INSPEC_SEQ  = C.INSPEC_SEQ
+		                AND D.INSPEC_TIME = A.SUB_CODE
+		 WHERE A.COMP_CODE  = #{S_COMP_CODE}
+		   AND A.MAIN_CODE  = 'Q043'
+		   AND A.SUB_CODE  !='$'
+		   AND C.INSPEC_NUM = #{INSPEC_NUM}
+		   AND C.DIV_CODE   = #{DIV_CODE}
+		 GROUP BY A.COMP_CODE, C.DIV_CODE, B.SUB_CODE, A.SUB_CODE, C.INSPEC_NUM, C.INSPEC_SEQ, D.INSPEC_NUM, D.INSPEC_SEQ, D.INSPEC_TIME, D.INSPEC_PRSN, A.SORT_SEQ
+		 ORDER BY A.COMP_CODE, C.DIV_CODE, C.INSPEC_NUM, C.INSPEC_SEQ, A.SORT_SEQ     --202010006 수정
+	</select>
+
+
+
+
+
+<!-- 저장 로직(master) -->
+	<select id="qms400ukrvServiceImpl.getInspecNum" parameterType="Map" resultType="rMap">
+		DECLARE @INSPEC_NUM  NVARCHAR(20)
+
+		EXEC SP_GetAutoNumComp #{S_COMP_CODE}, #{DIV_CODE}, 'QMS420T', 'Q', #{INSPEC_DATE}, '1', @INSPEC_NUM OUTPUT
+
+		IF ISNULL(@INSPEC_NUM, '') != ''
+			SELECT @INSPEC_NUM AS INSPEC_NUM
+		ELSE
+			SELECT '' AS INSPEC_NUM
+	</select>
+
+	<insert id="qms400ukrvServiceImpl.insertDetail" parameterType="Map">
+		/* qms400ukrvServiceImpl.insertDetail */
+		INSERT INTO QMS420T (
+		       COMP_CODE
+		     , DIV_CODE
+		     , INSPEC_NUM
+		     , INSPEC_SEQ
+		     , INSPEC_DATE
+		     , ITEM_CODE
+		     , INSPEC_TYPE
+		     , INSPEC_METHOD
+		     , INSPEC_Q
+		     , GOOD_INSPEC_Q
+		     , BAD_INSPEC_Q
+		     , INSTOCK_Q
+		     , VERIFY_Q
+		     , INSPEC_PRSN
+		     , LOT_NO
+		     , PRODT_NUM
+		     , WKORD_NUM
+		     , PROJECT_NO
+		     , RECEIPT_NUM
+		     , RECEIPT_SEQ
+		     , GOODBAD_TYPE
+		     , INSPEC_RESULT
+		     , RECEIPT_Q
+		     , PJT_CODE
+		     , REMARK
+		     , INSERT_DB_USER
+		     , INSERT_DB_TIME
+		     , UPDATE_DB_USER
+		     , UPDATE_DB_TIME
+		) VALUES (
+		       #{COMP_CODE}
+		     , #{DIV_CODE}
+		     , #{INSPEC_NUM}
+		     , #{INSPEC_SEQ}
+		     , #{INSPEC_DATE}
+		     , #{ITEM_CODE}
+		     , #{INSPEC_TYPE}
+		     , #{INSPEC_METHOD}
+		     , #{INSPEC_Q}
+		     , #{GOOD_INSPEC_Q}
+		     , #{BAD_INSPEC_Q}
+		     , #{INSTOCK_Q}
+		     , #{VERIFY_Q}
+		     , #{INSPEC_PRSN}
+		     , #{LOT_NO}
+		     , #{PRODT_NUM}
+		     , #{WKORD_NUM}
+		     , #{PROJECT_NO}
+		     , #{RECEIPT_NUM}
+		     , #{RECEIPT_SEQ}
+		     , #{GOODBAD_TYPE}
+		     , #{INSPEC_RESULT}
+		     , #{RECEIPT_Q}
+		     , #{PJT_CODE}
+		     , #{REMARK}
+			 , #{S_USER_ID}
+			 , getDate()
+			 , #{S_USER_ID}
+			 , getDate()
+		)
+	</insert>
+
+	<update id="qms400ukrvServiceImpl.updateDetail" parameterType="Map">
+		/* qms400ukrvServiceImpl.updateDetail */
+		UPDATE QMS420T
+		   SET INSPEC_TYPE = #{INSPEC_TYPE}
+		     , INSPEC_Q    = #{INSPEC_Q}
+		 WHERE COMP_CODE   = #{COMP_CODE}
+		   AND DIV_CODE    = #{DIV_CODE}
+		   AND INSPEC_NUM  = #{INSPEC_NUM}
+		   AND INSPEC_SEQ  = #{INSPEC_SEQ}
+	</update>
+
+	<delete id="qms400ukrvServiceImpl.deleteDetail" parameterType="Map">
+		/* qms400ukrvServiceImpl.deleteDetail */
+		DELETE FROM QMS420T
+		 WHERE COMP_CODE   = #{COMP_CODE}
+		   AND DIV_CODE    = #{DIV_CODE}
+		   AND INSPEC_NUM  = #{INSPEC_NUM}
+		   AND INSPEC_SEQ  = #{INSPEC_SEQ}
+
+		DELETE FROM QMS430T
+		 WHERE COMP_CODE   = #{COMP_CODE}
+		   AND DIV_CODE    = #{DIV_CODE}
+		   AND INSPEC_NUM  = #{INSPEC_NUM}
+		   AND INSPEC_SEQ  = #{INSPEC_SEQ}
+	</delete>
+
+
+
+
+	<update id="qms400ukrvServiceImpl.updateDetail2" parameterType="Map">
+		/* qms400ukrvServiceImpl.updateDetail2 */
+		MERGE INTO QMS430T                                A
+		USING ( SELECT #{COMP_CODE}          AS COMP_CODE
+		             , #{DIV_CODE}           AS DIV_CODE
+		             , #{INSPEC_NUM}         AS INSPEC_NUM
+		             , #{INSPEC_SEQ}         AS INSPEC_SEQ
+		             , #{INSPEC_TIME}        AS INSPEC_TIME
+		             , #{BAD_INSPEC_CODE}    AS BAD_INSPEC_CODE ) B ON A.COMP_CODE       = B.COMP_CODE
+		                                                           AND A.DIV_CODE        = B.DIV_CODE
+		                                                           AND A.INSPEC_NUM      = B.INSPEC_NUM
+		                                                           AND A.INSPEC_SEQ      = B.INSPEC_SEQ
+		                                                           AND A.INSPEC_TIME     = B.INSPEC_TIME
+		                                                           AND A.BAD_INSPEC_CODE = B.BAD_INSPEC_CODE
+
+		WHEN MATCHED THEN
+		        UPDATE
+		           SET BAD_INSPEC_Q = #{BAD_INSPEC_Q}
+		             , INSPEC_PRSN  = #{INSPEC_PRSN}
+		             , REMARK       = #{REMARK}     --20201006 추가: REMARK
+
+		WHEN NOT MATCHED THEN
+		        INSERT
+		             ( COMP_CODE
+		             , DIV_CODE
+		             , INSPEC_NUM
+		             , INSPEC_SEQ
+		             , INSPEC_TIME
+		             , INSPEC_PRSN
+		             , BAD_INSPEC_CODE
+		             , BAD_INSPEC_Q
+		             , INSPEC_REMARK
+		             , MANAGE_REMARK
+		             , MEASURED_VALUE
+		             , SPEC
+		             , TEST_COND
+		             , MEASURED_FROM
+		             , MEASURED_TO
+		             , REMARK         --20201006 추가: REMARK
+		             , INSERT_DB_USER
+		             , INSERT_DB_TIME
+		             , UPDATE_DB_USER
+		             , UPDATE_DB_TIME
+		        ) VALUES (
+		               #{COMP_CODE}
+		             , #{DIV_CODE}
+		             , #{INSPEC_NUM}
+		             , #{INSPEC_SEQ}
+		             , #{INSPEC_TIME}
+		             , #{INSPEC_PRSN}
+		             , #{BAD_INSPEC_CODE}
+		             , #{BAD_INSPEC_Q}
+		             , #{INSPEC_REMARK}
+		             , #{MANAGE_REMARK}
+		             , #{MEASURED_VALUE}
+		             , #{SPEC}
+		             , #{TEST_COND}
+		             , #{MEASURED_FROM}
+		             , #{MEASURED_TO}
+		             , #{REMARK}      --20201006 추가: REMARK
+		             , #{S_USER_ID}
+		             , getDate()
+		             , #{S_USER_ID}
+		             , getDate()
+		        );
+	</update>
+
+	<delete id="qms400ukrvServiceImpl.deleteDetail2" parameterType="Map">
+		/* qms400ukrvServiceImpl.deleteDetail2 */
+		DELETE FROM QMS430T
+		 WHERE COMP_CODE       = #{COMP_CODE}
+		   AND DIV_CODE        = #{DIV_CODE}
+		   AND INSPEC_NUM      = #{INSPEC_NUM}
+		   AND INSPEC_SEQ      = #{INSPEC_SEQ}
+		   AND INSPEC_TIME     = #{INSPEC_TIME}
+		   AND BAD_INSPEC_CODE = #{BAD_INSPEC_CODE}
+	</delete>
+</mapper>

@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="sfa260rkrServiceImpl">
+	<select id="selectPrimaryDataList" parameterType="Map" resultType="rMap" >	
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		    DECLARE @COMP_CODE   NVARCHAR(08) /* 법인코드    */
+		          , @DIV_CODE    NVARCHAR(20) /* 사업장    */
+		          , @ItemLevel1 NVARCHAR(08)
+			   	  , @ItemLevel2 NVARCHAR(08)
+			   	  , @ItemLevel3 NVARCHAR(08)
+			   	  , @TOP_LEVEL_NAME1 NVARCHAR(40) 
+			   	  , @TOP_LEVEL_NAME2 NVARCHAR(40) 
+			   	  , @TOP_LEVEL_NAME3 NVARCHAR(40) 
+					  
+			/* Heder 대, 중, 소 분류 출력 */
+		    SET @ItemLevel1 = #{ITEM_LEVEL1}
+		    SET @ItemLevel2 = #{ITEM_LEVEL2}
+		    SET @ItemLevel3 = #{ITEM_LEVEL3}
+		    	
+		    SELECT @TOP_LEVEL_NAME1 = LEVEL_NAME FROM BPR000T WHERE LEVEL1 = @ItemLevel1 AND LEVEL2 = '*' 		  AND LEVEL3 ='*'
+		    SELECT @TOP_LEVEL_NAME2 = LEVEL_NAME FROM BPR000T WHERE LEVEL1 = @ItemLevel1 AND LEVEL2 = @ItemLevel2 AND LEVEL3 ='*'
+		    SELECT @TOP_LEVEL_NAME3 = LEVEL_NAME FROM BPR000T WHERE LEVEL1 = @ItemLevel1 AND LEVEL2 = @ItemLevel2 AND LEVEL3 =@ItemLevel3
+		    
+		    PRINT @TOP_LEVEL_NAME1
+		    PRINT @TOP_LEVEL_NAME2
+		    PRINT @TOP_LEVEL_NAME3 	
+		
+		    SET @COMP_CODE = #{COMP_CODE}
+            SET @DIV_CODE  = #{DIV_CODE}
+            
+			SELECT 
+				 A.COMP_CODE
+				,ISNULL(@TOP_LEVEL_NAME1,'') 									AS TOP_ITEM_LEVEL1
+			    ,ISNULL(@TOP_LEVEL_NAME2,'') 									AS TOP_ITEM_LEVEL2
+			    ,ISNULL(@TOP_LEVEL_NAME3,'') 									AS TOP_ITEM_LEVEL3 
+				,ISNULL(C.ITEM_LEVEL1, '')         								AS LEVEL1
+				,ISNULL(C.ITEM_LEVEL2, '')         								AS LEVEL2
+				,ISNULL(E.LEVEL_NAME,'')										AS ITEM_LEVEL1  /* report 출력 */
+				,ISNULL(E1.LEVEL_NAME,'')										AS ITEM_LEVEL2	/* report 출력 */
+				,B.ITEM_CODE
+				,C.ITEM_NAME
+				,C.AUTHOR1
+				,C.PUBLISHER
+				,G.CUSTOM_NAME
+				,C.SALE_COMMON_P
+				,ISNULL(C.SALE_BASIS_P, 0)   		AS SALE_P
+				,SUM(B.SALE_Q)						AS SALE_Q
+				,SUM(B.SALE_AMT_O + B.TAX_AMT_O)    AS SALE_AMT_O
+				,ISNULL(J.TREE_NAME,'')				AS WH_CODE
+				,ISNULL(X.STOCK_Q, 0)				AS STOCK_Q
+				,I.COMP_NAME						AS COMP_NAME
+				,A.DEPT_CODE						AS DEPT_CODE
+				,H.TREE_NAME						AS DEPT_NAME
+				
+				FROM			SSA100T A WITH (NOLOCK)
+					INNER JOIN	SSA110T	B WITH (NOLOCK) ON A.COMP_CODE	=	B.COMP_CODE
+													   AND A.DIV_CODE	=	B.DIV_CODE
+													   AND A.BILL_NUM	=	B.BILL_NUM
+                    LEFT JOIN (SELECT 
+								   COMP_CODE, DIV_CODE, WH_CODE, ITEM_CODE
+								  ,MAX(PURCHASE_CUSTOM_CODE) AS PURCHASE_CUSTOM_CODE
+								  ,SUM(STOCK_Q) AS STOCK_Q
+								 FROM
+									(SELECT A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE, (B.PURCHASE_CUSTOM_CODE) AS PURCHASE_CUSTOM_CODE
+								  		   ,(A.STOCK_Q) AS STOCK_Q
+									 FROM      BIV150T A WITH(NOLOCK)
+									 LEFT JOIN BIV350T B WITH(NOLOCK) ON A.COMP_CODE= B.COMP_CODE
+																	 AND A.DIV_CODE	= B.DIV_CODE
+																	 AND A.LOT_NO 	= B.LOT_NO
+																	 AND A.WH_CODE 	= B.WH_CODE
+																	 AND A.ITEM_CODE= B.ITEM_CODE
+									WHERE A.COMP_CODE = #{COMP_CODE}
+									  AND A.DIV_CODE  = #{DIV_CODE}
+										 
+									 UNION ALL
+								 
+									 SELECT A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE, (A.PURCHASE_CUSTOM_CODE) AS PURCHASE_CUSTOM_CODE
+								 			,(A.STOCK_Q) AS STOCK_Q
+									 FROM UNILITE.VGetDailyStock A WITH(NOLOCK)
+								 
+									WHERE A.COMP_CODE = #{COMP_CODE}
+									  AND A.DIV_CODE  = #{DIV_CODE}
+							        ) A
+								GROUP BY A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE
+				               ) X ON B.COMP_CODE = X.COMP_CODE 
+							      AND B.DIV_CODE  = X.DIV_CODE
+								  AND B.WH_CODE   = X.WH_CODE
+								  AND B.ITEM_CODE = X.ITEM_CODE  
+								 													   
+					INNER JOIN	BPR100T	C WITH (NOLOCK) ON C.COMP_CODE	=	B.COMP_CODE
+													   AND C.ITEM_CODE	=	B.ITEM_CODE
+					LEFT  JOIN  BPR000T E WITH (NOLOCK) ON E.COMP_CODE  = C.COMP_CODE
+					                                   AND E.LEVEL1    != '*'
+					                                   AND E.LEVEL1     = C.ITEM_LEVEL1
+					                                   AND E.LEVEL2     = '*'
+					                                   AND E.LEVEL3     = '*'
+					LEFT  JOIN BPR000T E1 WITH (NOLOCK) ON E1.COMP_CODE  = C.COMP_CODE
+				                                        AND E1.LEVEL1    != '*'
+				                                        AND E1.LEVEL1     = C.ITEM_LEVEL1
+				                                        AND E1.LEVEL2    != '*'
+				                                        AND E1.LEVEL2     = C.ITEM_LEVEL2
+				                                        AND E1.LEVEL3     = '*'
+					LEFT  JOIN BPR000T E2 WITH (NOLOCK) ON E2.COMP_CODE  = C.COMP_CODE
+				                                        AND E2.LEVEL1    != '*'
+				                                        AND E2.LEVEL1     = C.ITEM_LEVEL1
+				                                        AND E2.LEVEL2    != '*'
+				                                        AND E2.LEVEL2     = C.ITEM_LEVEL2
+				                                        AND E2.LEVEL3    != '*'
+				                                        AND E2.LEVEL3     = C.ITEM_LEVEL3
+					LEFT  JOIN	BCM100T G WITH (NOLOCK) ON G.COMP_CODE	  =	X.COMP_CODE
+													   AND G.CUSTOM_CODE  =	X.PURCHASE_CUSTOM_CODE
+					INNER JOIN BSA210T H WITH (NOLOCK) ON H.COMP_CODE 	= A.COMP_CODE
+			          								  AND H.TYPE_LEVEL	= A.DIV_CODE
+			          								  AND H.TREE_CODE	= A.DEPT_CODE
+			        LEFT  JOIN  BOR100T I WITH(NOLOCK) ON A.COMP_CODE   = I.COMP_CODE 	
+			        
+			        LEFT  JOIN  BSA220T J WITH(NOLOCK) ON B.COMP_CODE   = J.COMP_CODE
+													  AND B.WH_CODE		= J.TREE_CODE
+													  AND B.DIV_CODE    = J.TYPE_LEVEL
+				WHERE A.COMP_CODE = #{COMP_CODE}
+				  AND A.DIV_CODE  = #{DIV_CODE}
+				   
+			<if test="@foren.Ognl@isNotEmpty(SALES_DATE_FR)"> 
+					AND A.SALE_DATE &gt;= #{SALES_DATE_FR}
+				</if>
+			<if test="@foren.Ognl@isNotEmpty(SALES_DATE_TO)">
+					AND A.SALE_DATE &lt;= #{SALES_DATE_TO}
+				</if>
+			<if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">		/*부서*/
+			        AND  H.TREE_LEVEL  LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) 
+			                                                 WHERE COMP_CODE = @COMP_CODE AND TYPE_LEVEL = @DIV_CODE AND TREE_CODE = #{DEPT_CODE}) + '%'
+				</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)">
+					AND	C.ITEM_LEVEL1 = #{ITEM_LEVEL1}
+				</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL2)">
+					AND C.ITEM_LEVEL2 = #{ITEM_LEVEL2}
+				</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL3)">
+					AND C.ITEM_LEVEL3 = #{ITEM_LEVEL3}
+				</if>				
+			<if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+					AND B.WH_CODE = #{WH_CODE}
+				</if>
+				
+			GROUP BY A.COMP_CODE ,E.LEVEL_NAME, C.ITEM_LEVEL1, E1.LEVEL_NAME, C.ITEM_LEVEL2, B.ITEM_CODE ,C.ITEM_NAME, A.DEPT_CODE, H.TREE_NAME
+				     ,C.AUTHOR1, C.PUBLISHER, G.CUSTOM_NAME ,C.SALE_COMMON_P, C.SALE_BASIS_P, J.TREE_NAME, X.STOCK_Q, I.COMP_NAME
+				
+			ORDER BY C.ITEM_LEVEL1, C.ITEM_LEVEL2 ,C.ITEM_NAME, G.CUSTOM_NAME
+			
+		SET NOCOUNT OFF
+	    SET ARITHABORT OFF
+	END
+	</select>
+
+</mapper>

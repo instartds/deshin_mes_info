@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="afd530skrService">
+	
+	<select id="afd530skrService.selectMasterList" parameterType="Map" resultType="rMap">
+	--afd530skr.Cafd530skr[fnAfd530Qstd] QUERY01
+    /* 프로그램 ID: afd530skr(연간예적금현황)*/
+    BEGIN
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+    
+        DECLARE         @COMP_CODE          NVARCHAR(08)                -- (필수) 법인코드
+                      , @BASIS_MONTH        NVARCHAR(06)                -- (필수) 기준년월
+                      , @ST_MONTH           NVARCHAR(06)                -- (필수) 당기시작년월
+                      , @QRY_TYPE           NVARCHAR(01)                -- (필수) 구분(A:전체, I:진행, E:마감)
+                      , @DISP_SUM           NVARCHAR(01)                -- (필수) 소계여부(Y:예, N:아니오)
+                      , @USER_ID            NVARCHAR(100)                -- (필수) USER ID
+    
+        --  [ 변수 값 할당 ] --------------------------------------------------------------------------------------------------
+        SET @COMP_CODE      = #{S_COMP_CODE}
+		SET @BASIS_MONTH    = #{BASIS_MONTH}
+		SET @ST_MONTH       = #{ST_DATE}
+		SET @QRY_TYPE       = #{QRY_TYPE}
+    	SET @DISP_SUM       = #{DISP_SUM}
+		SET @USER_ID        = #{S_USER_ID}
+    
+        --  [ 명칭 참조 유형 ] ------------------------------------------------------------------------------------------------
+        DECLARE         @RefItem            NVARCHAR(01)
+    
+        SELECT TOP 1 @RefItem = REF_ITEM
+        FROM   BSA300T WITH (NOLOCK)
+        WHERE  USER_ID = @USER_ID
+    
+        SET @RefItem = ISNULL(@RefItem, N'0')
+    
+        --  [ 날짜 포맷 유형 설정 ] -------------------------------------------------------------------------------------------
+        DECLARE         @DateFormat         NVARCHAR(10)
+    
+        SELECT TOP 1 @DateFormat = CODE_NAME
+        FROM   BSA100T WITH (NOLOCK)
+        WHERE  COMP_CODE    = @COMP_CODE
+        AND    MAIN_CODE    = N'B044'
+        AND    REF_CODE1    = N'Y'
+    
+        SET @DateFormat = ISNULL(@DateFormat, N'YYYY.MM.DD')
+    
+        --  [ 조회기간 설정 ] -------------------------------------------------------------------------------------------------
+        DECLARE         @FrDate             NVARCHAR(08)                -- 월금액 집계 시작일
+                      , @ToDate             NVARCHAR(08)                -- 월금액 집계 종료일
+                      , @CheckDate          NVARCHAR(06)                -- 마감체크 기준일  
+    
+        SET @FrDate     = SUBSTRING(@BASIS_MONTH, 1, 4) + SUBSTRING(@ST_MONTH, 5, 2) + '01'
+        SET @ToDate     = @BASIS_MONTH + '31'
+    
+        IF  @FrDate &gt; @ToDate
+            SET @FrDate = CONVERT(NVARCHAR, DATEADD(YYYY, -1, @FrDate), 112)
+    
+        SET @CheckDate  = SUBSTRING(@FrDate, 1, 6)
+    
+    --  [ 데이터 조회 ] -------------------------------------------------------------------------------------------------------
+    
+        SELECT  B.ACCNT                                                                             AS ACCNT
+              , CASE WHEN @RefItem = '0' THEN D1.ACCNT_NAME
+                     WHEN @RefItem = '1' THEN D1.ACCNT_NAME2
+                     WHEN @RefItem = '2' THEN D1.ACCNT_NAME3
+                     ELSE D1.ACCNT_NAME
+                END                                                                                 AS ACCNT_NAME
+              , B.BANK_CODE                                                                         AS BANK_CODE
+              , CASE WHEN @RefItem = '0' THEN D2.CUSTOM_NAME
+                     WHEN @RefItem = '1' THEN D2.CUSTOM_NAME1
+                     WHEN @RefItem = '2' THEN D2.CUSTOM_NAME2
+                     ELSE D2.CUSTOM_NAME
+                END                                                                                 AS BANK_NAME
+              , ROW_NUMBER() OVER ( PARTITION BY B.ACCNT, B.BANK_CODE 
+                                    ORDER     BY B.ACCNT, B.BANK_CODE)                              AS SEQ
+              , uniLITE.fnCipherDecrypt(B.BANK_ACCOUNT, 'B')                                        AS BANK_ACCOUNT
+              , M1.CODE_NAME                                                                        AS BANK_KIND
+              , REPLACE(
+                REPLACE(
+                REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PUB_DATE, 1, 4))
+                                   , 'MM'  , SUBSTRING(A.PUB_DATE, 5, 2))
+                                   , 'DD'  , SUBSTRING(A.PUB_DATE, 7, 2))                           AS PUB_DATE
+    
+              , REPLACE(
+                REPLACE(
+                REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.EXP_DATE, 1, 4))
+                                   , 'MM'  , SUBSTRING(A.EXP_DATE, 5, 2))
+                                   , 'DD'  , SUBSTRING(A.EXP_DATE, 7, 2))                           AS EXP_DATE
+              , A.MONTH_AMT                                                                         AS MONTH_AMT
+              , A.EXP_AMT_I                                                                         AS EXP_AMT_I
+              , SUM(CASE WHEN C.AC_DATE &gt;= @ST_MONTH                    AND
+                              C.AC_DATE &lt;  @FrDate                      THEN C.DR_AMT_I
+                         ELSE 0
+                    END)                                                                            AS MONTH_0
+              , SUM(CASE WHEN LEN(C.AC_DATE) = 6                        THEN 0
+                         WHEN DATEDIFF(MONTH, @FrDate, C.AC_DATE)  = 0  THEN C.DR_AMT_I
+                         ELSE 0
+                    END)                                                                            AS MONTH_1
+              , SUM(CASE WHEN LEN(C.AC_DATE) = 6                        THEN 0
+                         WHEN DATEDIFF(MONTH, @FrDate, C.AC_DATE)  = 1  THEN C.DR_AMT_I
+                         ELSE 0
+                    END)                                                                            AS MONTH_2
+              , SUM(CASE WHEN LEN(C.AC_DATE) = 6                        THEN 0
+                         WHEN DATEDIFF(MONTH, @FrDate, C.AC_DATE)  = 2  THEN C.DR_AMT_I
+                         ELSE 0
+                    END)                                                                            AS MONTH_3
+              , SUM(CASE WHEN LEN(C.AC_DATE) = 6                        THEN 0
+                         WHEN DATEDIFF(MONTH, @FrDate, C.AC_DATE)  = 3  THEN C.DR_AMT_I
+                         ELSE 0
+                    END)                                                                            AS MONTH_4
+              , SUM(CASE WHEN LEN(C.AC_DATE) = 6                        THEN 0
+                         WHEN DATEDIFF(MONTH, @FrDate, C.AC_DATE)  = 4  THEN C.DR_AMT_I
+                         ELSE 0
+                    END)                                                                            AS MONTH_5
+              , SUM(CASE WHEN LEN(C.AC_DATE) = 6                        THEN 0
+                         WHEN DATEDIFF(MONTH, @FrDate, C.AC_DATE)  = 5  THEN C.DR_AMT_I
+                         ELSE 0
+                    END)                                                                            AS MONTH_6
+              , SUM(CASE WHEN LEN(C.AC_DATE) = 6                        THEN 0
+                         WHEN DATEDIFF(MONTH, @FrDate, C.AC_DATE)  = 6  THEN C.DR_AMT_I
+                         ELSE 0
+                    END)                                                                            AS MONTH_7
+              , SUM(CASE WHEN LEN(C.AC_DATE) = 6                        THEN 0
+                         WHEN DATEDIFF(MONTH, @FrDate, C.AC_DATE)  = 7  THEN C.DR_AMT_I
+                         ELSE 0
+                    END)                                                                            AS MONTH_8
+              , SUM(CASE WHEN LEN(C.AC_DATE) = 6                        THEN 0
+                         WHEN DATEDIFF(MONTH, @FrDate, C.AC_DATE)  = 8  THEN C.DR_AMT_I
+                         ELSE 0
+                    END)                                                                            AS MONTH_9
+              , SUM(CASE WHEN LEN(C.AC_DATE) = 6                        THEN 0
+                         WHEN DATEDIFF(MONTH, @FrDate, C.AC_DATE)  = 9  THEN C.DR_AMT_I
+                         ELSE 0
+                    END)                                                                            AS MONTH_10
+              , SUM(CASE WHEN LEN(C.AC_DATE) = 6                        THEN 0
+                         WHEN DATEDIFF(MONTH, @FrDate, C.AC_DATE)  = 10 THEN C.DR_AMT_I
+                         ELSE 0
+                    END)                                                                            AS MONTH_11
+              , SUM(CASE WHEN LEN(C.AC_DATE) = 6                        THEN 0
+                         WHEN DATEDIFF(MONTH, @FrDate, C.AC_DATE)  = 11 THEN C.DR_AMT_I
+                         ELSE 0
+                    END)                                                                            AS MONTH_12
+              , SUM(CASE WHEN LEN(C.AC_DATE) = 6                        THEN 0
+                         WHEN DATEDIFF(MONTH, @FrDate, C.AC_DATE) &gt;= 0  AND
+                              DATEDIFF(MONTH, @FrDate, C.AC_DATE) &lt;= 11 THEN C.DR_AMT_I
+                         ELSE 0
+                    END)                                                                            AS TOT_AMT_I
+              , A.INT_RATE                                                                          AS INT_RATE
+              , ISNULL(A.EXP_AMT_I, 0) - ISNULL(SUM(C.DR_AMT_I), 0)                                 AS JAN_AMT_I
+        FROM                AFN400T   A  WITH (NOLOCK)
+                INNER JOIN  AFS100T   B  WITH (NOLOCK) ON B.COMP_CODE       = A.COMP_CODE
+                                                      AND B.SAVE_CODE       = A.SAVE_CODE
+                LEFT  JOIN  (
+                            SELECT  C1.COMP_CODE
+                                  , C1.DIV_CODE
+                                  , C1.ACCNT
+                                  , CASE WHEN C1.INPUT_PATH = 'A1' THEN C1.AC_DATE + '01'
+                                         ELSE C1.AC_DATE
+                                    END                                                 AS AC_DATE
+                                  , CASE WHEN C1.BOOK_CODE1 = 'O1' THEN C1.BOOK_DATA1
+                                         WHEN C1.BOOK_CODE2 = 'O1' THEN C1.BOOK_DATA2
+                                    END                                                 AS SAVE_CODE
+                                  , CASE WHEN C1.BOOK_CODE1 = 'A3' THEN C1.BOOK_DATA1
+                                         WHEN C1.BOOK_CODE2 = 'A3' THEN C1.BOOK_DATA2
+                                    END                                                 AS BANK_CODE
+                                  , C1.DR_AMT_I
+                            FROM                AGB200T   C1 WITH (NOLOCK)
+                                    INNER JOIN  ABA400T   C2 WITH (NOLOCK) ON C2.COMP_CODE           = C1.COMP_CODE
+                                                                          AND C2.ACCNT               = C1.ACCNT
+                                                                          AND LEFT(C2.SPEC_DIVI, 1) IN ('B', 'C')
+                            WHERE   C1.COMP_CODE    = @COMP_CODE
+                            AND     C1.AC_DATE     &gt;= @ST_MONTH
+                            AND     C1.AC_DATE     &lt;= @ToDate
+							<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+							AND     C1.DIV_CODE IN
+								<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+								#{item}
+								</foreach>									
+							</if>
+                            )         C                ON C.COMP_CODE       = B.COMP_CODE
+                                                      AND C.ACCNT           = B.ACCNT
+                                                      AND C.SAVE_CODE       = B.SAVE_CODE
+                                                      AND C.BANK_CODE       = B.BANK_CODE
+                LEFT  JOIN  ABA400T   D1 WITH (NOLOCK) ON D1.COMP_CODE      = B.COMP_CODE
+                                                      AND D1.ACCNT          = B.ACCNT
+                LEFT  JOIN  BCM100T   D2 WITH (NOLOCK) ON D2.COMP_CODE      = B.COMP_CODE
+                                                      AND D2.CUSTOM_CODE    = B.BANK_CODE
+                LEFT  JOIN  BOR120T   D3 WITH (NOLOCK) ON D3.COMP_CODE      = C.COMP_CODE
+                                                      AND D3.DIV_CODE       = C.DIV_CODE
+                LEFT  JOIN  BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE      = B.COMP_CODE
+                                                      AND M1.MAIN_CODE      = N'A049'
+                                                      AND M1.SUB_CODE       = B.BANK_KIND
+        WHERE   A.COMP_CODE     = @COMP_CODE
+        <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">	
+        AND   D3.DIV_CODE	IN
+        	<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+				#{item}
+			</foreach>	
+        </if>
+        AND   ((@QRY_TYPE       = 'A'                              ) OR
+               (@QRY_TYPE       = 'I' AND A.EXP_DATE &gt;= @CheckDate ) OR
+               (@QRY_TYPE       = 'E' AND A.EXP_DATE &lt;  @CheckDate ))
+    
+        GROUP BY B.ACCNT, B.BANK_CODE, B.BANK_ACCOUNT, B.BANK_KIND
+               , A.PUB_DATE, A.EXP_DATE, A.MONTH_AMT, A.EXP_AMT_I, A.INT_RATE
+               , D1.ACCNT_NAME, D1.ACCNT_NAME2, D1.ACCNT_NAME3
+               , D2.CUSTOM_NAME, D2.CUSTOM_NAME1, D2.CUSTOM_NAME2
+               , M1.CODE_NAME
+    
+        SET NOCOUNT OFF
+        SET ARITHABORT OFF
+    END                                                                                            
+	</select>
+
+</mapper>

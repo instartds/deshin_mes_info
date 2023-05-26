@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="abh900ukrServiceImpl">
+						
+	<select id="abh900ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+        DECLARE     @COMP_CODE          NVARCHAR(10)              /*  (필수) 법인코드       */
+                  , @FR_DATE            NVARCHAR(08)              /*  (필수) 일자(FR)       */
+                  , @TO_DATE            NVARCHAR(08)              /*  (필수) 일자(TO)       */
+                  , @NOTE_NUM          NVARCHAR(08)               /*  (선택) 어음번호       */
+                  , @PROC_FLAG          NVARCHAR(04)              /*  (필수) 실행구분       */
+                  , @USER_ID            NVARCHAR(100)              /*  (필수) 사용자ID       */
+                  , @INPUT_DATE         NVARCHAR(10)              /*  (필수) 입력일자       */
+    
+        /*   [ 변수 값 할당 ] -------------------------------------------------------------------------------------------------- */
+        SET @COMP_CODE          = #{S_COMP_CODE}
+        SET @FR_DATE            = #{DATE_FR}
+        SET @TO_DATE            = #{DATE_TO}
+        SET @NOTE_NUM           = #{NOTE_NUM}
+        SET @PROC_FLAG          = #{PROC_FLAG}            /* Proc:자동기표, Canc:기표취소 */
+        SET @USER_ID            = #{S_USER_ID}
+        SET @INPUT_DATE         = GETDATE()
+    
+        /*   [ 명칭 참조 유형 ] ------------------------------------------------------------------------------------------------ */
+        DECLARE         @RefItem            NVARCHAR(01)
+    
+        SELECT TOP 1 @RefItem = REF_ITEM
+        FROM   BSA300T WITH (NOLOCK)
+        WHERE  USER_ID = @USER_ID
+    
+        SET @RefItem = ISNULL(@RefItem, N'0')
+    
+        /*   [ 날짜 포맷 유형 설정 ] -------------------------------------------------------------------------------------------- */
+        DECLARE @DateFormat             NVARCHAR(10)
+    
+        SELECT TOP 1 @DateFormat = CODE_NAME
+        FROM   BSA100T WITH (NOLOCK)
+        WHERE  COMP_CODE = @COMP_CODE
+        AND    MAIN_CODE = N'B044'
+        AND    REF_CODE1 = N'Y'
+    
+        SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+    
+            /* 데이터 조회 */
+    	    SELECT   A.AUTO_NUM
+    	           , A.NOTE_NUM 
+                   , A.PUB_DATE
+                   , A.OC_AMT_I
+                   , A.EXP_DATE
+                   , A.PUB_COMPANY_NUM
+                   , A.PUB_MAN
+                   , A.PUB_TOT_NAME
+                   , A.CUSTOM_CODE
+                   , A.DIV_CODE
+                   , A.DEPT_CODE
+                   , A.DEPT_NAME
+                   , A.EX_DATE
+                   , A.EX_NUM
+                   , A.AGREE_YN
+                   , A.AC_DATE
+                   , A.SLIP_NUM
+             FROM    ABH900T  A  WITH (NOLOCK)
+            WHERE   A.COMP_CODE          =         @COMP_CODE
+              AND   A.PUB_DATE       &gt;=         @FR_DATE
+              AND   A.PUB_DATE       &lt;=         @TO_DATE
+              <if test="@foren.Ognl@isNotEmpty(NOTE_NUM)">
+              AND   A.NOTE_NUM           =         @NOTE_NUM
+              </if>
+              AND   (      (ISNULL(A.EX_DATE, '')    =   ''   AND ISNULL(A.EX_NUM , 0 )    =   0           AND ISNULL(@PROC_FLAG, '')       = 'PROC')
+                    OR     (ISNULL(A.EX_DATE, '')   !=  ''    AND ISNULL(@PROC_FLAG, '')       = 'CANC')
+                    OR     (ISNULL(@PROC_FLAG, '')   = '')
+                    )
+             ORDER   BY A.NOTE_NUM, A.PUB_DATE
+          END
+    </select>
+    
+    <!-- 전자어음 정보 가져오기 -->
+    <update id="abh900ukrServiceImpl.getData" parameterType="Map" statementType="CALLABLE">
+        {call USP_ACCNT_ABH900T_GETDATA (
+            #{S_COMP_CODE,   mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+            #{LANG_TYPE,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+            #{S_USER_ID,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+            #{ErrorDesc,     mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+        )}
+    </update>
+	
+	<update id="abh900ukrServiceImpl.updateDetail" parameterType="Map">	
+	/* --abh900ukr.Cabh900ukr[fnAbh300Save] Query02 */
+		UPDATE ABH900T
+		   SET CUSTOM_CODE = #{CUSTOM_CODE}
+		     , REMARK2     = #{REMARK2}
+		     , IN_GUBUN    = #{IN_GUBUN}
+		 WHERE AUTO_NUM    = #{AUTO_NUM}
+		   AND COMP_CODE   = #{S_COMP_CODE}
+  	</update>
+	
+	<delete id="abh900ukrServiceImpl.deleteDetail" parameterType="Map">
+	/* --abh900ukr.Cabh900ukr[fnAbh300Save] Query01" */
+		DELETE  FROM ABH900T
+		 WHERE  COMP_CODE   = #{S_COMP_CODE}
+		  AND   AUTO_NUM    = #{AUTO_NUM}
+		  AND   ISNULL(#{EX_DATE},		'') = ''
+		  AND   ISNULL(#{IN_REFT_NO},	'') = ''
+  	</delete>
+  	
+  	
+
+	<!-- 자동기표 -->
+	<!-- SP 실행을 위한 LOG table에 data insert -->
+	<update id="abh900ukrServiceImpl.insertLogTable" parameterType="Map">     
+	    INSERT INTO L_ABH900T
+	           (
+				  KEY_VALUE     
+				, OPR_FLAG      
+				, AUTO_NUM      
+				, PROC_TYPE     
+				, COMP_CODE     
+				, DIV_CODE      
+				, PROC_DATE     
+				, INSERT_DB_USER
+				, INSERT_DB_TIME
+	           )
+	     VALUES
+	           ( 
+	              #{KEY_VALUE}     
+                , #{OPR_FLAG}      
+                , #{AUTO_NUM}      
+                , #{PROC_TYPE}     
+                , #{S_COMP_CODE}     
+                , #{DIV_CODE}      
+                , #{PROC_DATE}     
+                , #{S_USER_ID}
+                , GETDATE()     
+	           ) 
+	</update>
+	
+	<!-- 자동기표 SP호출 -->
+	<update id="abh900ukrServiceImpl.runAutoSlip" parameterType="Map" statementType="CALLABLE">
+	    {call USP_ACCNT_ABH900T_SLIP (
+	        #{COMP_CODE,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{KEY_VALUE,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{INPUT_USER_ID ,mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{LANG_TYPE,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{ERROR_DESC,    mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+	    )}
+	</update>
+
+	<!-- 기표취소 SP 호출 -->
+	<update id="abh900ukrServiceImpl.cancelSlip" parameterType="Map" statementType="CALLABLE">
+	    {call USP_ACCNT_ABH900T_SLIP_Cancel (
+	        #{COMP_CODE,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{KEY_VALUE,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{USER_ID,       mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{LANG_TYPE,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{ERROR_DESC,    mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+	    )}
+	</update>
+
+
+
+	
+	<!-- INTERFACE -->
+	<!-- 인터페이스 로그테이블에 데이터 INSERT -->
+	<update id="abh900ukrServiceImpl.insertInterfaceLog" parameterType="Map">
+	    INSERT INTO L_ABH_IF
+	           (
+	             KEY_VALUE
+			   , COMP_CODE	
+			   , APP_ID		
+			   , INDEX_NUM	
+			   , AC_DATE		
+			   , SLIP_NUM	
+			   , SLIP_SEQ	
+			   , AMT_I		
+			   , BANK_CODE	
+			   , ACCOUNT_NUM 
+			   , REMARK		
+			   , INSERT_DB_USER
+			   , INSERT_DB_TIME
+	           )
+             SELECT   #{KEY_VALUE}
+   		           ,  #{S_COMP_CODE}     
+				   , 'SRB'								-- 정기구독:SRA / 출판판매 :SRB
+				   , A.AUTO_SLIP_NUM
+				   , A.AC_DATE
+				   , A.SLIP_NUM
+				   , CASE WHEN A.AUTO_SLIP_NUM = 'A2016112100001' THEN 2 
+				          WHEN A.AUTO_SLIP_NUM = 'A2016112100002' THEN 4
+				  		  WHEN A.AUTO_SLIP_NUM = 'A2016112100003' THEN 6
+				     END 												        AS SLIP_SEQ
+				   , A.INOUT_AMT_I 
+				   , B.BANK_CODE
+				   , UNILITE.FNCIPHERDECRYPT(A.ACCOUNT_NUM, '') 
+				   , A.REMARK
+		           , #{S_USER_ID}       
+		           , GETDATE() 
+		      FROM      ABH900T AS A WITH (NOLOCK)
+	          LEFT JOIN AFS100T AS B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+	                                              AND UNILITE.FNCIPHERDECRYPT(B.BANK_ACCOUNT, '') = UNILITE.FNCIPHERDECRYPT(A.ACCOUNT_NUM, '')
+		     WHERE   A.COMP_CODE = #{S_COMP_CODE}
+		       AND   A.ATUTO_NUM = #{ATUTO_NUM}
+	</update>
+
+	<!-- 인터페이스 정보 조회1 -->
+	<select id="abh900ukrServiceImpl.getInfoIF" parameterType="Map" resultType="rMap">
+      /* abh900ukrServiceImpl.getInfoIF */
+		SELECT A.CODE_NAME 	AS action_url
+		  FROM BSA100T AS A                 WITH (NOLOCK)
+         WHERE A.COMP_CODE   = #{S_COMP_CODE}
+		   AND A.MAIN_CODE	 = 'B610'
+		   AND A.SUB_CODE	!= '$'
+		   AND A.SUB_CODE	 = 'action_url'
+	</select>
+	
+	<!-- 인터페이스 정보 조회2 -->
+	<select id="abh900ukrServiceImpl.getInfoIF2" parameterType="Map" resultType="rMap">
+    /* abh900ukrServiceImpl.getInfoIF2  */
+		SELECT *
+		FROM   L_ABH_IF WITH (NOLOCK)
+	   WHERE   KEY_VALUE = #{KEY_VALUE}
+	</select>
+
+</mapper>

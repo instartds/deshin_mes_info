@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_emp120skrv_hsServiceImpl">
+	
+	<select id="s_emp120skrv_hsServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		--	s_emp120skrv_hsServiceImpl.selectList
+		DECLARE
+			  @COMP_CODE	NVARCHAR(8)	= #{S_COMP_CODE}
+			, @DIV_CODE		NVARCHAR(8)	= #{S_DIV_CODE}
+			, @TO_DAY		NVARCHAR(8)	= CONVERT(NVARCHAR(8), GETDATE(), 112)
+			, @YESTER_DAY	NVARCHAR(8)	= CONVERT(NVARCHAR(8), DATEADD(D, -1, GETDATE()), 112)
+		
+		SELECT *
+		  FROM (
+				SELECT ROW_NUMBER() OVER(ORDER BY A.CUSTOM_CODE, B.ITEM_CODE)	AS [ROW_NUMBER]
+					 , COUNT(*) OVER()											AS TOTAL
+					 , A.CUSTOM_CODE
+					 , M1.CUSTOM_NAME
+					 , B.ITEM_CODE
+					 , M3.ITEM_NAME
+					 , Q1.CODE_NAME				AS COND_PACKING		--	포장방법
+					 , B.ORDER_Q									--	주문량
+					 , ISNULL(C.Y_Q,0)			AS Y_Q				--	전일
+					 , ISNULL(C.D_Q,0)			AS D_Q				--	당일
+					 , ISNULL(D.SUM_OUT_Q,0)	AS SUM_OUT_Q		--	누계
+				  FROM SOF100T A WITH (NOLOCK)
+						INNER JOIN		SOF110T B WITH (NOLOCK)
+									 ON B.COMP_CODE	= A.COMP_CODE
+									AND B.DIV_CODE	= A.DIV_CODE
+									AND B.ORDER_NUM	= A.ORDER_NUM
+						LEFT JOIN	(
+										SELECT COMP_CODE, DIV_CODE, INOUT_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+											 , SUM(CASE WHEN INOUT_DATE = @YESTER_DAY	THEN INOUT_Q ELSE 0 END)	AS Y_Q
+											 , SUM(CASE WHEN INOUT_DATE = @TO_DAY		THEN INOUT_Q ELSE 0 END)	AS D_Q
+										  FROM BTR100T A WITH (NOLOCK)
+										 WHERE A.COMP_CODE		 = @COMP_CODE
+										   AND A.DIV_CODE		 = @DIV_CODE
+										   AND A.INOUT_TYPE		 = '2'
+										   AND A.CREATE_LOC		 = '1'
+										   AND A.INOUT_CODE_TYPE = '4'
+										   AND A.INOUT_DATE		&gt;= @YESTER_DAY
+										   AND A.INOUT_DATE		&lt;= @TO_DAY
+										 GROUP BY COMP_CODE, DIV_CODE, INOUT_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+									) C
+									 ON C.COMP_CODE	= B.COMP_CODE
+									AND C.DIV_CODE	= B.DIV_CODE
+									AND C.ORDER_NUM	= B.ORDER_NUM
+									AND C.ORDER_SEQ	= B.SER_NO
+									AND C.ITEM_CODE	= B.ITEM_CODE
+						LEFT JOIN	(
+										SELECT COMP_CODE, DIV_CODE, INOUT_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ, SUM(INOUT_Q) AS SUM_OUT_Q, MAX(INOUT_DATE) AS INOUT_DATE
+										  FROM BTR100T A WITH (NOLOCK)
+										 WHERE A.COMP_CODE		 = @COMP_CODE
+										   AND A.DIV_CODE		 = @DIV_CODE
+										   AND A.INOUT_TYPE		 = '2'
+										   AND A.CREATE_LOC		 = '1'
+										   AND A.INOUT_CODE_TYPE = '4'
+										 GROUP BY COMP_CODE, DIV_CODE, INOUT_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+									) D
+									 ON D.COMP_CODE	= B.COMP_CODE
+									AND D.DIV_CODE	= B.DIV_CODE
+									AND D.ORDER_NUM	= B.ORDER_NUM
+									AND D.ORDER_SEQ	= B.SER_NO
+									AND D.ITEM_CODE	= B.ITEM_CODE
+						LEFT JOIN		BCM100T M1 WITH (NOLOCK) ON M1.COMP_CODE = A.COMP_CODE	AND M1.CUSTOM_CODE	= A.CUSTOM_CODE
+						LEFT JOIN		TEA100T M2 WITH (NOLOCK) ON M2.COMP_CODE = A.COMP_CODE	AND M2.DIV_CODE		= A.DIV_CODE		AND M2.ORDER_NUM = A.ORDER_NUM
+						LEFT JOIN		BPR100T M3 WITH (NOLOCK) ON M3.COMP_CODE = B.COMP_CODE	AND M3.ITEM_CODE	= B.ITEM_CODE
+						LEFT JOIN		BSA100T Q1 WITH (NOLOCK) ON Q1.COMP_CODE = M2.COMP_CODE	AND Q1.SUB_CODE		= M2.COND_PACKING	AND Q1.MAIN_CODE = 'T010'	--포장방법
+				 WHERE A.COMP_CODE		= @COMP_CODE
+				   AND A.DIV_CODE		= @DIV_CODE
+				   AND ((B.ORDER_Q - ISNULL(D.SUM_OUT_Q,0) &gt; 0) OR (ISNULL(D.INOUT_DATE,'') = @TO_DAY))
+				   AND B.ORDER_STATUS	= 'N'
+				   AND D.COMP_CODE IS NOT NULL
+			  ) T
+		<if test="@foren.Ognl@isNotEmpty(page)"> 
+		 WHERE T.[ROW_NUMBER] BETWEEN ${start} + 1 AND ${limit} * ${page}
+		</if>
+	</select>
+	
+	<select id="s_emp120skrv_hsServiceImpl.selectExchg" parameterType="Map" resultType="rMap">
+		SELECT A.MONEY_UNIT
+			 , BASE_EXCHG
+			 , CASE WHEN CHANGE_PRICE &lt; 0 THEN '▼'
+					WHEN CHANGE_PRICE = 0 THEN '-'
+					ELSE '▲' 
+			   END ID_SIGN
+			 , CHANGE_PRICE
+			 , CHANGE_RATE
+		  FROM BCM520T A WITH (NOLOCK)
+				LEFT OUTER JOIN	BSA100T B WITH (NOLOCK)
+							 ON B.COMP_CODE	= A.COMP_CODE
+							AND B.MAIN_CODE	= 'B004'
+							AND B.SUB_CODE	= A.MONEY_UNIT
+		 WHERE A.COMP_CODE	= #{S_COMP_CODE}
+		   AND A.BASE_DATE	= (	SELECT MAX(BASE_DATE)
+								  FROM BCM520T WITH (NOLOCK)
+								 WHERE COMP_CODE	 = A.COMP_CODE
+								   AND MONEY_UNIT	 = A.MONEY_UNIT
+								   AND BASE_DATE	&lt;= CONVERT(NVARCHAR(8), GETDATE(), 112)	)
+		   AND A.BASE_DATE + A.BASE_TIME	= (	SELECT MAX(BASE_DATE + BASE_TIME)
+												  FROM BCM520T WITH (NOLOCK)
+												 WHERE COMP_CODE	= A.COMP_CODE
+												   AND BASE_DATE	= A.BASE_DATE
+												   AND MONEY_UNIT	= A.MONEY_UNIT	)
+		 ORDER BY ISNULL(B.SORT_SEQ, '99')
+	</select>
+</mapper>

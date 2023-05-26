@@ -1,0 +1,792 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="atx490ukrServiceImpl">
+<select id="atx490ukrServiceImpl.selectCheck1" parameterType="Map" resultType="rMap">					
+  --Atx490ukrv.CAtx490ukrv[fnAtx490QStd]query05
+	SELECT SUB_CODE
+		FROM BSA100T WITH(NOLOCK)
+        WHERE COMP_CODE = #{S_COMP_CODE}
+        AND MAIN_CODE = N'B066'
+        AND REF_CODE1 = N'Y'        
+</select>
+<select id="atx490ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	--Atx490ukrv.CAtx490ukrv[fnAtx490QStd]query03
+	--국세청신고 합계표 대사
+	BEGIN
+	    DECLARE         @COMP_CODE          NVARCHAR(10)                -- (필수) 법인코드
+	                  , @DIV_CODE           NVARCHAR(10)                -- (필수) 신고사업장
+	                  , @FR_DATE            NVARCHAR(08)                -- (필수) 계산서일(FR)
+	                  , @TO_DATE            NVARCHAR(08)                -- (필수) 계산서일(TO)
+	                  , @CUSTOM_CODE        NVARCHAR(10)                -- (선택) 거래처코드
+	                  , @CUSTOM_NAME        NVARCHAR(50)                -- (선택) 거래처명
+	                  , @INOUT_DIVI         NVARCHAR(03)                -- (선택) 매입/매출구분
+	                  , @COMPARE_YN         NVARCHAR(03)                -- (선택) 대사결과      ('':전체, Y:일치, N:불일치)
+	                  , @COMPANY_NUM        NVARCHAR(20)                -- (선택) 사업자번호
+	                  , @ENCRYPT_YN         NVARCHAR(20)                -- (선택) 주민번호 암호화
+	                  , @NTS_REPORT_YN      NVARCHAR(03)                -- (선택) 국세청신고여부('':전체, Y:예,   N:아니오)
+	                  , @BILL_SEND_YN       NVARCHAR(03)                -- (선택) 회계전자발행
+	                  , @USER_ID            NVARCHAR(100)                -- (필수) 사용자ID
+	                  , @BILL_TYPE          NVARCHAR(10)                -- (필수) 계산서유형
+	
+	    SET NOCOUNT    ON
+	    SET ARITHABORT ON
+	
+	--  1. 변수 값 할당
+	    SET @COMP_CODE          = #{S_COMP_CODE}
+	    SET @DIV_CODE           = #{txtBillDivCode}
+	    SET @FR_DATE            = #{txtFrPubDate}
+	    SET @TO_DATE            = #{txtToPubDate}
+	    SET @CUSTOM_CODE        = #{CUSTOM_CODE}
+	    SET @CUSTOM_NAME        = #{CUSTOM_NAME}
+	    SET @INOUT_DIVI         = #{cboInoutDivi}
+	    SET @COMPARE_YN         = #{rdoAccrue}
+	    SET @COMPANY_NUM        = #{txtCompanyNum}
+	    SET @ENCRYPT_YN         = #{rdoEncryptCode}
+	    SET @NTS_REPORT_YN      = #{rdoStatCode}
+	    SET @BILL_SEND_YN       = #{cboBillSendYn}
+	    SET @USER_ID            = #{S_USER_ID}
+	    SET @BILL_TYPE          = #{cboBillType}
+
+    	SET @COMPANY_NUM        = REPLACE(@COMPANY_NUM, '-', '')
+    	
+	--  2. 명칭 조회 유형 설정
+	    DECLARE @RefItem                NVARCHAR(01)
+	
+	    SELECT TOP 1 @RefItem = REF_ITEM
+	    FROM   BSA300T WITH (NOLOCK)
+	    WHERE  USER_ID = @USER_ID
+	
+	    SET @RefItem = ISNULL(@RefItem, '0')
+	
+	--  3. 날짜 포맷 유형 설정
+	    DECLARE @DateFormat             NVARCHAR(01)
+	    
+	    SELECT TOP 1 @DateFormat = SUBSTRING(CODE_NAME, 5, 1)
+	    FROM   BSA100T WITH (NOLOCK)
+	    WHERE  COMP_CODE = @COMP_CODE
+	    AND    MAIN_CODE = 'B044'
+	    AND    REF_CODE1 = 'Y'
+	    
+	    SET @DateFormat = ISNULL(@DateFormat, '.')
+	
+	--  3-2. 숫자 포맷 유형 설정
+	    DECLARE @NumberFormat             NUMERIC(01)
+	    
+	    SELECT TOP 1 @NumberFormat = CONVERT(NUMERIC(01), A.FORMAT_PRICE)
+		  FROM BSA110T A    WITH (NOLOCK)
+		     , BSA100T B    WITH (NOLOCK)
+		 WHERE A.COMP_CODE = B.COMP_CODE
+		   AND A.JOB_CODE  = B.SUB_CODE
+		   AND A.JOB_CODE  = '13'
+		   AND B.MAIN_CODE = 'B007'
+		   AND A.COMP_CODE = @COMP_CODE
+	    
+	    SET @NumberFormat = ISNULL(@NumberFormat, 0)
+	
+	--  4. 임시테이블 생성
+	--  4-1. 가상 테이블 생성(ATX490T(국세청)정보)
+	    CREATE TABLE #WEB201204231851
+	    (      DOC_ID               NUMERIC(20, 0)  IDENTITY(1,1)   NOT NULL        -- DOC ID
+	--
+	         , COMP_CODE            NVARCHAR(10)    NOT NULL DEFAULT 'MASTER'       -- 법인코드
+	         , DIV_CODE             NVARCHAR(10)    NOT NULL                        -- 사업장
+	         , INOUT_DIVI           NVARCHAR(01)    NOT NULL                        -- 매입/매출구분
+	         , BILL_TYPE            NVARCHAR(02)    NOT NULL                        -- 계산서유형(세금계산서:11, 계산서:20)
+	         , PUB_DATE             NVARCHAR(10)    NOT NULL                        -- 발행일자
+	         , PROV_REGNO           NVARCHAR(40)    NOT NULL DEFAULT ''             -- 공급자 사업자번호
+	         , GROUP_SEQ            INT             NOT NULL DEFAULT 0              -- 그룹순번 (JOIN 조건의 그룹별 순번)
+	--
+	         , COMPANY_NAME         NVARCHAR(50)    NOT NULL DEFAULT ''             -- 공급자 상호
+	         , SUPPLY_AMT           NUMERIC(30, 6)      NULL DEFAULT 0              -- 공급가액
+	         , TAX_AMT              NUMERIC(30, 6)      NULL DEFAULT 0              -- 세액
+	         , TOTAL_AMT            NUMERIC(30, 6)      NULL DEFAULT 0              -- 합계금액
+	         , APPR_NO              NVARCHAR(100)   NOT NULL                        -- 승인번호
+	         , NTS_REPORT_YN        NVARCHAR(10)    NOT NULL DEFAULT 'Y'            -- 국세청신고여부
+	    )
+	    CREATE INDEX WEB201204231851_IDX01 ON #WEB201204231851(COMP_CODE, DIV_CODE, INOUT_DIVI, PUB_DATE, PROV_REGNO, GROUP_SEQ)
+	
+	--  4-2. ERP정보
+	    CREATE TABLE #ERP201204231851
+	    (      DOC_ID               NUMERIC(20, 0)  IDENTITY(1,1)   NOT NULL        -- DOC ID
+	--
+	         , COMP_CODE            NVARCHAR(10)    NOT NULL DEFAULT 'MASTER'       -- 법인코드
+	         , DIV_CODE             NVARCHAR(10)    NOT NULL                        -- 사업장
+	         , INOUT_DIVI           NVARCHAR(01)    NOT NULL                        -- 매입/매출구분(매출:1,매입:2)
+	         , BILL_TYPE            NVARCHAR(02)    NOT NULL                        -- 계산서유형(세금계산서:11, 계산서:20)
+	         , PUB_DATE             NVARCHAR(10)    NOT NULL                        -- 계산서일자
+	         , COMPANY_NUM          NVARCHAR(40)    NOT NULL DEFAULT ''             -- 사업자번호
+	         , GROUP_SEQ            INT             NOT NULL DEFAULT 0              -- 그룹순번 (JOIN 조건의 그룹별 순번)
+	--
+	         , CUSTOM_CODE          NVARCHAR(10)    NOT NULL                        -- 거래처코드
+	         , CUSTOM_NAME          NVARCHAR(100)   NOT NULL                        -- 거래처명
+	         , SUPPLY_AMT_I         NUMERIC(30, 6)      NULL DEFAULT 0              -- 공급가액
+	         , TAX_AMT_I            NUMERIC(30, 6)      NULL DEFAULT 0              -- 세액
+	         , TOT_AMT_I            NUMERIC(30, 6)      NULL DEFAULT 0              -- 합계금액
+	         , BILL_SEND_YN         NVARCHAR(01)    NOT NULL DEFAULT 'N'            -- 전자발행여부
+	         , AC_DATE              NVARCHAR(10)    NOT NULL                        -- 전표일자
+	         , SLIP_NUM             NUMERIC(07, 0)  NOT NULL DEFAULT 0              -- 전표번호
+	         , SLIP_SEQ             NUMERIC(05, 0)  NOT NULL DEFAULT 0              -- 전표순번
+	         , INPUT_PATH           NVARCHAR(10)        NULL                        -- 입력경로
+	         , AUTO_SLIP_NUM        NVARCHAR(50)        NULL                        -- 지출/수입결의번호
+	         , REMARK               NVARCHAR(3000)      NULL                        -- 비고
+	    )
+	    CREATE INDEX ERP201204231851_IDX01 ON #ERP201204231851(COMP_CODE, DIV_CODE, INOUT_DIVI, PUB_DATE, COMPANY_NUM, GROUP_SEQ)
+	
+	--  4-3. 합계표대사정보
+	    CREATE TABLE #TOT201204231851
+	    (      DOC_ID               NUMERIC(20, 0)  IDENTITY(1,1)   NOT NULL        -- DOC ID
+	--  기본정보
+	         , COMP_CODE            NVARCHAR(10)    NOT NULL DEFAULT 'MASTER'       -- 법인코드
+	         , DIV_CODE             NVARCHAR(10)    NOT NULL                        -- 사업장
+	         , INOUT_DIVI           NVARCHAR(01)    NOT NULL                        -- 매입/매출구분(매출:1,매입:2)
+	         , BILL_TYPE            NVARCHAR(02)    NOT NULL                        -- 계산서유형(세금계산서:11, 계산서:20)
+	         , PUB_DATE             NVARCHAR(10)    NOT NULL                        -- 계산서일자
+	         , CUSTOM_CODE          NVARCHAR(10)        NULL                        -- 거래처코드
+	         , CUSTOM_NAME          NVARCHAR(100)       NULL                        -- 거래처명(ERP)
+	         , COMPANY_NAME         NVARCHAR(100)       NULL                        -- 거래처명(WEB)
+	         , COMPANY_NUM          NVARCHAR(40)    NOT NULL DEFAULT ''             -- 사업자번호
+	         , GROUP_SEQ            INT             NOT NULL DEFAULT 0              -- 그룹순번 (JOIN 조건의 그룹별 순번)
+	--  웹캐시정보
+	         , SUPPLY_AMT           NUMERIC(30, 6)      NULL                        -- 공급가액
+	         , TAX_AMT              NUMERIC(30, 6)      NULL                        -- 세액
+	         , TOTAL_AMT            NUMERIC(30, 6)      NULL                        -- 합계금액
+	         , APPR_NO              NVARCHAR(100)       NULL                        -- 승인번호
+	         , NTS_REPORT_YN        NVARCHAR(10)        NULL                        -- 국세청신고여부
+	--  대사정보
+	         , ACCRUE_I             NUMERIC(30, 6)      NULL DEFAULT 0              -- 대사결과차액
+	--  ERP정보
+	         , SUPPLY_AMT_I         NUMERIC(30, 6)      NULL                        -- 공급가액
+	         , TAX_AMT_I            NUMERIC(30, 6)      NULL                        -- 세액
+	         , TOT_AMT_I            NUMERIC(30, 6)      NULL                        -- 합계금액
+	         , BILL_SEND_YN         NVARCHAR(01)        NULL                        -- 전자발행여부
+	         , AC_DATE              NVARCHAR(10)        NULL                        -- 전표일자
+	         , SLIP_NUM             NUMERIC(07, 0)      NULL                        -- 전표번호
+	         , SLIP_SEQ             NUMERIC(05, 0)      NULL                        -- 전표순번
+	         , INPUT_PATH           NVARCHAR(10)        NULL                        -- 입력경로
+	         , AUTO_SLIP_NUM        NVARCHAR(50)        NULL                        -- 지출/수입결의번호
+	         , REMARK               NVARCHAR(3000)      NULL                        -- 비고
+	--  합계금액
+	         , WEB_TOT_I            NUMERIC(30, 6)      NULL DEFAULT 0              -- 국세청이세로 총금액
+	         , WEB_SUPPLY_I         NUMERIC(30, 6)      NULL DEFAULT 0              -- 국세청이세로 공급가액
+	         , WEB_TAX_I            NUMERIC(30, 6)      NULL DEFAULT 0              -- 국세청이세로 세액
+	         , ERP_TOT_I            NUMERIC(30, 6)      NULL DEFAULT 0              -- ERP 총금액
+	         , ERP_SUPPLY_I         NUMERIC(30, 6)      NULL DEFAULT 0              -- ERP 공급가액
+	         , ERP_TAX_I            NUMERIC(30, 6)      NULL DEFAULT 0              -- ERP 세액
+	    ) 
+	    CREATE INDEX TOT201204231851_IDX01 ON #TOT201204231851(COMP_CODE, DIV_CODE, INOUT_DIVI, PUB_DATE, COMPANY_NUM, GROUP_SEQ)
+	
+	--  5. 임시데이터 생성 --------------------------------------------------------------------------------------------------------
+	    DECLARE     @DivCompanyNum      NVARCHAR(20)        -- 사업장 사업자번호
+	
+	    SELECT  @DivCompanyNum      = COMPANY_NUM
+	    FROM    BOR120T   WITH (NOLOCK)
+	    WHERE   COMP_CODE           = @COMP_CODE
+	    AND     DIV_CODE            = @DIV_CODE
+	
+	--  5-1. 국세청이세로 정보
+	    INSERT INTO #WEB201204231851
+	    (      COMP_CODE            , DIV_CODE             , INOUT_DIVI           , BILL_TYPE           , PUB_DATE            , PROV_REGNO
+	         , GROUP_SEQ            , COMPANY_NAME         , SUPPLY_AMT           , TAX_AMT             , TOTAL_AMT
+	         , APPR_NO              , NTS_REPORT_YN        
+	    )
+	    SELECT @COMP_CODE                                                                               AS COMP_CODE
+	         , @DIV_CODE                                                                                AS DIV_CODE
+	         , A.INOUT_DIVI                                                                             AS INOUT_DIVI
+	         , A.BILL_TYPE                                                                              AS BILL_TYPE
+	         , A.PUB_DATE                                                                               AS PUB_DATE
+	         , CASE WHEN A.INOUT_DIVI = '1' THEN ISNULL(A.PROV_REGNO, '')
+	                ELSE ISNULL(A.BUY_REGNO, '')
+	           END                                                                                      AS PROV_REGNO
+	         , ROW_NUMBER() OVER (PARTITION BY A.INOUT_DIVI, A.PUB_DATE, CASE WHEN A.INOUT_DIVI = '1' THEN A.PROV_REGNO 
+	                                                                          ELSE A.BUY_REGNO
+	                                                                     END, ISNULL(A.SUPPLY_AMT , 0), ISNULL(A.TAX_AMT, 0)
+	                              ORDER     BY A.APPR_NO)                                         AS GROUP_SEQ
+	         , CASE WHEN A.INOUT_DIVI = '1' THEN ISNULL(A.PROV_COMP_NAME, '')
+	                ELSE ISNULL(A.BUY_COMP_NAME, '')
+	           END                                                                                      AS COMPANY_NAME
+	         , ISNULL(A.SUPPLY_AMT, 0)                                                                  AS SUPPLY_AMT
+	         , ISNULL(A.TAX_AMT   , 0)                                                                  AS TAX_AMT
+	         , ISNULL(A.TOTAL_AMT , 0)                                                                  AS TOTAL_AMT
+	         , A.APPR_NO                                                                                AS APPR_NO
+	         , N'Y'                                                                                     AS NTS_REPORT_YN
+	    FROM   ATX490T  A  WITH (NOLOCK)
+	    WHERE  A.COMP_CODE         =       @COMP_CODE
+	    AND    A.PUB_DATE         &gt;=       @FR_DATE
+	    AND    A.PUB_DATE         &lt;=       @TO_DATE
+	    AND    A.INOUT_DIVI        =       @INOUT_DIVI
+	    AND    A.BILL_TYPE         =       @BILL_TYPE
+	--
+	    AND  ((A.PROV_REGNO      LIKE       @DivCompanyNum + '%' AND A.INOUT_DIVI   = '2' AND @DivCompanyNum != '')
+	       OR (A.BUY_REGNO       LIKE       @DivCompanyNum + '%' AND A.INOUT_DIVI   = '1' AND @DivCompanyNum != '')
+	       OR (@DivCompanyNum       = ''))
+	    AND  ((A.BUY_REGNO       LIKE       @COMPANY_NUM   + '%' AND A.INOUT_DIVI   = '2' AND @COMPANY_NUM   != '')
+	       OR (A.PROV_REGNO      LIKE       @COMPANY_NUM   + '%' AND A.INOUT_DIVI   = '1' AND @COMPANY_NUM   != '')
+	       OR (@COMPANY_NUM         = ''))
+	--
+	--  AND  ((@NTS_REPORT_YN       =       'Y')                                          OR (@NTS_REPORT_YN = ''))    -- 국세청 신고자료일 경우
+	
+	--  5-2. ERP정보
+	    INSERT INTO #ERP201204231851
+	    (      COMP_CODE            , DIV_CODE             , INOUT_DIVI           , BILL_TYPE            , PUB_DATE             , COMPANY_NUM
+	         , GROUP_SEQ            , CUSTOM_CODE          , CUSTOM_NAME          , SUPPLY_AMT_I         , TAX_AMT_I
+	         , TOT_AMT_I            , BILL_SEND_YN         , AC_DATE              , SLIP_NUM             , SLIP_SEQ             , INPUT_PATH
+	         , AUTO_SLIP_NUM        , REMARK
+	    )
+	    SELECT A.COMP_CODE                                                                              AS COMP_CODE
+	         , A.BILL_DIVI_CODE                                                                         AS DIV_CODE
+	         , A.INOUT_DIVI                                                                             AS INOUT_DIVI
+	         , @BILL_TYPE                                                                               AS BILL_TYPE
+	         , A.PUB_DATE                                                                               AS PUB_DATE
+	         , CASE WHEN A.PROOF_KIND = '19' 
+	                     THEN CASE WHEN @ENCRYPT_YN = 'Y' THEN ISNULL(REPLACE(uniLite.fnCipherDecrypt(C1.TOP_NUM,'RJ'), '-', ''), '')
+	                               ELSE ISNULL(REPLACE(uniLite.fnCipherDecrypt(C1.TOP_NUM,'A'), '-', ''), '')
+	                          END
+	                ELSE ISNULL(A.COMPANY_NUM, '')
+	           END                                                                                      AS COMPANY_NUM
+	         , ROW_NUMBER() OVER (PARTITION BY A.INOUT_DIVI, A.PUB_DATE
+	                                         , CASE WHEN A.PROOF_KIND = '19' 
+	                                                     THEN CASE WHEN @ENCRYPT_YN = 'Y' THEN ISNULL(REPLACE(uniLite.fnCipherDecrypt(C1.TOP_NUM,'RJ'), '-', ''), '')
+	                                                               ELSE ISNULL(REPLACE(uniLite.fnCipherDecrypt(C1.TOP_NUM,'A'), '-', ''), '')
+	                                                          END
+	                                                ELSE ISNULL(A.COMPANY_NUM, '')
+	                                            END
+	                                         , ISNULL(A.SUPPLY_AMT_I, 0), ISNULL(A.TAX_AMT_I, 0)
+	                              ORDER     BY A.INSERT_DB_TIME)                                        AS GROUP_SEQ
+	         , A.CUSTOM_CODE                                                                            AS CUSTOM_CODE
+	         , CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+	                WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+	                ELSE C1.CUSTOM_NAME
+	           END                                                                                      AS CUSTOM_NAME
+	         , A.SUPPLY_AMT_I                                                                           AS SUPPLY_AMT_I
+	         , ROUND(A.TAX_AMT_I, @NumberFormat, -1)                                                    AS TAX_AMT_I
+	         , A.SUPPLY_AMT_I + ROUND(A.TAX_AMT_I, @NumberFormat, -1)                                   AS TOT_AMT_I
+	         --, A.TAX_AMT_I                                                                              AS TAX_AMT_I
+	         --, A.SUPPLY_AMT_I + A.TAX_AMT_I                                                             AS TOT_AMT_I
+	         , A.EB_YN                                                                                  AS BILL_SEND_YN
+	         , A.AC_DATE                                                                                AS AC_DATE
+	         , A.SLIP_NUM                                                                               AS SLIP_NUM
+	         , A.SLIP_SEQ                                                                               AS SLIP_SEQ
+	         , A.INPUT_PATH                                                                             AS INPUT_PATH
+	         , CASE WHEN A.INPUT_PATH IN ('79', '80') THEN ISNULL(B.AUTO_SLIP_NUM, '')
+	                ELSE ''
+	           END                                                                                      AS AUTO_SLIP_NUM
+	         , A.REMARK                                                                                 AS REMARK
+	    FROM              ATX100T   A  WITH (NOLOCK, INDEX(ATX100T_IDX01))
+	           LEFT  JOIN AGJ210T   B  WITH (NOLOCK) ON B.COMP_CODE     = A.COMP_CODE
+	                                                AND B.AC_DATE       = A.AC_DATE
+	                                                AND B.SLIP_NUM      = A.SLIP_NUM
+	                                                AND B.SLIP_SEQ      = A.SLIP_SEQ
+	                                                AND ISNULL(B.MOD_DIVI,'')=''
+	           INNER JOIN BCM100T   C1 WITH (NOLOCK) ON C1.COMP_CODE        = A.COMP_CODE
+	                                                AND C1.CUSTOM_CODE      = A.CUSTOM_CODE
+	           INNER JOIN BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE        = A.COMP_CODE
+	                                                AND M1.MAIN_CODE        = N'A022'
+	                                                AND M1.SUB_CODE         = A.PROOF_KIND
+	                                                AND M1.REF_CODE1       IN ('A', 'B', 'C', 'D')
+	    WHERE   A.COMP_CODE         =       @COMP_CODE
+	    AND     A.BILL_DIVI_CODE    =       @DIV_CODE
+	    AND     A.PUB_DATE         &gt;=       @FR_DATE
+	    AND     A.PUB_DATE         &lt;=       @TO_DATE
+	    AND     A.INOUT_DIVI        =       @INOUT_DIVI
+	    AND     ((M1.REF_CODE1 IN ('A', 'C', 'D') AND @BILL_TYPE = '11')
+	     OR      (M1.REF_CODE1 IN ('B')           AND @BILL_TYPE = '20'))
+	    AND  (( A.COMPANY_NUM    LIKE       @COMPANY_NUM + '%' AND A.PROOF_KIND        != '19' AND  @COMPANY_NUM != '')
+	       OR (uniLite.fnCipherDecrypt(C1.TOP_NUM,'')        LIKE       @COMPANY_NUM + '%' AND A.PROOF_KIND         = '19' AND  @COMPANY_NUM != '')
+	       OR (@COMPANY_NUM         = ''))
+	    AND  (( A.INOUT_DIVI        =       @INOUT_DIVI        AND @INOUT_DIVI         != '')  OR (@INOUT_DIVI   = ''))
+	--  AND  (( A.EB_YN             =       @BILL_SEND_YN      AND @BILL_SEND_YN       != '')  OR (@BILL_SEND_YN = ''))
+	
+	--  6. 합계표대사 생성 --------------------------------------------------------------------------------------------------------
+	
+	--  6-1. 웹캐시 기준 (ERP에 있거나 없는 데이터 생성)
+	    INSERT INTO #TOT201204231851
+	    (      COMP_CODE            , DIV_CODE             , INOUT_DIVI           , BILL_TYPE            , PUB_DATE             , CUSTOM_CODE
+	         , CUSTOM_NAME          , COMPANY_NAME         , COMPANY_NUM          , GROUP_SEQ            , SUPPLY_AMT
+	         , TAX_AMT              , TOTAL_AMT            , APPR_NO              , NTS_REPORT_YN        , ACCRUE_I
+	         , SUPPLY_AMT_I         , TAX_AMT_I            , TOT_AMT_I            , BILL_SEND_YN         , AC_DATE
+	         , SLIP_NUM             , SLIP_SEQ             , INPUT_PATH           , AUTO_SLIP_NUM        , REMARK
+	         , WEB_TOT_I            , WEB_SUPPLY_I         , WEB_TAX_I            , ERP_TOT_I            , ERP_SUPPLY_I         , ERP_TAX_I
+	    )
+	    SELECT ISNULL(A.COMP_CODE   , B.COMP_CODE  )                                AS COMP_CODE
+	         , ISNULL(A.DIV_CODE    , B.DIV_CODE   )                                AS DIV_CODE
+	         , ISNULL(A.INOUT_DIVI  , B.INOUT_DIVI )                                AS INOUT_DIVI
+	         , ISNULL(A.BILL_TYPE   , B.BILL_TYPE  )                                AS BILL_TYPE
+	         , ISNULL(A.PUB_DATE    , B.PUB_DATE   )                                AS PUB_DATE
+	         , ISNULL(B.CUSTOM_CODE , N''          )                                AS CUSTOM_CODE
+	         , ISNULL(B.CUSTOM_NAME , N'')                                          AS CUSTOM_NAME
+	         , ISNULL(A.COMPANY_NAME, B.CUSTOM_NAME)                                AS COMPANY_NAME
+	         , ISNULL(A.PROV_REGNO  , B.COMPANY_NUM)                                AS COMPANY_NUM
+	         , ISNULL(A.GROUP_SEQ   , B.GROUP_SEQ  )                                AS GROUP_SEQ
+	--
+	         , A.SUPPLY_AMT                                                         AS SUPPLY_AMT
+	         , A.TAX_AMT                                                            AS TAX_AMT
+	         , A.TOTAL_AMT                                                          AS TOTAL_AMT
+	         , A.APPR_NO                                                            AS APPR_NO
+	         , A.NTS_REPORT_YN                                                      AS NTS_REPORT_YN
+	         , A.SUPPLY_AMT - ISNULL(B.SUPPLY_AMT_I, 0)                             AS ACCRUE_I
+	         , ISNULL(B.SUPPLY_AMT_I, 0            )                                AS SUPPLY_AMT_I
+	         , ISNULL(B.TAX_AMT_I   , 0            )                                AS TAX_AMT_I
+	         , ISNULL(B.TOT_AMT_I   , 0            )                                AS TOT_AMT_I
+	         , ISNULL(B.BILL_SEND_YN, N'N'         )                                AS BILL_SEND_YN
+	         , ISNULL(B.AC_DATE     , N''          )                                AS AC_DATE
+	         , ISNULL(B.SLIP_NUM    , NULL         )                                AS SLIP_NUM
+	         , ISNULL(B.SLIP_SEQ    , NULL         )                                AS SLIP_SEQ
+	         , ISNULL(B.INPUT_PATH  , ''           )                                AS INPUT_PATH
+	         , ISNULL(B.AUTO_SLIP_NUM , N''        )                                AS AUTO_SLIP_NUM
+	         , ISNULL(B.REMARK      , N''          )                                AS REMARK
+	--
+	         , 0.0                                                                  AS WEB_TOT_I
+	         , 0.0                                                                  AS WEB_SUPPLY_I
+	         , 0.0                                                                  AS WEB_TAX_I
+	         , 0.0                                                                  AS ERP_TOT_I
+	         , 0.0                                                                  AS ERP_SUPPLY_I
+	         , 0.0                                                                  AS ERP_TAX_I
+	    FROM              #WEB201204231851  A  WITH (NOLOCK)
+	           LEFT  JOIN #ERP201204231851  B  WITH (NOLOCK) ON B.COMP_CODE         = A.COMP_CODE
+	                                                        AND B.DIV_CODE          = A.DIV_CODE
+	                                                        AND B.INOUT_DIVI        = A.INOUT_DIVI
+	                                                        AND B.PUB_DATE          = A.PUB_DATE
+	                                                        AND B.COMPANY_NUM       = A.PROV_REGNO
+	                                                        AND B.GROUP_SEQ         = A.GROUP_SEQ
+	                                                        AND B.SUPPLY_AMT_I      = A.SUPPLY_AMT
+	                                                        AND B.TOT_AMT_I         = A.TOTAL_AMT
+	    WHERE  A.COMP_CODE          = @COMP_CODE
+	    ORDER  BY
+	           A.DOC_ID
+	
+	--  6-2. ERP 기준 (웹캐시에 없는 데이터만 생성)
+	    INSERT INTO #TOT201204231851
+	    (      COMP_CODE            , DIV_CODE             , INOUT_DIVI           , BILL_TYPE            , PUB_DATE             , CUSTOM_CODE
+	         , CUSTOM_NAME          , COMPANY_NAME         , COMPANY_NUM          , GROUP_SEQ            , SUPPLY_AMT
+	         , TAX_AMT              , TOTAL_AMT            , APPR_NO              , NTS_REPORT_YN        , ACCRUE_I
+	         , SUPPLY_AMT_I         , TAX_AMT_I            , TOT_AMT_I            , BILL_SEND_YN         , AC_DATE
+	         , SLIP_NUM             , SLIP_SEQ             , INPUT_PATH           , AUTO_SLIP_NUM        , REMARK
+	         , WEB_TOT_I            , WEB_SUPPLY_I         , WEB_TAX_I            , ERP_TOT_I            , ERP_SUPPLY_I         , ERP_TAX_I
+	    )
+	    SELECT A.COMP_CODE                                                          AS COMP_CODE
+	         , A.DIV_CODE                                                           AS DIV_CODE
+	         , A.INOUT_DIVI                                                         AS INOUT_DIVI
+	         , A.BILL_TYPE                                                          AS BILL_TYPE
+	         , A.PUB_DATE                                                           AS PUB_DATE
+	         , A.CUSTOM_CODE                                                        AS CUSTOM_CODE
+	         , A.CUSTOM_NAME                                                        AS CUSTOM_NAME
+	         , ISNULL(B.COMPANY_NAME, A.CUSTOM_NAME)                                AS COMPANY_NAME
+	         , A.COMPANY_NUM                                                        AS COMPANY_NUM
+	         , A.GROUP_SEQ                                                          AS GROUP_SEQ
+	--
+	         , ISNULL(B.SUPPLY_AMT   , 0           )                                AS SUPPLY_AMT
+	         , ISNULL(B.TAX_AMT      , 0           )                                AS TAX_AMT
+	         , ISNULL(B.TOTAL_AMT    , 0           )                                AS TOTAL_AMT
+	         , ISNULL(B.APPR_NO      , N''         )                                AS APPR_NO
+	         , ISNULL(B.NTS_REPORT_YN, N'N'        )                                AS NTS_REPORT_YN
+	         , ISNULL(B.SUPPLY_AMT, 0) - A.SUPPLY_AMT_I                             AS ACCRUE_I
+	         , A.SUPPLY_AMT_I                                                       AS SUPPLY_AMT_I
+	         , A.TAX_AMT_I                                                          AS TAX_AMT_I
+	         , A.TOT_AMT_I                                                          AS TOT_AMT_I
+	         , A.BILL_SEND_YN                                                       AS BILL_SEND_YN
+	         , A.AC_DATE                                                            AS AC_DATE
+	         , A.SLIP_NUM                                                           AS SLIP_NUM
+	         , A.SLIP_SEQ                                                           AS SLIP_SEQ
+	         , A.INPUT_PATH                                                         AS INPUT_PATH
+	         , A.AUTO_SLIP_NUM                                                      AS AUTO_SLIP_NUM
+	         , A.REMARK                                                             AS REMARK
+	--
+	         , 0.0                                                                  AS WEB_TOT_I
+	         , 0.0                                                                  AS WEB_SUPPLY_I
+	         , 0.0                                                                  AS WEB_TAX_I
+	         , 0.0                                                                  AS ERP_TOT_I
+	         , 0.0                                                                  AS ERP_SUPPLY_I
+	         , 0.0                                                                  AS ERP_TAX_I
+	    FROM              #ERP201204231851  A  WITH (NOLOCK)
+	           LEFT  JOIN #WEB201204231851  B  WITH (NOLOCK) ON B.COMP_CODE         = A.COMP_CODE
+	                                                        AND B.DIV_CODE          = A.DIV_CODE
+	                                                        AND B.INOUT_DIVI        = A.INOUT_DIVI
+	                                                        AND B.PUB_DATE          = A.PUB_DATE
+	                                                        AND B.PROV_REGNO        = A.COMPANY_NUM
+	                                                        AND B.GROUP_SEQ         = A.GROUP_SEQ
+	                                                        AND B.SUPPLY_AMT        = A.SUPPLY_AMT_I
+	                                                        AND B.TOTAL_AMT         = A.TOT_AMT_I
+	    WHERE  A.COMP_CODE          = @COMP_CODE
+	    AND    B.COMP_CODE         IS NULL
+	    ORDER  BY
+	           A.DOC_ID
+	
+	--  7. 합계금액 계산 ----------------------------------------------------------------------------------------------------------
+	    UPDATE A
+	    SET    A.WEB_TOT_I         = ISNULL(B.WEB_TOT_I , 0)
+	         , A.WEB_SUPPLY_I      = ISNULL(B.WEB_SUPPLY_I, 0)
+	         , A.WEB_TAX_I         = ISNULL(B.WEB_TAX_I , 0)
+	         , A.ERP_TOT_I         = ISNULL(B.ERP_TOT_I, 0)
+	         , A.ERP_SUPPLY_I      = ISNULL(B.ERP_SUPPLY_I , 0)
+	         , A.ERP_TAX_I         = ISNULL(B.ERP_TAX_I, 0)
+	    FROM              #TOT201204231851  A  WITH (NOLOCK)
+	           LEFT  JOIN (
+	                      SELECT A.COMP_CODE, A.DIV_CODE
+	                           , SUM(ISNULL(A.TOTAL_AMT   , 0))   AS WEB_TOT_I
+	                           , SUM(ISNULL(A.SUPPLY_AMT  , 0))   AS WEB_SUPPLY_I
+	                           , SUM(ISNULL(A.TAX_AMT     , 0))   AS WEB_TAX_I
+	                           , SUM(ISNULL(A.TOT_AMT_I   , 0))   AS ERP_TOT_I
+	                           , SUM(ISNULL(A.SUPPLY_AMT_I, 0))   AS ERP_SUPPLY_I
+	                           , SUM(ISNULL(A.TAX_AMT_I   , 0))   AS ERP_TAX_I
+	                      FROM   #TOT201204231851  A  WITH (NOLOCK)
+	                      WHERE  A.COMP_CODE          =       @COMP_CODE
+	                      AND    A.DIV_CODE           =       @DIV_CODE
+	                      AND    A.PUB_DATE          &gt;=       @FR_DATE
+	                      AND    A.PUB_DATE          &lt;=       @TO_DATE
+	--
+	                      AND  ((A.CUSTOM_CODE     LIKE       @CUSTOM_CODE   + '%' AND @CUSTOM_CODE   != '') OR (@CUSTOM_CODE   = ''))
+	                      AND  ((A.CUSTOM_NAME     LIKE '%' + @CUSTOM_NAME   + '%' AND @CUSTOM_NAME   != '') OR (@CUSTOM_NAME   = ''))
+	                      AND  ((A.INOUT_DIVI         =       @INOUT_DIVI          AND @INOUT_DIVI    != '') OR (@INOUT_DIVI    = ''))
+	                      AND  ((A.BILL_TYPE          =       @BILL_TYPE           AND @BILL_TYPE     != '') OR (@BILL_TYPE     = ''))
+	                      AND  ((A.ACCRUE_I           =       0                    AND @COMPARE_YN    = 'Y')
+	                         OR (A.ACCRUE_I          !=       0                    AND @COMPARE_YN    = 'N') OR (@COMPARE_YN    = ''))
+	                      AND  ((A.COMPANY_NUM     LIKE       @COMPANY_NUM   + '%' AND @COMPANY_NUM   != '') OR (@COMPANY_NUM   = ''))
+	                      AND  ((A.NTS_REPORT_YN      =       @NTS_REPORT_YN       AND @NTS_REPORT_YN != '') OR (@NTS_REPORT_YN = ''))
+	                      AND  ((A.BILL_SEND_YN       =       @BILL_SEND_YN        AND @BILL_SEND_YN  != '') OR (@BILL_SEND_YN  = ''))
+	                      GROUP  BY
+	                             A.COMP_CODE, A.DIV_CODE
+	                      ) B                                ON B.COMP_CODE     = A.COMP_CODE
+	                                                        AND B.DIV_CODE      = A.DIV_CODE
+	    WHERE  A.COMP_CODE          = @COMP_CODE
+	    AND    A.DIV_CODE           = @DIV_CODE
+	
+	--  8. 합계표대사 조회 --------------------------------------------------------------------------------------------------------
+	    SELECT CAST(0 AS BIT)                                                           AS CHOICE
+	         , ROW_NUMBER() OVER (ORDER BY A.INOUT_DIVI, A.PUB_DATE, A.CUSTOM_NAME)     AS SEQ
+	         , A.GROUP_SEQ
+	         , A.COMP_CODE
+	         , A.DIV_CODE
+	         , A.INOUT_DIVI
+	         , A.BILL_TYPE
+	         , CASE WHEN ISNULL(A.PUB_DATE, '') = '' THEN ''
+	                ELSE SUBSTRING(A.PUB_DATE, 1, 4) + @DateFormat + 
+	                     SUBSTRING(A.PUB_DATE, 5, 2) + @DateFormat + 
+	                     SUBSTRING(A.PUB_DATE, 7, 2)
+	           END                                                                      AS PUB_DATE
+	         , ISNULL(A.COMPANY_NAME, A.CUSTOM_NAME)                                    AS CUSTOM_NAME
+	         , CASE WHEN ISNULL(A.COMPANY_NUM, '') = '' THEN ''
+	                ELSE CASE WHEN LEN(A.COMPANY_NUM) = '13' THEN SUBSTRING(A.COMPANY_NUM, 1, 6) + '-'
+	                                                            + SUBSTRING(A.COMPANY_NUM, 7, 7)
+	                          ELSE SUBSTRING(A.COMPANY_NUM, 1, 3) + '-'
+	                             + SUBSTRING(A.COMPANY_NUM, 4, 2) + '-'
+	                             + SUBSTRING(A.COMPANY_NUM, 6, 5)
+	                     END
+	           END                                                                      AS COMPANY_NUM
+	         , A.SUPPLY_AMT
+	         , A.TAX_AMT
+	         , A.TOTAL_AMT
+	         , A.APPR_NO
+	         , A.NTS_REPORT_YN
+	         , A.ACCRUE_I
+	         , A.SUPPLY_AMT_I
+	         , A.TAX_AMT_I
+	         , A.TOT_AMT_I
+	         , A.BILL_SEND_YN
+	         , CASE WHEN ISNULL(A.AC_DATE, '') = '' THEN ''
+	                ELSE SUBSTRING(A.AC_DATE, 1, 4) + @DateFormat + 
+	                     SUBSTRING(A.AC_DATE, 5, 2) + @DateFormat + 
+	                     SUBSTRING(A.AC_DATE, 7, 2)
+	           END                                                                      AS AC_DATE
+	         , A.SLIP_SEQ
+	         , A.SLIP_NUM
+	         , A.INPUT_PATH
+	         , A.AUTO_SLIP_NUM
+	         , A.REMARK
+	         , A.WEB_TOT_I
+	         , A.WEB_SUPPLY_I
+	         , A.WEB_TAX_I
+	         , A.ERP_TOT_I
+	         , A.ERP_SUPPLY_I
+	         , A.ERP_TAX_I
+	    FROM   #TOT201204231851  A  WITH (NOLOCK)
+	    WHERE  A.COMP_CODE          =       @COMP_CODE
+	    AND    A.DIV_CODE           =       @DIV_CODE
+	    AND    A.PUB_DATE          &gt;=       @FR_DATE
+	    AND    A.PUB_DATE          &lt;=       @TO_DATE
+	    AND    A.INOUT_DIVI         =       @INOUT_DIVI
+	    AND    A.BILL_TYPE          =       @BILL_TYPE
+	--
+	--  2012/05/23 YJY 국세청 자료와 ERP자료의 거래처명이 다르므로 무조건 사업자번호로 비교하거나 거래처명 like 검색할 수 있도록 함
+	--  AND  ((A.CUSTOM_CODE     LIKE       @CUSTOM_CODE   + '%' AND @CUSTOM_CODE   != '') OR (@CUSTOM_CODE   = ''))
+	    AND  ((ISNULL(A.COMPANY_NAME, A.CUSTOM_NAME) LIKE '%' + @CUSTOM_NAME   + '%' AND @CUSTOM_NAME   != '') OR (@CUSTOM_NAME   = ''))
+	    AND  ((A.INOUT_DIVI         =       @INOUT_DIVI          AND @INOUT_DIVI    != '') OR (@INOUT_DIVI    = ''))
+	    AND  ((A.BILL_TYPE          =       @BILL_TYPE           AND @BILL_TYPE     != '') OR (@BILL_TYPE     = ''))
+	    AND  ((A.ACCRUE_I           =       0                    AND @COMPARE_YN    = 'Y')
+	       OR (A.ACCRUE_I          !=       0                    AND @COMPARE_YN    = 'N') OR (@COMPARE_YN    = ''))
+	    AND  ((A.COMPANY_NUM     LIKE       @COMPANY_NUM   + '%' AND @COMPANY_NUM   != '') OR (@COMPANY_NUM   = ''))
+	    AND  ((A.NTS_REPORT_YN      =       @NTS_REPORT_YN       AND @NTS_REPORT_YN != '') OR (@NTS_REPORT_YN = ''))
+	    AND  ((A.BILL_SEND_YN       =       @BILL_SEND_YN        AND @BILL_SEND_YN  != '') OR (@BILL_SEND_YN  = ''))
+	
+	--  9. 임시테이블 삭제 --------------------------------------------------------------------------------------------------------
+	    DROP TABLE #WEB201204231851
+	    DROP TABLE #ERP201204231851
+	    DROP TABLE #TOT201204231851
+	
+	    SET NOCOUNT OFF
+	    SET ARITHABORT OFF
+	END
+</select>
+
+<insert id="atx490ukrServiceImpl.insertDetail" parameterType="Map">    	
+
+</insert>
+	
+<update id="atx490ukrServiceImpl.updateDetail" parameterType="Map">		
+	--s_Atx490ukrv_im.CAtx490ukrv[fnAtx490Save] QUERY01
+DECLARE  @COMP_CODE        NVARCHAR(8)
+        ,@AC_DATE          NVARCHAR(8)
+        ,@SLIP_NUM         NUMERIC(7,0)
+        ,@SLIP_SEQ         NUMERIC(7,0)
+        ,@UPDATE_DB_USER   NVARCHAR(100)
+        ,@EB_YN            NVARCHAR(2)
+        
+SET      @COMP_CODE      = #{S_COMP_CODE}
+SET      @AC_DATE        = #{PUB_DATE}
+SET      @SLIP_NUM       = #{SLIP_NUM}
+SET      @SLIP_SEQ       = #{SLIP_SEQ}
+SET      @UPDATE_DB_USER = #{S_USER_ID}
+SET      @EB_YN          = #{BILL_SEND_YN}
+
+--############################################################################
+--#결의전표일자, 번호, 순번 찾기
+--############################################################################
+DECLARE  @EX_DATE          NVARCHAR(8)
+        ,@EX_NUM           NUMERIC(7,0)
+        ,@EX_SEQ           NUMERIC(5,0)
+
+SELECT @EX_DATE = EX_DATE
+     , @EX_NUM  = EX_NUM
+     , @EX_SEQ  = EX_SEQ
+  FROM AGJ210T WITH (NOLOCK, INDEX(AGJ210T_IDX01))
+ WHERE COMP_CODE       = @COMP_CODE 
+   AND AC_DATE         = @AC_DATE
+   AND SLIP_NUM        = @SLIP_NUM
+   AND SLIP_SEQ        = @SLIP_SEQ
+   AND (MOD_DIVI IS NULL OR MOD_DIVI = '')
+
+--############################################################################
+--#UPDATE ATX100T
+--############################################################################
+
+UPDATE ATX100T
+SET EB_YN = @EB_YN
+   ,UPDATE_DB_USER = @UPDATE_DB_USER
+   ,UPDATE_DB_TIME = GETDATE()
+
+WHERE COMP_CODE       = @COMP_CODE 
+  AND AC_DATE         = @AC_DATE
+  AND SLIP_NUM        = @SLIP_NUM
+  AND SLIP_SEQ        = @SLIP_SEQ
+  AND INPUT_DIVI      = '1'
+
+--############################################################################
+--#UPDATE AGJ210T
+--############################################################################
+
+UPDATE AGJ210T 
+
+SET AC_DATA1          = CASE AC_CODE1 WHEN 'I7' THEN @EB_YN
+                                      ELSE AC_DATA1
+                          END
+   ,AC_DATA2          = CASE AC_CODE2 WHEN 'I7' THEN @EB_YN
+                                      ELSE AC_DATA2
+                          END
+   ,AC_DATA3          = CASE AC_CODE3 WHEN 'I7' THEN @EB_YN
+                                      ELSE AC_DATA3
+                          END
+   ,AC_DATA4          = CASE AC_CODE4 WHEN 'I7' THEN @EB_YN
+                                      ELSE AC_DATA4
+                          END
+   ,AC_DATA5          = CASE AC_CODE5 WHEN 'I7' THEN @EB_YN
+                                      ELSE AC_DATA5
+                          END
+   ,AC_DATA6          = CASE AC_CODE6 WHEN 'I7' THEN @EB_YN
+                                      ELSE AC_DATA6
+                          END
+   ,AC_DATA_NAME1     = CASE AC_CODE1 WHEN 'I7' THEN B.CODE_NAME
+                                      ELSE AC_DATA_NAME1
+                          END
+   ,AC_DATA_NAME2     = CASE AC_CODE2 WHEN 'I7' THEN B.CODE_NAME
+                                      ELSE AC_DATA_NAME2
+                          END
+   ,AC_DATA_NAME3     = CASE AC_CODE3 WHEN 'I7' THEN B.CODE_NAME
+                                      ELSE AC_DATA_NAME3
+                          END
+   ,AC_DATA_NAME4     = CASE AC_CODE4 WHEN 'I7' THEN B.CODE_NAME
+                                      ELSE AC_DATA_NAME4
+                          END
+   ,AC_DATA_NAME5     = CASE AC_CODE5 WHEN 'I7' THEN B.CODE_NAME
+                                      ELSE AC_DATA_NAME5
+                          END
+   ,AC_DATA_NAME6     = CASE AC_CODE6 WHEN 'A7' THEN B.CODE_NAME
+                                      ELSE AC_DATA_NAME6
+                          END
+FROM       AGJ210T AS A WITH (NOLOCK, INDEX(AGJ210T_IDX01))
+INNER JOIN BSA100T AS B WITH (NOLOCK) ON B.COMP_CODE = @COMP_CODE
+                                     AND B.MAIN_CODE = 'A149'
+                                     AND B.SUB_CODE = @EB_YN                    
+WHERE A.COMP_CODE       = @COMP_CODE 
+  AND A.AC_DATE         = @AC_DATE
+  AND A.SLIP_NUM        = @SLIP_NUM
+  AND A.SLIP_SEQ        = @SLIP_SEQ
+  AND (A.MOD_DIVI IS NULL OR A.MOD_DIVI = '')
+
+
+--############################################################################
+--#UPDATE AGJ110T
+--############################################################################
+
+UPDATE AGJ110T 
+
+SET AC_DATA1          = CASE AC_CODE1 WHEN 'I7' THEN @EB_YN
+                                      ELSE AC_DATA1
+                          END
+   ,AC_DATA2          = CASE AC_CODE2 WHEN 'I7' THEN @EB_YN
+                                      ELSE AC_DATA2
+                          END
+   ,AC_DATA3          = CASE AC_CODE3 WHEN 'I7' THEN @EB_YN
+                                      ELSE AC_DATA3
+                          END
+   ,AC_DATA4          = CASE AC_CODE4 WHEN 'I7' THEN @EB_YN
+                                      ELSE AC_DATA4
+                          END
+   ,AC_DATA5          = CASE AC_CODE5 WHEN 'I7' THEN @EB_YN
+                                      ELSE AC_DATA5
+                          END
+   ,AC_DATA6          = CASE AC_CODE6 WHEN 'I7' THEN @EB_YN
+                                      ELSE AC_DATA6
+                          END
+   ,AC_DATA_NAME1     = CASE AC_CODE1 WHEN 'I7' THEN B1.CODE_NAME
+                                      ELSE AC_DATA_NAME1
+                          END
+   ,AC_DATA_NAME2     = CASE AC_CODE2 WHEN 'I7' THEN B1.CODE_NAME
+                                      ELSE AC_DATA_NAME2
+                          END
+   ,AC_DATA_NAME3     = CASE AC_CODE3 WHEN 'I7' THEN B1.CODE_NAME
+                                      ELSE AC_DATA_NAME3
+                          END
+   ,AC_DATA_NAME4     = CASE AC_CODE4 WHEN 'I7' THEN B1.CODE_NAME
+                                      ELSE AC_DATA_NAME4
+                          END
+   ,AC_DATA_NAME5     = CASE AC_CODE5 WHEN 'I7' THEN B1.CODE_NAME
+                                      ELSE AC_DATA_NAME5
+                          END
+   ,AC_DATA_NAME6     = CASE AC_CODE6 WHEN 'I7' THEN B1.CODE_NAME
+                                      ELSE AC_DATA_NAME6
+                          END
+FROM       AGJ110T AS A1 WITH (NOLOCK, INDEX(AGJ110T_IDX01))
+INNER JOIN BSA100T AS B1 WITH (NOLOCK) ON B1.COMP_CODE = @COMP_CODE
+                                      AND B1.MAIN_CODE = 'A149'
+                                      AND B1.SUB_CODE  = @EB_YN                    
+WHERE A1.COMP_CODE       = @COMP_CODE 
+  AND A1.EX_DATE         = @EX_DATE
+  AND A1.EX_NUM          = @EX_NUM
+  AND A1.EX_SEQ          = @EX_SEQ
+  AND (A1.MOD_DIVI IS NULL OR A1.MOD_DIVI = '')
+</update>
+
+<update id="atx490ukrServiceImpl.deleteDetail" parameterType="Map">
+ 
+</update>
+
+<select id="atx490ukrServiceImpl.checkCompCode" parameterType="Map" resultType="rMap">
+
+</select>
+
+	<delete id="atx490ukrServiceImpl.deleteAll" >
+		/*atx490ukrServiceImpl.deleteAll*/
+		DELETE
+		  FROM ATX490T
+		 WHERE COMP_CODE	 = #{S_COMP_CODE}
+		   AND PUB_DATE		&gt;= #{FR_DATE}
+		   AND PUB_DATE		&lt;= #{TO_DATE}
+		   AND INOUT_DIVI	 = #{INOUT_DIVI}
+		   AND BILL_TYPE	 = #{BILL_TYPE}
+	</delete>
+
+	<insert id="atx490ukrServiceImpl.insertExcelAtx490ukr" parameterType="Map">       /* 엑셀insert */
+		/*atx490ukrServiceImpl.insertExcelAtx490ukr*/
+		DECLARE @TAX_AMT	NUMERIC(30, 6),
+				@ETC		NVARCHAR(300)
+		
+		SET @TAX_AMT	= CASE WHEN '${TAX_AMT}' = '' THEN 0 ELSE 0${TAX_AMT} END
+		SET @ETC		= #{ETC}
+		
+		INSERT INTO ATX490T
+			( COMP_CODE
+			, APPR_NO
+			, INOUT_DIVI
+			, BILL_TYPE
+			, PUB_DATE
+			, ISSU_DATE
+			, SEND_DATE
+			, PROV_REGNO
+			, PROV_OTHER_REGNO
+			, PROV_COMP_NAME
+			, PROV_CEO_NAME
+			, BUY_REGNO
+			, BUY_OTHER_REGNO
+			, BUY_COMP_NAME
+			, BUY_CEO_NAME
+			, TOTAL_AMT
+			, SUPPLY_AMT
+			, TAX_AMT
+			, EBILL_TYPE
+			, ISSUE_TYPE
+			, ETC
+			, TEMPC_01
+			, TEMPC_02
+			, INSERT_DB_USER
+			, INSERT_DB_TIME
+			, UPDATE_DB_USER
+			, UPDATE_DB_TIME	)
+		VALUES
+			( #{S_COMP_CODE}
+			, #{APPR_NO}
+			, #{INOUT_DIVI}
+			, #{BILL_TYPE}
+			, REPLACE(#{PUB_DATE}, '-', '')
+			, REPLACE(#{ISSU_DATE}, '-', '')
+			, REPLACE(#{SEND_DATE}, '-', '')
+			, REPLACE(#{PROV_REGNO}, '-', '')
+			, REPLACE(#{PROV_OTHER_REGNO}, '-', '')
+			, #{PROV_COMP_NAME}
+			, #{PROV_CEO_NAME}
+			, REPLACE(#{BUY_REGNO}, '-', '')
+			, REPLACE(#{BUY_OTHER_REGNO}, '-', '')
+			, #{BUY_COMP_NAME}
+			, #{BUY_CEO_NAME}
+			, ${TOTAL_AMT}
+			, ${SUPPLY_AMT}
+			, @TAX_AMT
+			, #{EBILL_TYPE}
+			, #{ISSUE_TYPE}
+			, @ETC
+			, #{_EXCEL_JOBID}
+			, #{_EXCEL_HAS_ERROR}
+			, #{S_USER_ID}
+			, GETDATE()
+			, #{S_USER_ID}
+			, GETDATE()	)
+	</insert>
+
+	<update id="atx490ukrServiceImpl.excelValidate" >
+		/*atx490ukrServiceImpl.excelValidate*/
+		UPDATE A
+		   SET A.PROV_REGNO = REPLACE(A.PROV_REGNO, '-', '')
+			 , A.BUY_REGNO  = REPLACE(A.BUY_REGNO , '-', '')
+		  FROM ATX490T A
+		 WHERE A.APPR_NO	= #{APPR_NO}
+		   AND A.PUB_DATE	= #{PUB_DATE}
+	</update>
+
+	<select id="atx490ukrServiceImpl.getErrMsg" parameterType="Map" resultType="rMap">
+		--Atx490ukrv.CAtx490ukrv[fnAtx490QStd]getErrMsg
+		SELECT *
+		  FROM ATX490T WITH (NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND TEMPC_01  = #{_EXCEL_JOBID}
+		   AND TEMPC_02 != ''
+	</select>
+	
+</mapper>

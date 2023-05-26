@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="adt500ukrServiceImpl">
+	
+	<select id="adt500ukrServiceImpl.selectDetailList" parameterType="Map" resultType="rMap">	/* 마스터데이터 조회 */
+	DECLARE @COMP_CODE      NVARCHAR(8)
+      , @DSTRB_NO       NVARCHAR(20)
+      , @FR_AC_DATE     NVARCHAR(8)
+      , @TO_AC_DATE     NVARCHAR(8)
+      , @DSTRB_DIV_CODE NVARCHAR(8)
+
+	SET @COMP_CODE      = #{S_COMP_CODE}
+	SET @DSTRB_NO       = #{DSTRB_NO}
+	SET @FR_AC_DATE     = #{FR_AC_DATE}
+	SET @TO_AC_DATE     = #{TO_AC_DATE}
+	SET @DSTRB_DIV_CODE = #{DSTRB_DIV_CODE}
+	--UAdt01Krv.Cadt500UKR[fnadt500QStd] Query01
+	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+	
+	SELECT A.COMP_CODE
+	     , A.DSTRB_NO
+	     , unilite.fnGetUserDate(A.COMP_CODE, A.FR_AC_DATE) AS FR_AC_DATE
+	     , unilite.fnGetUserDate(A.COMP_CODE, A.TO_AC_DATE) AS TO_AC_DATE
+	     , A.ORG_DIV_CODE
+	     , A.DSTRB_DIV_CODE
+	     , A.DIV_CODE
+	     , unilite.fnGetUserDate(A.COMP_CODE, A.EX_DATE)    AS EX_DATE
+	     , CASE A.EX_NUM
+	            WHEN 0 THEN NULL
+	            ELSE        A.EX_NUM
+	        END                                             AS EX_NUM
+	  FROM ADT500T AS A WITH (NOLOCK)
+	 WHERE A.COMP_CODE = @COMP_CODE
+	   AND A.DSTRB_NO  = @DSTRB_NO
+	</select>
+	
+	<select id="adt500ukrServiceImpl.selectDetailList2" parameterType="Map" resultType="rMap">	/* 디테일데이터 조회 */
+	--UAdt01Krv.Cadt500UKR[fnadt500QStd] Query02
+	DECLARE @COMP_CODE      NVARCHAR(8)
+		  , @DSTRB_NO       NVARCHAR(20)
+		  , @FR_AC_DATE     NVARCHAR(8)
+		  , @TO_AC_DATE     NVARCHAR(8)
+		  , @DSTRB_DIV_CODE NVARCHAR(8)
+
+	SET @COMP_CODE      = #{S_COMP_CODE}
+	SET @DSTRB_NO       = #{DSTRB_NO}
+	SET @FR_AC_DATE     = #{FR_AC_DATE}
+	SET @TO_AC_DATE     = #{TO_AC_DATE}
+	SET @DSTRB_DIV_CODE = #{DSTRB_DIV_CODE}
+     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+    
+     IF ( @DSTRB_NO = '' )
+         -- (1) 새로운 배부 대상을 조회할 경우
+         SELECT CONVERT(BIT,0)                      AS CHK
+              , T.COMP_CODE
+              , CONVERT(NVARCHAR(20),'')            AS DSTRB_NO
+              , T.ACCNT
+              , T.ACCNT_NAME
+              , T.DEPT_CODE
+              , D.TREE_NAME                         AS DEPT_NAME
+              , T.PJT_CODE
+              , P.PJT_NAME
+              , T.APPLY_DSTRB
+              , SUM(T.DSTRB_AMT_I) AS DSTRB_AMT_I
+              , CONVERT(NVARCHAR(10),'')            AS UPDATE_DB_USER
+              , CONVERT(SMALLDATETIME,GETDATE())    AS UPDATE_DB_TIME
+           FROM (
+                 --(1.1) 프로젝트를 계정잔액으로 관리 안 하는 계정
+                 SELECT A.COMP_CODE
+                      , A.ACCNT
+                      , MAX(C.ACCNT_NAME)                   AS ACCNT_NAME
+                      , A.DEPT_CODE
+                      , CONVERT(NVARCHAR(20),'')            AS PJT_CODE
+                      , B.APPLY_DSTRB
+                      , SUM(CASE C.JAN_DIVI
+                                 WHEN '1' THEN ISNULL(A.DR_AMT_I,0) - ISNULL(A.CR_AMT_I,0)
+                                 WHEN '2' THEN ISNULL(A.CR_AMT_I,0) - ISNULL(A.DR_AMT_I,0)
+                             END)                           AS DSTRB_AMT_I
+                   FROM            AGB100T AS A WITH (NOLOCK) 
+                        INNER JOIN ADT210T AS B WITH (NOLOCK) ON B.COMP_CODE     = A.COMP_CODE
+                                                             AND B.FR_YYYYMM     = LEFT(@FR_AC_DATE,6)
+                                                             AND B.TO_YYYYMM     = LEFT(@TO_AC_DATE,6)
+                                                             AND B.BASE_DIV_CODE = @DSTRB_DIV_CODE
+                                                             AND B.BASE_ACCNT    = A.ACCNT
+                        INNER JOIN ABA400T AS C WITH (NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+                                                             AND C.ACCNT     = A.ACCNT
+                                                             AND (ISNULL(C.BOOK_CODE1, '') != 'E1'
+                                                             AND  ISNULL(C.BOOK_CODE2, '') != 'E1')
+
+                  GROUP BY A.COMP_CODE, A.ACCNT, A.DEPT_CODE, B.APPLY_DSTRB
+    
+                  UNION ALL
+    
+                 --(1.2) 프로젝트를 계정잔액으로 관리하는 계정
+                 SELECT A.COMP_CODE
+                      , A.ACCNT
+                      , MAX(C.ACCNT_NAME)                   AS ACCNT_NAME
+                      , A.DEPT_CODE
+                      , CASE 'E1'
+                             WHEN A.BOOK_CODE1 THEN A.BOOK_DATA1
+                             WHEN A.BOOK_CODE2 THEN A.BOOK_DATA2
+                         END                                AS PJT_CODE
+                      , B.APPLY_DSTRB
+                      , SUM(CASE C.JAN_DIVI
+                                 WHEN '1' THEN ISNULL(A.DR_AMT_I,0) - ISNULL(A.CR_AMT_I,0)
+                                 WHEN '2' THEN ISNULL(A.CR_AMT_I,0) - ISNULL(A.DR_AMT_I,0)
+                             END)                           AS DSTRB_AMT_I
+                   FROM             AGB200T AS A WITH (NOLOCK)
+                         INNER JOIN ADT210T AS B WITH (NOLOCK) ON B.COMP_CODE     = A.COMP_CODE
+                                                              AND B.FR_YYYYMM     = LEFT(@FR_AC_DATE,6)
+                                                              AND B.TO_YYYYMM     = LEFT(@TO_AC_DATE,6)
+                                                              AND B.BASE_DIV_CODE = @DSTRB_DIV_CODE
+                                                              AND B.BASE_ACCNT    = A.ACCNT
+                         INNER JOIN ABA400T AS C WITH (NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+                                                              AND C.ACCNT     = A.ACCNT
+                                                              AND (ISNULL(C.BOOK_CODE1, '') = 'E1'
+                                                               OR  ISNULL(C.BOOK_CODE2, '') = 'E1')
+
+                  GROUP BY A.COMP_CODE, A.ACCNT, A.DEPT_CODE, A.BOOK_CODE1, A.BOOK_CODE2, A.BOOK_DATA1, A.BOOK_DATA2, B.APPLY_DSTRB
+                ) AS T
+                  INNER JOIN BSA210T AS D WITH (NOLOCK) ON D.COMP_CODE = T.COMP_CODE
+                                                       AND D.TREE_CODE = T.DEPT_CODE
+                  LEFT  JOIN BCM600T AS P WITH (NOLOCK) ON P.COMP_CODE = T.COMP_CODE
+                                                       AND P.PJT_CODE  = T.PJT_CODE
+           WHERE ISNULL(T.DSTRB_AMT_I,0) != 0
+           GROUP BY T.COMP_CODE, T.ACCNT, T.ACCNT_NAME, T.DEPT_CODE, D.TREE_NAME, T.PJT_CODE, P.PJT_NAME, T.APPLY_DSTRB
+
+    
+     ELSE
+         -- (2) 이미 배부된 데이터를 조회할 경우
+         SELECT CONVERT(BIT,0)          AS CHK
+              , A.COMP_CODE
+              , A.DSTRB_NO
+              , A.ACCNT
+              , B.ACCNT_NAME
+              , A.DEPT_CODE
+              , D.TREE_NAME             AS DEPT_NAME
+              , A.PJT_CODE
+              , P.PJT_NAME
+              , A.APPLY_DSTRB
+              , A.DSTRB_AMT_I
+              , A.UPDATE_DB_USER
+              , A.UPDATE_DB_TIME
+           FROM             ADT510T AS A WITH (NOLOCK)
+                 LEFT  JOIN ABA400T AS B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                                      AND B.ACCNT     = A.ACCNT
+                 INNER JOIN BSA210T AS D WITH (NOLOCK) ON D.COMP_CODE = A.COMP_CODE
+                                                      AND D.TREE_CODE = A.DEPT_CODE
+                 LEFT  JOIN BCM600T AS P WITH (NOLOCK) ON P.COMP_CODE = A.COMP_CODE
+                                                      AND P.PJT_CODE  = A.PJT_CODE
+          WHERE A.COMP_CODE = @COMP_CODE
+            AND A.DSTRB_NO  = @DSTRB_NO
+	</select>
+	
+	<insert id="adt500ukrServiceImpl.insertDetail" parameterType="Map">
+		
+	</insert>
+	
+	<update id="adt500ukrServiceImpl.updateDetail" parameterType="Map">		
+		
+	</update>
+	
+	<update id="adt500ukrServiceImpl.deleteDetail" parameterType="Map">
+	
+	</update>
+</mapper>

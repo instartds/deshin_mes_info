@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ems100skrvServiceImpl">
+	<select id="ems100skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* ems100skrvServiceImpl.selectList */
+		    DECLARE         @COMP_CODE          NVARCHAR(08)                -- (필수) 법인코드
+		                  , @DIV_CODE           NVARCHAR(08)                -- (필수) 사업장
+
+		    SET @COMP_CODE = #{S_COMP_CODE}
+		    SET @DIV_CODE  = #{S_DIV_CODE}
+SELECT *
+  FROM (	
+			SELECT ROW_NUMBER() over (ORDER BY MIN(A.ISSUE_DATE) DESC,A.SALE_CUSTOM_CODE) AS ROW_NUMBER
+				 , COUNT(A.COMP_CODE) OVER () AS TOTAL
+				 , MIN(A.ISSUE_DATE)														AS ISSUE_DATE--요청일자
+				 , D1.CUSTOM_NAME			--업체명
+				 , A.ISSUE_REQ_NUM			--출하지시서 NO
+				 , COUNT(*)								AS ISSUE_REQ_QTY	--요청품목수
+				 , COUNT(*) - SUM(ISNULL(NON_CNT,0))	AS ISSUE_QTY		--출고완료수
+				 , SUM(ISNULL(NON_CNT,0))				AS NON_CNT			--미출고건수
+				 , COUNT(C.ISSUE_REQ_SEQ)				AS TODAY_CNT		--당일출고건수 
+				 , MAX(R2.CODE_NAME) 					AS ISSUE_REQ_PRSN 	--영업담당
+			 FROM  SRQ100T A WITH (NOLOCK)
+			 INNER JOIN SOF110T A1 WITH(NOLOCK) ON A.ORDER_NUM = A1.ORDER_NUM
+			                                  AND A.SER_NO    = A1.SER_NO
+											  AND ISNULL(A1.ORDER_STATUS, 'N') = 'N'
+			LEFT JOIN (SELECT COMP_CODE, DIV_CODE,ISSUE_REQ_NUM, ISSUE_REQ_SEQ, SALE_CUSTOM_CODE, COUNT(*) AS NON_CNT
+					 FROM  SRQ100T  WITH (NOLOCK)
+					WHERE COMP_CODE			= @COMP_CODE
+					  AND DIV_CODE			= @DIV_CODE
+					  AND ISSUE_DATE			&lt;= CONVERT(NVARCHAR, GETDATE(), 112)
+					  AND ISSUE_REQ_QTY - ISSUE_QTY &gt; 0
+					GROUP BY COMP_CODE, DIV_CODE, ISSUE_REQ_NUM, ISSUE_REQ_SEQ, SALE_CUSTOM_CODE) B ON A.COMP_CODE		= B.COMP_CODE
+																					AND A.DIV_CODE		= B.DIV_CODE
+																					AND A.ISSUE_REQ_NUM	= B.ISSUE_REQ_NUM
+																					AND A.ISSUE_REQ_SEQ	= B.ISSUE_REQ_SEQ
+																					AND A.SALE_CUSTOM_CODE	= B.SALE_CUSTOM_CODE
+			LEFT JOIN (SELECT COMP_CODE, DIV_CODE, ISSUE_REQ_NUM, ISSUE_REQ_SEQ, INOUT_CODE, SUM(INOUT_Q) AS INOUT_Q  
+						  FROM BTR100T WITH (NOLOCK)
+						 WHERE COMP_CODE = @COMP_CODE
+						  AND DIV_CODE	 = @DIV_CODE
+						  AND INOUT_TYPE = '2'
+					      AND CREATE_LOC = '1'
+					      AND INOUT_CODE_TYPE = '4'
+					      AND INOUT_DATE = CONVERT(NVARCHAR, GETDATE(), 112)
+						GROUP BY COMP_CODE, DIV_CODE,ISSUE_REQ_NUM, ISSUE_REQ_SEQ, INOUT_CODE) C ON A.COMP_CODE		= C.COMP_CODE
+																					AND A.DIV_CODE		= C.DIV_CODE
+																					AND A.ISSUE_REQ_NUM	= C.ISSUE_REQ_NUM
+																					AND A.ISSUE_REQ_SEQ	= C.ISSUE_REQ_SEQ
+																					AND A.SALE_CUSTOM_CODE	= C.INOUT_CODE
+																					AND A.ISSUE_REQ_QTY - C.INOUT_Q = 0
+			LEFT  JOIN  BCM100T D1 WITH (NOLOCK) ON D1.COMP_CODE     = A.COMP_CODE
+					                                            AND D1.CUSTOM_CODE   = A.SALE_CUSTOM_CODE
+
+			LEFT JOIN BSA100T R2 WITH(NOLOCK) ON R2.COMP_CODE = A.COMP_CODE
+												 AND R2.MAIN_CODE  = 'S010' 
+												 AND R2.SUB_CODE = A.ISSUE_REQ_PRSN	
+			WHERE A.COMP_CODE			= @COMP_CODE
+			  AND A.DIV_CODE			= @DIV_CODE
+			  AND A.ISSUE_DATE			&lt;= CONVERT(NVARCHAR, GETDATE(), 112)
+			GROUP BY A.COMP_CODE,A.ISSUE_REQ_NUM, A.SALE_CUSTOM_CODE, D1.CUSTOM_NAME
+			HAVING SUM(NON_CNT) &gt; 0 OR  COUNT(C.ISSUE_REQ_SEQ) &gt; 0
+	) T
+
+<if test="@foren.Ognl@isNotEmpty(page)"> 
+WHERE ROW_NUMBER BETWEEN ${start}+1 and ${limit} * ${page}
+</if>
+
+	</select>
+	
+	<select id="ems100skrvServiceImpl.selectNextPgmId" parameterType="Map" resultType="java.lang.String">
+		DECLARE
+			  @PAGE_CONTROL_YN	NVARCHAR(10)
+			, @THIS_PGM_ID		NVARCHAR(100)	= #{PGM_ID}
+			, @NEXT_PGM_ID		NVARCHAR(100)
+		
+		IF EXISTS (	SELECT *
+					  FROM BSA100T
+					 WHERE COMP_CODE	= #{S_COMP_CODE}
+					   AND MAIN_CODE	= 'B708'
+					   AND SUB_CODE		= 'A'	)
+		BEGIN
+			SELECT @PAGE_CONTROL_YN = ISNULL(REF_CODE2, '')
+			  FROM BSA100T
+			 WHERE COMP_CODE	= #{S_COMP_CODE}
+			   AND MAIN_CODE	= 'B708'
+			   AND SUB_CODE		= 'A'
+		
+			IF @PAGE_CONTROL_YN = 'Y'
+			BEGIN
+				SELECT TOP 1
+					   @NEXT_PGM_ID	= NEXT_PGM_ID
+				  FROM (
+						SELECT 1			AS SORT_ORDER
+							 , SUB_CODE
+							 , REF_CODE3	AS NEXT_PGM_ID
+						  FROM BSA100T
+						 WHERE COMP_CODE	= #{S_COMP_CODE}
+						   AND MAIN_CODE	= 'B708'
+						   AND SUB_CODE		&gt; (	SELECT SUB_CODE
+												  FROM BSA100T
+												 WHERE COMP_CODE	= #{S_COMP_CODE}
+												   AND MAIN_CODE	= 'B708'
+												   AND REF_CODE1	= @THIS_PGM_ID	)
+						   AND SUB_CODE NOT IN ('$', 'A')
+						   AND ISNULL(REF_CODE1, '') != ''
+		
+						UNION ALL
+						
+						SELECT 9			AS SORT_ORDER
+							 , SUB_CODE
+							 , REF_CODE3	AS NEXT_PGM_ID
+						  FROM BSA100T
+						 WHERE COMP_CODE	= #{S_COMP_CODE}
+						   AND MAIN_CODE	= 'B708'
+						   AND SUB_CODE		&lt; (	SELECT SUB_CODE
+												  FROM BSA100T
+												 WHERE COMP_CODE	= #{S_COMP_CODE}
+												   AND MAIN_CODE	= 'B708'
+												   AND REF_CODE1	= @THIS_PGM_ID	)
+						   AND SUB_CODE NOT IN ('$', 'A')
+						   AND ISNULL(REF_CODE1, '') != ''
+					  ) A
+				 ORDER BY SORT_ORDER
+					 , SUB_CODE
+			END
+			ELSE
+			BEGIN
+				SET @NEXT_PGM_ID	= ''
+			END
+		END
+		ELSE
+		BEGIN
+			SET @NEXT_PGM_ID	= ''
+		END
+		
+		SELECT ISNULL(@NEXT_PGM_ID, '')	AS NEXT_PGM_ID
+	</select>
+	
+	<select id="ems100skrvServiceImpl.selectNextPgmInterval" parameterType="Map" resultType="java.lang.Integer">
+		DECLARE
+			  @INTERVAL		NUMERIC(10, 0)
+		
+		IF EXISTS (	SELECT *
+					  FROM BSA100T
+					 WHERE COMP_CODE	= #{S_COMP_CODE}
+					   AND MAIN_CODE	= 'B708'
+					   AND SUB_CODE		= 'A'	)
+		BEGIN
+			SELECT @INTERVAL = CASE WHEN ISNULL(REF_CODE4, '') = '' THEN 30000
+									ELSE CONVERT(NUMERIC(10, 0), REF_CODE4)
+							   END
+			  FROM BSA100T
+			 WHERE COMP_CODE	= #{S_COMP_CODE}
+			   AND MAIN_CODE	= 'B708'
+			   AND SUB_CODE		= 'A'
+		END
+		ELSE
+		BEGIN
+			SET @INTERVAL	= 30000
+		END
+		
+		SELECT ISNULL(@INTERVAL, 30000)	AS INTERVAL
+	</select>
+</mapper>

@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="gre600skrvServiceImpl">
+	<select id="gre600skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+BEGIN
+	SET NOCOUNT ON
+	SET ARITHABORT ON
+
+	DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+	      , @UserId			NVARCHAR(100)	/* 사용자ID		*/
+	      , @LangType		NVARCHAR(2)		/* 언어구분		*/
+          , @RefItem		NVARCHAR(01)
+          , @DateFormat		NVARCHAR(10)
+
+    DECLARE @DivCode        NVARCHAR(08)    /* 사업장       */
+          , @RequestDateFr  NVARCHAR(08)    /* 정비요청일FR */        
+          , @RequestDateTo  NVARCHAR(08)    /* 정비요청일TO */
+
+    SET @CompCode = #{S_COMP_CODE}
+    SET @UserId   = #{S_USER_ID}
+    SET @LangType = #{S_LANG_CODE} 
+
+    SET @DivCode       = #{DIV_CODE}
+    SET @RequestDateFr = #{REQUEST_DATE_FR}
+    SET @RequestDateTo = #{REQUEST_DATE_TO}
+
+	/* 명칭 참조 유형 */
+    SELECT TOP 1 @RefItem = REF_ITEM
+      FROM BSA300T WITH (NOLOCK)
+     WHERE USER_ID = @UserId
+
+    SET @RefItem = ISNULL(@RefItem, N'0')
+
+	/* 날짜 포맷 유형 설정 */
+    SELECT TOP 1 @DateFormat = CODE_NAME
+      FROM BSA100T WITH (NOLOCK)
+     WHERE COMP_CODE = @CompCode
+       AND MAIN_CODE = N'B044'
+       AND REF_CODE1 = N'Y'
+
+    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+	/* 데이터 조회 */
+    SELECT A.COMP_CODE                                                                                          /* 법인코드         */
+         , A.DIV_CODE                                                                                           /* 사업장           */
+         , A.REQUEST_NUM                                                                                        /* 요청번호         */
+         , A.VEHICLE_CODE                                                                                       /* 차량코드         */
+         , ISNULL(V.VEHICLE_REGIST_NO,'')   AS VEHICLE_REGIST_NO                                                /* 차량번호         */
+         , (CASE WHEN ISNULL(A.REQUEST_DATE, '') = ''
+                 THEN ''
+                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.REQUEST_DATE, 1, 4))
+                                                         , 'MM'  , SUBSTRING(A.REQUEST_DATE, 5, 2))
+                                                         , 'DD'  , SUBSTRING(A.REQUEST_DATE, 7, 2))
+             END)																				AS REQUEST_DATE /* 요청일자         */
+         , A.ROUTE_CODE                                                                                         /* 노선코드         */
+         , ISNULL(R.ROUTE_NUM,'')           AS ROUTE_NUM                                                        /* 노선번호         */
+         , A.DRIVER_CODE                                                                                        /* 기사코드         */
+         , ISNULL(H1.NAME,'')               AS NAME                                                             /* 기사명           */
+         , B.MAINTAIN_CODE                                                                                      /* 정비코드(공통코드GO19)   */
+         , B.CONDITION                                                                                          /* 상태설명         */
+         , B.CHECK_RESULT                                                                                       /* 결과판정(공통코드GO21)   */
+         , '' AS REMARK                                                                                         /* 비고             */
+      FROM            GRE100T A  WITH (NOLOCK)
+           INNER JOIN GRE110T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+                                              AND B.DIV_CODE     = A.DIV_CODE
+                                              AND B.REQUEST_NUM  = A.REQUEST_NUM
+           LEFT  JOIN GRT100T R  WITH (NOLOCK) ON R.COMP_CODE    = A.COMP_CODE
+                                              AND R.DIV_CODE     = A.DIV_CODE
+                                              AND R.ROUTE_CODE   = A.ROUTE_CODE
+           LEFT  JOIN GVE100T V  WITH (NOLOCK) ON V.COMP_CODE    = A.COMP_CODE
+                                              AND V.DIV_CODE     = A.DIV_CODE
+                                              AND V.VEHICLE_CODE = A.VEHICLE_CODE
+           LEFT  JOIN HUM100T H1 WITH (NOLOCK) ON H1.COMP_CODE   = A.COMP_CODE
+                                              AND H1.DIV_CODE    = A.DIV_CODE
+                                              AND H1.PERSON_NUMB = A.DRIVER_CODE
+      WHERE A.COMP_CODE      = @CompCode
+        AND A.DIV_CODE       = @DivCode
+        AND A.REQUEST_DATE  &gt;= @RequestDateFr
+        AND A.REQUEST_DATE  &lt;= @RequestDateTo
+
+	  <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+        AND A.ROUTE_CODE    =  #{ROUTE_CODE}              /* 노선*/
+	  </if>
+     <if test="@foren.Ognl@isNotEmpty(VEHICLE_CODE)">	/* 차량*/
+	   AND A.VEHICLE_CODE = #{VEHICLE_CODE}
+	  </if> 
+	  <if test="@foren.Ognl@isNotEmpty(VEHICLE_NAME)">
+	   AND V.VEHICLE_NAME LIKE '%' + #{VEHICLE_NAME} + '%'
+	  </if>               
+      <if test="@foren.Ognl@isNotEmpty(DRIVER_CODE)">	/* 기사*/
+	   AND A.DRIVER_CODE = #{DRIVER_CODE}
+	  </if>	
+	  <if test="@foren.Ognl@isNotEmpty(DRIVER_NAME)">
+	   AND H1.NAME LIKE '%'+ #{DRIVER_NAME} +'%'
+	  </if>	               
+	  
+	   <if test="@foren.Ognl@isNotEmpty(MAINTAIN_CODE)">	 /* 정비코드*/				
+        AND B.MAINTAIN_CODE IN
+			 <foreach collection="MAINTAIN_CODE" item="item" separator="," close=")" open="(">
+              		 #{item}
+        	</foreach>									
+        </if>
+        
+        <if test="@foren.Ognl@isNotEmpty(CHECK_RESULT)">	 /* 결과판정*/				
+        AND B.CHECK_RESULT  IN
+			 <foreach collection="CHECK_RESULT" item="item2" separator="," close=")" open="(">
+              		 #{item2}
+        	</foreach>									
+        </if>
+	  <if test="@foren.Ognl@isNotEmpty(ROUTE_GROUP)">
+	   AND A.ROUTE_GROUP = #{ROUTE_GROUP}
+	  </if>
+	  <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+	   AND A.ROUTE_CODE = #{ROUTE_CODE}
+	  </if>	
+	 
+	  <if test="@foren.Ognl@isNotEmpty(OFFICE_CODE)">
+	   AND A.OFFICE_CODE = #{OFFICE_CODE}
+	  </if> 
+     ORDER BY A.REQUEST_DATE 
+
+	SET NOCOUNT OFF
+	SET ARITHABORT OFF
+END
+		
+	</select>
+	
+</mapper>

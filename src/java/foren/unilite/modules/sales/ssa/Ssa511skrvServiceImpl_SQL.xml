@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ssa511skrvServiceImpl">
+	
+	<select id="ssa511skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">		
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+		
+		    DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+				  , @UserId			NVARCHAR(100)	/* 사용자ID */
+				  , @LangType		NVARCHAR(2)		/* 언어구분 */
+				  , @RefItem		NVARCHAR(01)
+				  , @DateFormat		NVARCHAR(10)
+				
+		    SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_ID}
+			SET @LangType = #{S_LANG_CODE}
+				
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+			    FROM BSA300T WITH (NOLOCK)
+			    WHERE USER_ID = @UserId
+				
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+				
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+			    FROM BSA100T WITH (NOLOCK)
+			    WHERE COMP_CODE = @CompCode
+			    AND MAIN_CODE = N'B044'
+			    AND REF_CODE1 = N'Y'
+				
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		        
+			SELECT 	B.SALE_DATE								AS SALE_DATE
+			  ,B.DEPT_CODE
+              ,D.TREE_NAME      							AS DEPT_NAME            
+
+              ,CONVERT(NUMERIC(10,0), ISNULL(A.POS_NO, '0'))  AS POS_NO
+              ,E.POS_NAME
+              --,COUNT(*)                                   AS SALE_COUNT 
+              ,B.RECEIPT_NO												-- 영수증NO
+              ,B.SALE_CUSTOM_CODE										-- 매출처코드
+              ,CONVERT(NUMERIC(10,0), CASE WHEN ISNULL(C.SAP_CODE, '') = '' THEN B.SALE_CUSTOM_CODE
+                                           ELSE ISNULL(C.SAP_CODE, '0')
+                                      END)                  AS SAP_CODE
+              ,C.CUSTOM_NAME  AS CUSTOM_NAME							--매출처명
+              ,SUM(A.SALE_AMT_O)                        AS SALE_AMT_O  --공급가액
+              ,SUM(A.TAX_AMT_O)                         AS TAX_AMT_O    --부가세액
+              ,SUM(ABS(A.SALE_Q))                            AS SALE_Q      --수량
+              --,A.ITEM_CODE
+              , (CASE WHEN COUNT(*) > 1 THEN MAX(F.ITEM_NAME)+'외 '+ CONVERT(nvarchar,COUNT(*)-1)+'종' 
+              						   ELSE MAX(F.ITEM_NAME) 
+             	END) 									AS ITEM_NAME	--사용내역
+			  
+
+           FROM         SSA110T A WITH (NOLOCK)    
+             INNER JOIN SSA100T B WITH (NOLOCK) ON A.COMP_CODE   = B.COMP_CODE
+                                               AND B.DIV_CODE    = A.DIV_CODE
+                                               AND B.BILL_NUM    = A.BILL_NUM
+             INNER JOIN BCM100T C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE    /*거래처*/
+                                         	   AND C.CUSTOM_CODE = B.SALE_CUSTOM_CODE
+                                         	   AND C.AGENT_TYPE  = '2'
+              LEFT JOIN BSA210T D WITH (NOLOCK) ON D.COMP_CODE   = B.COMP_CODE    /*부서*/
+              								   AND B.DIV_CODE    = D.TYPE_LEVEL
+                                               AND D.TREE_CODE   = B.DEPT_CODE      
+              LEFT JOIN BSA240T E WITH (NOLOCK) ON E.COMP_CODE   = A.COMP_CODE    /*POS*/
+                                               AND E.POS_NO      = A.POS_NO
+                                               AND E.POS_TYPE    = '1'
+                                               AND E.DIV_CODE    = A.DIV_CODE               
+              LEFT JOIN BPR100T F WITH (NOLOCK) ON F.COMP_CODE   = A.COMP_CODE    /*품목*/
+                                               AND F.ITEM_CODE   = A.ITEM_CODE
+		      
+	        WHERE A.COMP_CODE       = @CompCode
+		        <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		          AND A.DIV_CODE = #{DIV_CODE}
+		        </if>  
+		        <if test="@foren.Ognl@isNotEmpty(SALE_DATE_FR)">
+		          AND B.SALE_DATE &gt;= #{SALE_DATE_FR}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(SALE_DATE_TO)">
+		          AND B.SALE_DATE &lt;= #{SALE_DATE_TO}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">     
+			     AND    D.TREE_LEVEL        LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =D.COMP_CODE AND TYPE_LEVEL=D.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+			     </if>
+		        <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_FR)">
+		          AND B.SALE_CUSTOM_CODE &gt;= #{CUSTOM_CODE_FR}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_TO)">
+		          AND B.SALE_CUSTOM_CODE &lt;= #{CUSTOM_CODE_TO}
+		        </if>
+	        GROUP BY B.DEPT_CODE, D.TREE_NAME, B.SALE_CUSTOM_CODE, C.SAP_CODE, C.CUSTOM_NAME, C.CUSTOM_NAME1, C.CUSTOM_NAME2,
+               		 B.SALE_DATE, A.POS_NO,    E.POS_NAME, B.RECEIPT_NO
+			
+			ORDER BY B.DEPT_CODE, A.POS_NO, B.RECEIPT_NO, B.SALE_CUSTOM_CODE ,B.SALE_DATE, C.SAP_CODE
+				
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END   
+    </select>
+</mapper>

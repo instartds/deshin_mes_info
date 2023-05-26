@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="pmr150skrvServiceImpl">
+	<select id="pmr150skrvServiceImpl.selectColumns" parameterType="Map" resultType="rMap">
+		SELECT A.PRODT_NUM
+			 , uniLITE.fnGetUserDateComp(A.COMP_CODE, A.PRODT_DATE)	AS PRODT_DATE
+			 , CONVERT(NVARCHAR(05), ISNULL(A.FR_TIME, ''))			AS FR_TIME
+			 --, A.PRODT_DATE
+			 , ISNULL(D.CODE_NAME, '*')								AS PRODT_PRSN
+			 , REPLACE(CONVERT(VARCHAR,
+			   CAST(A.WORK_Q AS MONEY),1),'.00','')					AS WORK_Q
+			 , REPLACE(CONVERT(VARCHAR,
+			   CAST(A.GOOD_WORK_Q AS MONEY),1),'.00','')			AS GOOD_WORK_Q
+			 , ISNULL(A.REMARK, '')		AS REMARK		--비고
+		  FROM       PMR100T A  WITH(NOLOCK)
+		  LEFT  JOIN PMR500T B1 WITH(NOLOCK) ON B1.COMP_CODE = A.COMP_CODE
+										    AND B1.DIV_CODE  = A.DIV_CODE
+										    AND B1.PRODT_NUM = A.PRODT_NUM
+		  LEFT  JOIN PMP100T B2 WITH(NOLOCK) ON B2.COMP_CODE      = A.COMP_CODE
+										    AND B2.DIV_CODE       = A.DIV_CODE
+										    AND B2.WKORD_NUM      = A.WKORD_NUM
+										    AND B2.PROG_WORK_CODE = A.PROG_WORK_CODE
+		  LEFT  JOIN BSA100T D  WITH(NOLOCK) ON D.COMP_CODE = A.COMP_CODE
+										    AND D.MAIN_CODE = 'P505'
+										    AND D.SUB_CODE  = A.PRODT_PRSN
+		 WHERE A.COMP_CODE      = #{S_COMP_CODE}
+		   AND A.DIV_CODE       = #{DIV_CODE}
+		   
+		<if test="@foren.Ognl@isNotEmpty(ORDER_DATE_FR)">
+		   AND A.PRODT_DATE &gt;= #{ORDER_DATE_FR}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ORDER_DATE_TO)">
+		   AND A.PRODT_DATE &lt;= #{ORDER_DATE_TO}
+		</if>
+		
+		<if test="@foren.Ognl@isEmpty(ORDER_DATE_FR)">
+		   AND A.PRODT_DATE &gt;= CONVERT(NVARCHAR(08), GETDATE(), 112)
+		</if>
+		<if test="@foren.Ognl@isEmpty(ORDER_DATE_TO)">
+		   AND A.PRODT_DATE &lt;= CONVERT(NVARCHAR(08), GETDATE(), 112)
+		</if>
+
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		   AND (B2.ITEM_CODE   = #{ITEM_CODE} 
+			 --코디 2019.06.01 데이터 마이그레이션 버젼 데이터 읽기 위해 추가
+			 OR A.PROJECT_NO  = #{ITEM_CODE})
+		</if>
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.PRODT_NUM, A.PRODT_DATE, A.FR_TIME, A.PRODT_PRSN, A.WORK_Q, A.GOOD_WORK_Q, D.CODE_NAME, A.REMARK
+		 ORDER BY A.PRODT_NUM
+	</select>
+
+	<select id="pmr150skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* pmr150skrvServiceImpl.selectList */
+		SELECT MIN(Y.SEQ)					AS SEQ
+			 , Y.ITEM_CODE
+			 , Y.ITEM_NAME
+		<foreach collection="prodtDateArray" item="item" index="index">
+			 , MAX(Y.Z${index})				AS  Z${index}
+		</foreach>
+		  FROM (
+				SELECT X.SEQ
+					 , X.ITEM_CODE
+					 , X.ITEM_NAME
+				<foreach collection="prodtDateArray" item="item" index="index">
+					 , CASE WHEN X.PRODT_NUM + X.PRODT_DATE = '${item}' THEN X.MODIFY_RATE
+							ELSE ''
+					   END					AS Z${index}
+				</foreach>
+				  FROM (
+						SELECT A.COMP_CODE
+							 , A.DIV_CODE
+							 , ROW_NUMBER() OVER( ORDER BY A.PRODT_NUM, B.SEQ ) AS SEQ
+							 , A.PRODT_DATE
+							 , A.PRODT_PRSN
+							 , A.WORK_Q				--생산량(작업량)
+							 , A.GOOD_WORK_Q		--실적량(양품실적량)
+							 , A.PRODT_NUM
+							 , B.ITEM_CODE
+							 , C.ITEM_NAME
+							 , B.MODIFY_RATE
+						  FROM       PMR100T A WITH(NOLOCK)
+						  LEFT  JOIN PMR500T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+														   AND B.DIV_CODE  = A.DIV_CODE
+														   AND B.PRODT_NUM = A.PRODT_NUM
+						  LEFT  JOIN BPR100T C WITH(NOLOCK) ON C.COMP_CODE = B.COMP_CODE
+														   AND C.ITEM_CODE = B.ITEM_CODE
+						  LEFT  JOIN PMP100T D WITH(NOLOCK) ON D.COMP_CODE      = A.COMP_CODE
+														   AND D.DIV_CODE       = A.DIV_CODE
+														   AND D.WKORD_NUM      = A.WKORD_NUM
+														   AND D.PROG_WORK_CODE = A.PROG_WORK_CODE
+						 WHERE A.COMP_CODE      = #{S_COMP_CODE}
+						   AND A.DIV_CODE       = #{DIV_CODE}
+						   AND ISNULL(B.ITEM_CODE, '') != ''
+						   AND A.PRODT_DATE &gt;= #{ORDER_DATE_FR}
+						   AND A.PRODT_DATE &lt;= #{ORDER_DATE_TO}
+						<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+						   AND (D.ITEM_CODE   = #{ITEM_CODE} 
+							 --코디 2019.06.01 데이터 마이그레이션 버젼 데이터 읽기 위해 추가
+							 OR A.PROJECT_NO  = #{ITEM_CODE})
+						</if>
+				  ) X
+		 ) Y
+		 GROUP BY Y.ITEM_CODE, Y.ITEM_NAME
+		 ORDER BY 1
+	</select>
+</mapper>

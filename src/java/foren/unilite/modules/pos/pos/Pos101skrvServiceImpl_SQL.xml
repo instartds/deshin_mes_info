@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="pos101skrvServiceImpl">
+	<select id="pos101skrvServiceImpl.selectsaleList" parameterType="Map" resultType="rMap">
+		BEGIN
+				SET NOCOUNT ON
+				SET ARITHABORT ON
+					
+				DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+				      , @UserId			NVARCHAR(100)	/* 사용자ID */
+				      , @LangType		NVARCHAR(2)		/* 언어구분 */
+				      , @RefItem		NVARCHAR(01)
+				      , @DateFormat		NVARCHAR(10)
+					
+				SET @CompCode = #{S_COMP_CODE}
+				SET @UserId   = #{S_USER_ID}
+				SET @LangType = #{S_LANG_CODE}
+					
+				/* 명칭 참조 유형 */
+				SELECT TOP 1 @RefItem = REF_ITEM
+					FROM BSA300T WITH (NOLOCK)
+					WHERE COMP_CODE = @CompCode
+						AND USER_ID = @UserId
+					
+				SET @RefItem = ISNULL(@RefItem, N'0')
+					
+				/* 날짜 포맷 유형 설정 */
+				SELECT TOP 1 @DateFormat = CODE_NAME
+					FROM BSA100T WITH (NOLOCK)
+					WHERE COMP_CODE = @CompCode
+					AND MAIN_CODE = N'B044'
+					AND REF_CODE1 = N'Y'
+					
+				SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')	
+				
+				/* 조회  */ 
+				
+			   SELECT 
+			   /* 영수증별 상세현황조회 pos101skrv Main*/
+			   		  A.RECEIPT_NO       														/* 영수증번호 */
+					, B.ITEM_CODE        														/* 품목코드 */
+					, C.ITEM_NAME        														/* 품목명 */
+					, B.ORIGIN_P         														/* 판매가 */
+					, B.DISCOUNT_P       														/* 할인 */
+					, B.SALE_P					 					AS SALEPRICE  				/* 실판매가 */ 
+					, SUM(B.SALE_Q)									AS SALE_Q           		/* 수량 */ 
+					, SUM(B.SALE_AMT_O + B.TAX_AMT_O)    					AS SALE_MONEY 		/* 금액 */
+					, SUM(B.DISCOUNT_P * B.SALE_Q) 					AS DISCOUNT_MONEY    		/* 할인액*/
+					, CASE WHEN SUM(B.DISCOUNT_P * B.SALE_Q) = 0 THEN 0
+					  ELSE ROUND((SUM(B.DISCOUNT_P * B.SALE_Q)) / SUM(B.SALE_AMT_O + B.TAX_AMT_O) *100,0) END AS DISRATE /*할인율*/          
+					,B.REMARK	
+					,A.SALE_DATE																/* 비고 */
+					
+					FROM SSA100T A 
+
+					INNER JOIN SSA110T B ON A.COMP_CODE = B.COMP_CODE
+										 AND A.DIV_CODE = B.DIV_CODE
+										 AND A.BILL_NUM = B.BILL_NUM
+
+					LEFT OUTER JOIN BPR100T C ON B.COMP_CODE = C.COMP_CODE
+											  AND B.ITEM_CODE = C.ITEM_CODE
+
+					WHERE A.COMP_CODE = @CompCode
+					
+					<if test="@foren.Ognl@isNotEmpty(SALE_DATE)">
+			 		AND A.SALE_DATE 		= #{SALE_DATE}
+             		</if>
+					<if test="@foren.Ognl@isNotEmpty(POS_CODE)">					
+				        AND A.POS_NO IN
+							 <foreach collection="POS_CODE" item="item" separator="," close=")" open="(">
+				              		 #{item}
+				        	</foreach>									
+			        </if>
+             		<if test="@foren.Ognl@isNotEmpty(RECEIPT_NO)">
+			 		AND A.RECEIPT_NO 		= #{RECEIPT_NO}
+             		</if>
+
+					GROUP BY A.RECEIPT_NO, B.ITEM_CODE, C.ITEM_NAME, B.ORIGIN_P, B.DISCOUNT_P, B.REMARK, A.SALE_DATE, B.SALE_P	
+					--ORDER BY A.RECEIPT_NO
+				SET NOCOUNT ON
+				SET ARITHABORT ON
+			END		
+	    </select>
+	
+	
+	
+	<select id="pos101skrvServiceImpl.selectpayList" parameterType="Map" resultType="rMap">
+		BEGIN
+				SET NOCOUNT ON
+				SET ARITHABORT ON
+					
+				DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+				      , @UserId			NVARCHAR(100)	/* 사용자ID */
+				      , @LangType		NVARCHAR(2)		/* 언어구분 */
+				      , @RefItem		NVARCHAR(01)
+				      , @DateFormat		NVARCHAR(10)
+					
+				SET @CompCode = #{S_COMP_CODE}
+				SET @UserId   = #{S_USER_ID}
+				SET @LangType = #{S_LANG_CODE}
+					
+				/* 명칭 참조 유형 */
+				SELECT TOP 1 @RefItem = REF_ITEM
+					FROM BSA300T WITH (NOLOCK)
+					WHERE COMP_CODE = @CompCode
+						AND USER_ID = @UserId
+					
+				SET @RefItem = ISNULL(@RefItem, N'0')
+					
+				/* 날짜 포맷 유형 설정 */
+				SELECT TOP 1 @DateFormat = CODE_NAME
+					FROM BSA100T WITH (NOLOCK)
+					WHERE COMP_CODE = @CompCode
+					AND MAIN_CODE = N'B044'
+					AND REF_CODE1 = N'Y'
+					
+				SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')	
+				
+				/* 조회  */
+				
+			  SELECT 
+			  /* 영수증별 상세현황조회 pos101skrv Detail*/
+			  
+			  		 A.RECEIPT_NO           /* NO */
+					,A.COLLECT_TYPE         /* 결제유형 (수금유형 )*/
+					,A.COLLECT_AMT          /* 금액  */
+					,A.CARD_ACC_NUM         /* 승인번호 */
+					--,A.APPVAL_TIME          /* 승인시간*/
+				    , CASE WHEN LEN(A.APPVAL_TIME) = 8 THEN A.APPVAL_TIME 
+				           ELSE (CASE WHEN ISNULL(A.APPVAL_TIME, '') = '' THEN '' 
+				                      ELSE '20' + LEFT(A.APPVAL_TIME, 6) 
+				                 END )
+				      END AS APPVAL_TIME				
+					,A.REMARK               /* 비고 */
+					,A.CUSTOM_CODE			/* 부서코드*/
+					,B.CUSTOM_NAME			/* 부서명*/
+					,A.SIGN_DATA			/* 싸인*/
+					,A.COLLECT_NUM			/* 수금번호*/
+					,A.COLLECT_SEQ			/* 수금순번 */
+					,A.DIV_CODE  AS SIGN_DIV_CODE /* 사업장코드 */
+					,A.INF_COLLECT_TYPE		/* 원본결제유형 2016.02.22 추가 */
+					,CASE WHEN A.COLLECT_TYPE = '22' THEN (CASE WHEN A.INPUT_METHOD_TYPE = 'M' THEN 'MSR'
+					                                            WHEN A.INPUT_METHOD_TYPE = 'K' THEN 'KEY-IN'
+					                                            ELSE '기타' 
+					                                       END) 
+					      ELSE ''
+					 END AS INPUT_METHOD_TYPE
+					 FROM SCO100T       A WITH(NOLOCK)
+					 INNER JOIN BCM100T B WITH(NOLOCK) ON A.COMP_CODE   = B.COMP_CODE
+					 								  AND A.CUSTOM_CODE = B.CUSTOM_CODE
+					 
+					 
+					 WHERE A.COMP_CODE = @CompCode
+					<if test="@foren.Ognl@isNotEmpty(SALE_DATE)">
+			 		AND A.COLLECT_DATE 	= #{SALE_DATE}
+             		</if>
+             		<if test="@foren.Ognl@isNotEmpty(POS_CODE)">					
+				        AND A.POS_NO IN
+							 <foreach collection="POS_CODE" item="item" separator="," close=")" open="(">
+				              		 #{item}
+				        	</foreach>									
+			        </if>
+             		<if test="@foren.Ognl@isNotEmpty(RECEIPT_NO)">
+			 		AND A.RECEIPT_NO 		= #{RECEIPT_NO}
+             		</if>
+				 
+				SET NOCOUNT ON
+				SET ARITHABORT ON
+			END		
+    </select>
+    
+    <select id="pos101skrvServiceImpl.getSign" parameterType="Map" resultType="rMap">
+		SELECT TOP 1 SIGN_DATA
+		FROM SCO100T
+		WHERE COMP_CODE =#{S_COMP_CODE}
+		  AND DIV_CODE = #{DIV_CODE}
+		  AND COLLECT_NUM = #{COLLECT_NUM}
+		  AND COLLECT_SEQ = #{COLLECT_SEQ}
+		  AND SIGN_DATA IS NOT NULL
+	</select>
+</mapper>

@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="pmp150skrvServiceImpl">
+	<select id="pmp150skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* pmp150skrvServiceImpl.selectList */
+		SELECT Y.COMP_CODE
+		     , Y.DIV_CODE
+		     , Y.ITEM_CODE
+		     , Y.ITEM_NAME
+		     , Y.BASIS_P
+		     , Y.STOCK_UNIT
+		     , Y.IN_Q
+		     , Y.OUT_Q
+		     , Y.IN_AMOUT
+		     , Y.OUT_AMOUT
+		     , B1.STOCK_Q
+		     , CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(Y.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')    -- 기준단가 적용 제품/반제품 금액
+		                 THEN CONVERT(NUMERIC(30, 6), ISNULL(Y.BASIS_P, 0) * ISNULL(B1.STOCK_Q, 0))
+		            WHEN ISNULL(M4.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(Y.ITEM_ACCOUNT, ''), 1, 1) NOT IN ('1', '2')
+		                 THEN CONVERT(NUMERIC(30, 6), ISNULL(Y.BASIS_P, 0) * ISNULL(B1.STOCK_Q, 0))
+		            ELSE ISNULL(B1.STOCK_I, 0)
+		       END              AS STOCK_AMT    --재고금액
+		 FROM (
+		        SELECT Z.COMP_CODE
+		             , Z.DIV_CODE
+		             , Z.ITEM_CODE
+		             , Z.ITEM_NAME
+		             , Z.BASIS_P
+		             , Z.STOCK_UNIT
+		             , SUM(Z.IN_Q)          AS IN_Q
+		             , SUM(Z.OUT_Q)         AS OUT_Q
+		             , SUM(Z.IN_AMOUT)      AS IN_AMOUT
+		             , SUM(Z.OUT_AMOUT)     AS OUT_AMOUT
+		             , Z.ITEM_ACCOUNT
+		          FROM (
+		                SELECT A.COMP_CODE
+		                     , A.DIV_CODE
+		                     , A.ITEM_CODE                          --품목코드
+		                     , C1.ITEM_NAME                         --품목명
+		                     , C2.BASIS_P                           --재고단가
+		                     , C1.STOCK_UNIT                        --재고단위
+		                     , CASE WHEN A.INOUT_TYPE = '1' OR A.INOUT_TYPE = '3' THEN A.INOUT_Q
+		                            ELSE 0
+		                       END                    AS IN_Q       --입고량
+		                     , CASE WHEN A.INOUT_TYPE = '2' THEN A.INOUT_Q
+		                            ELSE 0
+		                       END                    AS OUT_Q      --출고량
+		                     , C2.BASIS_P * CASE WHEN A.INOUT_TYPE = '1' THEN A.INOUT_Q
+		                                         ELSE 0
+		                                    END        AS IN_AMOUT  --입고금액
+		                     , C2.BASIS_P * CASE WHEN A.INOUT_TYPE = '2' THEN A.INOUT_Q
+		                                         ELSE 0
+		                                    END        AS OUT_AMOUT --출고금액
+		                     , C2.ITEM_ACCOUNT
+		                  FROM       BTR100T A  WITH(NOLOCK)
+		                  INNER JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+		                                                    AND C1.ITEM_CODE = A.ITEM_CODE
+		                  INNER JOIN BPR200T C2 WITH(NOLOCK) ON C2.COMP_CODE = A.COMP_CODE
+		                                                    AND C2.DIV_CODE  = A.DIV_CODE
+		                                                    AND C2.ITEM_CODE = A.ITEM_CODE
+		                 WHERE A.COMP_CODE      = #{S_COMP_CODE}
+		                   AND A.DIV_CODE       = #{DIV_CODE}
+		                   AND C2.ITEM_ACCOUNT != '10'
+		                <if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+		                   AND C2.ITEM_ACCOUNT  = #{ITEM_ACCOUNT}
+		                </if>
+		                <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)">
+		                   AND C1.ITEM_LEVEL1   = #{ITEM_LEVEL1}
+		                </if>
+		                <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		                   AND A.ITEM_CODE   LIKE #{ITEM_CODE} + '%'
+		                </if>
+		                <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+		                   AND C1.ITEM_NAME  LIKE REPLACE(#{ITEM_NAME},'[','[[]') + '%'
+		                </if>
+		                <if test="@foren.Ognl@isNotEmpty(DATE_FR)">
+		                   AND A.INOUT_DATE &gt;= #{DATE_FR}
+		                </if>
+		                <if test="@foren.Ognl@isNotEmpty(DATE_TO)">
+		                   AND A.INOUT_DATE &lt;= #{DATE_TO}
+		                </if>
+		                <if test="EVAL_FLAG != &quot;Y&quot;">
+		                   AND A.INOUT_METH    != '4'        -- 실사포함여부
+		                </if>
+		         ) Z
+		         GROUP BY Z.COMP_CODE
+		                , Z.DIV_CODE
+		                , Z.ITEM_CODE
+		                , Z.ITEM_NAME
+		                , Z.BASIS_P
+		                , Z.STOCK_UNIT
+		                , Z.ITEM_ACCOUNT
+		  ) Y
+		  LEFT  JOIN (SELECT COMP_CODE, DIV_CODE, ITEM_CODE, SUM(STOCK_Q) AS STOCK_Q, SUM(STOCK_I) AS STOCK_I
+		                FROM BIV100T WITH(NOLOCK)
+		               WHERE COMP_CODE = #{S_COMP_CODE}
+		                 AND DIV_CODE  = #{DIV_CODE}
+		               GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE ) B1 ON B1.COMP_CODE = Y.COMP_CODE
+		                                                           AND B1.DIV_CODE  = Y.DIV_CODE
+		                                                           AND B1.ITEM_CODE = Y.ITEM_CODE
+		  LEFT  JOIN BSA100T M1 WITH(NOLOCK) ON M1.COMP_CODE = Y.COMP_CODE    -- 단가처리 기준
+		                                    AND M1.MAIN_CODE = 'B069'
+		                                    AND M1.SUB_CODE  = '1'            -- 기준재고단가
+		                                    AND M1.REF_CODE1 = 'Y'
+		  LEFT  JOIN BSA100T M4 WITH(NOLOCK) ON M4.COMP_CODE = Y.COMP_CODE    -- 단가처리 기준
+		                                    AND M4.MAIN_CODE = 'B069'
+		                                    AND M4.SUB_CODE  = '1'            -- 기준재고단가
+		                                    AND M4.REF_CODE2 = 'Y'
+	</select>
+
+	<select id="pmp150skrvServiceImpl.selectDetailList" parameterType="Map" resultType="rMap">
+		/* pmp150skrvServiceImpl.selectDetailList */
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.ITEM_CODE                              --품목코드
+		     , C1.ITEM_NAME                             --품목명
+		     , C1.STOCK_UNIT                            --재고단위
+		     , A.INOUT_DATE                             --일자
+		     , A.LOT_NO                                 --Lot No
+		     , A.INOUT_TYPE                             --입/출고 구분
+		     , CASE WHEN ISNULL(B.MOVE_TYPE_NAME, '') = ''
+		            THEN M2.CODE_NAME                   --출고반품(출고반입)에만 적용 됨.. ㅡㅡ;;
+		            ELSE B.MOVE_TYPE_NAME
+		       END                                      AS INOUT_TYPE_DETAIL   --구분: 입/출고 상세구분
+		     , CASE WHEN A.INOUT_TYPE = '1' OR A.INOUT_TYPE = '3' THEN A.INOUT_Q
+		            ELSE 0
+		       END                                      AS IN_Q                --입고량
+		     , CASE WHEN A.INOUT_TYPE = '2' THEN A.INOUT_Q
+		            ELSE 0
+		       END                                      AS OUT_Q               --출고량
+		     , A.ORDER_NUM                              AS REMARK1             --비고1: 작업지시번호
+		     , CASE B.MOVE_TYPE_NAME WHEN '생산출고' THEN P1.ITEM_CODE
+		                                               + ' (' + C3.ITEM_NAME + '), '
+		                                               + 'Lot No [' + ISNULL(P2.LOT_NO, '') + ']'
+		                             ELSE A.REMARK      --비고2
+		       END                                      AS REMARK2
+		  FROM       BTR100T   A  WITH(NOLOCK)
+		  LEFT  JOIN BTR100TV2 B  WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE 
+		                                      AND B.MOVE_TYPE = A.MOVE_TYPE
+		  INNER JOIN BPR100T   C1 WITH(NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+		                                      AND C1.ITEM_CODE = A.ITEM_CODE
+		  INNER JOIN BPR200T   C2 WITH(NOLOCK) ON C2.COMP_CODE = A.COMP_CODE
+		                                      AND C2.DIV_CODE  = A.DIV_CODE
+		                                      AND C2.ITEM_CODE = A.ITEM_CODE
+		  LEFT  JOIN BSA100T   M2 WITH(NOLOCK) ON M2.COMP_CODE = A.COMP_CODE
+		                                      AND M2.MAIN_CODE = 'M104'		--출고유형
+		                                      AND M2.SUB_CODE  = A.INOUT_TYPE_DETAIL
+		  LEFT  JOIN PMP100T   P1 WITH(NOLOCK) ON P1.COMP_CODE   = A.COMP_CODE
+		                                      AND P1.DIV_CODE	 = A.DIV_CODE
+		                                      AND P1.WKORD_NUM   = A.ORDER_NUM
+		                                      AND P1.LINE_END_YN = 'Y'
+		  LEFT  JOIN PMR100T   P2 WITH(NOLOCK) ON P2.COMP_CODE   = A.COMP_CODE
+		                                      AND P2.DIV_CODE	 = A.DIV_CODE
+		                                      AND P2.WKORD_NUM   = A.ORDER_NUM
+		                                      AND P2.LINE_END_YN = 'Y'
+		                                      AND P2.PRODT_NUM = A.BASIS_NUM
+		  LEFT  JOIN BPR100T   C3 WITH(NOLOCK) ON C3.COMP_CODE = P1.COMP_CODE
+		                                      AND C3.ITEM_CODE = P1.ITEM_CODE
+		 WHERE A.COMP_CODE      = #{S_COMP_CODE}
+		   AND A.DIV_CODE       = #{DIV_CODE}
+		   AND A.ITEM_CODE      = #{ITEM_CODE}
+		   AND C2.ITEM_ACCOUNT != '10'
+		<if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+		   AND C2.ITEM_ACCOUNT  = #{ITEM_ACCOUNT}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)">
+		   AND C1.ITEM_LEVEL1   = #{ITEM_LEVEL1}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+		   AND C1.ITEM_NAME  LIKE REPLACE(#{ITEM_NAME},'[','[[]') + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(DATE_FR)">
+		   AND A.INOUT_DATE &gt;= #{DATE_FR}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(DATE_TO)">
+		   AND A.INOUT_DATE &lt;= #{DATE_TO}
+		</if>
+		<if test="EVAL_FLAG != &quot;Y&quot;">
+		   AND A.INOUT_METH    != '4'       -- 실사포함여부
+		</if>
+		 ORDER BY A.INOUT_DATE
+	</select>
+</mapper>

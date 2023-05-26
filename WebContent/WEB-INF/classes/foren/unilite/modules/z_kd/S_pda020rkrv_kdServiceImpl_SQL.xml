@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_pda020rkrv_kdService">
+
+	<select id="s_pda020rkrv_kdService.selectList1" parameterType="Map" resultType="rMap">
+        --구매입고바코드출력 S_PDA020RKRV_KD
+        DECLARE @ORDER_FLAG    NVARCHAR(1)  --발주형태: M001(1.내자, 4.외주), O.수입오퍼
+              , @DIV_CODE      nvarchar(2)  --사업장
+              , @COMP_CODE     nvarchar(8)  --법인코드
+              , @ORDER_DATE_Fr nvarchar(8)  --발주일Fr
+              , @ORDER_DATE_To nvarchar(8)  --발주일To
+              , @ORDER_NUM     nvarchar(20) --발주번호
+              , @CUSTOM_CODE   nvarchar(20) --발주번호
+
+        SET @COMP_CODE      = 'MASTER'
+        SET @ORDER_FLAG     = #{ORDER_FLAG}
+        SET @DIV_CODE       = #{DIV_CODE}
+        SET @ORDER_DATE_FR  = #{ORDER_DATE_FR}
+        SET @ORDER_DATE_TO  = #{ORDER_DATE_TO}
+        SET @ORDER_NUM      = #{ORDER_NUM}
+        SET @CUSTOM_CODE    = #{CUSTOM_CODE}
+
+        IF @ORDER_FLAG != 'O'
+        BEGIN --내자/외주발주
+            SELECT CASE @ORDER_FLAG WHEN '1' THEN '내수'
+                                    WHEN '4' THEN '외주'
+                                    WHEN 'O' THEN '수입' END AS ORDER_TYPE
+                 , A.ORDER_DATE   AS ORDER_DATE --발주일
+                 , A.CUSTOM_CODE  AS CUSTOM_CODE --거래처코드
+                 , C.CUSTOM_NAME  AS CUSTOM_NAME --거래처명
+                 , B.ITEM_CODE    AS ITEM_CODE
+                 , D.ITEM_NAME    AS ITEM_NAME
+                 , D.SPEC         AS SPEC
+--                 , D.OEM_ITEM_CODE  AS OEM_ITEM_CODE --품번
+                 , CASE WHEN ISNULL(D.OEM_ITEM_CODE,'')='' THEN D.SPEC ELSE D.OEM_ITEM_CODE END AS OEM_ITEM_CODE
+--                 , B.LOT_NO         AS LOT_NO
+                 , MAX(G.LOT_NO )        AS LOT_NO
+                 , D.STOCK_UNIT     AS STOCK_UNIT    --재고단위
+                 , A.ORDER_NUM      AS ORDER_NUM     --발주번호
+                 , B.ORDER_SEQ      AS ORDER_SEQ     --발주순번
+         				, MAX(B.ORDER_UNIT_Q) AS PO_QTY	--발주수량
+--                 , B.ORDER_UNIT_Q   AS QTY
+                 , MAX(B.ORDER_UNIT_Q - ISNULL(F.INOUT_Q, 0)) AS QTY
+                 , 1                AS PRINT_CNT
+                 , A.DIV_CODE       AS DIV_CODE
+                 , 0 AS IN_QTY1
+				 , 0 AS IN_QTY2
+				 , 0 AS IN_QTY3
+				 , 0 AS IN_QTY4
+				 , 0 AS IN_QTY5
+				 , 0 AS IN_QTY6
+				 , 0 AS IN_QTY7
+				 , 0 AS IN_QTY8
+				 , 0 AS IN_QTY9
+				 , 0 AS IN_QTY10
+				 , ROW_NUMBER() OVER( ORDER BY A.ORDER_NUM DESC) AS ROW_COUNT
+              FROM MPO100T A WITH(NOLOCK)
+                   INNER JOIN MPO200T B WITH(NOLOCK)
+                           ON A.COMP_CODE = B.COMP_CODE
+                          AND A.DIV_CODE  = B.DIV_CODE
+                          AND A.ORDER_NUM = B.ORDER_NUM
+                   INNER JOIN BCM100T C WITH(NOLOCK)
+                           ON A.COMP_CODE = C.COMP_CODE
+                          AND A.CUSTOM_CODE = C.CUSTOM_CODE
+                   INNER JOIN BPR100T D WITH(NOLOCK)
+                           ON B.COMP_CODE = D.COMP_CODE
+                          AND B.ITEM_CODE = D.ITEM_CODE
+                   INNER JOIN BPR200T E WITH(NOLOCK)
+                           ON D.COMP_CODE = E.COMP_CODE
+                          AND B.DIV_CODE  = E.DIV_CODE
+                          AND D.ITEM_CODE = E.ITEM_CODE
+        				--20180316 분할입고
+        				   LEFT  JOIN (
+        								SELECT COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ, SUM(INOUT_Q) AS INOUT_Q
+        								FROM BTR100T  WITH (NOLOCK)
+        								WHERE COMP_CODE = @COMP_CODE
+        								AND DIV_CODE    = @DIV_CODE
+        								AND INOUT_TYPE  = '1'
+        								AND INOUT_METH  = '1'
+        								AND CREATE_LOC  = '2'
+        								GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ
+
+        							) F
+        						   ON F.COMP_CODE = B.COMP_CODE
+                                  AND F.DIV_CODE  = B.DIV_CODE
+                                  AND F.ORDER_NUM = B.ORDER_NUM
+        						  AND F.ORDER_SEQ = B.ORDER_SEQ
+        					LEFT JOIN BIV350T G  WITH (NOLOCK) ON A.COMP_CODE=G.COMP_CODE AND A.DIV_CODE=G.DIV_CODE AND A.ORDER_NUM=G.PO_NUM AND B.ORDER_SEQ=G.PO_SEQ
+            WHERE A.COMP_CODE    = @COMP_CODE
+              AND A.ORDER_TYPE   = @ORDER_FLAG          --발주형태
+              AND A.DIV_CODE     = @DIV_CODE            --사업장
+              AND A.ORDER_DATE  &gt;= @ORDER_DATE_FR    --발주일Fr
+              AND A.ORDER_DATE  &lt;= @ORDER_DATE_TO    --발주일To
+              AND B.ORDER_UNIT_Q - ISNULL(F.INOUT_Q, 0) &gt; 0
+        <if test="@foren.Ognl@isNotEmpty(ORDER_NUM)">
+              AND A.ORDER_NUM   LIKE @ORDER_NUM + '%'   --발주번호
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+              AND A.CUSTOM_CODE  = @CUSTOM_CODE         --거래처
+        </if>
+			GROUP BY A.ORDER_DATE, A.CUSTOM_CODE, C.CUSTOM_NAME, B.ITEM_CODE, D.ITEM_NAME, D.SPEC
+                 , CASE WHEN ISNULL(D.OEM_ITEM_CODE,'')='' THEN D.SPEC ELSE D.OEM_ITEM_CODE END
+                 , D.STOCK_UNIT, A.ORDER_NUM, B.ORDER_SEQ, A.DIV_CODE
+			ORDER BY A.ORDER_DATE, A.CUSTOM_CODE, B.ITEM_CODE
+        END
+        ELSE
+        BEGIN  --수입오퍼
+             SELECT CASE @ORDER_FLAG WHEN '1' THEN '내수'
+                                    WHEN '4' THEN '외주'
+                                    WHEN 'O' THEN '수입' END AS ORDER_TYPE
+                 , A.ORDER_DATE   AS ORDER_DATE --발주일
+                 , A.CUSTOM_CODE  AS CUSTOM_CODE --거래처코드
+                 , C.CUSTOM_NAME  AS CUSTOM_NAME --거래처명
+                 , B.ITEM_CODE    AS ITEM_CODE
+                 , D.ITEM_NAME    AS ITEM_NAME
+                 , D.SPEC         AS SPEC
+--                 , D.OEM_ITEM_CODE  AS OEM_ITEM_CODE --품번
+                 , CASE WHEN ISNULL(D.OEM_ITEM_CODE,'')='' THEN D.SPEC ELSE D.OEM_ITEM_CODE END AS OEM_ITEM_CODE
+--                 , B.LOT_NO         AS LOT_NO
+                 , MAX(G.LOT_NO)         AS LOT_NO
+                 , D.STOCK_UNIT     AS STOCK_UNIT    --재고단위
+                 , A.ORDER_NUM      AS ORDER_NUM     --발주번호
+                 , B.ORDER_SEQ      AS ORDER_SEQ     --발주순번
+--                 , B.ORDER_UNIT_Q   AS QTY
+  				       , MAX(B.ORDER_UNIT_Q) AS PO_QTY	--발주수량
+                 , MAX(B.ORDER_UNIT_Q - ISNULL(F.INOUT_Q, 0)) AS QTY
+                 , 1                AS PRINT_CNT
+                 , A.DIV_CODE       AS DIV_CODE
+                 , ROW_NUMBER() OVER( ORDER BY A.ORDER_NUM DESC) AS ROW_COUNT
+              FROM MPO100T A WITH(NOLOCK)
+                   INNER JOIN MPO200T B WITH(NOLOCK)
+                           ON A.COMP_CODE = B.COMP_CODE
+                          AND A.DIV_CODE  = B.DIV_CODE
+                          AND A.ORDER_NUM = B.ORDER_NUM
+                   INNER JOIN BCM100T C WITH(NOLOCK)
+                           ON A.COMP_CODE = C.COMP_CODE
+                          AND A.CUSTOM_CODE = C.CUSTOM_CODE
+                   INNER JOIN BPR100T D WITH(NOLOCK)
+                           ON B.COMP_CODE = D.COMP_CODE
+                          AND B.ITEM_CODE = D.ITEM_CODE
+                   INNER JOIN BPR200T E WITH(NOLOCK)
+                           ON D.COMP_CODE = E.COMP_CODE
+                          AND B.DIV_CODE  = E.DIV_CODE
+                          AND D.ITEM_CODE = E.ITEM_CODE
+        				--20180316 분할입고
+        				   LEFT  JOIN (
+        								SELECT COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ, SUM(INOUT_Q) AS INOUT_Q
+        								FROM BTR100T  WITH (NOLOCK)
+        								WHERE COMP_CODE = @COMP_CODE
+        								AND DIV_CODE    = @DIV_CODE
+        								AND INOUT_TYPE  = '1'
+        								AND INOUT_METH  = '1'
+        								AND CREATE_LOC  = '2'
+        								GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ
+
+        							) F
+        						   ON F.COMP_CODE = B.COMP_CODE
+                                  AND F.DIV_CODE  = B.DIV_CODE
+                                  AND F.ORDER_NUM = B.ORDER_NUM
+        						  AND F.ORDER_SEQ = B.ORDER_SEQ
+        					LEFT JOIN BIV350T G  WITH (NOLOCK) ON A.COMP_CODE=G.COMP_CODE AND A.DIV_CODE=G.DIV_CODE AND A.ORDER_NUM=G.PO_NUM AND B.ORDER_SEQ=G.PO_SEQ
+            WHERE A.COMP_CODE    = @COMP_CODE
+              AND A.ORDER_TYPE   NOT IN ('1','4')        --발주형태
+              AND A.DIV_CODE     = @DIV_CODE            --사업장
+              AND A.ORDER_DATE  &gt;= @ORDER_DATE_FR    --발주일Fr
+              AND A.ORDER_DATE  &lt;= @ORDER_DATE_TO    --발주일To
+              AND B.ORDER_UNIT_Q - ISNULL(F.INOUT_Q, 0) &gt; 0              
+        <if test="@foren.Ognl@isNotEmpty(ORDER_NUM)">
+              AND A.ORDER_NUM   LIKE @ORDER_NUM + '%'   --발주번호
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+              AND A.CUSTOM_CODE  = @CUSTOM_CODE         --거래처
+        </if>
+			GROUP BY A.ORDER_DATE, A.CUSTOM_CODE, C.CUSTOM_NAME, B.ITEM_CODE, D.ITEM_NAME, D.SPEC
+					, CASE WHEN ISNULL(D.OEM_ITEM_CODE,'')='' THEN D.SPEC ELSE D.OEM_ITEM_CODE END, D.STOCK_UNIT
+					, A.ORDER_NUM, B.ORDER_SEQ, A.DIV_CODE
+			ORDER BY A.ORDER_DATE, A.CUSTOM_CODE, B.ITEM_CODE
+        END
+	</select>
+	<select id="s_pda020rkrv_kdService.autoLotNoCreate" parameterType="Map" resultType="String">
+
+			DECLARE @COMP_CODE NVARCHAR(10),-- 법인코드
+					@DIV_CODE NVARCHAR(10),-- 사업장코드
+					@PO_NUM NVARCHAR(20),-- 발주번호
+					@PO_SEQ NUMERIC(10,0),-- 발주순번
+					@USER_ID NVARCHAR(100),
+					@AUTO_LOT_NO NVARCHAR(20),
+					@ROW_COUNT NVARCHAR(10)
+
+
+					SET @COMP_CODE= #{COMP_CODE}
+					SET @DIV_CODE= #{DIV_CODE}
+					SET @PO_NUM= #{PO_NUM}
+					SET @PO_SEQ= #{PO_SEQ}
+					SET @USER_ID= #{USER_ID}
+					SET @ROW_COUNT= #{ROW_COUNT}
+
+					EXEC UNILITE.USP_PurchaseAutoLotNo_KD @COMP_CODE
+					  , @DIV_CODE
+					  , @PO_NUM
+					  , @PO_SEQ
+					  , @USER_ID
+					  , @AUTO_LOT_NO OUTPUT
+
+					SELECT @AUTO_LOT_NO AS AUTO_LOT_NO
+	</select>
+</mapper>

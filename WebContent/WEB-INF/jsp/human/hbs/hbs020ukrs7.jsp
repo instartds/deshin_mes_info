@@ -1,0 +1,324 @@
+<%@page language="java" contentType="text/html; charset=utf-8"%>
+	 {
+		title:'<t:message code="system.label.human.worktimeupdate" default="근무시간등록"/>',
+		id: 'hbs020ukrTab7',
+		border: false,
+<!-- 		xtype: 'uniDetailForm', -->
+		xtype: 'container',
+<!-- 		api: {load:'hbs020ukrs7Service.select'}, -->
+		layout: {type: 'border'},
+		items:[{
+			xtype: 'container',
+			layout: 'border',
+			region: 'center',
+			items:[{				
+				region: 'north',
+				flex: 2,
+				xtype: 'uniGridPanel',
+				id: 'dutyTimeGrid01',
+			    store : hbs020ukrs7Store,
+			    uniOpt: {
+			    	expandLastColumn: true,
+			        useMultipleSorting: false,
+			        copiedRow: true
+				},
+		    	features: [{
+		    		id: 'masterGridSubTotal1',
+		    		ftype: 'uniGroupingsummary', 
+		    		showSummaryRow: false 
+		    	},{
+		    		id: 'masterGridTotal1', 	
+		    		ftype: 'uniSummary', 	  
+		    		showSummaryRow: false
+		    	}],	
+<!-- 				selModel :   Ext.create('Ext.selection.CheckboxModel', { checkOnly : true, toggleOnClick:false  }),  -->
+				columns: [{dataIndex: 'WORK_TEAM'					,		width: 120},				  	  
+						  {dataIndex: 'HOLY_TYPE'					,		width: 70},
+						  {text:'<t:message code="system.label.human.worktime1" default="근무시간"/>',
+								columns:[
+							 			{
+							 				text:'<t:message code="system.label.human.starttime" default="시작시간"/>', columns :[
+							 					{dataIndex: 'DUTY_FR_D',		width: 40},				  	  
+									  			{dataIndex: 'DUTY_FR_H',		width: 40},
+									  			{dataIndex: 'DUTY_FR_M',		width: 40}
+							 				]
+							 			},{
+							 				text:'<t:message code="system.label.human.endtime" default="종료시간"/>', columns :[
+							 					{dataIndex: 'DUTY_TO_D'	,		width: 40},				  	  
+									  			{dataIndex: 'DUTY_TO_H'	,		width: 40},
+									  			{dataIndex: 'DUTY_TO_M'	,		width: 40}
+							 				]
+							 			}
+					  					]
+						  },
+						  {text:'<t:message code="system.label.human.resttime" default="휴식시간"/>1',
+								columns:[
+						  				{
+							 				text:'<t:message code="system.label.human.starttime" default="시작시간"/>', columns :[
+							 					{dataIndex: 'REST_FR_D_01',		width: 40},				  	  
+									  			{dataIndex: 'REST_FR_H_01',		width: 40},
+									  			{dataIndex: 'REST_FR_M_01',		width: 40}
+							 				]
+							 			},{
+							 				text:'<t:message code="system.label.human.endtime" default="종료시간"/>', columns :[
+							 					{dataIndex: 'REST_TO_D_01'	,		width: 40},				  	  
+									  			{dataIndex: 'REST_TO_H_01'	,		width: 40},
+									  			{dataIndex: 'REST_TO_M_01'	,		width: 40}
+							 				]
+							 			}
+						  		]
+						  },
+						  {text:'<t:message code="system.label.human.resttime" default="휴식시간"/>2',
+								columns:[
+						  				{
+							 				text:'<t:message code="system.label.human.starttime" default="시작시간"/>', columns :[
+							 					{dataIndex: 'REST_FR_D_02',		width: 40},				  	  
+									  			{dataIndex: 'REST_FR_H_02',		width: 30},
+									  			{dataIndex: 'REST_FR_M_02',		width: 30}
+							 				]
+							 			},{
+							 				text:'<t:message code="system.label.human.endtime" default="종료시간"/>', columns :[
+							 					{dataIndex: 'REST_TO_D_02'	,		width: 40},				  	  
+									  			{dataIndex: 'REST_TO_H_02'	,		width: 30},
+									  			{dataIndex: 'REST_TO_M_02'	,		width: 30}
+							 				]
+							 			}
+						  		]
+						  },
+						  {text:'<t:message code="system.label.human.resttime" default="휴식시간"/>3',
+								columns:[
+						  				{
+							 				text:'<t:message code="system.label.human.starttime" default="시작시간"/>', columns :[
+							 					{dataIndex: 'REST_FR_D_03',		width: 40},				  	  
+									  			{dataIndex: 'REST_FR_H_03',		width: 30},
+									  			{dataIndex: 'REST_FR_M_03',		width: 30}
+							 				]
+							 			},{
+							 				text:'<t:message code="system.label.human.endtime" default="종료시간"/>', columns :[
+							 					{dataIndex: 'REST_TO_D_03'	,		width: 40},				  	  
+									  			{dataIndex: 'REST_TO_H_03'	,		width: 30},
+									  			{dataIndex: 'REST_TO_M_03'	,		width: 30}
+							 				]
+							 			}
+						  		]
+						  },
+						  {text:'<t:message code="system.label.human.resttime" default="휴식시간"/>4',
+								columns:[
+						  				{
+							 				text:'<t:message code="system.label.human.starttime" default="시작시간"/>', columns :[
+							 					{dataIndex: 'REST_FR_D_04',		width: 40},				  	  
+									  			{dataIndex: 'REST_FR_H_04',		width: 30},
+									  			{dataIndex: 'REST_FR_M_04',		width: 30}
+							 				]
+							 			},{
+							 				text:'<t:message code="system.label.human.endtime" default="종료시간"/>', columns :[
+							 					{dataIndex: 'REST_TO_D_04'	,		width: 40},				  	  
+									  			{dataIndex: 'REST_TO_H_04'	,		width: 30},
+									  			{dataIndex: 'REST_TO_M_04'	,		width: 30}
+							 				]
+							 			}
+						  		]
+						  },
+						  {text:'<t:message code="system.label.human.dutytime" default="근태시간"/>',
+								columns:[
+						  				{
+							 				text:'<t:message code="system.label.human.starttime" default="시작시간"/>', columns :[
+							 					{dataIndex: 'REAL_DUTY_FR_D',		width: 40},				  	  
+									  			{dataIndex: 'REAL_DUTY_FR_H',		width: 30},
+									  			{dataIndex: 'REAL_DUTY_FR_M',		width: 30}
+							 				]
+							 			},{
+							 				text:'<t:message code="system.label.human.endtime" default="종료시간"/>', columns :[
+							 					{dataIndex: 'REAL_DUTY_TO_D'	,		width: 40},				  	  
+									  			{dataIndex: 'REAL_DUTY_TO_H'	,		width: 30},
+									  			{dataIndex: 'REAL_DUTY_TO_M'	,		width: 30}
+							 				]
+							 			}
+						  		]
+						  },
+						  {dataIndex: 'DUTY_CODE'					,		width: 80}
+				],
+                  listeners: {
+                  	containerclick: function() {
+                  		selectedGrid = 'dutyTimeGrid01';
+                  	}, select: function() {
+                  		selectedGrid = 'dutyTimeGrid01';
+                  	}, cellclick: function() {
+                  		selectedGrid = 'dutyTimeGrid01';
+                  	}, beforeedit: function(editor, e) {
+						if (!e.record.phantom) {
+							if (e.field == 'HOLY_TYPE' || e.field == 'WORK_TEAM') {
+								return false;
+							}
+						}
+					}, edit: function(editor, e) { console.log(e);
+						var fieldName = e.field;
+						var num_check = /[0-9]/;
+						if (fieldName != 'WORK_TEAM' && fieldName != 'HOLY_TYPE' && fieldName != 'DUTY_CODE' && fieldName.indexOf('_D') == -1) {
+							if (!num_check.test(e.value)) {
+									Ext.Msg.alert('<t:message code="system.label.human.confirm" default="확인"/>', '<t:message code="system.message.human.message033" default="숫자형식이 잘못되었습니다."/>');
+									e.record.set(fieldName, e.originalValue);
+									return false;
+							}
+							if (fieldName.indexOf('_H') != -1) {
+								if (parseInt(e.value) >= 24 || parseInt(e.value) < 0) {
+									Ext.Msg.alert('<t:message code="system.label.human.confirm" default="확인"/>', '<t:message code="system.message.human.message034" default="정확한 시를 입력하십시오."/>');
+									e.record.set(fieldName, e.originalValue);
+									return false;
+								}
+							} 
+							if (fieldName.indexOf('_M') != -1) {
+								if (parseInt(e.value) >= 60 || parseInt(e.value) < 0) {
+									Ext.Msg.alert('<t:message code="system.label.human.confirm" default="확인"/>', '<t:message code="system.message.human.message036" default="정확한 분을 입력하십시오."/>');
+									e.record.set(fieldName, e.originalValue);
+									return false;
+								}
+							}
+						}									
+						if (e.originalValue != e.value && !Ext.isEmpty(e.value)) {
+							UniAppManager.setToolbarButtons('save', true);
+						} else {
+//							UniAppManager.setToolbarButtons('save', false);
+						}
+					}
+                  }
+			}, {
+				region: 'center',
+				flex: 2,
+				xtype: 'uniGridPanel',
+				id: 'dutyTimeGrid02',
+			    store : hbs020ukrs7_1Store,
+			    uniOpt: {
+			    	expandLastColumn: true,
+			        useMultipleSorting: false,
+			        copiedRow: true
+				},
+		    	features: [{
+		    		id: 'masterGridSubTotal2',
+		    		ftype: 'uniGroupingsummary', 
+		    		showSummaryRow: false 
+		    	},{
+		    		id: 'masterGridTotal2', 	
+		    		ftype: 'uniSummary', 	  
+		    		showSummaryRow: false
+		    	}],		      
+				columns: [{dataIndex: 'WORK_TEAM'					,		width: 120},				  	  
+						  {dataIndex: 'PAY_CODE'					,		width: 70},
+						  {dataIndex: 'HOLY_TYPE'					,		width: 70},
+						  {dataIndex: 'DUTY_CODE'					,		width: 80},
+						  {text:'<t:message code="system.label.human.worktime1" default="근무시간"/>',
+								columns:[
+							 			{
+							 				text:'<t:message code="system.label.human.starttime" default="시작시간"/>', columns :[
+							 					{dataIndex: 'DUTY_FR_D',		width: 40},				  	  
+									  			{dataIndex: 'DUTY_FR_H',		width: 40},
+									  			{dataIndex: 'DUTY_FR_M',		width: 40}
+							 				]
+							 			},{
+							 				text:'<t:message code="system.label.human.endtime" default="종료시간"/>', columns :[
+							 					{dataIndex: 'DUTY_TO_D'	,		width: 40},				  	  
+									  			{dataIndex: 'DUTY_TO_H'	,		width: 40},
+									  			{dataIndex: 'DUTY_TO_M'	,		width: 40}
+							 				]
+							 			}
+					  					]
+						  },
+						  {text:'<t:message code="system.label.human.resttime" default="휴식시간"/>1',
+								columns:[
+						  				{
+							 				text:'<t:message code="system.label.human.starttime" default="시작시간"/>', columns :[
+							 					{dataIndex: 'REST_FR_D_01',		width: 40},				  	  
+									  			{dataIndex: 'REST_FR_H_01',		width: 30},
+									  			{dataIndex: 'REST_FR_M_01',		width: 30}
+							 				]
+							 			},{
+							 				text:'<t:message code="system.label.human.endtime" default="종료시간"/>', columns :[
+							 					{dataIndex: 'REST_TO_D_01'	,		width: 40},				  	  
+									  			{dataIndex: 'REST_TO_H_01'	,		width: 30},
+									  			{dataIndex: 'REST_TO_M_01'	,		width: 30}
+							 				]
+							 			}
+						  		]
+						  },
+						  {text:'<t:message code="system.label.human.resttime" default="휴식시간"/>2',
+								columns:[
+						  				{
+							 				text:'<t:message code="system.label.human.starttime" default="시작시간"/>', columns :[
+							 					{dataIndex: 'REST_FR_D_02',		width: 40},				  	  
+									  			{dataIndex: 'REST_FR_H_02',		width: 30},
+									  			{dataIndex: 'REST_FR_M_02',		width: 30}
+							 				]
+							 			},{
+							 				text:'<t:message code="system.label.human.endtime" default="종료시간"/>', columns :[
+							 					{dataIndex: 'REST_TO_D_02'	,		width: 40},				  	  
+									  			{dataIndex: 'REST_TO_H_02'	,		width: 30},
+									  			{dataIndex: 'REST_TO_M_02'	,		width: 30}
+							 				]
+							 			}
+						  		]
+						  },
+						  {text:'<t:message code="system.label.human.resttime" default="휴식시간"/>3',
+								columns:[
+						  				{
+							 				text:'<t:message code="system.label.human.starttime" default="시작시간"/>', columns :[
+							 					{dataIndex: 'REST_FR_D_03',		width: 40},				  	  
+									  			{dataIndex: 'REST_FR_H_03',		width: 30},
+									  			{dataIndex: 'REST_FR_M_03',		width: 30}
+							 				]
+							 			},{
+							 				text:'<t:message code="system.label.human.endtime" default="종료시간"/>', columns :[
+							 					{dataIndex: 'REST_TO_D_03'	,		width: 40},				  	  
+									  			{dataIndex: 'REST_TO_H_03'	,		width: 30},
+									  			{dataIndex: 'REST_TO_M_03'	,		width: 30}
+							 				]
+							 			}
+						  		]
+						  }
+				],
+                  listeners: {
+                  	containerclick: function () {
+                  		selectedGrid = 'dutyTimeGrid02';
+                  	}, select: function () {
+                  		selectedGrid = 'dutyTimeGrid02';
+                  	}, cellclick: function() {
+                  		selectedGrid = 'dutyTimeGrid02';
+                  	}, beforeedit: function(editor, e) {
+						if (!e.record.phantom) {
+							if (e.field == 'HOLY_TYPE' || e.field == 'WORK_TEAM' || e.field == 'PAY_CODE') {
+								return false;
+							}
+						}
+					}, edit: function(editor, e) {
+						var fieldName = e.field;
+						var num_check = /[0-9]/;
+						if (fieldName != 'WORK_TEAM' && fieldName != 'HOLY_TYPE' && fieldName.indexOf('_D') == -1) {
+							if (!num_check.test(e.value)) {
+									Ext.Msg.alert('<t:message code="system.label.human.confirm" default="확인"/>', '<t:message code="system.message.human.message033" default="숫자형식이 잘못되었습니다."/>');
+									e.record.set(fieldName, e.originalValue);
+									return false;
+							}
+							if (fieldName.indexOf('_H') != -1) {
+								if (parseInt(e.value) >= 24 || parseInt(e.value) < 0) {
+									Ext.Msg.alert('<t:message code="system.label.human.confirm" default="확인"/>', '<t:message code="system.message.human.message034" default="정확한 시를 입력하십시오."/>');
+									e.record.set(fieldName, e.originalValue);
+									return false;
+								}
+							} 
+                            if (fieldName.indexOf('_M') != -1) {
+								if (parseInt(e.value) >= 60 || parseInt(e.value) < 0) {
+									Ext.Msg.alert('<t:message code="system.label.human.confirm" default="확인"/>', '<t:message code="system.message.human.message036" default="정확한 분을 입력하십시오."/>');
+									e.record.set(fieldName, e.originalValue);
+									return false;
+								}
+							}
+						}
+						if (e.originalValue != e.value && !Ext.isEmpty(e.value)) {
+							UniAppManager.setToolbarButtons('save', true);
+						} else {
+//							UniAppManager.setToolbarButtons('save', false);
+						}
+					}
+                  }
+			}]
+		}]
+	}

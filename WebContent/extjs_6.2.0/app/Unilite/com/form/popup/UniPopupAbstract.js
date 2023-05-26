@@ -1,0 +1,1067 @@
+//@charset UTF-8
+/**
+ * 
+ * Popup
+ * 
+ * ## Example usage:
+ *  
+ *    @example
+ *    listeners: {
+ *			'onSelected':  function(records, type  ){
+ *				//var grdRecord = masterGrid.getSelectedRecord();
+ *				var grdRecord = masterGrid.uniOpt.currentRecord;
+ *				grdRecord.set('MANAGE_CUSTOM',records[0]['CUSTOM_CODE']);
+ *			},
+ *			'onClear':  function( type  ){
+ *				// onClear는 커서가 떠난후 발생하므로 getSlected 사용 안함.
+ *				//var grdRecord = masterGrid.getSelectedRecord(); 
+ *				var grdRecord = masterGrid.uniOpt.currentRecord;
+ *				grdRecord.set('MCUSTOM_NAME','');
+ *				grdRecord.set('MANAGE_CUSTOM','');
+ *			}
+ *		}         
+ */
+Ext.define('Unilite.com.form.popup.UniPopupAbstract', {
+	
+    requires: [
+        'Ext.form.field.Text',
+        'Ext.form.Label'
+    ],
+
+    /**
+     * 
+     * @cfg {Boolean} 
+     * 
+     * boolean/string (true/false/'value'/'text')
+     * true : 잘못된 값은 valuefield, textfield 모두 clear함 
+     * false : 잘못된 값은 valuefield, textfield 모두 그대로 놓아 둠
+     * 'value' : 잘못된 값은 valuefield 만 clear함 
+     * 'text' : 잘못된 값은 textfield 만 clear함 
+     */
+    validateBlank : true,	
+    autoPopup : false,
+        /**
+     * 
+     * @cfg {Boolean} 
+     * 
+     * default value is false
+     * true : 팝업띄우지 않고 검색란에서 검색시 조회 결과가 2건 이상 조회시 onClear를 실행하지 않음 
+     */
+    allowMulti : false,
+    store:'',
+    api : '',
+    pageTitle:'',
+    readOnly: false,
+	popupPage : '/com/popup/CustPopup.do',
+	popupWidth:700,
+	popupHeight:550,
+	valueFieldWidth:60,
+	textFieldWidth:90,
+	extraFieldWidth:90,
+	defaults: {
+         hideLabel: true
+    },
+	
+	//layout: 'uniPopupFieldLayout',
+    /**
+     * 
+     * @cfg {String}
+     */
+    valueFieldName: 'VALUE_FIELD',
+    /**
+     * 
+     * @cfg {String}
+     */
+    textFieldName: 'TEXT_FIELD',
+    /**
+     * DB의 Value field name 
+     * @cfg {String}
+     */
+    DBvalueFieldName : undefined,
+    /**
+     * DB의 Text field name 
+     * @cfg {String}
+     */
+    DBtextFieldName : undefined,
+    
+    textFieldConfig: {},
+    
+    /**
+     * DB검색시 Like를 사용 할것인지?
+     * @cfg {String} useLike
+     */
+    useLike : false,
+    allowInputData :false,
+    //width:320,typeof value !== 'undefined'
+    /**
+     * api 호출시 추가되는 parameters
+     * @type  {Object}
+     */
+	extParam: {},
+    
+	//valueField, textField 외 부가필드
+	extraFields: [],
+	extraFieldsConfig: [],
+	
+	useBarcodeScanner:false,
+	isOpen : false,
+	
+	getDBvalueFieldName:function() {
+		return (typeof this.DBvalueFieldName === 'undefined') ? this.valueFieldName : this.DBvalueFieldName;
+	},
+    getDBtextFieldName:function() {
+		return (typeof this.DBtextFieldName === 'undefined') ? this.textFieldName : this.DBtextFieldName;
+    	
+    },
+    /**
+     * uniPopup 생성
+     * 
+     * @param {} config
+     */
+    constructor : function(config){    
+        var me = this;
+        me.extParam = {};
+        config.trackResetOnLoad = true;
+        if (config) {
+            Ext.apply(me, config);
+        }
+        
+        /**
+         * IE 10 오류로 추가됨 : class load 전 callback function 호출되어 class 없다는 오류
+         */
+        if(Ext.ieVersion == 10)	{
+        	Unilite.require(me.app, null, this, true);
+        }
+        //addEvents 제거 - 5.0.1 deprecated
+//        me.addEvents(
+//        	/**
+//             * @event onSelected
+//             * 하나의 record가 선택되었을때 발생
+//             * @param {Array} records
+//             * @param {String} type
+//             * [ TEXT | VALUE ] 
+//             */
+//        	'onSelected',
+//        	
+//        	/**
+//             * @event onClear
+//             * 데이타가 지워졌을때 발생 
+//             * 주의! grid에서 onClear사용시 현재 record 가져올때는 아래 방법 사용 
+//             *        
+//			 * @param {String} type
+//             * [ TEXT | VALUE ]
+//             */
+//        	'onClear',
+//        	'applyextparam'
+//        );        
+        
+    },  // constructor
+   	_supendEvents : function(supend) {
+   		var me = this;
+   		if(supend) {
+       		if(me.valueField) {
+   				me.valueField.suspendEvents(false);
+       		}
+   			me.textField.suspendEvents(false);
+   			Ext.each(me.extraFields, function(field){
+	        	field.suspendEvents(false);
+	        });
+   		} else {
+   			if(me.valueField) {
+   				me.valueField.resumeEvents();
+       		}
+   			me.textField.resumeEvents();
+   			Ext.each(me.extraFields, function(field){
+	        	field.resumeEvents();
+	        });
+   		}
+   	},
+   	
+    _onDataLoad : function( records,   type) {
+    	var me = this;
+    	me.extParam.TXT_SEARCH = '';
+    	if(records!=null && (records.length == 1 || ( me.allowMulti && records.length > 1))) {
+    		var rec = records[0];
+    		console.log('popup(select) ' + type + ' : select 1 : ' + rec.get(me.getDBtextFieldName()));
+    		me._supendEvents(true);
+    		if(type == 'TEXT') {
+       			if(me.valueField) {
+       				//var v= rec.get(me.getDBvalueFieldName());
+       				var v = rec.getData()[me.getDBvalueFieldName()];
+    				me.valueField.setRawValue(v);
+    				me.valueField.setValue(v);
+       			}
+       			//var v= rec.get(me.getDBtextFieldName());
+       			var v = rec.getData()[me.getDBtextFieldName()];
+    			me.textField.setRawValue(v);
+    			me.textField.setValue(v);
+    			Ext.each(me.extraFields, function(field){
+		        	field.setRawValue(rec.getData()[field.name]);
+		        	field.setValue(rec.getData()[field.name]);
+		        	field.uniChanged = false;
+		        	field.clearInvalid();
+		        });
+		        if(me.ownerCt && me.ownerCt.grid)	{
+		        	var grid = me.ownerCt.grid;
+		        	var view = grid.getView();
+		        	var navi = view.getNavigationModel();
+		        	var columns = me.ownerCt.grid.getVisibleColumns();
+					var columnIndex, column;
+					Ext.each(columns, function(item, idx) {
+						if(item.dataIndex && ( item.dataIndex == me.textField.name ||  item.dataIndex == me.textFieldName))	{
+							columnIndex = idx;
+							column = item;
+						}
+					});
+					
+		        	if(navi && columnIndex) {
+		        		if(navi.getRecordIndex())	{
+		        			navi.setPosition(navi.getRecordIndex(), columnIndex);
+		        		} else if(grid.getSelectionModel().selectionStartIdx)	{
+		        			navi.setPosition(grid.getSelectionModel().selectionStartIdx, columnIndex);
+		        		}
+		        	}
+		        }else {
+		        	me.textField.focus();
+		        }
+    		} else {
+       			if(me.valueField) {
+       				//var v= rec.get(me.getDBvalueFieldName());
+       				var v = rec.getData()[me.getDBvalueFieldName()];
+    				me.valueField.setRawValue(v);
+    				me.valueField.setValue(v);
+       			}
+       			//var v= rec.get(me.getDBtextFieldName());
+       			var v = rec.getData()[me.getDBtextFieldName()];
+    			me.textField.setRawValue(v);
+    			me.textField.setValue(v);
+    			
+    			Ext.each(me.extraFields, function(field){
+		        	field.setRawValue(rec.getData()[field.name]);
+		        	field.setValue(rec.getData()[field.name]);
+		        	field.uniChanged = false;
+		        	field.clearInvalid();
+		        });
+		        if(me.ownerCt && me.ownerCt.grid)	{
+		        	var grid = me.ownerCt.grid;
+		        	var view = grid.getView();
+		        	var navi = view.getNavigationModel();
+		        	var columns = me.ownerCt.grid.getVisibleColumns();
+					var columnIndex;
+					var column;
+					Ext.each(columns, function(item, idx) {
+						if(item.dataIndex && (item.dataIndex == me.valueField.name ||  item.dataIndex == me.valueFieldName))	{
+							columnIndex = idx;
+							column = item;
+						}
+					});
+					
+		        	if(navi && columnIndex) {
+		        		if(navi.getRecordIndex())	{
+		        			navi.setPosition(navi.getRecordIndex(), columnIndex);
+		        		}else if(grid.getSelectionModel().selectionStartIdx)	{
+		        			navi.setPosition(grid.getSelectionModel().selectionStartIdx, column);
+		        		}
+		        		//navi.setPosition(grid.getSelectionModel().selectionStartIdx,me.ownerCt.grid.getColumnIndex(me.valueField.name));
+		        	}
+		        }
+    		}
+    		
+    		me.textField.uniChanged = false;
+    		me.textField.clearInvalid();
+    		if(me.valueField) {
+    			me.valueField.uniChanged = false;
+    			me.valueField.clearInvalid();
+    		}
+    		me._supendEvents(false);
+    		
+    		// data에는 fields에 정의된 값만 있음 !!!
+    		me.fireEvent('onSelected',  [rec.getData()], type);	
+    		
+    		if(me.textField.getXType('uniPopupField'))	{
+    			var formpanel = me.textField.up('form');
+    			if(formpanel)	{
+		    		if(! formpanel.uniOpt.inLoading) {
+						var rec = formpanel.activeRecord; //this.getRecord();
+						var form = formpanel.getForm();
+						if(rec) {
+							form.updateRecord(rec);	//form의 내용을 rec에 write 함.
+						}
+			        }
+    			}
+    		}
+    		if(me.textField)  me.fireEvent('onTextFieldChange',   me.textField, me.textField.getValue());	
+    		if(me.valueField) me.fireEvent('onValueFieldChange',  me.valueField, me.valueField.getValue());	
+    		
+    		//this._fireBlurEvent(null);
+    	} else /*if (records!=null && records.length > 1)*/ {
+    		if( me.allowInputData && (records ==null || (records !=null && records.length==0) ))	{
+    			/*Ext.each(me.extraFields, function(field){
+			    	field.setValue('');
+					field.validate();
+			    });
+		    	me.fireEvent('onClear',  type);	
+    			*/
+    		}else {
+	    		if(type == 'VALUE' && !Ext.isEmpty(me.valueField.getValue()) && (!Ext.isEmpty(me.valueField.getValue()) && (me.allowBlank === false || me.autoPopup))) {
+	    			me.openPopup(type);
+	    		}else if(type== 'TEXT' && !Ext.isEmpty(me.textField.uniChanged) && (!Ext.isEmpty(me.textField.getValue()) && (me.allowBlank === false || me.autoPopup ))) {
+	    			me.openPopup(type);
+	    		}
+	    		me._clearValue(me);
+    		}
+    	} 
+    	
+    }
+    
+    ,_clearValue : function (me, type) {
+    	if(type == 'TEXT') {
+			me.textField.setValue('');
+			me.textField.setRawValue('');
+			if(me.xtype != 'uniPopupColumn') me.textField.validate();
+		} else if(type == 'VALUE') {
+   			if(me.valueField) {
+				me.valueField.setValue('');
+				me.valueField.setRawValue('');
+				if(me.xtype != 'uniPopupColumn') me.valueField.validate();
+   			}
+		}
+		if(me.validateBlank === 'value')	{
+    		if(me.valueField) {
+				me.valueField.setValue('');
+				me.valueField.setRawValue('');
+				if(me.xtype != 'uniPopupColumn') me.valueField.validate();
+   			}
+    	}else if(me.validateBlank === 'text')	{
+    		me.textField.setValue('');
+    		me.textField.setRawValue('');
+			if(me.xtype != 'uniPopupColumn') me.textField.validate();
+    	}else if(me.validateBlank == true)	{
+    		if(me.valueField) {
+				me.valueField.setValue('');
+				me.valueField.setRawValue('');
+				if(me.xtype != 'uniPopupColumn') me.valueField.validate();
+   			}
+			me.textField.setValue('');
+			me.textField.setRawValue('');
+			if(me.xtype != 'uniPopupColumn') me.textField.validate();
+			
+    	}
+    	if(me.extParam)	{
+    		me.extParam[me.DBtextField]='';
+    		me.extParam[me.DBvalueField]='';
+    	}
+		Ext.each(me.extraFields, function(field){
+	    	field.setValue('');
+			if(me.xtype != 'uniPopupColumn') field.validate();
+	    });
+    	me.fireEvent('onClear',  type);	
+    },
+    _checkReadOnly: function() {
+    	var rv = false;
+    	var me = this;
+    	if(me.valueField ) {
+    		if(me.valueField.readOnly) return true;
+    	}
+    	if(me.textField.readOnly) {
+    		return true;
+    	} else {
+    		return false;
+    	}
+    	
+    },
+    
+    openPopup: function(type) {
+        var me = this;
+        if(!me.hasListeners.applyextparam || me.fireEvent('applyextparam', me) !== false) {
+        	
+        	/*if(Ext.isFunction(me._setRecordExtParam))	{
+    			me._setRecordExtParam();
+    		}*/
+		                            		
+	        //var param = me.extParam;
+    		//me.setExtParam();
+    		var param = me.extParam;
+	        //param['page'] = 'CustPopup';
+	        console.log("me.useyn :",me.useyn);
+	        if(!Ext.isDefined(param['USE_YN']))	{
+		        if(Ext.isDefined(me.useyn) && me.useyn != '' )	{
+		        	param['USE_YN'] = me.useyn;
+		        }
+	        }
+	        if(!me.textField.readOnly)	{
+		        if(me.valueField ) {
+    				param[me.getDBvalueFieldName()]='';
+		            param[me.getDBvalueFieldName()] = me.valueField.getValue().trim()   ;
+		        }
+		        //param[me.getDBtextFieldName()] = me.textField.getValue();   
+		        
+		        if(me.textField instanceof Ext.form.field.Date) {
+	       			param[me.getDBtextFieldName()]  = me.textField.getSubmitValue();
+	       		}else{
+	       			param[me.getDBtextFieldName()]='';
+					param[me.getDBtextFieldName()]  = me.textField.getValue();
+	       		}
+		        param['TYPE'] = type;   
+		        param['pageTitle'] = me.pageTitle;
+		        
+		        if(me.app) {
+		            var fn = function() {
+		                var oWin =  Ext.WindowManager.get(me.app);
+		                
+		                if(!oWin) {
+		                    oWin = Ext.create( me.app, {
+		                            //id: me.app, 
+		                            callBackFn: me.processResult, 
+		                            callBackScope: me, 
+		                            popupType: type,
+		                            width: me.popupWidth,
+		                            height: me.popupHeight,
+		                            title:me.pageTitle,
+		                            param: param,
+		                            listeners:{
+		                            	'beforeshow':function()	{
+		                            			me.setExtParam({'isFieldSearch':false})
+		                            			if(!me.isOpen){
+		                            				me.isOpen = true;
+		                            			}else {
+		                            				return false;
+		                            			}
+		                            	},
+		                            	'beforeclose':function()	{
+		                            		me.extParam.TXT_SEARCH = '';
+		                            		me.extParam[me.getDBvalueFieldName()] = '';
+		                            		me.extParam[me.getDBtextFieldName()] = '';
+		                            		
+		                            		var bsaCode = me.extParam.BSA_CODE, headerNm = me.extParam.HEADER;
+		                            		//me.extParam = {}
+		                            		if(bsaCode)	{
+		                            			me.extParam.BSA_CODE = bsaCode;
+		                            			me.extParam.HEADER   = headerNm;
+		                            		}
+		                            		me.isOpen = false;
+		                            	},
+		                            	'hide':function()	{
+		                            		me.extParam.TXT_SEARCH = '';
+		                            		
+		                            		me.extParam[me.getDBvalueFieldName()] = '';
+		                            		me.extParam[me.getDBtextFieldName()] = '';
+		                            		var bsaCode = me.extParam.BSA_CODE, headerNm = me.extParam.HEADER;
+		                            		//me.extParam = {};
+		                            		if(bsaCode)	{
+		                            			me.extParam.BSA_CODE = bsaCode;
+		                            			me.extParam.HEADER   = headerNm;
+		                            		}
+		                            		me.isOpen = false;
+		                            		
+		                            		var fieldType = type;
+		                            		if(me.ownerCt && me.ownerCt.grid)	{
+		                            			var grid = me.ownerCt.grid;
+									        	var view = grid.getView();
+									        	var navi = view.getNavigationModel();
+									        	var columns = me.ownerCt.grid.getVisibleColumns();
+												var columnIndex;
+												
+												Ext.each(columns, function(column, idx) {
+													if(column.dataIndex && (column.dataIndex == me.textField.name || column.dataIndex == me.textFieldName))	{
+														columnIndex = idx;
+													}
+												});
+									        	if(navi) {
+									        		if(navi.getRecordIndex())	{
+	                            						navi.setPosition(navi.getRecordIndex(), columnIndex);
+	                            					}else if(grid.getSelectionModel().selectionStartIdx)	{
+	                            						navi.setPosition(grid.getSelectionModel().selectionStartIdx,columnIndex); 
+	                            					}	
+		                            			}
+		                            		}else {
+		                            			if(me.textField && me.textField.isVisible())	{
+		                            				me.textField.focus();
+		                            			}
+		                            		}
+		                            		//me.setExtParam({'TXT_SEARCH':''});
+		                            	}
+		                            }
+		                     });
+		                }
+		                oWin.fnInitBinding(param);
+		                oWin.center();
+		                // animation을 원할경우 oWin.show(me) 하면 되나 느림 ㅠㅠ
+		                oWin.show();
+		                //팝업에서 팝업 띄울 경우, 뒤에 나오는 팝업이 위로 나오게 하기 위해서... 
+		                //그런데 팝업에서 윈도우 띄우면 윈도우가 뒤로 숨는 경우 발생 -> 주석처리
+		                oWin.setAlwaysOnTop(true);
+		            };
+
+		            Unilite.require(me.app, fn, this, true);
+		//            Ext.require(me.app, fn);            
+		        } else {
+		            me.openPopupModalDialog(param,type)
+		        }
+	        }
+        }
+    },
+    processResult: function(result, type) {
+        var me = this, rv;
+        console.log("Result: ", result);
+        if(Ext.isEmpty(result)) {
+        	if(type == 'VALUE') {
+        		if( Ext.isDefined(me.valueField) ) {
+        			me.valueField.focus();
+        		}
+        	}else{
+        		me.textField.focus();
+        	}
+        }else{
+	        if(Ext.isDefined(result) && result.status == 'OK') {
+//	            if( Ext.isDefined(me.valueField) ) {
+//	                me.valueField.suspendEvents(false);
+//	            }
+//	            me.textField.suspendEvents(false);
+	        	me._supendEvents(true);
+	            
+	            var rec = result.data[0];
+	            //console.log("RV:", me.DBtextFieldName, rec[me.DBtextFieldName], rec);
+	            if(rec)	{
+		            if( Ext.isDefined(me.valueField) ) {
+		                me.valueField.setValue(rec[me.DBvalueFieldName]);
+		                me.valueField.clearInvalid();
+		            }
+		            me.textField.setValue(rec[me.getDBtextFieldName()]);
+		            me.textField.clearInvalid();	            
+		            //console.log("value : ", me.DBvalueFieldName," text : ",me.getDBtextFieldName())
+		            Ext.each(me.extraFields, function(field){
+			        	field.setValue(rec[field.name]);
+			        	field.clearInvalid();
+			        });
+	            }
+	            //me.textField.focus();
+	            me._focusNext(me.textField);	//2014.09.03 값 입력 후 다음 필드 포커스 이동 구현.
+	            
+//	            if( Ext.isDefined(me.valueField) ) {
+//	                me.valueField.resumeEvents();
+//	            }
+//	            me.textField.resumeEvents();
+	            me._supendEvents(false);
+	            
+	            me.fireEvent('onSelected',  result.data, type); 
+	            if(me.textField.getXType('uniPopupField'))	{
+	    			var formpanel = me.textField.up('form');
+	    			if(formpanel)	{
+			    		if(! formpanel.uniOpt.inLoading) {
+							var rec = formpanel.activeRecord; //this.getRecord();
+							var form = formpanel.getForm();
+							if(rec) {
+								form.updateRecord(rec);	//form의 내용을 rec에 write 함.
+							}
+				        }
+	    			}
+	    		}
+	            if(me.textField) me.fireEvent('onTextFieldChange',   me.textField, me.textField.getValue());	
+    			if(me.valueField)  me.fireEvent('onValueFieldChange',  me.valueField, me.valueField.getValue());
+	            this._fireBlurEvent(null);
+	        }
+        }
+    },
+    
+    openPopupModalDialog: function(param, type) {
+    	var me = this;
+    	var width = me.popupWidth, height = me.popupHeight;
+    	var xPos = (screen.availWidth - width) / 2;
+	    var yPos = (screen.availHeight - height ) / 2 ;
+	
+		
+	
+		// readonly면 popup 불가.
+		if(me._checkReadOnly()) return false;
+		
+	    var sParam = UniUtils.param(param);
+	    console.log("Parameters : ", param, sParam);
+	    var features = "help:0;scroll:0;status:0;center:yes;" +
+	           // "dialogTop="+yPos + "px;dialogLeft="+xPos +"px;" +
+	            ";dialogWidth="+width +"px;dialogHeight="+height+"px" ;
+	
+	    var rv = window.showModalDialog(CPATH+me.popupPage+'?'+sParam, param, features);
+	    me.processResult(rv, type);
+
+	    
+    },
+   
+   
+    // private
+    getLayoutItems: function() {
+    	var me = this;
+        return  me.items.items;
+    }
+    /**
+     * 
+     * @param {} v
+     */
+    ,setValue:function(v) {
+    	this.textField.setValue(v);
+    }
+    /**
+     * 
+     */
+    ,getValue: function() {
+    	this.textField.getValue();
+    }
+    /**
+     * 
+     */
+    ,reset:function() {
+    	this.textField.reset();
+    	
+       	if(this.valueField) {
+    		this.valueField.reset();
+       	}
+       	Ext.each(this.extraFields, function(field){
+        	field.reset();
+        });
+    },
+    isValid: function() { return true; },
+    
+    /**
+     * 강제로 값을 조회하게 함.
+     * @param {} type
+     */
+    lookup:function(type) {
+    	var me = this;
+    	var elm = "";
+    	if( type == 'TEXT') {
+    		elm = me.textField;
+    	} else {
+    		elm = me.valueField;
+    	}
+    	console.log("lookup",elm, type) ;
+    	this._onFieldBlur(elm, type, true) ;
+    },
+    /*
+    onFieldBlur: function( field, e ){ 
+    	var items = this.field.items.items;
+            
+        for( var index = 0; index < items.length; index++ )
+        {
+            if (items[ index ].hasFocus) {
+                return;
+            }
+        }
+        
+        this.onFieldBlur( field, e );
+    },
+    */
+    defaultRenderer: function(value){
+    	
+    	return this.textField.getValue();
+    },
+    // value : {key: value, key2: value2}
+    setExtParam : function(param)	{
+    	var me = this;
+    	//me.extParam = me.config.extParam ? me.config.extParam : {};
+    	if(param)	{
+    		Ext.Object.merge(me.extParam, param);
+    	}
+    	//me.extParam = param; 
+    },
+    // private  valuefield ( Code 값 저장 )
+    _getValueFieldConfig:function(isHidden) {
+    	var me = this, lHidden = isHidden || false;;
+    	var lAllowBlank = (typeof me.allowBlank === 'undefined') ? true : me.allowBlank;
+    	var rtn = {
+            xtype: 'textfield',
+            id: this.id + '-valueField',
+            //triggerCls :'x-form-search-trigger',
+            labelWidth: 0,
+            padding:0, margin:0,
+            hideLabel: true,
+            width: me.valueFieldWidth,
+            label:'Code',
+            name: this.valueFieldName,
+            allowBlank : lAllowBlank,
+            enableKeyEvents: true,
+		    uniChanged : false,
+		    uniPopupChanged : false,
+		    uniOpt:this.uniOpt,
+		    hidden: lHidden,
+		    readOnly:me.readOnly,
+            isPopupField: true,
+            popupField: me,
+		    
+            /*
+            onTriggerClick: function() {
+		        me.openPopup( 'VALUE');
+		    },
+		    */
+            listeners: {
+            	'render' : function(c) {
+            		 c.getEl().on('dblclick', function(){
+					    	me.openPopup( 'VALUE');
+					    	
+					  });
+            	},
+                'blur': {
+                    fn: function(elm){  
+                    	if(!me.readOnly)	{
+	                        this._onFieldBlur(elm, 'VALUE');
+	                        //this.fireEvent('onValueFieldChange', elm, elm.getValue());
+                    	}
+                    },
+                    scope: this
+					//,delay:1
+                },
+                'change': {
+                    fn: function(elm, newValue, oldValue, eOpts){
+                    	if(newValue == ''&& Ext.isDefined(this.textField) && me.validateBlank =="text")	{
+                    		this.textField.setValue('');
+                    	}
+                    	var form = elm.up('form');
+                    	if(form && form.uniOpt.inLoading == false)	{
+                        	this._onFieldChange(elm, 'VALUE', newValue, oldValue);
+                        	this.fireEvent('onValueFieldChange', elm, newValue, oldValue);
+                    	}
+                    }
+                    ,scope: this
+					//,delay:1
+                },
+                'keydown': {
+                  	fn: function(elm, e){
+                  		switch( e.getKey() ) {
+                  			case Ext.EventObjectImpl.F8:
+                  				if(!(e.shiftKey || e.ctrlKey || e.altKey )) {
+                  					me.openPopup( 'TEXT');
+                  					e.stopEvent();
+									e.preventDefault();
+									e.stopPropagation();
+                  				}
+                    			break;
+                  		}
+                  	} // fn
+                    ,scope: this
+                }
+            }
+        };
+        if(me.hasListener('onValueSpecialKey'))	{    
+        	Ext.Object.merge(rtn.listeners, {'specialKey':{
+	    			fn:function(elm, e){
+	    			this.fireEvent('onValueSpecialKey', elm, e);
+	    			
+	    			},
+	    			scope:this
+	    		}
+    		})
+        	/*
+	    	Ext.apply(rtn, {listeners:{'specialKey':{
+	    			fn:function(elm, e){
+	    				this.fireEvent('onValueSpecialKey', elm, e);
+	    			
+	    			},
+	    			scope:this
+	    		}
+	    	}
+	    	})*/
+        }
+    	return rtn;
+    },
+    // private
+    _getTextFieldConfig: function() {
+    	var me = this;
+    	var lAllowBlank = (typeof me.allowBlank === 'undefined') ? true : me.allowBlank;
+    	var rtn = {
+            //xtype: 'triggerfield',
+    		xtype: 'textfield',
+            id: this.id + '-textField',
+            //triggerCls :'x-form-search-trigger',
+            labelWidth: 0,
+            padding:0, margin:0,
+            hideLabel: true,
+            name:this.textFieldName,
+            enableKeyEvents: true,
+            allowBlank : lAllowBlank,
+            fieldStyle: me.textFieldStyle,
+            width:me.textFieldWidth,            
+//            onTriggerClick: function() {
+//		        me.openPopup( 'TEXT');
+//		    },
+		    triggers: {				//5.0 clear trigger
+				popup: {
+					cls: 'x-form-search-trigger',
+					handler: function() {
+						me.openPopup( 'TEXT');
+					}
+				}
+			}, 
+		    uniOpt:this.uniOpt,
+		    uniChanged : false,
+		    uniPopupChanged : false,
+		    readOnly:me.readOnly,
+            isPopupField: true,
+            popupField: me,
+            listeners: {
+            	'render' : function(c) {
+            		 c.getEl().on('dblclick', function(){
+					    	me.openPopup( 'TEXT');
+					  });
+					  
+            	},
+                'blur': {
+                    fn: function(elm){
+                    	if(!me.readOnly)	{
+                        	this._onFieldBlur(elm, 'TEXT');
+                        	//this.fireEvent('onTextFieldChange', elm, elm.getValue());
+                    	}
+                    }
+                    ,scope: this
+					,delay:1
+                },
+                'change': {
+                    fn: function(elm, newValue, oldValue, eOpts){
+                    	if(newValue == '' && Ext.isDefined(this.valueField) && me.validateBlank =="value")	{
+                    		this.valueField.setValue('');
+                    	}
+                    	var form = elm.up('form');
+                    	if(form && form.uniOpt.inLoading == false)	{
+                        	this._onFieldChange(elm, 'TEXT', newValue, oldValue);
+                        	this.fireEvent('onTextFieldChange', elm, newValue, oldValue);
+                    	}
+                    }
+                    ,scope: this
+					//,delay:1
+                },
+                'keydown': {
+                  	fn: function(elm, e){
+                  		switch( e.getKey() ) {
+                  			case Ext.EventObjectImpl.F8:
+                  				if(!(e.shiftKey || e.ctrlKey || e.altKey )) {
+                  					me.openPopup( 'TEXT');
+                  					e.stopEvent();
+                  				}
+                    			break;
+                  		}
+                  	} // fn
+                  	
+                  	
+                  	,scope: this
+                }
+                
+            }
+    	}
+    	Ext.apply(rtn, me.textFieldConfig);
+    	if(me.hasListener('onTextSpecialKey'))	{
+    		Ext.Object.merge(rtn.listeners, {'specialKey':{
+	    			fn:function(elm, e){
+	    			this.fireEvent('onTextSpecialKey', elm, e);
+	    			
+	    			},
+	    			scope:this
+	    		}
+    		})
+	    	/*Ext.apply(rtn, {listeners:{'specialKey':{
+	    			fn:function(elm, e){
+	    			this.fireEvent('onTextSpecialKey', elm, e);
+	    			
+	    			},
+	    			scope:this
+	    		}
+	    	}
+	    	})*/
+        }
+    	return rtn;
+    },
+    
+    _getExtraFieldsConfig: function() {
+    	var me = this;
+    	var fields = [];
+    	var lAllowBlank = (typeof me.allowBlank === 'undefined') ? true : me.allowBlank;
+    	
+    	if(!Ext.isEmpty(me.extraFieldsConfig)) {
+    		Ext.each(me.extraFieldsConfig, function(config){
+    			fields.push(
+    				{
+			            xtype: 'textfield',
+			            id: me.id + '-extraField'+ '-' + config.extraFieldName,
+			            labelWidth: 0,
+			            padding:0, margin:0,
+			            hideLabel: true,
+			            width: Ext.isDefined(config.extraFieldWidth) ? config.extraFieldWidth: me.extraFieldWidth,
+			            name: config.extraFieldName,
+			            allowBlank : true,
+			            enableKeyEvents: true,
+					    uniChanged : false,
+					    uniPopupChanged : false,
+					    uniOpt:me.uniOpt,
+					    readOnly: Ext.isDefined(config.readOnly) ? config.readOnly: true,
+			            isPopupField: true,
+			            popupField: me,
+			            listeners: {
+			            	'blur': {
+			                    fn: function(elm){
+			                        me._onFieldBlur(elm, 'TEXT');
+			                    }
+			                    ,scope: me
+								,delay:1
+			                },
+			                'change': {
+			                    fn: function(elm, newValue, oldValue, eOpts){
+			                    	var form = elm.up('form');
+                    				if(form && form.uniOpt.inLoading == false)	{
+			                        	me._onFieldChange(elm, 'EXTRA', newValue, oldValue);
+                    				}
+			                    }
+			                    ,scope: me
+								,delay:1
+			                }	                
+			            }
+			    	}
+    			)    			
+    		});
+    	}
+    	
+    	return fields;
+    },
+    _onFieldChange : function (elm, type, newValue, oldValue) {
+    	var form = elm.up('form');
+    	if(form)	{
+    		if(form && form.uniOpt && form.uniOpt.inLoading == true){
+    			return;
+    		}
+    	}
+    	this.setExtParam({'isFieldSearch':true})
+    	elm.uniChanged = true;
+    	elm.uniPopupChanged = true;
+    },
+    _onFieldBlur : function(elm, type, force) {
+	    var me = this;
+	    if(!me.hasListeners.applyextparam || me.fireEvent('applyextparam', me) !== false) {
+	 
+			
+			// elm.originalValue == "" :  변경없이 focus 후 blur 
+			if( (Ext.isEmpty(elm.getValue() ) && elm.originalValue != "" && me.validateBlank == true ) || ( Ext.isEmpty(elm.getValue() ) && me.validateBlank == true && elm.uniPopupChanged == true)) {  
+			//if( Ext.isEmpty(elm.getValue() ) && me.validateBlank == true ) {
+	    		me._clearValue(me, type);
+	    		
+	    		
+	    	} else {
+	    		
+	    		// isDirty() ? uniChanged (onChange 기반이라 DEL이나 일부 이벤트 처리 안됨);
+	    		var skipPopup = false;
+	    		if(type == 'VALUE')	{
+	    			if(elm.getValue() == elm.originalValue && me.textField && me.textField.value != '' )	{
+	    				skipPopup = true
+	    			}
+	    		}
+	    		if(type == 'TEXT')	{
+	    			if(elm.getValue() == elm.originalValue && me.valueField && me.valueField.value != '' )	{
+	    				skipPopup = true
+	    			}
+	    		}
+		    	if(( elm.uniPopupChanged && !skipPopup ) || force) {
+		    	//if((elm.isDirty() ) || force) {
+		    		elm.resetOriginalValue();
+		    		elm.uniChanged = false;
+		    		//elm.uniOpt.oldValue=elm.uniOpt.lastValidValue;	//2014.09.02 영업기회진행종합->영업기회세부정보에서 null 참조 오류
+		    		if(!Ext.isEmpty(elm.uniOpt) && !Ext.isEmpty(elm.uniOpt.lastValidValue)){
+		    			elm.uniOpt.oldValue=elm.uniOpt.lastValidValue;
+		    		}
+		    		elm.setValue(elm.value);
+		    		
+		    		var  param = me.extParam;
+		    		if(!Ext.isDefined(param['USE_YN']))	{
+				        if(Ext.isDefined(me.useyn) && me.useyn != '' )	{
+				        	param['USE_YN'] = me.useyn;
+				        }
+			        }
+			       	if(me.valueField && type == 'VALUE') {
+			       		param[me.getDBvalueFieldName()] = '';
+			    		param[me.getDBvalueFieldName()] = me.valueField.getValue().trim();
+			    		param[me.getDBtextFieldName()] = '';
+			       	}
+			       	if( type == 'TEXT') {
+		    			if(me.textField instanceof Ext.form.field.Date) {
+			       			param[me.getDBtextFieldName()]  = me.textField.getSubmitValue().trim();
+			       		}else{
+		    				param[me.getDBtextFieldName()]  = me.textField.getValue().trim();
+			       		}
+		    			if(me.valueField) {
+		    				param[me.getDBvalueFieldName()] = me.valueField.getValue().trim();
+		    			}else {
+		    				param[me.getDBvalueFieldName()] = '';
+		    			}
+			       	}
+		    		param['TYPE'] = type;
+		    		param['USELIKE'] = me.useLike;
+		    		
+		    		if(!(Ext.isEmpty(param[me.getDBtextFieldName()]) && Ext.isEmpty(param[me.getDBvalueFieldName()])) )	{
+		    			if(!Ext.isEmpty(me.api))	{
+		                    Ext.getBody().mask();
+		                    //console.log('mask');
+				    		me.store.load({
+								params: param,
+								limit: 2,
+								scope: this,
+								callback: function(records, operation, success) {
+		                            console.log('unmask');
+		                            Ext.getBody().unmask(); 
+									if(success) {
+										me._onDataLoad(records,  type);
+									}
+								}
+							}); 
+		    			} else {
+		    				me.openPopup(type);
+		    			}
+		    		}else {
+		    			setTimeout(function(){
+		    				me._onDataLoad(null,  type);
+		    				console.log("finish");
+		    			}, 1000);
+		    			//me._onDataLoad(null,  type);
+		    			
+		    		}
+		    	}
+		    	
+		    	
+	    	}
+//	    }
+    		elm.uniPopupChanged = false;
+    	}
+    },
+    _fireBlurEvent:function(obj) {
+    	var me = this;
+    	//	this.textField.fireEvent('blur', this.textField);
+    	
+    	if( Ext.isDefined(me.valueField) ) {
+			me.valueField.uniPopupChanged = false;
+    	}
+		me.textField.uniPopupChanged = false;
+		Ext.each(me.extraFields, function(field){
+        	field.uniPopupChanged = false;
+        });
+    },
+    
+    //값 입력 후 form 상에서 다음 form field에 포커스 이동
+    _focusNext: function(field) {
+    	
+    	var me = this;
+    	if(Ext.isEmpty(me.el)) return;
+    	
+    	var nextEl = null;
+    	var fieldCell = me.el.up('.x-table-layout-cell');
+    	
+    	if(fieldCell && fieldCell.parent()) {
+    		//nextEl = fieldCell.parent().next().down('.x-form-field');
+    		var obj = fieldCell.parent().next();
+    		if(obj) {
+    			//nextEl = obj.query(':focusable')[0];
+    			nextEl = obj.query('input:first-child')[0];
+    		}
+    	}
+    	if(nextEl) {
+    		nextEl.focus();
+    		nextEl.select();
+    	}else{
+    		field.focus();
+    	}
+    	
+    }
+   
+});

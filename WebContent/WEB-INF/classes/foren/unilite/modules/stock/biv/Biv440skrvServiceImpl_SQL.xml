@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="biv440skrvServiceImpl">
+
+<select id="biv440skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+       --s_biv470skrv_yh.Cbiv470skrv[fnBiv470QStd] Query01
+SELECT X.EXPIRY_TYPE                                       --유통기한
+             , CONVERT(INTEGER, ROW_NUMBER() OVER (PARTITION BY X.EXPIRY_TYPE ORDER BY X.WH_CODE, X.EXPIRY_TYPE, X.ITEM_CODE, X.LOT_NO)) AS SEQ
+             , X.ITEM_CODE                                         --품목코드
+             , X.ITEM_NAME                                         --품명
+             , X.STOCK
+             , X.AVERAGE_P
+             , X.STOCK_AMT
+             , X.GOOD_STOCK
+             , X.BAD_STOCK
+             , unilite.fnGetUserdate(X.COMP_CODE, X.EXPIRY_DATE) AS S_EXPIRY_DATE_YH  --유통기한
+             , INOUT_DATE AS S_INOUT_DATE	--수불일자
+             , X.LOT_NO
+             , '' AS REMARK
+  FROM (
+        SELECT       		CASE WHEN DATEDIFF(DAY, #{BASE_DATE}, B.EXPIRY_DATE ) &gt; 0 AND DATEDIFF(DAY, #{BASE_DATE}, B.EXPIRY_DATE ) &lt;= 180
+			                    THEN '2'
+			                    WHEN DATEDIFF(DAY, #{BASE_DATE}, B.EXPIRY_DATE ) &gt; 180 AND DATEDIFF(DAY, #{BASE_DATE}, B.EXPIRY_DATE ) &lt;= 365
+			                    THEN '3'
+			                    WHEN DATEDIFF(DAY, #{BASE_DATE}, B.EXPIRY_DATE ) &lt;= 0
+			                    THEN '1'
+			                END  AS EXPIRY_SEQ
+              ,				CASE WHEN DATEDIFF(DAY, #{BASE_DATE}, B.EXPIRY_DATE ) &gt; 0 AND DATEDIFF(DAY, #{BASE_DATE}, B.EXPIRY_DATE ) &lt;= 180
+			                    THEN '6개월미만'
+			                    WHEN DATEDIFF(DAY, #{BASE_DATE}, B.EXPIRY_DATE ) &gt; 180 AND DATEDIFF(DAY, #{BASE_DATE}, B.EXPIRY_DATE ) &lt;= 365
+			                    THEN '12개월미만'
+			                    WHEN DATEDIFF(DAY, #{BASE_DATE}, B.EXPIRY_DATE ) &lt;= 0
+			                    THEN '폐기대상'
+							END AS EXPIRY_TYPE
+		             , A.ITEM_CODE
+		             , C1.ITEM_NAME
+                     , ISNULL(C1.SPEC, '')                                                                            AS SPEC
+                     , ISNULL(C1.STOCK_UNIT, '')                                                                      AS STOCK_UNIT
+                     , D1.TREE_NAME                                                                                   AS WH_NAME
+                     , A.LOT_NO                                                                                       AS LOT_NO
+                     , uniLITE.fnGetUserDate(B.COMP_CODE, B.EXPIRY_DATE)                                              AS EXPIRY_DATE
+                     , uniLITE.fnGetUserDate(B.COMP_CODE, B.INOUT_DATE)                                               AS INOUT_DATE
+                     , A.STOCK_Q                                                                                      AS STOCK
+                     , ISNULL(C.AVERAGE_P, 0)                                                                         AS AVERAGE_P
+                     , A.STOCK_Q * ISNULL(C.AVERAGE_P, 0)                                                             AS STOCK_AMT
+                     , A.GOOD_STOCK_Q                                                                                 AS GOOD_STOCK
+                     , A.BAD_STOCK_Q                                                                                  AS BAD_STOCK
+                     , B.REMARK
+                     , A.COMP_CODE                                                                                    AS COMP_CODE
+                     , A.DIV_CODE                                                                                     AS DIV_CODE
+                     , A.WH_CODE                                                                                      AS WH_CODE
+
+        FROM           BIV150T  A  WITH (NOLOCK)
+                       LEFT  JOIN (
+                                  SELECT COMP_CODE, DIV_CODE, ITEM_CODE, LOT_NO, MAX(MAKE_EXP_DATE) AS EXPIRY_DATE, MAX(REMARK) AS REMARK, MAX(INOUT_DATE) AS INOUT_DATE
+                                  FROM   BTR100T WITH (NOLOCK, INDEX(BTR100T_IDX07))
+                                  GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, LOT_NO
+                                  )        B                ON  B.COMP_CODE  = A.COMP_CODE
+                                                           AND  B.DIV_CODE   = A.DIV_CODE
+                                                           AND  B.ITEM_CODE  = A.ITEM_CODE
+                                                           AND  B.LOT_NO     = A.LOT_NO
+                       LEFT  JOIN BIV200T  C  WITH (NOLOCK) ON C.COMP_CODE  = A.COMP_CODE                                             -- 창고
+                                                           AND C.DIV_CODE   = A.DIV_CODE
+                                                           AND C.BASIS_YYYYMM = LEFT(#{BASE_DATE}, 6)
+                                                           AND C.WH_CODE     = A.WH_CODE
+                                                           AND C.ITEM_CODE   = A.ITEM_CODE
+                       LEFT  JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE                                             -- 품목
+                                                           AND C1.ITEM_CODE  = A.ITEM_CODE
+                       LEFT  JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE  = A.COMP_CODE                                             -- 사업장 품목
+                                                           AND C2.DIV_CODE   = A.DIV_CODE
+                                                           AND C2.ITEM_CODE  = A.ITEM_CODE
+                       LEFT  JOIN BSA220T  D1 WITH (NOLOCK) ON D1.COMP_CODE  = A.COMP_CODE                                             -- 창고
+                                                           AND D1.TYPE_LEVEL = A.DIV_CODE
+                                                           AND D1.TREE_CODE  = A.WH_CODE
+         WHERE A.COMP_CODE = #{S_COMP_CODE}
+           AND A.DIV_CODE  = #{DIV_CODE}
+           AND A.SUM_TYPE  = 'C'
+           AND A.STOCK_Q   != 0.0
+           AND ISNULL(B.EXPIRY_DATE,'') != ''
+           <if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+		   AND C2.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+		   AND A.WH_CODE = #{WH_CODE}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		   AND A.ITEM_CODE LIKE '%' + #{ITEM_CODE} + '%'
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)">
+		   AND C1.ITEM_LEVEL1 = #{ITEM_LEVEL1}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL2)">
+		   AND C1.ITEM_LEVEL2 = #{ITEM_LEVEL2}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL3)">
+		   AND C1.ITEM_LEVEL3 = #{ITEM_LEVEL3}
+		   </if>
+           AND (ISNULL(A.STOCK_Q, 0)      != 0
+             OR  ISNULL(A.GOOD_STOCK_Q, 0) != 0
+             OR  ISNULL(A.BAD_STOCK_Q, 0)  != 0 )
+        ) X
+
+
+		<if test="@foren.Ognl@isNotEmpty(EXPIRY_SEQ)">
+WHERE          X.EXPIRY_SEQ = #{EXPIRY_SEQ} --유통기한 조건
+		</if>
+
+    ORDER BY  X.EXPIRY_SEQ, X.WH_CODE, X.ITEM_CODE, X.LOT_NO
+</select>
+
+</mapper>

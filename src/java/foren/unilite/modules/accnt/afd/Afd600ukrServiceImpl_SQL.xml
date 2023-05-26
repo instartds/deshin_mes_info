@@ -1,0 +1,456 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="afd600ukrService">
+	
+	<select id="afd600ukrService.selectList" parameterType="Map" resultType="rMap">	    
+	--afd600ukr.Cafd600ukr[fnafd600nq] Query1
+    BEGIN
+       SET NOCOUNT ON
+       SET ARITHABORT ON
+    
+       DECLARE @ST_DATE     NVARCHAR(08)
+             , @TO_DATE     NVARCHAR(08)
+    
+       -- 0.회사정보에서 회계시작년월 찾기
+       SELECT @ST_DATE = LEFT(FN_DATE, 6)
+         FROM BOR100T WITH (NOLOCK)
+    
+       -- 1. 현재 시스템일자
+       SELECT @TO_DATE = CONVERT(NVARCHAR(8), GETDATE(), 112)
+    
+       -- 2. 날짜 포맷 유형 설정 ------------------------------------------------------------------------------------------
+       DECLARE @DateFormat         NVARCHAR(01)
+             , @TimeFormat         NVARCHAR(01)    
+    
+       SELECT TOP 1 @DateFormat = SUBSTRING(CODE_NAME, 5, 1)
+       FROM   BSA100T WITH (NOLOCK)
+       WHERE  COMP_CODE  = #{S_COMP_CODE}
+       AND    MAIN_CODE  = 'B044'
+       AND    REF_CODE1  = 'Y'
+    
+       SET @DateFormat = ISNULL(@DateFormat, '.')
+       SET @TimeFormat = ISNULL(@TimeFormat, ':')
+    
+    -- 4. Main Query
+       SELECT A.ACCNT                                                         --'01.계정과목
+            , M1.ACCNT_NAME
+            , M1.AC_CODE1
+            , A.LOANNO                                                        --'03.차입번호
+            , A.LOAN_NAME                                                     --'03.차입명
+            , uniLITE.fnCipherDecrypt(A.ACCOUNT_NUM, 'B')   AS ACCOUNT_NUM    --'04.계좌번호
+            , A.CUSTOM                                                        --'05.차입처
+            , M2.CUSTOM_NAME
+            , A.DIV_CODE                                                      --'07.사업장
+            , A.DEPT_CODE                                                     --'08.차입부서
+            , M3.TREE_NAME                                  AS DEPT_NAME
+            , A.LOAN_GUBUN                                                    --'10.차입구분
+            , CASE WHEN ISNULL(A.PUB_DATE, '') = '' THEN NULL
+                   ELSE SUBSTRING(A.PUB_DATE, 1, 4) + @DateFormat + 
+                        SUBSTRING(A.PUB_DATE, 5, 2) + @DateFormat + 
+                        SUBSTRING(A.PUB_DATE, 7, 2)
+               END                                          AS PUB_DATE       --'11.차입일
+            , CASE WHEN ISNULL(A.EXP_DATE, '') = '' THEN NULL
+                   ELSE SUBSTRING(A.EXP_DATE, 1, 4) + @DateFormat + 
+                        SUBSTRING(A.EXP_DATE, 5, 2) + @DateFormat + 
+                        SUBSTRING(A.EXP_DATE, 7, 2)
+               END                                          AS EXP_DATE       --'12.만기일
+            , CASE WHEN ISNULL(A.RENEW_DATE, '') = '' THEN NULL
+                   ELSE SUBSTRING(A.RENEW_DATE, 1, 4) + @DateFormat + 
+                        SUBSTRING(A.RENEW_DATE, 5, 2) + @DateFormat + 
+                        SUBSTRING(A.RENEW_DATE, 7, 2)
+               END                                          AS RENEW_DATE     /*'22.갱신일*/
+            , A.AMT_I                                                         /*'13.차입원화금액*/
+            , A.MONEY_UNIT                                                    /*'14.화폐단위*/
+            , A.EXCHG_RATE_O                                                  /*'15.차입환율*/
+            , A.FOR_AMT_I                                                     /*'16.차입외화금액*/
+            , A.REMARK                                                        /*'04.차입내용*/
+            , A.INT_RATE                                                      /*'17.이율*/
+            , A.LCNO                                                          /*'18.L/C번호*/
+            , A.REPAY_PERIOD                                                  /*'19.차입상환주기*/
+            , A.INT_PERIOD                                                    /*'20.이자지급주기*/
+            , A.MORTGAGE                                                      /*'21.담보현황*/
+            , CASE WHEN ISNULL(A.REPAY_DATE, '') = '' THEN NULL
+                   ELSE SUBSTRING(A.REPAY_DATE, 1, 4) + @DateFormat + 
+                        SUBSTRING(A.REPAY_DATE, 5, 2) + @DateFormat + 
+                        SUBSTRING(A.REPAY_DATE, 7, 2)
+               END                                          AS REPAY_DATE     /*'22.차입금상환만료일*/
+            , A.EX_DATE                                                       /*'23.결의전표일*/
+            , A.EX_NUM                                                        /*'24.결의전표번호*/
+            , A.AGREE_YN                                                      /*'25.승인여부*/
+            , A.AC_DATE                                                       /*'26.회계전표일*/
+            , A.SLIP_NUM                                                      /*'27.회계전표번호*/
+            , A.FG_INT                                                        /*'28.이자구분*/
+            -- 차입이 추가로 늘어나는 경우는 차입마스터 금액(AMT_I)를 늘려주고, 상환시 그만큼 장부금액에서 (-)해줘야 함
+            , CASE WHEN ISNULL(B.BA_REPAY_AMT, 0) = 0
+                        THEN ISNULL(SUM(C.DR_AMT_I),0)
+                   ELSE A.AMT_I - ISNULL(B.BA_REPAY_AMT, 0) + ISNULL(SUM(C.DR_AMT_I),0) - ISNULL(SUM(C.CR_AMT_I),0)
+               END                                          AS REPAY_AMT_I     /*'28.원화상환금액*/
+            , CASE WHEN ISNULL(B.BA_REPAY_FOR_AMT, 0) = 0
+                        THEN ISNULL(SUM(C.DR_FOR_AMT_I),0)
+                   ELSE A.FOR_AMT_I - ISNULL(B.BA_REPAY_FOR_AMT, 0) + ISNULL(SUM(C.DR_FOR_AMT_I),0) - ISNULL(SUM(C.CR_FOR_AMT_I),0)
+               END                                          AS FORREPAY_AMT_I  /*'29.외화상환금액*/
+            ,A.INT_CAL_TYPE  /*'30.이자계산단위*/
+            ,A.SCD_CREATE_YN /*'31.스케줄생성여부*/
+            ,A.TEMPC_01 /*'32.상환조건*/
+            ,A.NOW_RATE /*'33.표시현이율*/
+            
+            ,ISNULL(A.TERM_LOAN, 0)       AS TERM_LOAN      /* 거치기간 */
+            ,ISNULL(A.TERM_PRINCIPAL, 0)  AS TERM_PRINCIPAL /* 상환기간 */
+         FROM AFN300T A WITH (NOLOCK)
+              LEFT  JOIN (SELECT COMP_CODE
+                               , DIV_CODE
+                               , ACCNT
+                               , BOOK_CODE1
+                               , BOOK_CODE2
+                               , BOOK_DATA1
+                               , BOOK_DATA2
+                               , SUM(ISNULL(CR_AMT_I    , 0)) - SUM(ISNULL(DR_AMT_I    , 0)) AS BA_REPAY_AMT
+                               , SUM(ISNULL(CR_FOR_AMT_I, 0)) - SUM(ISNULL(DR_FOR_AMT_I, 0)) AS BA_REPAY_FOR_AMT
+                            FROM AGB200T WITH (NOLOCK)
+                           WHERE COMP_CODE   = #{S_COMP_CODE}
+							 <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+							 AND DIV_CODE IN
+								<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+								#{item}
+								</foreach>									
+							 </if>
+                             AND AC_DATE     = @ST_DATE
+                             AND (BOOK_CODE1 ='P2' OR BOOK_CODE2 ='P2')
+                           GROUP BY COMP_CODE, DIV_CODE, ACCNT, BOOK_CODE1, BOOK_CODE2, BOOK_DATA1, BOOK_DATA2
+                         ) B                      ON B.COMP_CODE    = A.COMP_CODE
+                                                 AND B.ACCNT        = A.ACCNT
+                                                 AND ((B.BOOK_CODE1 ='P2' AND B.BOOK_DATA1 = A.LOANNO)
+                                                  OR  (B.BOOK_CODE2 ='P2' AND B.BOOK_DATA2 = A.LOANNO))
+              LEFT  JOIN AGB200T C  WITH (NOLOCK) ON C.COMP_CODE    = A.COMP_CODE
+                                                 AND C.ACCNT        = A.ACCNT
+                                                 AND ((C.BOOK_CODE1 ='P2' AND C.BOOK_DATA1 = A.LOANNO)
+                                                  OR  (C.BOOK_CODE2 ='P2' AND C.BOOK_DATA2 = A.LOANNO))
+                                                 AND C.AC_DATE     &gt;= @ST_DATE + '01'
+                                                 AND C.AC_DATE     &lt;= @TO_DATE
+              INNER JOIN ABA400T M1 WITH (NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE
+                                                 AND M1.ACCNT       = A.ACCNT
+                                                 AND SUBSTRING(M1.SPEC_DIVI,1,1) IN ('P')
+              INNER JOIN BCM100T M2 WITH (NOLOCK) ON M2.COMP_CODE   = A.COMP_CODE
+                                                 AND M2.CUSTOM_CODE = A.CUSTOM
+              LEFT  JOIN BSA210T M3 WITH (NOLOCK) ON M3.COMP_CODE   = A.COMP_CODE
+                                                 AND M3.TREE_CODE   = A.DEPT_CODE
+                                                 AND M3.TYPE_LEVEL  = A.DIV_CODE
+    
+        WHERE A.COMP_CODE = #{S_COMP_CODE}
+
+    		<if test="DATE_GUBUN == &quot;EXP&quot;">
+	        	<if test="@foren.Ognl@isNotEmpty(FR_EXDATE)">
+	            AND A.EXP_DATE       &gt;= #{FR_EXDATE}
+	        	</if>
+	        	<if test="@foren.Ognl@isNotEmpty(TO_EXDATE)">
+	            AND A.EXP_DATE       &lt;= #{TO_EXDATE}
+	        	</if>
+    		</if>
+    		<if test="DATE_GUBUN == &quot;RENEW&quot;">
+	        	<if test="@foren.Ognl@isNotEmpty(FR_EXDATE)">
+	            AND A.RENEW_DATE     &gt;= #{FR_EXDATE}
+	        	</if>
+	        	<if test="@foren.Ognl@isNotEmpty(TO_EXDATE)">
+	            AND A.RENEW_DATE     &lt;= #{TO_EXDATE}
+	        	</if>
+    		</if>
+    
+    		<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+        	AND     A.DIV_CODE IN
+				<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+			 	#{item}
+				</foreach>									
+	  		</if>
+    		<if test="@foren.Ognl@isNotEmpty(ACCOUNT_CODE)">
+            AND A.ACCNT        LIKE '%' + #{ACCOUNT_CODE} + '%'
+    		</if>
+    		<if test="@foren.Ognl@isNotEmpty(ACCOUNT_NAME)">
+            AND M1.ACCNT_NAME  LIKE '%' + #{ACCOUNT_NAME} + '%'
+    		</if>
+			<if test="@foren.Ognl@isNotEmpty(CON_CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CON_CUSTOM_NAME)">
+				AND A.CUSTOM = #{CON_CUSTOM_CODE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CON_CUSTOM_CODE) and @foren.Ognl@isEmpty(CON_CUSTOM_NAME)">
+				AND A.CUSTOM LIKE #{CON_CUSTOM_CODE} + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(CON_CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CON_CUSTOM_NAME)">
+				AND M2.CUSTOM_NAME LIKE '%' + #{CON_CUSTOM_NAME} + '%' 
+			</if> 
+    		<if test="@foren.Ognl@isNotEmpty(FG_INT)">
+            AND A.FG_INT = #{FG_INT}
+            </if>
+    
+        GROUP BY A.COMP_CODE, A.ACCNT, M1.ACCNT_NAME, M1.AC_CODE1, A.LOANNO, A.REMARK, A.CUSTOM, M2.CUSTOM_NAME, A.DIV_CODE, A.FG_INT
+               , A.DEPT_CODE, M3.TREE_NAME, A.LOAN_GUBUN, A.PUB_DATE, A.EXP_DATE, A.AMT_I, A.MONEY_UNIT, A.EXCHG_RATE_O
+               , A.FOR_AMT_I, A.INT_RATE, A.LCNO, A.REPAY_PERIOD, A.INT_PERIOD, A.MORTGAGE, A.REPAY_DATE, A.EX_DATE
+               , A.EX_NUM, A.AGREE_YN, A.AC_DATE, A.SLIP_NUM, B.BA_REPAY_AMT, B.BA_REPAY_FOR_AMT
+               , A.LOAN_NAME, uniLITE.fnCipherDecrypt(A.ACCOUNT_NUM, 'B'), A.RENEW_DATE,A.INT_CAL_TYPE ,A.SCD_CREATE_YN
+               , A.TERM_LOAN, A.TERM_PRINCIPAL ,A.TEMPC_01, A.NOW_RATE
+        ORDER BY M1.ACCNT_NAME, A.LOANNO
+    
+       SET ARITHABORT OFF
+       SET NOCOUNT OFF
+    
+    END                                                                                       
+	</select>
+	
+	
+	<update id="afd600ukrService.updateDetail" parameterType="Map">	
+	--afd600ukr.Cafd600ukr[fnafd600set] Query5
+	UPDATE AFN300T
+	   SET LOAN_NAME      = #{LOAN_NAME}
+	     , ACCNT          = #{ACCNT}      
+	     , CUSTOM         = #{CUSTOM}        
+	     , DIV_CODE       = #{DIV_CODE}           
+	     , DEPT_CODE      = #{DEPT_CODE}          
+	     , LOAN_GUBUN     = #{LOAN_GUBUN}         
+	     , PUB_DATE       = #{PUB_DATE}           
+	     , EXP_DATE       = #{EXP_DATE}           
+	     , MONEY_UNIT     = #{MONEY_UNIT}         
+	     , AMT_I          = #{AMT_I}          
+	     <if test="@foren.Ognl@isNotEmpty(EXCHG_RATE_O)">	    
+	     , EXCHG_RATE_O   = #{EXCHG_RATE_O}       
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(FOR_AMT_I)">	
+	     , FOR_AMT_I      = #{FOR_AMT_I}          
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(INT_RATE)">	
+	     , INT_RATE       = #{INT_RATE}    
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(ACCOUNT_NUM)">	        
+	     , ACCOUNT_NUM    = #{ACCOUNT_NUM}  
+	     </if>    
+	     <if test="@foren.Ognl@isNotEmpty(REMARK)">
+	     , REMARK         = #{REMARK}          
+	     </if>   
+	     <if test="@foren.Ognl@isNotEmpty(LCNO)">
+	     , LCNO           = #{LCNO}              
+	     </if>   
+	     <if test="@foren.Ognl@isNotEmpty(REPAY_PERIOD)">
+	     , REPAY_PERIOD   = #{REPAY_PERIOD}     
+	     </if>   
+	     <if test="@foren.Ognl@isNotEmpty(INT_PERIOD)">  
+	     , INT_PERIOD     = #{INT_PERIOD} 
+	     </if>   
+	     <if test="@foren.Ognl@isNotEmpty(FG_INT)">
+	     , FG_INT         = #{FG_INT}         
+	     </if>   
+	     <if test="@foren.Ognl@isNotEmpty(MORTGAGE)">
+	     , MORTGAGE       = #{MORTGAGE}          
+	     </if>   
+	     <if test="@foren.Ognl@isNotEmpty(REPAY_DATE)">
+	     , REPAY_DATE     = #{REPAY_DATE}  
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(RENEW_DATE)">	       
+	     , RENEW_DATE     = #{RENEW_DATE}
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(TERM_LOAN)">
+         , TERM_LOAN      = #{TERM_LOAN}
+         </if>   
+	     <if test="@foren.Ognl@isNotEmpty(TERM_PRINCIPAL)">
+         , TERM_PRINCIPAL = #{TERM_PRINCIPAL}
+         </if>   
+	     <if test="@foren.Ognl@isNotEmpty(TEMPC_01)">
+         , TEMPC_01 = #{TEMPC_01} 
+         </if>   
+	     <if test="@foren.Ognl@isNotEmpty(NOW_RATE)">
+         , NOW_RATE = #{NOW_RATE} 
+         </if>   
+	     , UPDATE_DB_USER = #{S_USER_ID}            
+	     , UPDATE_DB_TIME = GETDATE()               
+	     
+	 WHERE LOANNO         = #{LOANNO}
+	   AND COMP_CODE      = #{S_COMP_CODE}
+	  
+	</update>
+	
+	<delete id="afd600ukrService.deleteDetail" parameterType="Map">		/* 삭제 */
+	--afd600ukr.Cafd600ukr[fnafd600set] Query3
+	DELETE FROM AFN300T 
+	 WHERE LOANNO    = #{LOANNO}
+	   AND COMP_CODE = #{S_COMP_CODE}
+	</delete>
+	
+	<select id="afd600ukrService.checkLoanNo" parameterType="Map" resultType="rMap">
+	--afd600ukr.Cafd600ukr[fnafd600set] Query4
+	SELECT LOANNO                                
+	  FROM AFN300T                               
+	 WHERE COMP_CODE = #{S_COMP_CODE}
+	   AND LOANNO    = #{LOANNO}
+	</select>
+	
+	<insert id="afd600ukrService.insertDetail" parameterType="Map">
+	--afd600ukr.Cafd600ukr[fnafd600set] Query5
+	INSERT INTO AFN300T
+	     ( COMP_CODE
+	     , UPDATE_DB_USER
+	     , UPDATE_DB_TIME
+	     , LOANNO
+	     , LOAN_NAME
+		 , MONEY_UNIT
+	     <if test="@foren.Ognl@isNotEmpty(REPAY_PERIOD)">
+		 , REPAY_PERIOD
+	     </if>
+		 , ACCNT
+		 , EXCHG_RATE_O
+	     <if test="@foren.Ognl@isNotEmpty(INT_PERIOD)">
+		 , INT_PERIOD
+	     </if>
+		 , DIV_CODE
+	     <if test="@foren.Ognl@isNotEmpty(FOR_AMT_I)">
+		 , FOR_AMT_I
+	     </if>
+		 , CUSTOM
+		 , AMT_I
+	     <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+		 , DEPT_CODE
+	     </if>
+		 , PUB_DATE
+	     <if test="@foren.Ognl@isNotEmpty(LCNO)">
+		 , LCNO
+	     </if>
+		 , LOAN_GUBUN
+		 , EXP_DATE
+	     <if test="@foren.Ognl@isNotEmpty(EX_NUM)">
+		 , EX_NUM
+	     </if>
+		 , INT_RATE
+	     <if test="@foren.Ognl@isNotEmpty(REPAY_DATE)">
+		 , REPAY_DATE
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(SLIP_NUM)">
+		 , SLIP_NUM
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(ACCOUNT_NUM)">
+		 , ACCOUNT_NUM
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(FG_INT)">
+         , FG_INT
+         </if>
+	     <if test="@foren.Ognl@isNotEmpty(RENEW_DATE)">
+		 , RENEW_DATE
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(REMARK)">
+		 , REMARK
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(MORTGAGE)">
+		 , MORTGAGE
+	     </if>
+         <if test="@foren.Ognl@isNotEmpty(TERM_LOAN)">
+         , TERM_LOAN
+         </if>
+         <if test="@foren.Ognl@isNotEmpty(TERM_PRINCIPAL)">
+         , TERM_PRINCIPAL
+         </if>
+         <if test="@foren.Ognl@isNotEmpty(INT_CAL_TYPE)">
+	     ,INT_CAL_TYPE
+         </if>
+         <if test="@foren.Ognl@isNotEmpty(SCD_CREATE_YN)">
+         ,SCD_CREATE_YN
+         </if>
+         <if test="@foren.Ognl@isNotEmpty(TEMPC_01)">
+         ,TEMPC_01
+         </if>
+         <if test="@foren.Ognl@isNotEmpty(NOW_RATE)">
+         ,NOW_RATE
+         </if>
+		 ) 
+	VALUES
+	     ( #{S_COMP_CODE}
+	     , #{S_USER_ID}
+	     , GETDATE()
+	     , #{LOANNO}
+	     , #{LOAN_NAME}
+		 , #{MONEY_UNIT}
+	     <if test="@foren.Ognl@isNotEmpty(REPAY_PERIOD)">
+		 , #{REPAY_PERIOD}
+	     </if>
+		 , #{ACCNT}
+		 , #{EXCHG_RATE_O}
+	     <if test="@foren.Ognl@isNotEmpty(INT_PERIOD)">
+		 , #{INT_PERIOD}
+	     </if>
+		 , #{DIV_CODE}
+	     <if test="@foren.Ognl@isNotEmpty(FOR_AMT_I)">
+		 , #{FOR_AMT_I}
+	     </if>
+		 , #{CUSTOM}
+		 , #{AMT_I}
+	     <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+		 , #{DEPT_CODE}
+	     </if>
+		 , #{PUB_DATE}
+	     <if test="@foren.Ognl@isNotEmpty(LCNO)">
+		 , #{LCNO}
+	     </if>
+		 , #{LOAN_GUBUN}
+		 , #{EXP_DATE}
+	     <if test="@foren.Ognl@isNotEmpty(EX_NUM)">
+		 , #{EX_NUM}
+	     </if>
+		 , #{INT_RATE}
+	     <if test="@foren.Ognl@isNotEmpty(REPAY_DATE)">
+		 , #{REPAY_DATE}
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(SLIP_NUM)">
+		 , #{SLIP_NUM}
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(ACCOUNT_NUM)">
+		 , #{ACCOUNT_NUM}
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(FG_INT)">
+         , #{FG_INT}
+         </if>
+	     <if test="@foren.Ognl@isNotEmpty(RENEW_DATE)">
+		 , #{RENEW_DATE}
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(REMARK)">
+		 , #{REMARK}
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(MORTGAGE)">
+		 ,#{ MORTGAGE}		 
+	     </if>
+         
+         <if test="@foren.Ognl@isNotEmpty(TERM_LOAN)">
+         ,#{TERM_LOAN}
+         </if>
+         <if test="@foren.Ognl@isNotEmpty(TERM_PRINCIPAL)">
+         ,#{TERM_PRINCIPAL}
+         </if>
+         <if test="@foren.Ognl@isNotEmpty(INT_CAL_TYPE)">
+         ,#{INT_CAL_TYPE}
+         </if>
+         <if test="@foren.Ognl@isNotEmpty(SCD_CREATE_YN)">
+         ,#{SCD_CREATE_YN}
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(TEMPC_01)">
+         ,#{TEMPC_01}
+         </if>
+         <if test="@foren.Ognl@isNotEmpty(NOW_RATE)">
+         ,#{NOW_RATE}
+         </if>
+		 )
+	</insert>
+	
+	<select id="afd600ukrService.exDateAcDateCheck" parameterType="Map" resultType="rMap">
+	--afd600ukr.Cafd600ukr[fnafd600set] Query2
+	SELECT ISNULL(uniLITE.fnGetUserDateComp(COMP_CODE, EX_DATE),'')   AS EX_DATE 
+	     , ISNULL(EX_NUM  ,0)                                         AS EX_NUM  
+	     , ISNULL(uniLITE.fnGetUserDateComp(COMP_CODE, AC_DATE),'')   AS AC_DATE 
+	     , ISNULL(SLIP_NUM,0)                                         AS SLIP_NUM
+	  FROM AFN300T
+	 WHERE COMP_CODE = #{S_COMP_CODE}
+	   AND LOANNO    = #{LOANNO}
+	</select>
+	
+	<select id="afd600ukrService.checkCompCode" parameterType="Map" resultType="rMap">
+	SELECT A.COMP_CODE, A.COMP_NAME
+	FROM              BOR100T   A  WITH (NOLOCK)
+	       LEFT  JOIN BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE    = #{S_COMP_CODE}    
+	                                            AND M1.MAIN_CODE    = 'B107'
+	                                            AND M1.SUB_CODE     = '20'         
+	WHERE (A.COMP_CODE      &gt; ''        AND ISNULL(M1.REF_CODE1, 'N') = 'Y')
+	   OR (A.COMP_CODE      = #{S_COMP_CODE}  AND ISNULL(M1.REF_CODE1, 'N') = 'N')
+	</select>
+	
+</mapper>

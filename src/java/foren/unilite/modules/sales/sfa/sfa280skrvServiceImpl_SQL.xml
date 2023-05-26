@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sfa280skrvServiceImpl">
+	
+	<select id="sfa280skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+		
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+					
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+					
+				/* 조회 */
+				
+				SELECT
+				 X.COMP_CODE
+				,X.ITEM_LEVEL1														 		/* 대분류*/
+				,X.ITEM_LEVEL2																/* 중분류*/
+				,X.ITEM_LEVEL3														 		/* 소분류*/
+				
+				/* 전년도 합계 */
+				,SUM(X.BF_SALE_Q)          						AS BF_SALE_Q         		/* 전년도 수량 */
+				,SUM(X.BF_DISCOUNT_P)      						AS BF_DISCOUNT_P     		/* 전년도 할인 */
+				,SUM(X.BF_SALE_LOC_AMT_I)  						AS BF_SALE_LOC_AMT_I 		/* 전년도 판매금액 */
+				,SUM(X.BF_TAX_AMT_O)       						AS BF_TAX_AMT_O      		/* 전년도 부가세 */
+				,SUM(X.BF_SALE_AMT_O)      						AS BF_SALE_AMT_O     		/* 전년도 매출합계 */
+				
+				/* 현재년도 합계 */
+				,SUM(X.SALE_Q)             						AS SALE_Q        			/* 현재년도 수량 */
+				,SUM(X.DISCOUNT_P)         						AS DISCOUNT_P    			/* 현재년도 할인 */
+				,SUM(X.SALE_LOC_AMT_I)     						AS SALE_LOC_AMT_I			/* 현재년도 판매금액 */
+				,SUM(X.TAX_AMT_O)          						AS TAX_AMT_O     			/* 현재년도 부가세 */
+				,SUM(X.SALE_AMT_O) 								AS SALE_AMT_O    			/* 현재년도 매출합계 */
+				 
+				/* 차이 합계 */
+				,SUM(X.SALE_Q - X.BF_SALE_Q)          		    AS SUB_SALE_Q        		/* 차이 합계 수량 */
+				,SUM(X.DISCOUNT_P - X.BF_DISCOUNT_P)      		AS SUB_DISCOUNT_P    		/* 차이 합계 할인 */
+				,SUM(X.SALE_LOC_AMT_I - X.BF_SALE_LOC_AMT_I)  	AS SUB_SLAE_LOC_AMT_I		/* 차이 합계 판매금액 */
+				,SUM(X.TAX_AMT_O - X.BF_TAX_AMT_O)       		AS SUB_TAX_AMT_O     		/* 차이 합계 부가세 */
+				,SUM(X.SALE_AMT_O - X.BF_SALE_AMT_O)      		AS SUB_SALE_AMT_O    		/* 차이 합계 매출합계 */
+				,SUM(X.SALE_AMT_O - X.BF_SALE_AMT_O)			AS INCREASE_DECREASE		/* 차이 합계 증감액 */
+				,CASE WHEN SUM(X.BF_SALE_AMT_O) = 0 THEN 0 									
+				      ELSE (SUM((X.SALE_AMT_O - X.BF_SALE_AMT_O))) / (SUM(X.BF_SALE_AMT_O) * 100) END INCREASE_DECREASE_PER  /* 차이 합계 증감률 */
+				    
+				FROM
+				    (
+					  SELECT 
+					       A.COMP_CODE
+					      ,C.ITEM_LEVEL1                                    AS ITEM_LEVEL1
+					      ,C.ITEM_LEVEL2                                    AS ITEM_LEVEL2
+					 	  ,C.ITEM_LEVEL3                                    AS ITEM_LEVEL3
+					 	  
+					 	  ,SUM(B.SALE_Q)                                    AS SALE_Q
+						  ,SUM(B.DISCOUNT_P)                                AS DISCOUNT_P
+						  ,SUM(B.SALE_LOC_AMT_I)	                        AS SALE_LOC_AMT_I
+						  ,SUM(B.TAX_AMT_O)                                 AS TAX_AMT_O
+					 	  ,SUM(B.SALE_AMT_O + B.TAX_AMT_O) 					AS SALE_AMT_O
+					 	  
+						  ,0                                                AS BF_SALE_Q
+						  ,0                                                AS BF_DISCOUNT_P
+						  ,0											    AS BF_SALE_LOC_AMT_I
+						  ,0											    AS BF_TAX_AMT_O
+						  ,0												AS BF_SALE_AMT_O
+						  FROM        SSA100T A  WITH(NOLOCK)
+					      INNER JOIN  SSA110T B  WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE 
+		                                                     AND A.DIV_CODE  = B.DIV_CODE 
+		                                                     AND A.BILL_NUM  = B.BILL_NUM   
+						  INNER JOIN   BPR100T C WITH(NOLOCK) ON B.COMP_CODE = C.COMP_CODE 
+		                                                     AND B.ITEM_CODE = C.ITEM_CODE
+						  INNER JOIN   BSA210T D WITH(NOLOCK) ON A.COMP_CODE = D.COMP_CODE
+															 AND A.DEPT_CODE = D.TREE_CODE
+											         		 AND D.TREE_LEVEL LIKE (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) 
+											         		                                         WHERE COMP_CODE  = #{S_COMP_CODE}
+											         		                                           AND TREE_CODE  = #{DEPT_CODE}) + '%'		                                                     
+						  WHERE A.COMP_CODE = #{S_COMP_CODE}
+						    AND A.DIV_CODE > ''
+							AND A.SALE_DATE &gt;= #{SALE_DATE_FR}
+							AND A.SALE_DATE &lt;= #{SALE_DATE_TO}
+		
+						    <if test="@foren.Ognl@isNotEmpty(TXTLV_L1)">     
+						    	AND C.ITEM_LEVEL1  = #{TXTLV_L1}
+						    </if>
+						    <if test="@foren.Ognl@isNotEmpty(TXTLV_L2)">     
+						    	AND C.ITEM_LEVEL2  = #{TXTLV_L2}
+						    </if>
+						    <if test="@foren.Ognl@isNotEmpty(TXTLV_L3)">     
+						    	AND C.ITEM_LEVEL3  = #{TXTLV_L3}
+						    </if>
+					      
+					      GROUP BY A.COMP_CODE, C.ITEM_LEVEL1, C.ITEM_LEVEL2, C.ITEM_LEVEL3
+					      
+					  UNION ALL
+					  	    					  
+					  SELECT 
+					       A.COMP_CODE
+					      ,C.ITEM_LEVEL1                                    AS ITEM_LEVEL1
+					      ,C.ITEM_LEVEL2                                    AS ITEM_LEVEL2
+					 	  ,C.ITEM_LEVEL3                                    AS ITEM_LEVEL3
+					 	  
+						  ,0                                                AS SALE_Q
+						  ,0                                                AS DISCOUNT_P
+						  ,0											    AS SALE_LOC_AMT_I
+						  ,0											    AS TAX_AMT_O
+						  ,0												AS SALE_AMT_O
+
+					 	  ,SUM(B.SALE_Q)                                    AS BF_SALE_Q
+						  ,SUM(B.DISCOUNT_P)                                AS BF_DISCOUNT_P
+						  ,SUM(B.SALE_LOC_AMT_I)	                        AS BF_SALE_LOC_AMT_I
+						  ,SUM(B.TAX_AMT_O)                                 AS BF_TAX_AMT_O
+					 	  ,SUM(B.SALE_AMT_O + B.TAX_AMT_O) 					AS BF_SALE_AMT_O
+					 	  
+						  FROM        SSA100T A  WITH(NOLOCK)
+					      INNER JOIN  SSA110T B  WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE 
+		                                                     AND A.DIV_CODE  = B.DIV_CODE 
+		                                                     AND A.BILL_NUM  = B.BILL_NUM   
+						  INNER JOIN   BPR100T C WITH(NOLOCK) ON B.COMP_CODE = C.COMP_CODE
+		                                                     AND B.ITEM_CODE = C.ITEM_CODE
+						  INNER JOIN   BSA210T D WITH(NOLOCK) ON A.COMP_CODE = D.COMP_CODE
+															 AND A.DEPT_CODE = D.TREE_CODE
+											         		 AND D.TREE_LEVEL LIKE (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) 
+											         		                                         WHERE COMP_CODE  = #{S_COMP_CODE}
+											         		                                           AND TREE_CODE  = #{DEPT_CODE}) + '%'		                                                     
+						  WHERE A.COMP_CODE = #{S_COMP_CODE}
+						    AND A.DIV_CODE > ''
+							AND A.SALE_DATE &gt;= CONVERT(NVARCHAR, DATEADD(MONTH, -1, #{SALE_DATE_FR}), 112)
+							AND A.SALE_DATE &lt;= CONVERT(NVARCHAR, DATEADD(MONTH, -1, #{SALE_DATE_TO}), 112)
+		
+						    <if test="@foren.Ognl@isNotEmpty(TXTLV_L1)">     
+						    	AND C.ITEM_LEVEL1  = #{TXTLV_L1}
+						    </if>
+						    <if test="@foren.Ognl@isNotEmpty(TXTLV_L2)">     
+						    	AND C.ITEM_LEVEL2  = #{TXTLV_L2}
+						    </if>
+						    <if test="@foren.Ognl@isNotEmpty(TXTLV_L3)">     
+						    	AND C.ITEM_LEVEL3  = #{TXTLV_L3}
+						    </if>
+						   
+
+							GROUP BY A.COMP_CODE, C.ITEM_LEVEL1, C.ITEM_LEVEL2, C.ITEM_LEVEL3
+				       ) X
+				
+				    GROUP BY X.COMP_CODE, X.ITEM_LEVEL1, X.ITEM_LEVEL2, X.ITEM_LEVEL3
+				  
+				  /* ORDER BY X.ITEM_LEVEL1, X.ITEM_LEVEL2, X.ITEM_LEVEL3 */
+				         
+				         
+SET @END_TIME   = GETDATE()
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'sfa280skrv', '전월대비 매출현황 조회', #{SALE_DATE_FR}, #{SALE_DATE_TO}, @DIFF_TIME
+				          				         		      							 			 
+			SET ARITHABORT OFF
+			SET NOCOUNT OFF
+			
+		END
+    </select>	
+</mapper>

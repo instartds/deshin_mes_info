@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_pmp100skrv_inServiceImpl">
+
+    <select id="s_pmp100skrv_inServiceImpl.selectList" parameterType="Map" resultType="rMap">
+      --s_pmp100skrv_inServiceImpl.selectList
+
+      SELECT A.WKORD_NUM
+           , A.PRODT_START_DATE
+           , A.ITEM_CODE
+           , B.ITEM_NAME
+           , A.LOT_NO
+           , C.CUSTOM_NAME AS DCM
+           , MAX(C.ITEM_CODE) AS POWDER_ITEM_CODE
+           , MAX(C.ITEM_NAME) AS POWDER_NAME
+
+           , (SELECT TOP 1 REMARK FROM BPR500T WITH (NOLOCK) WHERE COMP_CODE=A.COMP_CODE AND DIV_CODE=A.DIV_CODE AND PROD_ITEM_CODE=A.ITEM_CODE AND CHILD_ITEM_CODE=ISNULL(C.REF_ITEM_CODE,C.ITEM_CODE) AND USE_YN='1') AS  BASE_VOL  --기준칙량
+           , CASE WHEN ISNULL(unilite.fnRemoveNonNumericStr((SELECT TOP 1 REMARK 
+                                                             FROM BPR500T WITH (NOLOCK) 
+                                                             WHERE COMP_CODE       = A.COMP_CODE
+                                                             AND   DIV_CODE        = A.DIV_CODE 
+                                                             AND   PROD_ITEM_CODE  = A.ITEM_CODE
+                                                             AND   CHILD_ITEM_CODE = ISNULL(C.REF_ITEM_CODE,C.ITEM_CODE) 
+                                                             AND   USE_YN='1')), '') ='' THEN 1
+                  ELSE unilite.fnRemoveNonNumericStr((SELECT TOP 1 REMARK FROM BPR500T WITH (NOLOCK)
+                                                      WHERE COMP_CODE       = A.COMP_CODE
+                                                      AND   DIV_CODE        = A.DIV_CODE 
+                                                      AND   PROD_ITEM_CODE  = A.ITEM_CODE 
+                                                      AND   CHILD_ITEM_CODE = ISNULL(C.REF_ITEM_CODE,C.ITEM_CODE) AND USE_YN='1'))
+             END *  SUM(CASE WHEN A.LINE_SEQ = 1 THEN A.WKORD_Q ELSE 0 END) AS TOTAL_VOL -- 총소분량
+
+           , (
+               SELECT TOP 1 S3.CUSTOM_NAME
+               FROM       PPL100T S1 WITH (NOLOCK)
+               INNER JOIN SOF100T S2 WITH (NOLOCK) ON S1.COMP_CODE   = S2.COMP_CODE
+                                                  AND S1.DIV_CODE    = S2.DIV_CODE
+                                                  AND S1.ORDER_NUM   = S2.ORDER_NUM
+               INNER JOIN BCM100T S3 WITH (NOLOCK) ON S2.COMP_CODE   = S3.COMP_CODE
+                                                  AND S2.CUSTOM_CODE = S3.CUSTOM_CODE
+               WHERE S1.COMP_CODE   = A.COMP_CODE
+               AND   S1.DIV_CODE    = A.DIV_CODE
+               AND   S1.WK_PLAN_NUM = max(A.WK_PLAN_NUM)
+             ) AS CUSTOMER
+            , SUM(CASE WHEN A.LINE_SEQ = 1 THEN A.WKORD_Q ELSE 0 END) AS VOLUME
+            , SUM(CASE WHEN A.LINE_END_YN='Y' THEN A.WKORD_Q ELSE 0 END) AS WKORD_Q
+--                      , UNILITE.S_fnGetMPNO_INNO(A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.PRODT_START_DATE) AS EQUIP_CODE
+--                      , UNILITE.S_fnGetWorkShop_INNO(A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.PRODT_START_DATE) AS WORKSHOP_LINE
+            , MAX(CASE WHEN A.LINE_SEQ=1 THEN A.EQUIP_CODE ELSE '' END) + CASE WHEN MAX(CASE WHEN A.LINE_SEQ=1 THEN A.EQUIP_CODE2 ELSE '' END) != '' THEN ','+ MAX(CASE WHEN A.LINE_SEQ=1 THEN A.EQUIP_CODE2 ELSE '' END) ELSE '' END AS EQUIP_CODE
+            , LTRIM(STR(D.TEMPN_01)) + '('+ LTRIM(STR(DENSE_RANK() OVER (PARTITION BY A.WORK_SHOP_CODE ORDER BY A.WKORD_NUM))) +')' AS WORKSHOP_LINE
+            , A.WORK_SHOP_CODE
+       FROM       PMP100T A WITH (NOLOCK)
+       INNER JOIN BPR100T B WITH (NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+                                         AND A.ITEM_CODE = B.ITEM_CODE
+       LEFT  JOIN (
+                    SELECT S3.CUSTOM_NAME
+                         , S2.ITEM_NAME
+                         , S1.COMP_CODE
+                         , S1.DIV_CODE
+                         , S1.WKORD_NUM
+                         , S1.ITEM_CODE
+                         , S1.REF_ITEM_CODE
+                    FROM       PMP200T S1 WITH (NOLOCK)
+                    INNER JOIN BPR100T S2 WITH (NOLOCK) ON S1.COMP_CODE = S2.COMP_CODE
+                                                       AND S1.ITEM_CODE = S2.ITEM_CODE
+                    LEFT  JOIN (
+                              SELECT  X.COMP_CODE, X.ITEM_CODE, MAX(Y.CUSTOM_NAME) AS CUSTOM_NAME
+                              FROM       BPR400T X WITH (NOLOCK)
+                              INNER JOIN BCM100T Y WITH (NOLOCK) ON X.COMP_CODE   = Y.COMP_CODE
+                                                                AND X.CUSTOM_CODE = Y.CUSTOM_CODE
+                              GROUP BY X.COMP_CODE, X.ITEM_CODE
+                            ) S3 ON S3.COMP_CODE = S1.COMP_CODE
+                                AND S3.ITEM_CODE = S1.ITEM_CODE
+                    WHERE S1.COMP_CODE   = #{S_COMP_CODE}
+                    AND   S1.DIV_CODE    = #{DIV_CODE}
+                    AND   S2.ITEM_LEVEL1 = '800'
+                    AND   S2.ITEM_LEVEL2 = '810'
+
+                ) C ON A.COMP_CODE = C.COMP_CODE
+                   AND A.DIV_CODE  = C.DIV_CODE
+                   AND A.WKORD_NUM = C.WKORD_NUM
+                LEFT JOIN BSA230T D WITH (NOLOCK) ON A.COMP_CODE      = D.COMP_CODE
+                                                 AND A.DIV_CODE       = D.TYPE_LEVEL
+                                                 AND A.WORK_SHOP_CODE = D.TREE_CODE
+                WHERE A.COMP_CODE                 = #{S_COMP_CODE}
+                AND   A.DIV_CODE                  = #{DIV_CODE}
+                AND   ISNULL(A.SEMI_ITEM_CODE,'') = ''
+                AND   A.WKORD_Q-A.PRODT_Q &gt; 0
+                AND   A.PRODT_START_DATE &gt;= #{PRODT_START_DATE_FR}
+                AND   A.PRODT_START_DATE &lt;= #{PRODT_START_DATE_TO}
+
+                GROUP BY A.COMP_CODE, A.DIV_CODE, A.WKORD_NUM, A.PRODT_START_DATE, A.ITEM_CODE, B.ITEM_NAME, A.LOT_NO, C.CUSTOM_NAME, C.ITEM_CODE, C.REF_ITEM_CODE, C.ITEM_NAME
+                     , D.TEMPN_01, A.WORK_SHOP_CODE
+                ORDER BY A.WORK_SHOP_CODE, A.WKORD_NUM, A.ITEM_CODE 
+    </select>
+
+<select id="s_pmp100skrv_inServiceImpl.selectMainList" parameterType="Map" resultType="rMap">
+      --s_pmp100skrv_inServiceImpl.selectList
+
+                SELECT TOP 1 A.WKORD_NUM
+                    , A.PRODT_WKORD_DATE
+                    , A.PRODT_START_DATE
+                        , A.ITEM_CODE
+                        , B.ITEM_NAME
+                        , A.LOT_NO
+                        , C.CUSTOM_NAME AS DCM
+                        , MAX(C.ITEM_CODE) AS POWDER_ITEM_CODE
+                        , MAX(C.ITEM_NAME) AS POWDER_NAME
+
+                        , (SELECT REMARK FROM BPR500T WITH (NOLOCK) WHERE COMP_CODE=A.COMP_CODE AND DIV_CODE=A.DIV_CODE AND PROD_ITEM_CODE=A.ITEM_CODE AND CHILD_ITEM_CODE=C.ITEM_CODE) AS  BASE_VOL  --기준칙량
+                        , CASE WHEN ISNULL(unilite.fnRemoveNonNumericStr((SELECT REMARK FROM BPR500T WHERE COMP_CODE=A.COMP_CODE AND DIV_CODE=A.DIV_CODE AND PROD_ITEM_CODE=A.ITEM_CODE AND CHILD_ITEM_CODE=C.ITEM_CODE)), '') ='' THEN 1
+                                ELSE unilite.fnRemoveNonNumericStr((SELECT REMARK FROM BPR500T WHERE COMP_CODE=A.COMP_CODE AND DIV_CODE=A.DIV_CODE AND PROD_ITEM_CODE=A.ITEM_CODE AND CHILD_ITEM_CODE=C.ITEM_CODE))
+                          END *  SUM(CASE WHEN A.LINE_SEQ = 1 THEN A.WKORD_Q ELSE 0 END) AS TOTAL_VOL -- 총소분량
+
+                        , (
+                                SELECT TOP 1 S3.CUSTOM_NAME
+                                FROM PPL100T S1 WITH (NOLOCK)
+                                     INNER JOIN SOF100T S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE
+                                                                                                            AND S1.DIV_CODE=S2.DIV_CODE
+                                                                                                            AND S1.ORDER_NUM=S2.ORDER_NUM
+                                     INNER JOIN BCM100T S3 WITH (NOLOCK) ON S2.COMP_CODE=S3.COMP_CODE
+                                                                                                             AND S2.CUSTOM_CODE=S3.CUSTOM_CODE
+                                WHERE S1.COMP_CODE=A.COMP_CODE
+                                AND S1.DIV_CODE=A.DIV_CODE
+                                AND S1.WK_PLAN_NUM=max(A.WK_PLAN_NUM)
+                          ) AS CUSTOMER
+            , SUM(CASE WHEN A.LINE_SEQ = 1 THEN A.WKORD_Q ELSE 0 END) AS VOLUME
+            , SUM(CASE WHEN A.LINE_END_YN='Y' THEN A.WKORD_Q ELSE 0 END) AS WKORD_Q
+                        , UNILITE.S_fnGetMPNO_INNO(A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.PRODT_START_DATE) AS EQUIP_CODE
+                        , UNILITE.S_fnGetWorkShop_INNO(A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.PRODT_START_DATE) AS WORKSHOP_LINE
+                FROM PMP100T A WITH (NOLOCK)
+                     INNER JOIN BPR100T B WITH (NOLOCK) ON A.COMP_CODE=B.COMP_CODE AND A.ITEM_CODE=B.ITEM_CODE
+           LEFT  JOIN (
+                                    SELECT (SELECT TOP 1 Y.CUSTOM_NAME
+                                            FROM BPR400T X WITH (NOLOCK)
+                                                  INNER JOIN BCM100T Y WITH (NOLOCK) ON X.COMP_CODE=Y.COMP_CODE AND X.CUSTOM_CODE=Y.CUSTOM_CODE
+                                            WHERE X.COMP_CODE=S1.COMP_CODE AND X.ITEM_CODE=S1.ITEM_CODE) AS CUSTOM_NAME
+                                            , S2.ITEM_NAME
+                      , S1.COMP_CODE, S1.DIV_CODE, S1.WKORD_NUM, S1.ITEM_CODE
+                                    FROM PMP200T S1 WITH (NOLOCK)
+                                         INNER JOIN BPR100T S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.ITEM_CODE=S2.ITEM_CODE
+                                    WHERE S1.COMP_CODE  =#{S_COMP_CODE}
+                                    AND   S1.DIV_CODE   =#{DIV_CODE}
+                                    AND   S2.ITEM_LEVEL1='800'
+                                    AND   S2.ITEM_LEVEL2='810'
+
+                     ) C ON A.COMP_CODE=C.COMP_CODE AND A.DIV_CODE=C.DIV_CODE AND A.WKORD_NUM=C.WKORD_NUM
+                WHERE A.COMP_CODE = #{S_COMP_CODE}
+                AND A.DIV_CODE = #{DIV_CODE}
+                AND ISNULL(A.SEMI_ITEM_CODE,'') = ''
+                AND A.WKORD_Q-A.PRODT_Q &gt; 0
+                AND A.PRODT_START_DATE &gt;= #{PRODT_START_DATE_FR}
+                AND A.PRODT_START_DATE &lt;= #{PRODT_START_DATE_TO}
+
+                GROUP BY A.COMP_CODE, A.DIV_CODE, A.WKORD_NUM, A.PRODT_START_DATE, A.ITEM_CODE, B.ITEM_NAME, A.LOT_NO, C.CUSTOM_NAME, C.ITEM_CODE, A.PRODT_WKORD_DATE
+                ORDER BY A.WKORD_NUM, A.ITEM_CODE
+    </select>
+
+</mapper>

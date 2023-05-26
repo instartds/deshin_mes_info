@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ssa550skrvServiceImpl">
+	
+	<select id="ssa550skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">		
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+		
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+		
+		    DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+				  , @UserId			NVARCHAR(100)	/* 사용자ID */
+				  , @LangType		NVARCHAR(2)		/* 언어구분 */
+				  , @RefItem		NVARCHAR(01)
+				  , @DateFormat		NVARCHAR(10)
+				
+		    SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_ID}
+			SET @LangType = #{S_LANG_CODE}
+				
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+			    FROM BSA300T WITH (NOLOCK)
+			    WHERE USER_ID = @UserId
+				
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+				
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+			    FROM BSA100T WITH (NOLOCK)
+			    WHERE COMP_CODE = @CompCode
+			    AND MAIN_CODE = N'B044'
+			    AND REF_CODE1 = N'Y'
+				
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+			SELECT A.COMP_CODE
+				 , A.DIV_CODE
+				 , D.TREE_CODE
+				 , D.TREE_NAME
+				 , ISNULL(E.POS_NO, 'ERP') AS POS_NO			-- 2015.07.25 수정
+				 , ISNULL(E.POS_NAME, '기타') AS POS_NAME			-- 2015.07.25 수정
+				 , C.ITEM_CODE
+				 , C.ITEM_NAME
+				 , B.SALE_P
+				 , CASE WHEN SUM(ISNULL(B.SALE_Q, 0)) &lt; 0 THEN ABS(B.CONSIGNMENT_FEE)*-1 ELSE ABS(B.CONSIGNMENT_FEE) END CONSIGNMENT_FEE
+				 , SUM(ISNULL(B.SALE_Q, 0)) AS SALE_QTY
+				 , SUM(ISNULL(B.SALE_AMT_O, 0) + ISNULL(B.TAX_AMT_O, 0) + (B.DISCOUNT_P * B.SALE_Q)) AS SALE_AMT 
+				 , SUM(ISNULL(ABS(B.SALE_Q), 0) * ISNULL(B.CONSIGNMENT_FEE, 0)) AS FEE_AMT
+				 , (SUM(ISNULL(B.SALE_AMT_O, 0) + ISNULL(B.TAX_AMT_O, 0) + (B.DISCOUNT_P * B.SALE_Q))) - (SUM(ISNULL(ABS(B.SALE_Q), 0) * ISNULL(B.CONSIGNMENT_FEE, 0))) AS BAL_AMT
+				 , (CASE WHEN SUM(ISNULL(ABS(B.SALE_Q), 0) * ISNULL(B.CONSIGNMENT_FEE, 0)) != 0 	
+						  AND SUM(ISNULL(B.SALE_AMT_O, 0) + ISNULL(B.TAX_AMT_O, 0) + (B.DISCOUNT_P * B.SALE_Q)) *100 != 0
+						 THEN (SUM(ISNULL(ABS(B.SALE_Q), 0) * ISNULL(B.CONSIGNMENT_FEE, 0)) / SUM(ISNULL(B.SALE_AMT_O, 0) + ISNULL(B.TAX_AMT_O, 0) + (B.DISCOUNT_P * B.SALE_Q)) *100)  
+						 ELSE 0 END ) 
+						 AS TAX_RATE
+				 
+				 
+				 
+			  FROM SSA100T A 
+					INNER JOIN SSA110T B WITH (NOLOCK)   ON B.COMP_CODE		= A.COMP_CODE
+														AND B.DIV_CODE		= A.DIV_CODE
+														AND B.BILL_NUM		= A.BILL_NUM
+					INNER JOIN BPR100T C WITH (NOLOCK)   ON C.COMP_CODE		= B.COMP_CODE
+														AND C.ITEM_CODE		= B.ITEM_CODE
+					LEFT  JOIN BSA210T D WITH (NOLOCK)   ON A.COMP_CODE		= D.COMP_CODE    /*부서*/
+														AND A.DIV_CODE      = D.TYPE_LEVEL
+					                                    AND A.DEPT_CODE		= D.TREE_CODE											
+					LEFT  JOIN BSA240T E WITH (NOLOCK)   ON A.COMP_CODE     = E.COMP_CODE    /*POS*/
+														AND A.DIV_CODE		= E.DIV_CODE
+					                                    AND A.POS_NO        = E.POS_NO
+					                                    AND E.POS_TYPE      = '1'
+					INNER JOIN BPR200T F WITH (NOLOCK)   ON B.COMP_CODE 	= F.COMP_CODE
+				                                        AND B.DIV_CODE  	= F.DIV_CODE
+				                                        AND B.ITEM_CODE 	= F.ITEM_CODE
+				                                        AND F.ITEM_ACCOUNT 	in ( '02', '04' )		-- 2015.07.25 수정
+				    LEFT  JOIN BTR100T G  WITH (NOLOCK) ON  G.COMP_CODE     = B.COMP_CODE
+		                                                AND G.DIV_CODE      = B.OUT_DIV_CODE
+		                                                AND G.INOUT_NUM     = B.INOUT_NUM
+		                                                AND G.INOUT_SEQ     = B.INOUT_SEQ
+		                                                AND G.INOUT_TYPE    = B.INOUT_TYPE                                     
+				                                        
+					
+			 WHERE A.COMP_CODE       = @CompCode
+		        <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		          AND A.DIV_CODE = #{DIV_CODE}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+		          AND G.PURCHASE_CUSTOM_CODE = #{CUSTOM_CODE}
+		        </if>   
+		        <if test="@foren.Ognl@isNotEmpty(SALE_DATE_FR)">
+		          AND A.SALE_DATE &gt;= #{SALE_DATE_FR}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(SALE_DATE_TO)">
+		          AND A.SALE_DATE &lt;= #{SALE_DATE_TO}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">     
+			     AND    D.TREE_LEVEL        LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =D.COMP_CODE AND TYPE_LEVEL=D.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+			     </if>  
+			    <if test="@foren.Ognl@isNotEmpty(POS_CODE)">					
+			        AND A.POS_NO IN
+						 <foreach collection="POS_CODE" item="item" separator="," close=")" open="(">
+			              		 #{item}
+			        	</foreach>									
+		        </if>
+			    
+			 GROUP BY A.COMP_CODE, A.DIV_CODE, D.TREE_CODE, D.TREE_NAME, E.POS_NO, E.POS_NAME, 
+			 	      C.ITEM_CODE, C.ITEM_NAME, B.ORIGIN_P, B.SALE_P, ABS(B.CONSIGNMENT_FEE)
+			 ORDER BY A.COMP_CODE, A.DIV_CODE, D.TREE_CODE, ISNULL(E.POS_NO, 'ERP'), C.ITEM_CODE		-- 2015.07.25 수정	      
+				
+				
+SET @END_TIME   = GETDATE()
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'ssa550skrv', '수탁수수료매출현황 조회', #{SALE_DATE_FR}, #{SALE_DATE_TO}, @DIFF_TIME
+
+				
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END   
+    </select>
+</mapper>

@@ -1,0 +1,2396 @@
+<?xml version="1.0" encoding="UTF-8"?><!---->
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="bpr300ukrvService">
+	<select id="bpr300ukrvService.selectAutoItemCode" parameterType="Map" resultType="rMap">
+		DECLARE @gubunValue   NVARCHAR(02)    -- 코드채번룰(구분값)
+		      , @gubunLen     NUMERIC         -- 코드채번룰(자릿수)
+		      , @seqValue     NVARCHAR(10)    -- BAUTONOT에 저장되어있던 최종순번
+		      , @lastItemCode NVARCHAR(100)   -- BPR100T에 저장되어있던 최종품목코드
+		      , @seqItemCode  NVARCHAR(100)   -- BAUTONOT에 저장되어있던 최종순번기준 품목코드
+		      , @siteCode     NVARCHAR(20)    -- 사이트코드
+		      , @gubunValueP  NVARCHAR(01)    -- 코드채번prefix
+		      , @gubunValue_COV  NVARCHAR(04)    -- 코드채번룰(구분값)_COV
+
+		IF EXISTS(SELECT *
+		            FROM BSA100T WITH(NOLOCK)
+		           WHERE COMP_CODE = #{S_COMP_CODE}
+		             AND MAIN_CODE = 'B020' -- 고정
+		             AND SUB_CODE != '$'    --고정
+		             AND SUB_CODE  = #{AUTO_ITEM_ACCOUNT} -- 자동채번 품목계정
+		)
+		    BEGIN
+
+			    SELECT @siteCode = CODE_NAME
+		          FROM BSA100T WITH(NOLOCK)
+		         WHERE COMP_CODE = #{S_COMP_CODE}
+		           AND MAIN_CODE = 'B256'
+		           AND SUB_CODE != '$'
+		           AND SUB_CODE  = '1'
+
+				IF(@siteCode = 'KODI' AND #{AUTO_ITEM_ACCOUNT} = '70' AND (#{AUTO_SUPPLY_TYPE} = '1' OR #{AUTO_SUPPLY_TYPE} = '4' OR #{AUTO_SUPPLY_TYPE} = '5'))
+					BEGIN
+						SELECT @gubunValueP = ISNULL(LEFT(REF_CODE1, 1),'') --코드채번구분값
+						  FROM BSA100T WITH(NOLOCK)
+						 WHERE COMP_CODE = #{S_COMP_CODE}
+						   AND MAIN_CODE = 'B014'
+						   AND SUB_CODE != '$'
+						   AND SUB_CODE  = #{AUTO_SUPPLY_TYPE}
+
+						SELECT @gubunValue = (CASE WHEN @gubunValueP = '' THEN ISNULL(REF_CODE6,'')
+						                           ELSE '00'
+						                       END)
+						     , @gubunLen   = (CASE WHEN ISNULL(REF_CODE7,'') = '' THEN 0
+												   ELSE REF_CODE7
+											  END) -- 총자릿수
+						  FROM BSA100T WITH(NOLOCK)
+						 WHERE COMP_CODE = #{S_COMP_CODE}
+						   AND MAIN_CODE = 'B020' -- 고정
+						   AND SUB_CODE != '$'    --고정
+						   AND SUB_CODE  = #{AUTO_ITEM_ACCOUNT} -- 자동채번 품목계정
+
+				        SELECT @seqValue = LAST_SEQ
+				          FROM (SELECT ROW_NUMBER()OVER(PARTITION BY COMP_CODE, DIV_CODE, TABLE_ID, AUTO_MAN ORDER BY BASIS_DATE DESC )  AS RN
+				                     , LAST_SEQ
+				                 FROM BAUTONOT WITH(NOLOCK)
+				                WHERE COMP_CODE = #{S_COMP_CODE}
+				                  AND DIV_CODE  = '00'      --고정
+				                  AND TABLE_ID  = 'BPR100T' --고정
+				                  AND AUTO_MAN  = @gubunValueP
+				               ) T
+				         WHERE T.RN = 1
+
+				        SELECT @lastItemCode = ITEM_CODE
+				          FROM (SELECT ROW_NUMBER()OVER(PARTITION BY COMP_CODE ORDER BY ITEM_CODE DESC )  AS RN
+				                     , ITEM_CODE
+				                  FROM BPR100T WITH(NOLOCK)
+				                 WHERE COMP_CODE = #{S_COMP_CODE}
+				                   AND ITEM_CODE LIKE @gubunValueP + '%'
+				                   AND LEN(ITEM_CODE) = @gubunLen+1
+				                   AND ISNUMERIC(SUBSTRING(ITEM_CODE, 2, @gubunLen)) = 1
+				           ) T
+				        WHERE T.RN = 1
+
+						SELECT @seqItemCode = @gubunValueP + @gubunValue + REPLICATE('0', @gubunLen - LEN(@gubunValue) - LEN(CONVERT( NVARCHAR, @seqValue + 1 ))) + CONVERT( NVARCHAR, @seqValue + 1 )
+
+
+				        IF(ISNULL(@seqValue,'') != '' AND @seqItemCode > ISNULL(@lastItemCode, REPLICATE('0', @gubunLen)))
+				            BEGIN -- 이미 해당데이터 채번이력이 채번테이블에 존재할시
+				                SELECT @gubunValueP + @gubunValue + REPLICATE('0', @gubunLen - LEN(@gubunValue) - LEN(CONVERT( NVARCHAR, @seqValue + 1 ))) + CONVERT( NVARCHAR, @seqValue + 1 )  AS AUTO_ITEM_CODE
+				                     , @lastItemCode  AS LAST_ITEM_CODE
+				                     , @gubunValueP   AS AUTO_MAN
+				                     , @seqValue + 1  AS LAST_SEQ
+				            END
+				        ELSE
+				            BEGIN     -- 해당데이터 채번이력이 채번테이블에 존재하지 않을시 BPR100T에서 최대값 읽고 + 1
+				                      -- BPR100T에도 해당조건으로 코드 존재 하지 않을시 해당조건으로 신규코드 생성시킴 예)@gubunValue = '21',@gubunLen = 7 이면 '21'+ '00001' =  '2100001'
+				                IF(ISNULL(@lastItemCode,'') != '')
+				                    BEGIN
+				                        SELECT @gubunValueP + @gubunValue + REPLICATE('0', @gubunLen - LEN(@gubunValue) - LEN(CONVERT( NVARCHAR, @seqValue + 1 ))) + CONVERT(NVARCHAR, CONVERT(NUMERIC, SUBSTRING(@lastItemCode, 2, @gubunLen))+1) AS AUTO_ITEM_CODE
+				                             , @lastItemCode AS LAST_ITEM_CODE
+				                             , @gubunValueP    AS AUTO_MAN
+				                             , RIGHT(CONVERT(NVARCHAR, CONVERT(NUMERIC, SUBSTRING(@lastItemCode, 2, @gubunLen))+1), @gubunLen - LEN(@gubunValue)) AS LAST_SEQ
+				                    END
+				                ELSE
+				                    BEGIN
+				                        SELECT @gubunValueP + @gubunValue + REPLICATE('0', @gubunLen - LEN(@gubunValue) - 1) + CONVERT( NVARCHAR, 1 )  AS AUTO_ITEM_CODE
+				                             , '' AS LAST_ITEM_CODE
+				                             , @gubunValueP    AS AUTO_MAN
+				                             , 1 AS LAST_SEQ
+				                    END
+				            END
+				    END
+				ELSE IF(@siteCode = 'COV')
+					BEGIN
+						SELECT @gubunValue_COV = A.REF_CODE1 + '_' + B.GUBUN_VALUE  --코드채번구분값
+							 , @gubunLen   = 10 -- 총자릿수
+						  FROM ( SELECT ISNULL(REF_CODE1,'') AS REF_CODE1, COMP_CODE FROM BSA100T WITH(NOLOCK)
+								 WHERE COMP_CODE = #{S_COMP_CODE}
+								   AND MAIN_CODE = 'Z016' -- 고정
+								   AND SUB_CODE != '$'    --고정
+								   AND REF_CODE2 = #{AUTO_ITEM_ACCOUNT} -- 자동채번 품목계정
+								   ) AS A
+								   LEFT JOIN  ( SELECT ISNULL(LEFT(REF_CODE1, 2),'') AS GUBUN_VALUE , COMP_CODE FROM BSA100T WITH(NOLOCK)
+												 WHERE COMP_CODE = #{S_COMP_CODE}
+												   AND MAIN_CODE = 'Z017'
+												   AND SUB_CODE != '$'
+												   AND SUB_CODE  = #{AUTO_SUPPLY_TYPE}
+												   ) AS B ON B.COMP_CODE = A.COMP_CODE
+
+						SELECT @seqValue = LAST_SEQ
+						  FROM (SELECT ROW_NUMBER()OVER(PARTITION BY COMP_CODE, DIV_CODE, TABLE_ID, AUTO_MAN ORDER BY BASIS_DATE DESC )  AS RN
+									 , LAST_SEQ
+								  FROM BAUTONOT WITH(NOLOCK)
+								 WHERE COMP_CODE	= #{S_COMP_CODE}
+								   AND DIV_CODE		= '00'      --고정
+								   AND TABLE_ID		= 'BPR100T' --고정
+								   AND AUTO_MAN		= @gubunValue_COV
+							   ) T
+						 WHERE T.RN = 1
+
+						SELECT @lastItemCode = REPLACE(ITEM_CODE, @gubunValue_COV, '')
+						  FROM (SELECT ROW_NUMBER()OVER(PARTITION BY COMP_CODE ORDER BY ITEM_CODE DESC )  AS RN
+									 , ITEM_CODE
+								  FROM BPR100T WITH(NOLOCK)
+								 WHERE COMP_CODE		= #{S_COMP_CODE}
+								   AND ITEM_CODE	 LIKE @gubunValue_COV + '%'
+								   AND LEN(ITEM_CODE)	= @gubunLen
+							   ) T
+						 WHERE T.RN = 1
+
+						SET @seqValue		=  RIGHT('000000' + ISNULL(@seqValue		, '0'), 6)
+						SET @lastItemCode	=  RIGHT('000000' +  ISNULL(@lastItemCode	, '0'), 6)
+
+						IF @lastItemCode > @seqValue
+						BEGIN
+							SET @seqValue		= RIGHT('0000000000' + CONVERT(NVARCHAR, CONVERT(NUMERIC(6, 0), @lastItemCode) + 1), @gubunLen - LEN(@gubunValue_COV))
+							SET @seqItemCode	= @gubunValue_COV + @seqValue
+							SET @lastItemCode	= @gubunValue_COV + @lastItemCode
+						END
+						ELSE
+						BEGIN
+							SET @lastItemCode	= RIGHT('0000000000' + CONVERT(NVARCHAR, CONVERT(NUMERIC(6, 0), @seqValue    )    ), @gubunLen - LEN(@gubunValue_COV))
+							SET @seqValue		= RIGHT('0000000000' + CONVERT(NVARCHAR, CONVERT(NUMERIC(6, 0), @seqValue    ) + 1), @gubunLen - LEN(@gubunValue_COV))
+							SET @seqItemCode	= @gubunValue_COV + @seqValue
+							SET @lastItemCode	= @gubunValue_COV + @lastItemCode
+						END
+
+						SELECT @seqItemCode		AS AUTO_ITEM_CODE
+							 , @lastItemCode	AS LAST_ITEM_CODE
+							 , @gubunValue_COV	AS AUTO_MAN
+							 , @seqValue		AS LAST_SEQ
+					END
+				ELSE
+					BEGIN
+				        SELECT @gubunValue = ISNULL(REF_CODE6,'') --코드채번구분값
+				             , @gubunLen   = (CASE WHEN ISNULL(REF_CODE7,'') = '' THEN 0
+				                                   ELSE REF_CODE7
+				                              END) -- 총자릿수
+				          FROM BSA100T WITH(NOLOCK)
+				         WHERE COMP_CODE = #{S_COMP_CODE}
+				           AND MAIN_CODE = 'B020' -- 고정
+				           AND SUB_CODE != '$'    --고정
+				           AND SUB_CODE  = #{AUTO_ITEM_ACCOUNT} -- 자동채번 품목계정
+
+
+				        SELECT @seqValue = LAST_SEQ
+				          FROM (SELECT ROW_NUMBER()OVER(PARTITION BY COMP_CODE, DIV_CODE, TABLE_ID, AUTO_MAN ORDER BY BASIS_DATE DESC )  AS RN
+				                     , LAST_SEQ
+				                 FROM BAUTONOT WITH(NOLOCK)
+				                WHERE COMP_CODE = #{S_COMP_CODE}
+				                  AND DIV_CODE  = '00'      --고정
+				                  AND TABLE_ID  = 'BPR100T' --고정
+				                  AND AUTO_MAN  = @gubunValue
+				               ) T
+				         WHERE T.RN = 1
+
+				        SELECT @lastItemCode = ITEM_CODE
+				          FROM (SELECT ROW_NUMBER()OVER(PARTITION BY COMP_CODE ORDER BY ITEM_CODE DESC )  AS RN
+				                     , ITEM_CODE
+				                  FROM BPR100T WITH(NOLOCK)
+				                 WHERE COMP_CODE = #{S_COMP_CODE}
+				                   AND ITEM_CODE LIKE @gubunValue + '%'
+				                   AND LEN(ITEM_CODE) = @gubunLen
+				                   AND ISNUMERIC(ITEM_CODE) = 1
+				           ) T
+				        WHERE T.RN = 1
+
+						SELECT @seqItemCode = @gubunValue + REPLICATE('0', @gubunLen - LEN(@gubunValue) - LEN(CONVERT( NVARCHAR, @seqValue + 1 ))) + CONVERT( NVARCHAR, @seqValue + 1 )
+
+				        IF(ISNULL(@seqValue,'') != '' AND @seqItemCode > ISNULL(@lastItemCode, REPLICATE('0', @gubunLen)))
+				            BEGIN -- 이미 해당데이터 채번이력이 채번테이블에 존재할시
+				                SELECT @gubunValue + REPLICATE('0', @gubunLen - LEN(@gubunValue) - LEN(CONVERT( NVARCHAR, @seqValue + 1 ))) + CONVERT( NVARCHAR, @seqValue + 1 )  AS AUTO_ITEM_CODE
+				                     , @lastItemCode  AS LAST_ITEM_CODE
+				                     , @gubunValue    AS AUTO_MAN
+				                     , @seqValue + 1  AS LAST_SEQ
+				            END
+				        ELSE
+				            BEGIN     -- 해당데이터 채번이력이 채번테이블에 존재하지 않을시 BPR100T에서 최대값 읽고 + 1
+				                      -- BPR100T에도 해당조건으로 코드 존재 하지 않을시 해당조건으로 신규코드 생성시킴 예)@gubunValue = '21',@gubunLen = 7 이면 '21'+ '00001' =  '2100001'
+				                IF(ISNULL(@lastItemCode,'') != '')
+				                    BEGIN
+				                        SELECT CONVERT(NVARCHAR, CONVERT(NUMERIC, @lastItemCode )+1) AS AUTO_ITEM_CODE
+				                             , @lastItemCode AS LAST_ITEM_CODE
+				                             , @gubunValue    AS AUTO_MAN
+				                             , RIGHT(CONVERT(NVARCHAR, CONVERT(NUMERIC, @lastItemCode )+1), @gubunLen - LEN(@gubunValue)) AS LAST_SEQ
+				                    END
+				                ELSE
+				                    BEGIN
+				                        SELECT @gubunValue + REPLICATE('0', @gubunLen - LEN(@gubunValue) - 1) + CONVERT( NVARCHAR, 1 )  AS AUTO_ITEM_CODE
+				                             , '' AS LAST_ITEM_CODE
+				                             , @gubunValue    AS AUTO_MAN
+				                             , 1 AS LAST_SEQ
+				                    END
+				            END
+					END
+		    END
+		ELSE
+		    BEGIN
+		        SELECT '' AS AUTO_ITEM_CODE
+		             , '' AS LAST_ITEM_CODE
+		             , '' AS AUTO_MAN
+		             , '' AS LAST_SEQ
+		    END
+	</select>
+
+	<update id="bpr300ukrvService.saveAutoItemCode" parameterType="Map">
+		IF NOT EXISTS (
+		    SELECT  TOP 1 COMP_CODE
+		      FROM BAUTONOT WITH(NOLOCK)
+		     WHERE COMP_CODE = #{S_COMP_CODE}
+		       AND DIV_CODE  = '00'      --고정
+		       AND TABLE_ID  = 'BPR100T' --고정
+		       AND AUTO_MAN  = #{AUTO_MAN}
+		)
+		    BEGIN
+		        INSERT INTO BAUTONOT(
+		               COMP_CODE
+		             , DIV_CODE
+		             , TABLE_ID
+		             , BASIS_DATE
+		             , AUTO_MAN
+		             , LAST_SEQ
+		             , INSERT_DB_USER
+		             , INSERT_DB_TIME
+		             , UPDATE_DB_USER
+		             , UPDATE_DB_TIME
+		        ) VALUES (
+		               #{S_COMP_CODE}
+		             , '00'
+		             , 'BPR100T'
+		             , CONVERT(CHAR(8), GETDATE(), 112)
+		             , #{AUTO_MAN}
+		             , ${LAST_SEQ}
+		             , #{S_USER_ID}
+		             , GETDATE()
+		             , #{S_USER_ID}
+		             , GETDATE()
+		        )
+		    END
+		ELSE
+		    BEGIN
+		        UPDATE A
+		           SET LAST_SEQ       = ${LAST_SEQ}
+		             , UPDATE_DB_USER = #{S_USER_ID}
+		             , UPDATE_DB_TIME = GETDATE()
+		          FROM BAUTONOT A WITH(NOLOCK)
+		         WHERE A.COMP_CODE  = #{S_COMP_CODE}
+		           AND A.DIV_CODE   = '00'      --고정
+		           AND A.TABLE_ID   = 'BPR100T' --고정
+		           AND A.BASIS_DATE = (SELECT BASIS_DATE
+		                                 FROM (SELECT ROW_NUMBER()OVER(PARTITION BY COMP_CODE, DIV_CODE, TABLE_ID, AUTO_MAN ORDER BY BASIS_DATE DESC )  AS RN
+		                                            , BASIS_DATE
+		                                         FROM BAUTONOT WITH(NOLOCK)
+		                                        WHERE COMP_CODE = #{S_COMP_CODE}
+		                                          AND DIV_CODE  = '00'      --고정
+		                                          AND TABLE_ID  = 'BPR100T' --고정
+		                                          AND AUTO_MAN  = #{AUTO_MAN}
+		                                 ) T
+		                                WHERE T.RN = 1
+		                              )
+		           AND A.AUTO_MAN = #{AUTO_MAN}
+		    END
+	</update>
+
+	<select id="bpr300ukrvService.selectItemAccountInfo" parameterType="Map" resultType="rMap">
+		SELECT SUPPLY_TYPE
+		     , WH_CODE
+		     , STOCK_UNIT
+		     , SALE_UNIT
+		     , ORDER_UNIT
+		     , SALE_TRNS_RATE
+		     , PUR_TRNS_RATE
+		     , ORDER_PLAN
+		     , TAX_TYPE
+		     , WORK_SHOP_CODE
+		     --20190910 추가: 출고방법, 실적입고방법(B023), 품질대상(검사)여부, LOT관리 여부
+		     , OUT_METH
+		     , RESULT_YN
+		     , INSPEC_YN
+		     , LOT_YN
+		     , ORDER_METH
+		     , CIR_PERIOD_YN
+		     , EXPIRATION_DAY
+		  FROM BPR220T WITH(NOLOCK)
+		 WHERE COMP_CODE    = #{S_COMP_CODE}
+		   AND DIV_CODE     = #{DIV_CODE}
+		   AND ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+	</select>
+
+	<select id="bpr300ukrvService.selectSearchType" parameterType="Map" resultType="rMap">
+		SELECT REF_CODE1
+		  FROM BSA100T WITH(NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND MAIN_CODE = 'B052'
+		   AND SUB_CODE  = #{QRY_TYPE}
+	</select>
+
+	<select id="bpr300ukrvService.selectList" parameterType="Map" resultType="rMap">
+		/* bpr300ukrv.Cbpr300ukrv[fnBpr300QStd] QUERY01 */
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+
+		/*  [ 변수 선언 ] ----------------------------------------------------------------------------------------------------- */
+			DECLARE	@COMP_CODE				NVARCHAR(08)		-- (필수) 법인코드
+					 , @DIV_CODE			NVARCHAR(08)		-- (필수) 사업장코드
+					 , @USER_ID				NVARCHAR(100)		-- (필수) 로그인 사용자ID
+					 , @QRY_TYPE			NVARCHAR(01)		-- (선택) 검색항목  [01: 규격, 02: 도면번호]
+					 , @QRY_VALUE			NVARCHAR(40)		-- (선택) 검색어
+					 , @ITEM_ACCOUNT		NVARCHAR(02)		-- (선택) 계정구분(B020)
+					 , @ITEM_CODE			NVARCHAR(20)		-- (선택) 품목코드
+					 , @ITEM_NAME			NVARCHAR(200)		-- (선택) 품목명
+					 , @SUPPLY_TYPE			NVARCHAR(01)		-- (선택) 조달구분 (B014)
+					 , @ORDER_PRSN			NVARCHAR(02)		-- (선택) 구매담당자
+					 , @ITEM_LEVEL1			NVARCHAR(20)		-- (선택) 대분류
+					 , @ITEM_LEVEL2			NVARCHAR(20)		-- (선택) 중분류
+					 , @ITEM_LEVEL3			NVARCHAR(20)		-- (선택) 소분류
+					 , @USE_YN				NVARCHAR(01)		-- (선택) 사용여부
+
+		/*  [ 변수 값 할당 ] -------------------------------------------------------------------------------------------------- */
+			SET @COMP_CODE		= #{S_COMP_CODE}
+			SET @DIV_CODE		= #{DIV_CODE}
+			SET @ITEM_CODE		= #{ITEM_CODE}
+			SET @ITEM_NAME		= #{ITEM_NAME}
+			SET @ITEM_ACCOUNT	= #{ITEM_ACCOUNT}
+			SET @QRY_TYPE		= #{QRY_TYPE}
+			SET @QRY_VALUE		= #{QRY_VALUE}
+			SET @ORDER_PRSN		= #{ORDER_PRSN}
+			SET @SUPPLY_TYPE	= #{SUPPLY_TYPE}
+			SET @ITEM_LEVEL1	= #{ITEM_LEVEL1}
+			SET @ITEM_LEVEL2	= #{ITEM_LEVEL2}
+			SET @ITEM_LEVEL3	= #{ITEM_LEVEL3}
+			SET @USER_ID		= #{S_USER_ID}
+			SET @USE_YN			= #{USE_YN}
+
+		/*  [ 날짜 포맷 유형 설정 ] ------------------------------------------------------------------------------------------- */
+			DECLARE		 @DateFormat		 NVARCHAR(10)
+
+			SELECT  TOP 1 @DateFormat = CODE_NAME
+			FROM	BSA100T WITH (NOLOCK)
+			WHERE   COMP_CODE = @COMP_CODE
+			AND	 MAIN_CODE = N'B044'
+			AND	 REF_CODE1 = N'Y'
+
+			SET @DateFormat = ISNULL(@DateFormat, N'YYYY.MM.DD')
+
+
+		/*  [ 데이터 조회 ] -------------------------------------------------------------------------------------------------- */
+			SELECT  A.COMP_CODE														AS COMP_CODE			--법인코드
+				 ,  A.ITEM_CODE														AS ITEM_CODE			--품목코드
+				 ,  A.ITEM_NAME														AS ITEM_NAME			--품목명
+				 ,  A.SPEC															AS SPEC					--규격
+				 ,  A.ITEM_NAME1													AS ITEM_NAME1			--품목명1
+				 ,  A.ITEM_NAME2													AS ITEM_NAME2			--품목명2
+				 ,  A.ITEM_LEVEL1													AS ITEM_LEVEL1			--대분류
+				 ,  L1.LEVEL_NAME													AS ITEM_LEVEL1_NAME		--대분류명
+				 ,  A.ITEM_LEVEL2													AS ITEM_LEVEL2			--중분류
+				 ,  L2.LEVEL_NAME													AS ITEM_LEVEL2_NAME		--중분류명
+				 ,  A.ITEM_LEVEL3													AS ITEM_LEVEL3			--소분류
+				 ,  L3.LEVEL_NAME													AS ITEM_LEVEL3_NAME		--소분류명
+				 ,  A.STOCK_UNIT													AS STOCK_UNIT			--재고단위
+				 ,  A.SALE_UNIT														AS SALE_UNIT			--판매단위
+				 ,  A.TRNS_RATE														AS SALE_TRNS_RATE		--판매입수
+				 ,  A.SALE_BASIS_P													AS SALE_BASIS_P			--판매단가
+				 ,  A.TAX_TYPE														AS TAX_TYPE				--세구분
+				 ,  A.DOM_FORIGN													AS DOM_FORIGN			--국내외
+				 ,  ISNULL(A.STOCK_CARE_YN,'N')													AS STOCK_CARE_YN		--재고관리대상유무
+				 ,  CASE WHEN ISNULL(A.START_DATE, '') = '' THEN ''
+					ELSE REPLACE(
+						 REPLACE(
+						 REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.START_DATE, 1, 4))
+											, 'MM',   SUBSTRING(A.START_DATE, 5, 2))
+											, 'DD',   SUBSTRING(A.START_DATE, 7, 2))
+					END																AS START_DATE			--사용시작일
+				 ,  CASE WHEN ISNULL(A.STOP_DATE, '') = '' THEN ''
+					ELSE REPLACE(
+						 REPLACE(
+						 REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.STOP_DATE, 1, 4))
+											, 'MM',   SUBSTRING(A.STOP_DATE, 5, 2))
+											, 'DD',   SUBSTRING(A.STOP_DATE, 7, 2))
+					END																AS STOP_DATE			--사용중단일
+				 ,  ISNULL(A.USE_YN,'N')														AS USE_YN				--사용여부
+				 ,  A.BARCODE														AS BARCODE				--바코드
+				 ,  A.ITEM_MAKER_PN													AS ITEM_MAKER_PN 		--메이커 Part No
+				 --
+				 ,  B.ITEM_ACCOUNT													AS ITEM_ACCOUNT			--품목계정
+				 ,  B.ITEM_ACCOUNT													AS ITEM_ACCOUNT_ORG		--원품목계정(비교용 원본)
+				 ,  B.SUPPLY_TYPE													AS SUPPLY_TYPE			--조달구분
+				 ,  B.ORDER_UNIT													AS ORDER_UNIT			--구매단위
+				 ,  ISNULL(B.TRNS_RATE, 1)											AS PUR_TRNS_RATE			--구매입수
+				 ,  B.PURCHASE_BASE_P												AS PURCHASE_BASE_P		--구매단가
+				 ,  B.ORDER_PRSN													AS ORDER_PRSN			--구매담당
+				 ,  B.WH_CODE														AS WH_CODE				--주창고
+				 ,  B.ORDER_PLAN													AS ORDER_PLAN			--발주방침
+				 ,  B.MATRL_PRESENT_DAY												AS MATRL_PRESENT_DAY	--올림기간
+				 ,  B.CUSTOM_CODE													AS CUSTOM_CODE			--거래처
+				 ,  C.CUSTOM_NAME													AS CUSTOM_NAME			--거래처명
+				 ,  ISNULL(B.BASIS_P		   ,  0 )								AS BASIS_P				--재고단가
+				 ,  ISNULL(B.REAL_CARE_YN	  , 'N')								AS REAL_CARE_YN			--실사대상Y/N
+				 ,  ISNULL(B.MINI_PACK_Q, 1)										AS MINI_PACK_Q			--최소포장수량
+				 ,  ISNULL(B.ORDER_KIND		, 'N')									AS ORDER_KIND			--오더생성여부
+				 ,  ISNULL(B.NEED_Q_PRESENT	, 'N')									AS NEED_Q_PRESENT		--소요량올림여부
+				 ,  ISNULL(B.EXC_STOCK_CHECK_YN, 'N')								AS EXC_STOCK_CHECK_YN	--가용재고체크여부
+				 ,  ISNULL(B.SAFE_STOCK_Q	  ,  0 )								AS SAFE_STOCK_Q			--안전재고량
+				 ,  ISNULL(B.DIST_LDTIME	   ,  1 )								AS DIST_LDTIME			--재발주 L/T
+				 ,  ISNULL(B.PURCH_LDTIME	   ,  1 )								AS PURCH_LDTIME			--발주 L/T
+				 ,  ISNULL(B.ROP_YN			, 'N')									AS ROP_YN				--ROP대상여부
+				 ,  ISNULL(B.DAY_AVG_SPEND	 ,  0 )									AS DAY_AVG_SPEND		--일일평균소비량
+				 ,  ISNULL(B.ORDER_POINT	   ,  0 )								AS ORDER_POINT			--고정발주량
+				 ,  B.ORDER_METH													AS ORDER_METH			--생산방식
+				 ,  B.OUT_METH														AS OUT_METH				--출고방법
+				 ,  B.RESULT_YN														AS RESULT_YN			--실적입고방법
+				 ,  B.WORK_SHOP_CODE												AS WORK_SHOP_CODE		--주작업장
+				 ,  ISNULL(B.PRODUCT_LDTIME, 1)										AS PRODUCT_LDTIME		--제조 L/T
+				 ,  ISNULL(B.INSPEC_YN, 'N')										AS INSPEC_YN			--품질대상
+				 ,  B.INSPEC_METH_MATRL												AS INSPEC_METH_MATRL	--수입검사방법
+				 ,  B.INSPEC_METH_PROG												AS INSPEC_METH_PROG		--공정검사방법
+				 ,  B.INSPEC_METH_PRODT												AS INSPEC_METH_PRODT	--출하검사방법
+				 ,  ISNULL(B.COST_YN, 'N')											AS COST_YN				--원가계산대상
+				 ,  B.COST_PRICE													AS COST_PRICE			--원가
+				 ,  A.REMARK1														AS REMARK1				--비고1
+				 ,  A.REMARK2														AS REMARK2				--비고2
+				 ,  A.REMARK3														AS REMARK3				--비고3
+				 ,  A.INSERT_DB_USER												AS INSERT_DB_USER		--입력자
+				 ,  A.INSERT_DB_TIME												AS INSERT_DB_TIME		--입력일
+				 ,  A.UPDATE_DB_USER												AS UPDATE_DB_USER		--수정자
+				 ,  A.UPDATE_DB_TIME												AS UPDATE_DB_TIME		--수정일
+				 ,  ROW_NUMBER() OVER (ORDER BY A.COMP_CODE, A.ITEM_CODE)			AS SEQ					--SEQ
+				 ,  B.DIV_CODE														AS DIV_CODE				--사업장코드
+				 ,  B.DIV_CODE														AS DIV_CODE2			--사업장코드
+				 ,  CASE WHEN ISNULL(B.DIV_CODE, '') = @DIV_CODE THEN '1'
+						 ELSE '2'
+					END																AS BPR200T_YN			--BPR200T DIV_CODE 조회조건과 동일여부
+				 ,  CASE WHEN ISNULL(B.DIV_CODE, '') = @DIV_CODE THEN '1'
+						 ELSE '2'
+					END																AS BPR200T_YN2			--BPR200T DIV_CODE 조회조건과 동일여부
+				 ,  B.ITEM_TYPE														AS ITEM_TYPE			--양산구분
+
+				-- 20180514 추가
+				 , A.EXCESS_RATE													AS EXCESS_RATE1
+				 , A.SPEC_NUM
+				 , B.EXCESS_RATE													AS EXCESS_RATE2
+				 , B.REAL_CARE_PERIOD
+				 , ISNULL(B.LOT_YN,'N')		AS	LOT_YN
+				 , B.MINI_PURCH_Q
+				 , B.MAX_PURCH_Q
+
+				-- 20180528 추가
+				 , A.ITEM_MODEL
+				 , B.PACK_QTY
+				 , B.ARRAY_CNT
+				 , A.ITEM_WIDTH
+
+				 , A.EXPIRATION_DAY
+				 --20190911 CIR_PERIOD_YN 추가
+		         , ISNULL(A.CIR_PERIOD_YN, 'N')										AS CIR_PERIOD_YN
+				 , B.PACK_TYPE
+				 , B.KEEP_TEMPER
+				 --20190305 추가
+				 , ISNULL(B.CARE_YN, 'N')											AS CARE_YN
+
+				 , B.CARE_REASON
+				 , A.MAKER_NAME
+				 , A.MAKE_NATION
+				 , ISNULL(A.CONTENT_QTY,0) AS CONTENT_QTY
+				 , A.ITEM_FLAVOR
+				 , A.SALE_NATION
+				 , B.LOCATION
+				 , B.INSERT_APPR_TYPE
+				 , B.FORM_TYPE
+				 , B.COATING
+				 , B.GOLD_WIRE
+				 , B.RISK_GRADE
+				 , B.UPN_CODE
+				 , B.INSERT_APPR_CODE
+				 , B.BARE_CODE
+				 --20191210 추가
+				 , B.WH_CELL_CODE
+				 --20191218 추가: CAR_TYPE, B_OUT_DATE
+				 , A.CAR_TYPE
+				 , A.B_OUT_DATE
+				 , B.NATIVE_AREA
+				 --20200131 추가: 매출부서구분(WB19), HS_NO, HS_NAME, HS_UNIT
+				 , B.TEMPC_01              AS SALES_DEPT
+				 , A.HS_NO
+				 , A.HS_NAME
+				 , A.HS_UNIT
+				 , B.MAN_HOUR
+				 , A.UNIT_WGT
+				 , A.WGT_UNIT
+				 , A.UNIT_VOL
+				 , A.VOL_UNIT
+				 --20200925 추가: ITEM_DIVISION
+				 , A.ITEM_DIVISION
+				 , B.REMARK_AREA
+				 , A.ITEM_COLOR
+				 --20210705 추가: COST_KIND
+				 , B.COST_KIND
+				 --20210719 추가: NEW_ITEM_TERM(신제품관리개월수)
+				 , A.NEW_ITEM_TERM
+				 
+				 -- 20210823 멕아이씨에스 전용 추가
+				 , A.ITEM_GRADE		-- 등급
+				 , A.UDI_CODE		-- UID코드
+				 , A.ITEM_MODEL AS MODEL_CODE	-- 모델 CODE
+			<if test="gsSetField == &quot;MICS&quot;">
+				 , D.MODEL_NAME	AS MODEL_NAME	-- 모델 NAME
+			</if>
+				 , A.ITEM_ALIAS                 --20210914 추가
+			  FROM			   BPR100T  A  WITH (NOLOCK)
+					LEFT  JOIN BPR200T  B  WITH (NOLOCK) ON B.COMP_CODE	 = A.COMP_CODE
+														AND B.DIV_CODE	 = @DIV_CODE
+														AND B.ITEM_CODE	 = A.ITEM_CODE
+					LEFT  JOIN BCM100T  C  WITH (NOLOCK) ON C.COMP_CODE	 = B.COMP_CODE
+														AND C.CUSTOM_CODE   = B.CUSTOM_CODE
+					LEFT  JOIN BPR000T  L1 WITH (NOLOCK) ON L1.COMP_CODE	= A.COMP_CODE
+														AND L1.LEVEL1	  != '*'
+														AND L1.LEVEL1	   = A.ITEM_LEVEL1
+														AND L1.LEVEL2	   = '*'
+														AND L1.LEVEL3	   = '*'
+					LEFT  JOIN BPR000T  L2 WITH (NOLOCK) ON L2.COMP_CODE	= A.COMP_CODE
+														AND L2.LEVEL1	  != '*'
+														AND L2.LEVEL1	   = A.ITEM_LEVEL1
+														AND L2.LEVEL2	  != '*'
+														AND L2.LEVEL2	   = A.ITEM_LEVEL2
+														AND L2.LEVEL3	   = '*'
+					LEFT  JOIN BPR000T  L3 WITH (NOLOCK) ON L3.COMP_CODE	= A.COMP_CODE
+														AND L3.LEVEL1	  != '*'
+														AND L3.LEVEL1	   = A.ITEM_LEVEL1
+														AND L3.LEVEL2	  != '*'
+														AND L3.LEVEL2	   = A.ITEM_LEVEL2
+														AND L3.LEVEL3	  != '*'
+														AND L3.LEVEL3	   = A.ITEM_LEVEL3
+			<if test="gsSetField == &quot;MICS&quot;">
+					/* 20210823 멕아이씨에스 전용 추가 */
+					LEFT OUTER JOIN S_BMD100T_MEK D WITH (NOLOCK)	ON	A.COMP_CODE = D.COMP_CODE
+																	AND	A.ITEM_MODEL = D.MODEL_UNI_CODE
+			</if>
+			WHERE   A.COMP_CODE		 =	   @COMP_CODE
+			AND     B.DIV_CODE =  @DIV_CODE
+			AND   ((B.ITEM_ACCOUNT	  =	   @ITEM_ACCOUNT	   AND @ITEM_ACCOUNT   != '') OR (@ITEM_ACCOUNT	= ''))
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+	 			AND (A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+				 	OR A.ITEM_NAME LIKE '%'+ #{ITEM_CODE} + '%' )
+		    </if>
+
+	--		AND   ((A.ITEM_CODE	  LIKE	   @ITEM_CODE + '%'	AND @ITEM_CODE	  != '') OR (@ITEM_CODE	   = ''))
+	--		AND   ((A.ITEM_NAME	  LIKE '%' + @ITEM_NAME + '%'	AND @ITEM_NAME	  != '') OR (@ITEM_NAME	   = ''))
+			AND   ((B.SUPPLY_TYPE	   =	   @SUPPLY_TYPE		AND @SUPPLY_TYPE	!= '') OR (@SUPPLY_TYPE	 = ''))
+			AND   ((B.ORDER_PRSN		=	   @ORDER_PRSN		 AND @ORDER_PRSN	 != '') OR (@ORDER_PRSN	  = ''))
+			AND   ((A.ITEM_LEVEL1	   =	   @ITEM_LEVEL1		AND @ITEM_LEVEL1	!= '') OR (@ITEM_LEVEL1	 = ''))
+			AND   ((A.ITEM_LEVEL2	   =	   @ITEM_LEVEL2		AND @ITEM_LEVEL2	!= '') OR (@ITEM_LEVEL2	 = ''))
+			AND   ((A.ITEM_LEVEL3	   =	   @ITEM_LEVEL3		AND @ITEM_LEVEL3	!= '') OR (@ITEM_LEVEL3	 = ''))
+			AND   ((A.USE_YN			=	   @USE_YN			 AND @USE_YN		 != '') OR (@USE_YN		  = ''))
+
+		<if test="@foren.Ognl@isNotEmpty(QRY_TYPE) and @foren.Ognl@isNotEmpty(QRY_VALUE)">
+			AND	(
+				   (@QRY_TYPE	  = '') OR (@QRY_TYPE != '' AND ${QRY_TYPE} LIKE '%' + @QRY_VALUE + '%')
+				   )
+		</if>
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+	</select>
+
+
+
+
+
+
+	<select id="bpr300ukrvService.checkExnum" parameterType="Map" resultType="rMap">
+		/* bpr300ukrvService.checkExnum */
+		/* bpr300ukrv.Cbpr300ukrv[fnBpr250Save] Query03 */
+		SELECT T.ITEM_CODE, T.EX_DATE, T.EX_NUM
+		  FROM (
+				/* 매입전표 */
+				SELECT TOP 1 B.ITEM_CODE, C.EX_DATE, C.EX_NUM
+				  FROM			 MAP100T AS A WITH (NOLOCK)
+					   INNER  JOIN MAP200T AS B WITH (NOLOCK) ON B.COMP_CODE		= A.COMP_CODE
+															 AND B.DIV_CODE		 = A.DIV_CODE
+															 AND B.CHANGE_BASIS_NUM = A.CHANGE_BASIS_NUM
+						LEFT  JOIN AGJ110T AS C WITH (NOLOCK) ON C.COMP_CODE		= A.COMP_CODE
+															 AND C.EX_DATE		  = A.EX_DATE
+															 AND C.EX_NUM		   = A.EX_NUM
+				 WHERE A.COMP_CODE			= #{S_COMP_CODE}
+				   AND A.DIV_CODE			 = #{DIV_CODE}
+				   AND ISNULL(C.MOD_DIVI,'') != 'D'			/*			 삭제된 전표 아닌것만 */
+				   AND ISNULL(C.EX_DATE,'')  != ''			 /*			 전표번호가 있으면 수정 불가능 */
+				   AND B.ITEM_CODE			= #{ITEM_CODE}
+
+				UNION ALL
+
+				/*  매출기표 */
+				SELECT TOP 1 B.ITEM_CODE, C.EX_DATE, C.EX_NUM
+				  FROM			SSA100T  AS A WITH (NOLOCK)
+					   INNER JOIN SSA110T  AS B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+															 AND B.DIV_CODE  = A.DIV_CODE
+															 AND B.BILL_NUM  = A.BILL_NUM
+						LEFT JOIN AGJ110T  AS C WITH (NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+															 AND C.EX_DATE   = A.EX_DATE
+															 AND C.EX_NUM	= A.EX_NUM
+				 WHERE A.COMP_CODE			= #{S_COMP_CODE}
+				   AND A.DIV_CODE			 = #{DIV_CODE}
+				   AND ISNULL(C.MOD_DIVI,'') != 'D'			/*			  삭제된 전표 아닌것만	*/
+				   AND ISNULL(C.EX_DATE,'')  != ''			 /*			   전표번호가 있으면 수정 불가능	*/
+				   AND B.ITEM_CODE			= #{ITEM_CODE}
+
+				UNION ALL
+
+				/*  세금계산서 매출기표	*/
+				SELECT TOP 1 B.ITEM_CODE, C.EX_DATE, C.EX_NUM
+				  FROM			SSA100T AS A WITH (NOLOCK)
+					   INNER JOIN SSA110T AS B WITH (NOLOCK) ON A.COMP_CODE	= B.COMP_CODE
+															AND A.DIV_CODE	 = B.DIV_CODE
+															AND A.BILL_NUM	 = B.BILL_NUM
+					   INNER JOIN STB100T AS C WITH (NOLOCK) ON B.COMP_CODE	= C.COMP_CODE
+															AND B.TO_DIV_CODE  = C.DIV_CODE
+															AND B.PUB_NUM	  = C.PUB_NUM
+						LEFT JOIN AGJ110T AS D WITH (NOLOCK) ON  D.COMP_CODE   = C.COMP_CODE
+															AND D.EX_DATE	  = C.EX_DATE
+															AND D.EX_NUM	   = C.EX_NUM
+				 WHERE A.COMP_CODE			= #{S_COMP_CODE}
+				   AND A.DIV_CODE			 = #{DIV_CODE}
+				   AND ISNULL(D.MOD_DIVI,'') != 'D'			/*			  삭제된 전표 아닌것만	*/
+				   AND ISNULL(D.EX_DATE,'')  != ''			 /*				전표번호가 있으면 수정 불가능	*/
+				   AND B.ITEM_CODE			= #{ITEM_CODE}
+
+				UNION ALL
+
+				/*  수출 선적기표 	*/
+				SELECT TOP 1 B.ITEM_CODE, C.EX_DATE, C.EX_NUM
+				  FROM			TED100T AS A WITH (NOLOCK)
+					   INNER JOIN TED110T AS B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+															AND B.DIV_CODE	= A.DIV_CODE
+															AND B.BL_SER_NO   = A.BL_SER_NO
+						LEFT JOIN AGJ110T AS C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+															AND C.EX_DATE	 = A.EX_DATE
+															AND C.EX_NUM	  = A.EX_NUM
+				 WHERE A.COMP_CODE			= #{S_COMP_CODE}
+				   AND A.DIV_CODE			 = #{DIV_CODE}
+				   AND ISNULL(C.MOD_DIVI,'') != 'D'			/*			  삭제된 전표 아닌것만	*/
+				   AND ISNULL(C.EX_DATE,'')  != ''			 /*			   전표번호가 있으면 수정 불가능	*/
+				   AND B.ITEM_CODE			= #{ITEM_CODE}
+
+				UNION ALL
+
+				/*  수출 LOCAL 매출기표	*/
+				SELECT TOP 1 B.ITEM_CODE, C.EX_DATE, C.EX_NUM
+				  FROM			TEC120T AS A WITH (NOLOCK)
+					   INNER JOIN TEC130T AS B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+															AND B.DIV_CODE	= A.DIV_CODE
+															AND B.ACCEPT_NO   = A.ACCEPT_NO
+						LEFT JOIN AGJ110T AS C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+															AND C.EX_DATE	 = A.EX_DATE
+															AND C.EX_NUM	  = A.EX_NUM
+				 WHERE A.COMP_CODE			= #{S_COMP_CODE}
+				   AND A.DIV_CODE			 = #{DIV_CODE}
+				   AND ISNULL(C.MOD_DIVI,'') != 'D'			/*			   삭제된 전표 아닌것만	*/
+				   AND ISNULL(C.EX_DATE,'')  != ''			 /*				전표번호가 있으면 수정 불가능	*/
+				   AND B.ITEM_CODE			= #{ITEM_CODE}
+
+			   )  AS T
+	</select>
+
+	<insert id="bpr300ukrvService.insert" parameterType="Map" useGeneratedKeys="false">
+		/* bpr300ukrv.Cbpr300ukrv[fnBpr300Save] Query01 */
+		BEGIN
+			SET NOCOUNT	ON
+			SET ARITHABORT ON
+
+		/*   1. (파라메터)변수 선언> ------------------------------------------------------------------------------------------- */
+			DECLARE @COMP_CODE				NVARCHAR(10)		-- 법인코드
+				  , @DIV_CODE				NVARCHAR(10)		-- 사업장코드
+				  , @ITEM_CODE				NVARCHAR(20)		-- 품목코드
+				  , @ITEM_NAME				NVARCHAR(200)		-- 품목명
+				  , @ITEM_NAME1				NVARCHAR(200)		-- 별칭
+				  , @ITEM_NAME2				NVARCHAR(200)		-- 별칭
+				  , @SPEC					NVARCHAR(160)		-- 규격
+				  , @ITEM_LEVEL1			NVARCHAR(20)		-- 대분류
+				  , @ITEM_LEVEL2			NVARCHAR(20)		-- 중분류
+				  , @ITEM_LEVEL3			NVARCHAR(20)		-- 소분류
+				  , @STOCK_UNIT				NVARCHAR(06)		-- 재고단위
+				  , @SALE_UNIT				NVARCHAR(06)		-- 판매단위
+				  , @SALE_TRNS_RATE			NUMERIC(12, 6)		-- 판매입수
+				  , @PUR_TRNS_RATE			NUMERIC(12, 6)		-- 구매입수
+				  , @SALE_BASIS_P			NUMERIC(30, 6)		-- 매출단가
+				  , @TAX_TYPE				NVARCHAR(01)		-- 세구분
+				  , @DOM_FORIGN				NVARCHAR(01)		-- 국내외
+				  , @STOCK_CARE_YN			NVARCHAR(01)		-- 재고관리여부
+				  , @START_DATE				NVARCHAR(08)		-- 사용시작일
+				  , @STOP_DATE				NVARCHAR(08)		-- 사용중단일
+				  , @USE_YN					NVARCHAR(01)		-- 사용여부
+				  , @BARCODE				NVARCHAR(30)		-- 바코드
+				  , @ITEM_MAKER_PN			NVARCHAR(30)		-- 메이커 Part No
+				  , @REMARK1				NVARCHAR(300)		-- 비고1
+				  , @REMARK2				NVARCHAR(300)		-- 비고2
+				  , @REMARK3				NVARCHAR(300)		-- 비고3
+				  , @USER_ID				NVARCHAR(100)		-- 사용자ID
+
+				  , @ITEM_ACCOUNT			NVARCHAR(02)		-- 아이템계정
+				  , @SUPPLY_TYPE			NVARCHAR(01)
+				  , @ORDER_UNIT				NVARCHAR(03)
+				  , @PURCHASE_BASE_P		NUMERIC(30, 6)
+				  , @ORDER_PRSN				NVARCHAR(02)
+				  , @WH_CODE				NVARCHAR(08)
+				  , @ORDER_PLAN				NVARCHAR(01)
+				  , @CUSTOM_CODE			NVARCHAR(08)
+				  , @BASIS_P				NUMERIC(30, 6)
+				  , @REAL_CARE_YN			NVARCHAR(01)
+				  , @MINI_PACK_Q			NUMERIC(30, 6)
+				  , @ORDER_KIND				NVARCHAR(01)
+				  , @NEED_Q_PRESENT			NVARCHAR(01)
+				  , @EXC_STOCK_CHECK_YN		NVARCHAR(01)
+				  , @SAFE_STOCK_Q			NUMERIC(30, 6)
+				  , @DIST_LDTIME			NUMERIC(3, 0)
+				  , @ROP_YN					NVARCHAR(01)
+				  , @DAY_AVG_SPEND			NUMERIC(30, 6)
+				  , @ORDER_POINT			NUMERIC(30, 6)
+				  , @ORDER_METH				NVARCHAR(02)
+				  , @OUT_METH				NVARCHAR(01)
+				  , @RESULT_YN				NVARCHAR(01)
+				  , @WORK_SHOP_CODE			NVARCHAR(08)
+				  , @PURCH_LDTIME			NUMERIC(3, 0)
+				  , @PRODUCT_LDTIME         NUMERIC(3, 0)
+				  , @INSPEC_YN				NVARCHAR(01)
+				  , @INSPEC_METH_MATRL		NVARCHAR(02)
+				  , @INSPEC_METH_PROG		NVARCHAR(02)
+				  , @INSPEC_METH_PRODT		NVARCHAR(02)
+				  , @COST_YN				NVARCHAR(01)
+				  , @COST_PRICE				NUMERIC(30, 6)
+				  , @ITEM_TYPE				NVARCHAR(02)
+
+				-- 20180514 추가
+				  , @EXCESS_RATE1			NUMERIC(8, 4)		-- 과출고허용율 (BPR100T)
+				  , @SPEC_NUM				NVARCHAR(30)		-- 도면번호 (BPR100T)
+				  , @EXCESS_RATE2			NUMERIC(9, 4)		-- 과입고허용율 (BPR200T)
+				  , @REAL_CARE_PERIOD		NVARCHAR(2)			-- 실사주기 (BPR200T)
+				  , @LOT_YN					NVARCHAR(1)			-- LOT관리여부 (BPR200T)
+				  , @MINI_PURCH_Q			NUMERIC(30, 6)		-- 최소발주량 (BPR200T)
+				  , @MAX_PURCH_Q			NUMERIC(30, 6)		-- 최대발주량 (BPR200T)
+
+				-- 20180528 추가
+				  , @ITEM_MODEL				NVARCHAR(100)		-- 모델 (BPR100T)
+				  , @ITEM_WIDTH				NUMERIC(30 ,6)		-- 폭 (BPR100T)
+				  , @PACK_QTY				NUMERIC(30, 6)		-- 포장수량 (BPR200T)
+				  , @ARRAY_CNT				NUMERIC(30, 6)		-- 배열수 (BPR200T)
+
+				  , @EXPIRATION_DAY			NVARCHAR(10)
+				--20190911 CIR_PERIOD_YN 추가
+				  , @CIR_PERIOD_YN			NVARCHAR(01)
+				  , @PACK_TYPE				NVARCHAR(10)
+
+				-- 20190305 추가
+				  , @CARE_YN				NVARCHAR(01)		-- 관리대상품목 (BPR200T)
+				  , @CARE_REASON			NVARCHAR(100)		-- 사유 (BPR200T)
+
+				  , @MAKER_NAME		        NVARCHAR(500)		--제조사
+				  , @MAKE_NATION            NVARCHAR(500)		--원산지
+				  , @CONTENT_QTY            NUMERIC(30, 6)		--함량
+				  , @ITEM_FLAVOR            NVARCHAR(500)		--맛
+				  , @SALE_NATION            NVARCHAR(500)		--판매국
+				  , @LOCATION            NVARCHAR(40)				--위치
+				-- 20190625 추가
+				  , @INSERT_APPR_TYPE    NVARCHAR(10)				--삽입기구 타입
+				  , @FORM_TYPE              NVARCHAR(20)				--형상
+				  , @COATING            	     NVARCHAR(20)				--코팅유무
+				  , @GOLD_WIRE               NVARCHAR(20)				--골드WIRE위치
+				  , @RISK_GRADE              NVARCHAR(10)				--위험등급
+				  , @UPN_CODE            	 NVARCHAR(50)				--UPN코드
+				  , @INSERT_APPR_CODE    NVARCHAR(20)				--삽입기구코드
+				  , @BARE_CODE            	 NVARCHAR(20)				--베어코드
+
+				  , @UNIT_WGT            NUMERIC(30, 6)		        --단위중량
+				  , @WGT_UNIT            NVARCHAR(3)				--중량단위
+				  , @UNIT_VOL            NUMERIC(30, 6)		        --단위부피
+				  , @VOL_UNIT            NVARCHAR(3)				--부피단위
+				  , @REMARK_AREA         NVARCHAR(600)				--비고(제조지시)
+
+			SET @COMP_CODE	  		= #{S_COMP_CODE}
+			SET @DIV_CODE			= #{DIV_CODE}
+			SET @ITEM_CODE	  		= REPLACE(#{ITEM_CODE},' ','')
+			SET @ITEM_NAME	  		= #{ITEM_NAME}
+			SET @ITEM_NAME1	 		= #{ITEM_NAME1}
+			SET @ITEM_NAME2	 		= #{ITEM_NAME2}
+			SET @SPEC		   		= #{SPEC}
+			SET @ITEM_LEVEL1		= #{ITEM_LEVEL1}
+			SET @ITEM_LEVEL2		= #{ITEM_LEVEL2}
+			SET @ITEM_LEVEL3		= #{ITEM_LEVEL3}
+			SET @STOCK_UNIT	 		= #{STOCK_UNIT}
+			SET @SALE_UNIT	  		= #{SALE_UNIT}
+			SET @SALE_TRNS_RATE		= #{SALE_TRNS_RATE}
+			SET @PUR_TRNS_RATE	  		= #{PUR_TRNS_RATE}
+			SET @SALE_BASIS_P   	= #{SALE_BASIS_P}
+			SET @TAX_TYPE	   		= #{TAX_TYPE}
+			SET @DOM_FORIGN	 		= #{DOM_FORIGN}
+			SET @STOCK_CARE_YN  	= #{STOCK_CARE_YN}
+			SET @START_DATE	 		= #{START_DATE}
+			SET @STOP_DATE	  		= #{STOP_DATE}
+			SET @USE_YN		 		= #{USE_YN}
+			SET @BARCODE			= #{BARCODE}
+			SET @ITEM_MAKER_PN		= #{ITEM_MAKER_PN}
+			SET @REMARK1			= #{REMARK1}
+			SET @REMARK2			= #{REMARK2}
+			SET @REMARK3			= #{REMARK3}
+			SET @USER_ID			= #{S_USER_ID}
+
+			SET @ITEM_ACCOUNT		= #{ITEM_ACCOUNT}
+			SET @SUPPLY_TYPE		= #{SUPPLY_TYPE}
+			SET @ORDER_UNIT			= #{ORDER_UNIT}
+			SET @PURCHASE_BASE_P	= #{PURCHASE_BASE_P}
+			SET @ORDER_PRSN			= #{ORDER_PRSN}
+			SET @WH_CODE			= #{WH_CODE}
+			SET @ORDER_PLAN			= #{ORDER_PLAN}
+			SET @CUSTOM_CODE		= #{CUSTOM_CODE}
+			SET @BASIS_P			= #{BASIS_P}
+			SET @REAL_CARE_YN		= #{REAL_CARE_YN}
+			SET @MINI_PACK_Q		= #{MINI_PACK_Q}
+			SET @ORDER_KIND			= #{ORDER_KIND}
+			SET @NEED_Q_PRESENT		= #{NEED_Q_PRESENT}
+			SET @EXC_STOCK_CHECK_YN	= #{EXC_STOCK_CHECK_YN}
+			SET @SAFE_STOCK_Q		= #{SAFE_STOCK_Q}
+			SET @DIST_LDTIME		= #{DIST_LDTIME}
+			SET @ROP_YN				= #{ROP_YN}
+			SET @DAY_AVG_SPEND		= #{DAY_AVG_SPEND}
+			SET @ORDER_POINT		= #{ORDER_POINT}
+			SET @ORDER_METH			= #{ORDER_METH}
+			SET @OUT_METH			= #{OUT_METH}
+			SET @RESULT_YN			= #{RESULT_YN}
+			SET @WORK_SHOP_CODE		= #{WORK_SHOP_CODE}
+			SET @PURCH_LDTIME       = #{PURCH_LDTIME}
+			SET @PRODUCT_LDTIME		= #{PRODUCT_LDTIME}
+			SET @INSPEC_YN			= #{INSPEC_YN}
+			SET @INSPEC_METH_MATRL	= #{INSPEC_METH_MATRL}
+			SET @INSPEC_METH_PROG	= #{INSPEC_METH_PROG}
+			SET @INSPEC_METH_PRODT	= #{INSPEC_METH_PRODT}
+			SET @COST_YN			= #{COST_YN}
+			SET @COST_PRICE			= #{COST_PRICE}
+			SET @ITEM_TYPE			= #{ITEM_TYPE}
+
+			-- 20180514 추가
+			SET @EXCESS_RATE1		= #{EXCESS_RATE1}
+			SET @SPEC_NUM			= #{SPEC_NUM}
+			SET @EXCESS_RATE2		= #{EXCESS_RATE2}
+			SET @REAL_CARE_PERIOD	= #{REAL_CARE_PERIOD}
+			SET @LOT_YN				= #{LOT_YN}
+			SET @MINI_PURCH_Q		= #{MINI_PURCH_Q}
+			SET @MAX_PURCH_Q		= #{MAX_PURCH_Q}
+
+			-- 20180528 추가
+			SET @ITEM_MODEL			= #{ITEM_MODEL}
+			SET @ITEM_WIDTH			= #{ITEM_WIDTH}
+			SET @PACK_QTY			= #{PACK_QTY}
+			SET @ARRAY_CNT			= #{ARRAY_CNT}
+
+			SET @EXPIRATION_DAY		= #{EXPIRATION_DAY}
+			--20190911 CIR_PERIOD_YN 추가
+			SET @CIR_PERIOD_YN		= #{CIR_PERIOD_YN}
+
+			SET @PACK_TYPE			= #{PACK_TYPE}
+
+			-- 20190305 추가
+			SET @CARE_YN			= #{CARE_YN}
+			SET @CARE_REASON		= #{CARE_REASON}
+
+			SET @MAKER_NAME	        = #{MAKER_NAME}
+			SET @MAKE_NATION        = #{MAKE_NATION}
+			SET @CONTENT_QTY        = CASE WHEN #{CONTENT_QTY} = '' OR #{CONTENT_QTY} IS NULL THEN 0 ELSE #{CONTENT_QTY} END
+			SET @ITEM_FLAVOR        = #{ITEM_FLAVOR}
+			SET @SALE_NATION        = #{SALE_NATION}
+			SET @LOCATION        	   = #{LOCATION}
+
+			-- 20190625
+			SET @INSERT_APPR_TYPE		= #{INSERT_APPR_TYPE}
+			SET @FORM_TYPE       			= #{FORM_TYPE}
+			SET @COATING                	= #{COATING}
+			SET @GOLD_WIRE             	= #{GOLD_WIRE}
+			SET @RISK_GRADE            	= #{RISK_GRADE}
+			SET @UPN_CODE               	= #{UPN_CODE}
+			SET @INSERT_APPR_CODE     = #{INSERT_APPR_CODE}
+			SET @BARE_CODE           	    = #{BARE_CODE}
+
+			SET @UNIT_WGT           	    = #{UNIT_WGT}
+			SET @WGT_UNIT           	    = #{WGT_UNIT}
+			SET @UNIT_VOL           	    = #{UNIT_VOL}
+			SET @VOL_UNIT           	    = #{VOL_UNIT}
+			--2020.11.20 제조지시서용 비고 추가
+			SET @REMARK_AREA           	    = #{REMARK_AREA}
+		/*  2. 데이타 저장(BPR100T) -------------------------------------------------------------------------------------------------- */
+
+			IF NOT EXISTS ( SELECT  TOP 1 1
+							FROM	BPR100T WITH (NOLOCK)
+							WHERE   COMP_CODE = @COMP_CODE
+							AND	 ITEM_CODE = @ITEM_CODE
+						  )
+
+			BEGIN
+
+				INSERT  INTO BPR100T
+				(
+						COMP_CODE		, ITEM_CODE			, ITEM_NAME			, ITEM_NAME1		, ITEM_NAME2
+					  , SPEC			, ITEM_LEVEL1		, ITEM_LEVEL2		, ITEM_LEVEL3		, STOCK_UNIT
+					  , SALE_UNIT		, TRNS_RATE			, SALE_BASIS_P		, TAX_TYPE			, DOM_FORIGN
+					  , STOCK_CARE_YN	, START_DATE		, STOP_DATE			, USE_YN			, BARCODE
+					  , ITEM_MAKER_PN 	, REMARK1			, REMARK2			, REMARK3
+					  , INSERT_DB_USER	, INSERT_DB_TIME	, UPDATE_DB_USER	, UPDATE_DB_TIME
+					-- 20180514 추가
+					  , EXCESS_RATE		, SPEC_NUM
+					-- 20180528 추가
+					  , ITEM_MODEL		, ITEM_WIDTH        , EXPIRATION_DAY
+					  --20190911 CIR_PERIOD_YN 추가
+					  , CIR_PERIOD_YN
+					  , MAKER_NAME	,MAKE_NATION	,CONTENT_QTY	,ITEM_FLAVOR	,SALE_NATION
+					  --20191218 추가
+					  , CAR_TYPE
+					  , B_OUT_DATE
+					  --20200131 추가: HS_NO, HS_NAME, HS_UNIT
+					  , HS_NO
+					  , HS_NAME
+					  , HS_UNIT
+					  , UNIT_WGT, WGT_UNIT, UNIT_VOL, VOL_UNIT
+					  --20200925 추가: ITEM_DIVISION
+					  , ITEM_DIVISION
+					  , ITEM_COLOR
+					  , NEW_ITEM_TERM
+					 -- 20210823 멕아이씨에스 전용 추가
+					 , ITEM_GRADE
+					 , UDI_CODE
+					 , ITEM_ALIAS                 --20210914 추가
+				)
+				VALUES
+				(
+						@COMP_CODE		, @ITEM_CODE		, @ITEM_NAME		, @ITEM_NAME1		, @ITEM_NAME2
+					  , @SPEC			, @ITEM_LEVEL1		, @ITEM_LEVEL2		, @ITEM_LEVEL3		, @STOCK_UNIT
+					  , @SALE_UNIT		, @SALE_TRNS_RATE	, @SALE_BASIS_P		, @TAX_TYPE			, @DOM_FORIGN
+					  , @STOCK_CARE_YN	, @START_DATE		, @STOP_DATE		, @USE_YN			, @BARCODE
+					  , @ITEM_MAKER_PN 	, @REMARK1		, @REMARK2			, @REMARK3
+					  , @USER_ID		, GETDATE()			, @USER_ID			, GETDATE()
+					-- 20180514 추가
+					  , @EXCESS_RATE1	, @SPEC_NUM
+					-- 20180528 추가
+					  , @ITEM_MODEL		, @ITEM_WIDTH       , @EXPIRATION_DAY
+					  --20190911 CIR_PERIOD_YN 추가
+					  , @CIR_PERIOD_YN
+					  , @MAKER_NAME	,@MAKE_NATION	, @CONTENT_QTY ,@ITEM_FLAVOR	,@SALE_NATION
+					  --20191218 추가
+					  , #{CAR_TYPE}
+					  , #{B_OUT_DATE}
+					  --20200131 추가: HS_NO, HS_NAME, HS_UNIT
+					  , #{HS_NO}
+					  , #{HS_NAME}
+					  , #{HS_UNIT}
+					  , @UNIT_WGT, @WGT_UNIT, @UNIT_VOL, @VOL_UNIT
+					  --20200925 추가: ITEM_DIVISION
+					  , #{ITEM_DIVISION}
+					  , #{ITEM_COLOR}
+					  , #{NEW_ITEM_TERM}
+					  
+					 -- 20210823 멕아이씨에스 전용 추가
+					 , #{ITEM_GRADE}
+					 , #{UDI_CODE}
+					 , UPPER(#{ITEM_ALIAS})                 --20210914 추가
+				)
+			END
+
+			ELSE
+
+			BEGIN
+
+				UPDATE  BPR100T
+				SET	 ITEM_NAME			= @ITEM_NAME
+					 ,  ITEM_NAME1		= @ITEM_NAME1
+					 ,  ITEM_NAME2		= @ITEM_NAME2
+					 ,  SPEC			= @SPEC
+					 ,  ITEM_LEVEL1		= @ITEM_LEVEL1
+					 ,  ITEM_LEVEL2		= @ITEM_LEVEL2
+					 ,  ITEM_LEVEL3		= @ITEM_LEVEL3
+					 ,  STOCK_UNIT		= @STOCK_UNIT
+					 ,  SALE_UNIT		= @SALE_UNIT
+					 ,  TRNS_RATE		= @SALE_TRNS_RATE
+					 ,  SALE_BASIS_P	= @SALE_BASIS_P
+					 ,  TAX_TYPE		= @TAX_TYPE
+					 ,  DOM_FORIGN		= @DOM_FORIGN
+					 ,  STOCK_CARE_YN	= @STOCK_CARE_YN
+					 ,  START_DATE		= @START_DATE
+					 ,  STOP_DATE		= @STOP_DATE
+					 ,  USE_YN			= @USE_YN
+					 ,  BARCODE			= @BARCODE
+					 ,  ITEM_MAKER_PN 	= @ITEM_MAKER_PN
+					 ,  REMARK1			= @REMARK1
+					 ,  REMARK2			= @REMARK2
+					 ,  REMARK3			= @REMARK3
+					 ,  UPDATE_DB_USER	= @USER_ID
+					 ,  UPDATE_DB_TIME	= GETDATE()
+					 -- 20180514 추가
+					 , EXCESS_RATE		= @EXCESS_RATE1
+					 , SPEC_NUM			= @SPEC_NUM
+					 -- 20180528 추가
+					 , ITEM_MODEL		= @ITEM_MODEL
+					 , ITEM_WIDTH		= @ITEM_WIDTH
+					 , EXPIRATION_DAY   = @EXPIRATION_DAY
+					 --20190911 CIR_PERIOD_YN 추가
+					 , CIR_PERIOD_YN    = @CIR_PERIOD_YN
+					 , MAKER_NAME	    = @MAKER_NAME
+					 , MAKE_NATION	    = @MAKE_NATION
+					 , CONTENT_QTY	    = @CONTENT_QTY
+					 , ITEM_FLAVOR	    = @ITEM_FLAVOR
+					 , SALE_NATION      = @SALE_NATION
+					 --20191218 추가
+					 , CAR_TYPE			= #{CAR_TYPE}
+					 , B_OUT_DATE		= #{B_OUT_DATE}
+					 --20200131 추가: HS_NO, HS_NAME, HS_UNIT
+					 , HS_NO			= #{HS_NO}
+					 , HS_NAME			= #{HS_NAME}
+					 , HS_UNIT			= #{HS_UNIT}
+					 , UNIT_WGT         = @UNIT_WGT
+					 , WGT_UNIT         = @WGT_UNIT
+					 , UNIT_VOL         = @UNIT_VOL
+					 , VOL_UNIT         = @VOL_UNIT
+					 --20200925 추가: ITEM_DIVISION
+					 , ITEM_DIVISION    = #{ITEM_DIVISION}
+					 , ITEM_COLOR = #{ITEM_COLOR}
+					 , NEW_ITEM_TERM	= #{NEW_ITEM_TERM}
+					 -- 20210823 멕아이씨에스 전용 추가
+					 , ITEM_GRADE		= #{ITEM_GRADE}
+					 , UDI_CODE			= #{UDI_CODE}
+					 , ITEM_ALIAS		= UPPER(#{ITEM_ALIAS})        --20210914 추가
+				 WHERE  COMP_CODE	= @COMP_CODE
+				   AND  ITEM_CODE	= @ITEM_CODE
+			END
+
+
+		/*  3. 데이타 저장(BPR200T) -------------------------------------------------------------------------------------------------- */
+
+			INSERT INTO BPR200T
+				 ( COMP_CODE
+				 , ITEM_CODE
+				 , ITEM_NAME
+				 , ITEM_ACCOUNT
+				 , SUPPLY_TYPE
+				 , ORDER_UNIT
+				 , TRNS_RATE
+				 , PURCHASE_BASE_P
+				 , ORDER_PRSN
+				 , WH_CODE
+				 , ORDER_PLAN
+				 , CUSTOM_CODE
+				 , BASIS_P
+				 , REAL_CARE_YN
+				 , MINI_PACK_Q
+				 , ORDER_KIND
+				 , NEED_Q_PRESENT
+				 , EXC_STOCK_CHECK_YN
+				 , SAFE_STOCK_Q
+				 , DIST_LDTIME
+				 , ROP_YN
+				 , DAY_AVG_SPEND
+				 , ORDER_POINT
+				 , ORDER_METH
+				 , OUT_METH
+				 , RESULT_YN
+				 , WORK_SHOP_CODE
+				 , PURCH_LDTIME
+				 , PRODUCT_LDTIME
+				 , INSPEC_YN
+				 , INSPEC_METH_MATRL
+				 , INSPEC_METH_PROG
+				 , INSPEC_METH_PRODT
+				 , COST_YN
+				 , COST_PRICE
+				 , DIV_CODE
+				 , ITEM_TYPE
+				 , INSERT_DB_USER  , INSERT_DB_TIME	, UPDATE_DB_USER	, UPDATE_DB_TIME
+				 -- 20180514 추가
+				 , EXCESS_RATE
+				 , REAL_CARE_PERIOD
+				 , LOT_YN
+				 , MINI_PURCH_Q
+				 , MAX_PURCH_Q
+				 -- 20180528 추가
+				 , PACK_QTY
+				 , ARRAY_CNT
+				 , PACK_TYPE
+				 -- 20190305 추가
+				 , CARE_YN
+				 , CARE_REASON
+				 , LOCATION
+				 -- 20190625 추가
+				 , INSERT_APPR_TYPE
+				 , FORM_TYPE
+				 , COATING
+				 , GOLD_WIRE
+				 , RISK_GRADE
+				 , UPN_CODE
+				 , INSERT_APPR_CODE
+				 , BARE_CODE
+				 --20191210 추가
+				 , WH_CELL_CODE
+				 , NATIVE_AREA
+				 --20200131 추가: 매출부서구분(WB19)
+				 , TEMPC_01
+				 , MAN_HOUR
+				 , REMARK_AREA
+				 --20210705 추가: 부문코드(제조부문)
+				 , COST_KIND
+				 )
+			VALUES
+				 ( @COMP_CODE
+				 , @ITEM_CODE
+				 , @ITEM_NAME
+				 , @ITEM_ACCOUNT
+				 , @SUPPLY_TYPE
+				 , @ORDER_UNIT
+				 , @PUR_TRNS_RATE
+				 , @PURCHASE_BASE_P
+				 , @ORDER_PRSN
+				 , @WH_CODE
+				 , @ORDER_PLAN
+				 , @CUSTOM_CODE
+				 , @BASIS_P
+				 , @REAL_CARE_YN
+				 , @MINI_PACK_Q
+				 , @ORDER_KIND
+				 , @NEED_Q_PRESENT
+				 , @EXC_STOCK_CHECK_YN
+				 , @SAFE_STOCK_Q
+				 , @DIST_LDTIME
+				 , @ROP_YN
+				 , @DAY_AVG_SPEND
+				 , @ORDER_POINT
+				 , @ORDER_METH
+				 , @OUT_METH
+				 , @RESULT_YN
+				 , @WORK_SHOP_CODE
+				 , @PURCH_LDTIME
+				 , @PRODUCT_LDTIME
+				 , @INSPEC_YN
+				 , @INSPEC_METH_MATRL
+				 --20180528 수정 (동일한 값 INSERT)
+				 , @INSPEC_METH_MATRL
+				 , @INSPEC_METH_MATRL
+				 --, @INSPEC_METH_PROG
+				 --, @INSPEC_METH_PRODT
+				 , @COST_YN
+				 , @COST_PRICE
+				 , @DIV_CODE
+				 , @ITEM_TYPE
+				 , @USER_ID		, GETDATE()		 , @USER_ID		  , GETDATE()
+				 -- 20180514 추가
+				 , @EXCESS_RATE2
+				 , @REAL_CARE_PERIOD
+				 , @LOT_YN
+				 , @MINI_PURCH_Q
+				 , @MAX_PURCH_Q
+				 -- 20180528 추가
+				 , @PACK_QTY
+				 , @ARRAY_CNT
+				 , @PACK_TYPE
+				 -- 20190305 추가
+				 , @CARE_YN
+				 , @CARE_REASON
+				 , @LOCATION
+				  -- 20190625 추가
+				 , @INSERT_APPR_TYPE
+				 , @FORM_TYPE
+				 , @COATING
+				 , @GOLD_WIRE
+				 , @RISK_GRADE
+				 , @UPN_CODE
+				 , @INSERT_APPR_CODE
+				 , @BARE_CODE
+				 --20191210 추가
+				 , #{WH_CELL_CODE}
+				 , #{NATIVE_AREA}
+				 --20200131 추가: 매출부서구분(WB19)
+				 , #{SALES_DEPT}
+
+				 , #{MAN_HOUR}
+				 , #{REMARK_AREA}
+				 , #{COST_KIND}
+				 )
+
+			SET NOCOUNT	OFF
+			SET ARITHABORT OFF
+		END
+	</insert>
+
+	<update id="bpr300ukrvService.update" parameterType="Map">
+		/* bpr300ukrv.Cbpr300ukrv[fnBpr300Save] Query02 */
+		BEGIN
+			SET NOCOUNT	ON
+			SET ARITHABORT ON
+
+		/*   1. (파라메터)변수 선언> ------------------------------------------------------------------------------------------- */
+			DECLARE @COMP_CODE				NVARCHAR(10)		-- 법인코드
+				  , @DIV_CODE				NVARCHAR(10)		-- 사업장코드
+				  , @ITEM_CODE				NVARCHAR(20)		-- 품목코드
+				  , @ITEM_NAME				NVARCHAR(200)		-- 품목명
+				  , @ITEM_NAME1				NVARCHAR(200)		-- 별칭
+				  , @ITEM_NAME2				NVARCHAR(200)		-- 별칭
+				  , @SPEC					NVARCHAR(160)		-- 규격
+				  , @ITEM_LEVEL1			NVARCHAR(20)		-- 대분류
+				  , @ITEM_LEVEL2			NVARCHAR(20)		-- 중분류
+				  , @ITEM_LEVEL3			NVARCHAR(20)		-- 소분류
+				  , @STOCK_UNIT				NVARCHAR(06)		-- 재고단위
+				  , @SALE_UNIT				NVARCHAR(06)		-- 판매단위
+				  , @SALE_TRNS_RATE			NUMERIC(12, 6)		-- 판매입수
+				  , @PUR_TRNS_RATE				NUMERIC(12, 6)		-- 구매입수
+				  , @SALE_BASIS_P			NUMERIC(30, 6)		-- 매출단가
+				  , @TAX_TYPE				NVARCHAR(01)		-- 세구분
+				  , @DOM_FORIGN				NVARCHAR(01)		-- 국내외
+				  , @STOCK_CARE_YN			NVARCHAR(01)		-- 재고관리여부
+				  , @START_DATE				NVARCHAR(08)		-- 사용시작일
+				  , @STOP_DATE				NVARCHAR(08)		-- 사용중단일
+				  , @USE_YN					NVARCHAR(01)		-- 사용여부
+				  , @BARCODE				NVARCHAR(30)		-- 바코드
+				  , @ITEM_MAKER_PN			NVARCHAR(30)		-- 메이커 Part No
+				  , @REMARK1				NVARCHAR(300)		-- 비고1
+				  , @REMARK2				NVARCHAR(300)		-- 비고2
+				  , @REMARK3				NVARCHAR(300)		-- 비고3
+				  , @USER_ID				NVARCHAR(100)		-- 사용자ID
+
+				  , @ITEM_ACCOUNT			NVARCHAR(02)		-- 아이템계정
+				  , @SUPPLY_TYPE			NVARCHAR(01)
+				  , @ORDER_UNIT				NVARCHAR(03)
+				  , @PURCHASE_BASE_P		NUMERIC(30, 6)
+				  , @ORDER_PRSN				NVARCHAR(02)
+				  , @WH_CODE				NVARCHAR(08)
+				  , @ORDER_PLAN				NVARCHAR(01)
+				  , @CUSTOM_CODE			NVARCHAR(08)
+				  , @BASIS_P				NUMERIC(30, 6)
+				  , @REAL_CARE_YN			NVARCHAR(01)
+				  , @MINI_PACK_Q			NUMERIC(30, 6)
+				  , @ORDER_KIND				NVARCHAR(01)
+				  , @NEED_Q_PRESENT			NVARCHAR(01)
+				  , @EXC_STOCK_CHECK_YN		NVARCHAR(01)
+				  , @SAFE_STOCK_Q			NUMERIC(30, 6)
+				  , @DIST_LDTIME			NUMERIC(3, 0)
+				  , @ROP_YN					NVARCHAR(01)
+				  , @DAY_AVG_SPEND			NUMERIC(30, 6)
+				  , @ORDER_POINT			NUMERIC(30, 6)
+				  , @ORDER_METH				NVARCHAR(02)
+				  , @OUT_METH				NVARCHAR(01)
+				  , @RESULT_YN				NVARCHAR(01)
+				  , @WORK_SHOP_CODE			NVARCHAR(08)
+				  , @PRODUCT_LDTIME			NUMERIC(3, 0)
+				  , @INSPEC_YN				NVARCHAR(01)
+				  , @INSPEC_METH_MATRL		NVARCHAR(02)
+				  , @INSPEC_METH_PROG		NVARCHAR(02)
+				  , @INSPEC_METH_PRODT		NVARCHAR(02)
+				  , @COST_YN				NVARCHAR(01)
+				  , @COST_PRICE				NUMERIC(30, 6)
+				  , @ITEM_TYPE				NVARCHAR(02)
+				  , @MATRL_PRESENT_DAY		NUMERIC(3, 0)
+
+				-- 20180514 추가
+				  , @EXCESS_RATE1			NUMERIC(8, 4)		-- 과출고허용율 (BPR100T)
+				  , @SPEC_NUM				NVARCHAR(30)		-- 도면번호 (BPR100T)
+				  , @EXCESS_RATE2			NUMERIC(9, 4)		-- 과입고허용율 (BPR200T)
+				  , @REAL_CARE_PERIOD		NVARCHAR(2)			-- 실사주기 (BPR200T)
+				  , @LOT_YN					NVARCHAR(1)			-- LOT관리여부 (BPR200T)
+				  , @MINI_PURCH_Q			NUMERIC(30, 6)		-- 최소발주량 (BPR200T)
+				  , @MAX_PURCH_Q			NUMERIC(30, 6)		-- 최대발주량 (BPR200T)
+
+				-- 20180528 추가
+				  , @ITEM_MODEL				NVARCHAR(100)		-- 모델 (BPR100T)
+				  , @ITEM_WIDTH				NUMERIC(30 ,6)		-- 폭 (BPR100T)
+				  , @PACK_QTY				NUMERIC(30, 6)		-- 포장수량 (BPR200T)
+				  , @ARRAY_CNT				NUMERIC(30, 6)		-- 배열수 (BPR200T)
+				  , @EXPIRATION_DAY			NVARCHAR(10)
+				--20190911 CIR_PERIOD_YN 추가
+				  , @CIR_PERIOD_YN			NVARCHAR(01)
+
+				  , @PACK_TYPE				NVARCHAR(10)
+				  , @KEEP_TEMPER			NVARCHAR(100)
+
+				-- 20190305 추가
+				  , @CARE_YN				NVARCHAR(01)		-- 관리대상품목 (BPR200T)
+				  , @CARE_REASON			NVARCHAR(100)		-- 사유 (BPR200T)
+
+				  , @MAKER_NAME		        NVARCHAR(500)		--제조사
+				  , @MAKE_NATION            NVARCHAR(500)		--원산지
+				  , @CONTENT_QTY            NUMERIC(30, 6)		--함량
+				  , @ITEM_FLAVOR            NVARCHAR(500)		--맛
+				  , @SALE_NATION            NVARCHAR(500)		--판매국
+				  , @LOCATION            	NVARCHAR(40)				--위치
+
+				-- 20190625 추가
+				  , @INSERT_APPR_TYPE    NVARCHAR(10)				--삽입기구 타입
+				  , @FORM_TYPE              NVARCHAR(20)				--형상
+				  , @COATING            	     NVARCHAR(20)				--코팅유무
+				  , @GOLD_WIRE               NVARCHAR(20)				--골드WIRE위치
+				  , @RISK_GRADE              NVARCHAR(10)				--위험등급
+				  , @UPN_CODE            	 NVARCHAR(50)				--UPN코드
+				  , @INSERT_APPR_CODE    NVARCHAR(20)				--삽입기구코드
+				  , @BARE_CODE            	 NVARCHAR(20)				--베어코드
+				  , @PURCH_LDTIME			NUMERIC(3)			-- 발주L/T
+
+				  , @UNIT_WGT            NUMERIC(30, 6)		        --단위중량
+				  , @WGT_UNIT            NVARCHAR(3)				--중량단위
+				  , @UNIT_VOL            NUMERIC(30, 6)		        --단위부피
+				  , @VOL_UNIT            NVARCHAR(3)				--부피단위
+				  , @REMARK_AREA         NVARCHAR(3)				--비고(제조지시)
+
+			SET @COMP_CODE	  		= #{S_COMP_CODE}
+			SET @DIV_CODE			= #{DIV_CODE}
+			SET @ITEM_CODE	  		= #{ITEM_CODE}
+			SET @ITEM_NAME	  		= #{ITEM_NAME}
+			SET @ITEM_NAME1	 		= #{ITEM_NAME1}
+			SET @ITEM_NAME2	 		= #{ITEM_NAME2}
+			SET @SPEC		   		= #{SPEC}
+			SET @ITEM_LEVEL1		= #{ITEM_LEVEL1}
+			SET @ITEM_LEVEL2		= #{ITEM_LEVEL2}
+			SET @ITEM_LEVEL3		= #{ITEM_LEVEL3}
+			SET @STOCK_UNIT	 		= #{STOCK_UNIT}
+			SET @SALE_UNIT	  		= #{SALE_UNIT}
+			SET @SALE_TRNS_RATE		= #{SALE_TRNS_RATE}
+			SET @PUR_TRNS_RATE	  		= #{PUR_TRNS_RATE}
+			SET @SALE_BASIS_P   	= #{SALE_BASIS_P}
+			SET @TAX_TYPE	   		= #{TAX_TYPE}
+			SET @DOM_FORIGN	 		= #{DOM_FORIGN}
+			SET @STOCK_CARE_YN  	= #{STOCK_CARE_YN}
+			SET @START_DATE	 		= #{START_DATE}
+			SET @STOP_DATE	  		= #{STOP_DATE}
+			SET @USE_YN		 		= #{USE_YN}
+			SET @BARCODE			= #{BARCODE}
+			SET @ITEM_MAKER_PN		= #{ITEM_MAKER_PN}
+			SET @REMARK1			= #{REMARK1}
+			SET @REMARK2			= #{REMARK2}
+			SET @REMARK3			= #{REMARK3}
+			SET @USER_ID			= #{S_USER_ID}
+
+			SET @ITEM_ACCOUNT		= #{ITEM_ACCOUNT}
+			SET @SUPPLY_TYPE		= #{SUPPLY_TYPE}
+			SET @ORDER_UNIT			= #{ORDER_UNIT}
+			SET @PURCHASE_BASE_P	= #{PURCHASE_BASE_P}
+			SET @ORDER_PRSN			= #{ORDER_PRSN}
+			SET @WH_CODE			= #{WH_CODE}
+			SET @ORDER_PLAN			= #{ORDER_PLAN}
+			SET @CUSTOM_CODE		= #{CUSTOM_CODE}
+			SET @BASIS_P			= #{BASIS_P}
+			SET @REAL_CARE_YN		= #{REAL_CARE_YN}
+			SET @MINI_PACK_Q		= #{MINI_PACK_Q}
+			SET @ORDER_KIND			= #{ORDER_KIND}
+			SET @NEED_Q_PRESENT		= #{NEED_Q_PRESENT}
+			SET @EXC_STOCK_CHECK_YN	= #{EXC_STOCK_CHECK_YN}
+			SET @SAFE_STOCK_Q		= #{SAFE_STOCK_Q}
+			SET @DIST_LDTIME		= #{DIST_LDTIME}
+			SET @ROP_YN				= #{ROP_YN}
+			SET @DAY_AVG_SPEND		= #{DAY_AVG_SPEND}
+			SET @ORDER_POINT		= #{ORDER_POINT}
+			SET @ORDER_METH			= #{ORDER_METH}
+			SET @OUT_METH			= #{OUT_METH}
+			SET @RESULT_YN			= #{RESULT_YN}
+			SET @WORK_SHOP_CODE		= #{WORK_SHOP_CODE}
+			SET @PRODUCT_LDTIME		= #{PRODUCT_LDTIME}
+			SET @INSPEC_YN			= #{INSPEC_YN}
+			SET @INSPEC_METH_MATRL	= #{INSPEC_METH_MATRL}
+			--20180528 수정 (동일한 값 입력)
+			SET @INSPEC_METH_PROG	= #{INSPEC_METH_MATRL}
+			SET @INSPEC_METH_PRODT	= #{INSPEC_METH_MATRL}
+
+			SET @COST_YN			= #{COST_YN}
+			SET @COST_PRICE			= #{COST_PRICE}
+			SET @ITEM_TYPE			= #{ITEM_TYPE}
+			SET @MATRL_PRESENT_DAY	= #{MATRL_PRESENT_DAY}
+
+			-- 20180514 추가
+			SET @EXCESS_RATE1		= #{EXCESS_RATE1}
+			SET @SPEC_NUM			= #{SPEC_NUM}
+			SET @EXCESS_RATE2		= #{EXCESS_RATE2}
+			SET @REAL_CARE_PERIOD	= #{REAL_CARE_PERIOD}
+			SET @LOT_YN				= #{LOT_YN}
+			SET @MINI_PURCH_Q		= #{MINI_PURCH_Q}
+			SET @MAX_PURCH_Q		= #{MAX_PURCH_Q}
+
+			-- 20180528 추가
+			SET @ITEM_MODEL			= #{ITEM_MODEL}
+			SET @ITEM_WIDTH			= #{ITEM_WIDTH}
+			SET @PACK_QTY			= #{PACK_QTY}
+			SET @ARRAY_CNT			= #{ARRAY_CNT}
+
+			SET @EXPIRATION_DAY		= #{EXPIRATION_DAY}
+			--20190911 CIR_PERIOD_YN 추가
+			SET @CIR_PERIOD_YN		= #{CIR_PERIOD_YN}
+			SET @PACK_TYPE			= #{PACK_TYPE}
+			SET @KEEP_TEMPER		= #{KEEP_TEMPER}
+
+			-- 20190305 추가
+			SET @CARE_YN			= #{CARE_YN}
+			SET @CARE_REASON		= #{CARE_REASON}
+
+			SET @MAKER_NAME	        = #{MAKER_NAME}
+			SET @MAKE_NATION        = #{MAKE_NATION}
+			SET @CONTENT_QTY        = CASE WHEN #{CONTENT_QTY} = '' OR #{CONTENT_QTY} IS NULL THEN 0 ELSE #{CONTENT_QTY} END
+			SET @ITEM_FLAVOR        = #{ITEM_FLAVOR}
+			SET @SALE_NATION        = #{SALE_NATION}
+		    SET @LOCATION 				= #{LOCATION}
+
+			-- 20190625
+			SET @INSERT_APPR_TYPE		= #{INSERT_APPR_TYPE}
+			SET @FORM_TYPE       			= #{FORM_TYPE}
+			SET @COATING                	= #{COATING}
+			SET @GOLD_WIRE             	= #{GOLD_WIRE}
+			SET @RISK_GRADE            	= #{RISK_GRADE}
+			SET @UPN_CODE               	= #{UPN_CODE}
+			SET @INSERT_APPR_CODE     = #{INSERT_APPR_CODE}
+			SET @BARE_CODE           	    = #{BARE_CODE}
+
+			SET @PURCH_LDTIME		= #{PURCH_LDTIME}
+
+			SET @UNIT_WGT           	    = #{UNIT_WGT}
+			SET @WGT_UNIT           	    = #{WGT_UNIT}
+			SET @UNIT_VOL           	    = #{UNIT_VOL}
+			SET @VOL_UNIT           	    = #{VOL_UNIT}
+				--2020.11.20 제조지시서용 비고 추가
+			SET @REMARK_AREA           	    = #{REMARK_AREA}
+		/*  2. 데이타 저장(BPR100T) -------------------------------------------------------------------------------------------------- */
+
+			IF NOT EXISTS ( SELECT  TOP 1 1
+							FROM	BPR100T WITH (NOLOCK)
+							WHERE   COMP_CODE = @COMP_CODE
+							AND	 ITEM_CODE = @ITEM_CODE
+						  )
+
+			BEGIN
+
+				INSERT  INTO BPR100T
+				(
+						COMP_CODE		, ITEM_CODE			, ITEM_NAME		, ITEM_NAME1	, ITEM_NAME2
+					  , SPEC			, ITEM_LEVEL1		, ITEM_LEVEL2	, ITEM_LEVEL3	, STOCK_UNIT
+					  , SALE_UNIT		, TRNS_RATE			, SALE_BASIS_P	, TAX_TYPE		, DOM_FORIGN
+					  , STOCK_CARE_YN	, START_DATE		, STOP_DATE		, USE_YN		, BARCODE
+					  , ITEM_MAKER_PN 	, REMARK1			, REMARK2			, REMARK3
+					  , INSERT_DB_USER	, INSERT_DB_TIME	, UPDATE_DB_USER	, UPDATE_DB_TIME
+					-- 20180514 추가
+					  , EXCESS_RATE		, SPEC_NUM
+					-- 20180528 추가
+					  , ITEM_MODEL		, ITEM_WIDTH        , EXPIRATION_DAY
+					  --20190911 CIR_PERIOD_YN 추가
+					  , CIR_PERIOD_YN
+					  , MAKER_NAME	,MAKE_NATION	,CONTENT_QTY	,ITEM_FLAVOR	,SALE_NATION
+					  --20191218 추가
+					  , CAR_TYPE
+					  , B_OUT_DATE
+					  --20200131 추가: HS_NO, HS_NAME, HS_UNIT
+					  , HS_NO
+					  , HS_NAME
+					  , HS_UNIT
+					  , UNIT_WGT, WGT_UNIT, UNIT_VOL, VOL_UNIT
+					  --20200925 추가: ITEM_DIVISION
+					  , ITEM_DIVISION
+					  ,ITEM_COLOR
+					  , NEW_ITEM_TERM
+					 -- 20210823 멕아이씨에스 전용 추가
+					 , ITEM_GRADE	-- 등급
+					 , UDI_CODE		-- UID코드
+					 , ITEM_ALIAS                 --20210914 추가
+				)
+				VALUES
+				(
+						@COMP_CODE		, @ITEM_CODE		, @ITEM_NAME		, @ITEM_NAME1	, @ITEM_NAME2
+					  , @SPEC			, @ITEM_LEVEL1		, @ITEM_LEVEL2		, @ITEM_LEVEL3	, @STOCK_UNIT
+					  , @SALE_UNIT		, @SALE_TRNS_RATE	, @SALE_BASIS_P		, @TAX_TYPE		, @DOM_FORIGN
+					  , @STOCK_CARE_YN	, @START_DATE		, @STOP_DATE		, @USE_YN		, @BARCODE
+					  , @ITEM_MAKER_PN 	, @REMARK1		, @REMARK2			, @REMARK3
+					  , @USER_ID		, GETDATE()			, @USER_ID			, GETDATE()
+					-- 20180514 추가
+					  , @EXCESS_RATE1	, @SPEC_NUM
+					-- 20180528 추가
+					  , @ITEM_MODEL		, @ITEM_WIDTH       , @EXPIRATION_DAY
+					  --20190911 CIR_PERIOD_YN 추가
+					  , @CIR_PERIOD_YN
+					  , @MAKER_NAME	,@MAKE_NATION	,@CONTENT_QTY	,@ITEM_FLAVOR	,@SALE_NATION
+					  --20191218 추가
+					  , #{CAR_TYPE}
+					  , #{B_OUT_DATE}
+					  --20200131 추가: HS_NO, HS_NAME, HS_UNIT
+					  , #{HS_NO}
+					  , #{HS_NAME}
+					  , #{HS_UNIT}
+					  , @UNIT_WGT, @WGT_UNIT, @UNIT_VOL, @VOL_UNIT
+					  --20200925 추가: ITEM_DIVISION
+					  , #{ITEM_DIVISION}
+					  , #{ITEM_COLOR}
+					  , #{NEW_ITEM_TERM}
+					  
+					 -- 20210823 멕아이씨에스 전용 추가
+					 , #{ITEM_GRADE}
+					 , #{UDI_CODE}
+					 , UPPER(#{ITEM_ALIAS})                 --20210914 추가
+				)
+			END
+
+			ELSE
+
+			BEGIN
+				UPDATE BPR100T
+				   SET ITEM_NAME		= @ITEM_NAME
+					 , ITEM_NAME1		= @ITEM_NAME1
+					 , ITEM_NAME2		= @ITEM_NAME2
+					 , SPEC				= @SPEC
+					 , ITEM_LEVEL1		= @ITEM_LEVEL1
+					 , ITEM_LEVEL2		= @ITEM_LEVEL2
+					 , ITEM_LEVEL3		= @ITEM_LEVEL3
+					 , STOCK_UNIT		= @STOCK_UNIT
+					 , SALE_UNIT		= @SALE_UNIT
+					 , TRNS_RATE		= @SALE_TRNS_RATE
+					 , SALE_BASIS_P		= @SALE_BASIS_P
+					 , TAX_TYPE			= @TAX_TYPE
+					 , DOM_FORIGN		= @DOM_FORIGN
+					 , STOCK_CARE_YN	= @STOCK_CARE_YN
+					 , START_DATE		= @START_DATE
+					 , STOP_DATE		= @STOP_DATE
+					 , USE_YN			= @USE_YN
+					 , BARCODE			= @BARCODE
+					 , ITEM_MAKER_PN 	= @ITEM_MAKER_PN
+					 , REMARK1			= @REMARK1
+					 , REMARK2			= @REMARK2
+					 , REMARK3			= @REMARK3
+					 , UPDATE_DB_USER	= @USER_ID
+					 , UPDATE_DB_TIME	= GETDATE()
+					 -- 20180514 추가
+					 , EXCESS_RATE		= @EXCESS_RATE1
+					 , SPEC_NUM			= @SPEC_NUM
+					 -- 20180528 추가
+					 , ITEM_MODEL		= @ITEM_MODEL
+					 , ITEM_WIDTH		= @ITEM_WIDTH
+					 , EXPIRATION_DAY   = @EXPIRATION_DAY
+					 --20190911 CIR_PERIOD_YN 추가
+					 , CIR_PERIOD_YN    = @CIR_PERIOD_YN
+					 , MAKER_NAME	    = @MAKER_NAME
+					 , MAKE_NATION	    = @MAKE_NATION
+					 , CONTENT_QTY	    = @CONTENT_QTY
+					 , ITEM_FLAVOR	    = @ITEM_FLAVOR
+					 , SALE_NATION      = @SALE_NATION
+					 --20191218 추가
+					 , CAR_TYPE			= #{CAR_TYPE}
+					 , B_OUT_DATE		= #{B_OUT_DATE}
+					 --20200131 추가: HS_NO, HS_NAME, HS_UNIT
+					 , HS_NO			= #{HS_NO}
+					 , HS_NAME			= #{HS_NAME}
+					 , HS_UNIT			= #{HS_UNIT}
+					 , UNIT_WGT         = @UNIT_WGT
+					 , WGT_UNIT         = @WGT_UNIT
+					 , UNIT_VOL         = @UNIT_VOL
+					 , VOL_UNIT         = @VOL_UNIT
+					 --20200925 추가: ITEM_DIVISION
+					 , ITEM_DIVISION    = #{ITEM_DIVISION}
+					 , ITEM_COLOR = #{ITEM_COLOR}
+					 , NEW_ITEM_TERM	= #{NEW_ITEM_TERM}
+					 
+					 -- 20210823 멕아이씨에스 전용 추가
+					 , ITEM_GRADE		= #{ITEM_GRADE}
+					 , UDI_CODE			= #{UDI_CODE}
+					 , ITEM_ALIAS		= UPPER(#{ITEM_ALIAS})                 --20210914 추가
+				 WHERE COMP_CODE	= @COMP_CODE
+				   AND ITEM_CODE	= @ITEM_CODE
+			END
+
+		/*  3. 데이타 수정(BPR200T) -------------------------------------------------------------------------------------------------- */
+
+			IF NOT EXISTS ( SELECT  TOP 1 1
+							FROM	BPR200T WITH (NOLOCK)
+							WHERE   COMP_CODE = @COMP_CODE
+							AND     DIV_CODE  = @DIV_CODE
+							AND	    ITEM_CODE = @ITEM_CODE
+						  )
+
+				BEGIN
+
+					INSERT INTO BPR200T
+						 ( COMP_CODE
+						 , DIV_CODE
+						 , ITEM_CODE
+						 , ITEM_NAME
+						 , ITEM_ACCOUNT
+						 , SUPPLY_TYPE
+						 , ORDER_UNIT
+						 , TRNS_RATE
+						 , PURCHASE_BASE_P
+						 , ORDER_PRSN
+						 , WH_CODE
+						 , ORDER_PLAN
+						 , CUSTOM_CODE
+						 , BASIS_P
+						 , REAL_CARE_YN
+						 , MINI_PACK_Q
+						 , ORDER_KIND
+						 , NEED_Q_PRESENT
+						 , EXC_STOCK_CHECK_YN
+						 , SAFE_STOCK_Q
+						 , DIST_LDTIME
+						 , ROP_YN
+						 , DAY_AVG_SPEND
+						 , ORDER_POINT
+						 , ORDER_METH
+						 , OUT_METH
+						 , RESULT_YN
+						 , WORK_SHOP_CODE
+						 , PRODUCT_LDTIME
+						 , INSPEC_YN
+						 , INSPEC_METH_MATRL
+						 , INSPEC_METH_PROG
+						 , INSPEC_METH_PRODT
+						 , COST_YN
+						 , COST_PRICE
+						 , ITEM_TYPE
+						 , INSERT_DB_USER  , INSERT_DB_TIME	, UPDATE_DB_USER	, UPDATE_DB_TIME
+						 , EXCESS_RATE
+						 , REAL_CARE_PERIOD
+						 , LOT_YN
+						 , MINI_PURCH_Q
+						 , MAX_PURCH_Q
+						 , PACK_QTY
+						 , ARRAY_CNT
+						 , PACK_TYPE
+						 , KEEP_TEMPER
+						 , CARE_YN
+						 , CARE_REASON
+						 , LOCATION
+						 , INSERT_APPR_TYPE
+						 , FORM_TYPE
+						 , COATING
+						 , GOLD_WIRE
+						 , RISK_GRADE
+						 , UPN_CODE
+						 , INSERT_APPR_CODE
+						 , BARE_CODE
+						 , WH_CELL_CODE
+						 , NATIVE_AREA
+						 , TEMPC_01
+						 , MAN_HOUR
+						 , REMARK_AREA
+						 , PURCH_LDTIME
+						 , COST_KIND
+						 )
+					VALUES
+						 ( @COMP_CODE
+						 , @DIV_CODE
+						 , @ITEM_CODE
+						 , @ITEM_NAME
+						 , @ITEM_ACCOUNT
+						 , @SUPPLY_TYPE
+						 , @ORDER_UNIT
+						 , @PUR_TRNS_RATE
+						 , @PURCHASE_BASE_P
+						 , @ORDER_PRSN
+						 , @WH_CODE
+						 , @ORDER_PLAN
+						 , @CUSTOM_CODE
+						 , @BASIS_P
+						 , @REAL_CARE_YN
+						 , @MINI_PACK_Q
+						 , @ORDER_KIND
+						 , @NEED_Q_PRESENT
+						 , @EXC_STOCK_CHECK_YN
+						 , @SAFE_STOCK_Q
+						 , @DIST_LDTIME
+						 , @ROP_YN
+						 , @DAY_AVG_SPEND
+						 , @ORDER_POINT
+						 , @ORDER_METH
+						 , @OUT_METH
+						 , @RESULT_YN
+						 , @WORK_SHOP_CODE
+						 , @PRODUCT_LDTIME
+						 , @INSPEC_YN
+						 , @INSPEC_METH_MATRL
+						 , @INSPEC_METH_PROG
+						 , @INSPEC_METH_PRODT
+						 , @COST_YN
+						 , @COST_PRICE
+						 , @ITEM_TYPE
+						 , @USER_ID		, GETDATE()		 , @USER_ID		  , GETDATE()
+						 , @EXCESS_RATE2
+						 , @REAL_CARE_PERIOD
+						 , @LOT_YN
+						 , @MINI_PURCH_Q
+						 , @MAX_PURCH_Q
+						 , @PACK_QTY
+						 , @ARRAY_CNT
+						 , @PACK_TYPE
+						 , @KEEP_TEMPER
+						 , @CARE_YN
+						 , @CARE_REASON
+						 , @LOCATION
+						 , @INSERT_APPR_TYPE
+						 , @FORM_TYPE
+						 , @COATING
+						 , @GOLD_WIRE
+						 , @RISK_GRADE
+						 , @UPN_CODE
+						 , @INSERT_APPR_CODE
+						 , @BARE_CODE
+						 , #{WH_CELL_CODE}
+						 , #{NATIVE_AREA}
+						 , #{SALES_DEPT}
+						 , #{MAN_HOUR}
+						 , #{REMARK_AREA}
+						 , @PURCH_LDTIME
+						 , #{COST_KIND}
+						 )
+
+
+				END
+
+			ELSE
+
+				BEGIN
+
+					UPDATE BPR200T
+					   SET ITEM_NAME			= @ITEM_NAME
+						 , ITEM_ACCOUNT			= @ITEM_ACCOUNT
+						 , SUPPLY_TYPE			= @SUPPLY_TYPE
+						 , ORDER_UNIT			= @ORDER_UNIT
+						 , TRNS_RATE			= @PUR_TRNS_RATE
+						 , PURCHASE_BASE_P		= @PURCHASE_BASE_P
+						 , ORDER_PRSN			= @ORDER_PRSN
+						 , WH_CODE				= @WH_CODE
+						 , ORDER_PLAN			= @ORDER_PLAN
+						 , MATRL_PRESENT_DAY	= @MATRL_PRESENT_DAY
+						 , CUSTOM_CODE			= @CUSTOM_CODE
+						 , BASIS_P				= @BASIS_P
+						 , REAL_CARE_YN			= @REAL_CARE_YN
+						 , MINI_PACK_Q			= @MINI_PACK_Q
+						 , ORDER_KIND			= @ORDER_KIND
+						 , NEED_Q_PRESENT		= @NEED_Q_PRESENT
+						 , EXC_STOCK_CHECK_YN	= @EXC_STOCK_CHECK_YN
+						 , SAFE_STOCK_Q			= @SAFE_STOCK_Q
+						 , DIST_LDTIME			= @DIST_LDTIME
+						 , ROP_YN				= @ROP_YN
+						 , DAY_AVG_SPEND		= @DAY_AVG_SPEND
+						 , ORDER_POINT			= @ORDER_POINT
+						 , ORDER_METH			= @ORDER_METH
+						 , OUT_METH				= @OUT_METH
+						 , RESULT_YN			= @RESULT_YN
+						 , WORK_SHOP_CODE		= @WORK_SHOP_CODE
+						 , PRODUCT_LDTIME		= @PRODUCT_LDTIME
+						 , INSPEC_YN			= @INSPEC_YN
+						 , INSPEC_METH_MATRL	= @INSPEC_METH_MATRL
+						 , INSPEC_METH_PROG		= @INSPEC_METH_PROG
+						 , INSPEC_METH_PRODT	= @INSPEC_METH_PRODT
+						 , COST_YN				= @COST_YN
+						 , COST_PRICE			= @COST_PRICE
+						 , UPDATE_DB_USER		= @USER_ID
+						 , UPDATE_DB_TIME		= GETDATE()
+						 , ITEM_TYPE			= @ITEM_TYPE
+						 -- 20180514 추가
+						 , EXCESS_RATE			= @EXCESS_RATE2
+						 , REAL_CARE_PERIOD		= @REAL_CARE_PERIOD
+						 , LOT_YN				= @LOT_YN
+						 , MINI_PURCH_Q			= @MINI_PURCH_Q
+						 , MAX_PURCH_Q			= @MAX_PURCH_Q
+						 -- 20180528 추가
+						 , PACK_QTY				= @PACK_QTY
+						 , ARRAY_CNT			= @ARRAY_CNT
+
+						 , PACK_TYPE			= @PACK_TYPE
+						 , KEEP_TEMPER			= @KEEP_TEMPER
+
+						 -- 20190305 추가
+						 , CARE_YN				= @CARE_YN
+						 , CARE_REASON			= @CARE_REASON
+						 , LOCATION   			= @LOCATION
+
+						  -- 20190625 추가
+						 , INSERT_APPR_TYPE     =  @INSERT_APPR_TYPE
+						 , FORM_TYPE                =  @FORM_TYPE
+						 , COATING                	   =  @COATING
+						 , GOLD_WIRE            	   =  @GOLD_WIRE
+						 , RISK_GRADE           	   =  @RISK_GRADE
+						 , UPN_CODE             	   =  @UPN_CODE
+						 , INSERT_APPR_CODE     =  @INSERT_APPR_CODE
+						 , BARE_CODE            	   =  @BARE_CODE
+
+						 , PURCH_LDTIME			= @PURCH_LDTIME
+						 --20191210 추가: WH_CELL_CODE
+						 , WH_CELL_CODE			= #{WH_CELL_CODE}
+						 , TEMPC_01     = #{SALES_DEPT}
+						 , MAN_HOUR 	= #{MAN_HOUR}
+						 , REMARK_AREA  = #{REMARK_AREA}
+						 , COST_KIND    = #{OST_KIND}
+					 WHERE COMP_CODE	= @COMP_CODE
+					   AND ITEM_CODE	= @ITEM_CODE
+					   AND DIV_CODE		= @DIV_CODE
+
+				END
+
+
+			SET NOCOUNT	OFF
+			SET ARITHABORT OFF
+		END
+			--	 EXEC SP_GetDownGoodsMaster_SS {DIV_CODE}, {ITEM_CODE}, 'U'
+			--   EXEC SP_GetDownGoodsMaster_KK {DIV_CODE}, {ITEM_CODE}, 'U'
+	</update>
+
+<!-- 20210428 추가: 삭제전, BOM 등록여부 확인로직 추가 -->
+	<select id="bpr300ukrvService.checkCompCode" parameterType="Map" resultType="rMap">
+		/* bpr300ukrvService.checkCompCode */
+		SELECT A.COMP_CODE, A.COMP_NAME
+		  FROM       BOR100T   A  WITH (NOLOCK)
+		  LEFT  JOIN BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE = #{S_COMP_CODE}
+		                                       AND M1.MAIN_CODE = 'B107'
+		                                       AND M1.SUB_CODE  = '20'
+		 WHERE (A.COMP_CODE &gt; ''          AND ISNULL(M1.REF_CODE1, 'N') = 'Y')
+		    OR (A.COMP_CODE = #{S_COMP_CODE} AND ISNULL(M1.REF_CODE1, 'N') = 'N')
+	</select>
+	<select id="bpr300ukrvService.checkChildCode" parameterType="Map" resultType="rMap">
+		/* bpr300ukrvService.checkChildCode */
+		SELECT PROD_ITEM_CODE
+		     , CHILD_ITEM_CODE
+		  FROM BPR500T WITH (NOLOCK)
+		 WHERE COMP_CODE       = #{COMP_CODE}
+		   AND CHILD_ITEM_CODE = #{ITEM_CODE}
+	</select>
+
+	<delete id="bpr300ukrvService.delete" parameterType="Map">
+		DELETE FROM BPR200T
+		WHERE 	COMP_CODE = #{COMP_CODE}
+		 AND	DIV_CODE  = #{DIV_CODE}
+		 AND	ITEM_CODE = #{ITEM_CODE}
+	</delete>
+
+	<delete id="bpr300ukrvService.delete2" parameterType="Map">
+		IF NOT EXISTS ( SELECT  TOP 1 1
+						FROM	BPR200T WITH (NOLOCK)
+						WHERE   COMP_CODE = #{COMP_CODE}
+						AND	    ITEM_CODE = #{ITEM_CODE}
+					  )
+
+			BEGIN
+				DELETE FROM BPR100T
+				 WHERE COMP_CODE = #{COMP_CODE}
+				   AND ITEM_CODE = #{ITEM_CODE}
+			END
+	</delete>
+
+
+	<!-- 인증서 정보 -->
+	<select id="bpr300ukrvService.getItemInfo" parameterType="Map" resultType="rMap">
+		SELECT *
+			 , CONVERT(NVARCHAR, UPDATE_DB_TIME) AS CHANGE_YN
+		  FROM BPR101T WITH(NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND ITEM_CODE = #{ITEM_CODE}
+		 ORDER BY FILE_TYPE, MANAGE_NO
+	</select>
+
+	<insert id="bpr300ukrvService.itemInfoInsert" parameterType="Map">
+		INSERT INTO BPR101T(
+		       COMP_CODE
+		     , ITEM_CODE
+		     , FILE_TYPE
+		     , MANAGE_NO
+		     , REMARK
+		     , INSERT_DB_USER
+		     , INSERT_DB_TIME
+		     , UPDATE_DB_USER
+		     , UPDATE_DB_TIME
+		) VALUES (
+		       #{S_COMP_CODE}
+		     , #{ITEM_CODE}
+		     , #{FILE_TYPE}
+		     , #{MANAGE_NO}
+		     , #{REMARK}
+		     , #{S_USER_ID}
+		     , GETDATE()
+		     , #{S_USER_ID}
+		     , GETDATE()
+		)
+	</insert>
+
+	<update id="bpr300ukrvService.itemInfoUpdate" parameterType="Map">
+		UPDATE BPR101T
+		   SET REMARK         = #{REMARK}
+		     , UPDATE_DB_USER = #{S_USER_ID}
+		     , UPDATE_DB_TIME = GETDATE()
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND ITEM_CODE = #{ITEM_CODE}
+		   AND MANAGE_NO = #{MANAGE_NO}
+		   AND FILE_TYPE = #{FILE_TYPE}
+	</update>
+
+	<delete id="bpr300ukrvService.itemInfoDelete" parameterType="Map">
+		DELETE FROM BPR101T
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND ITEM_CODE = #{ITEM_CODE}
+		   AND MANAGE_NO = #{MANAGE_NO}
+		   AND FILE_TYPE = #{FILE_TYPE}
+	</delete>
+
+
+
+	<!-- 품목이력관리 -->
+	<select id="bpr300ukrvService.getItemHistory" parameterType="Map" resultType="rMap">
+		SELECT A.COMP_CODE
+		     , A.ITEM_CODE
+		     , A.HIST_SEQ
+		     , ITEM_HISTORY
+		     , B.USER_NAME AS INSERT_DB_USER
+			 , CONVERT(VARCHAR(50), A.INSERT_DB_TIME, 112) AS INSERT_DB_TIME
+		  FROM BPR102T A WITH(NOLOCK)
+		       INNER JOIN BSA300T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+			                                    AND B.USER_ID = A.INSERT_DB_USER
+		 WHERE A.COMP_CODE = #{S_COMP_CODE}
+		   AND A.ITEM_CODE = #{ITEM_CODE}
+		 ORDER BY CONVERT(VARCHAR(50), A.INSERT_DB_TIME, 112), A.HIST_SEQ DESC
+	</select>
+
+	<insert id="bpr300ukrvService.itemHistoryInsert" parameterType="Map">
+		INSERT INTO BPR102T(
+		       COMP_CODE
+		     , ITEM_CODE
+		     , HIST_SEQ
+		     , ITEM_HISTORY
+		     , INSERT_DB_USER
+		     , INSERT_DB_TIME
+		     , UPDATE_DB_USER
+		     , UPDATE_DB_TIME
+		) VALUES (
+		       #{S_COMP_CODE}
+		     , #{ITEM_CODE}
+		     , #{HIST_SEQ}
+		     , #{ITEM_HISTORY}
+		     , #{S_USER_ID}
+		     , GETDATE()
+		     , #{S_USER_ID}
+		     , GETDATE()
+		)
+	</insert>
+
+	<!-- 사진업로드 후, 등록자정보 update -->
+	<update id="bpr300ukrvService.photoModified" parameterType="Map">
+		/* bpr300ukrvService.photoModified */
+		UPDATE BPR101T
+		   SET CERT_FILE      = #{CERT_FILE}  --실제파일명 (ORIGINAL_FILE_NAME)
+		     , FILE_ID        = #{FILE_ID}    --서버에 저장한 파일명 (FID)
+		     , MIME_TYPE      = #{MIME_TYPE}  --파일형식
+		     , FILE_EXT	      = #{FILE_EXT}   --파일확장자
+		     , FILE_SIZE      = #{FILE_SIZE}  --파일크기
+		     , FILE_PATH      = #{FILE_PATH}  --파일경로 (PATH)
+		     , UPDATE_DB_USER = #{S_USER_ID}
+		     , UPDATE_DB_TIME = GETDATE()
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND ITEM_CODE = #{ITEM_CODE}
+		   AND MANAGE_NO = #{MANAGE_NO}
+		   AND FILE_TYPE = #{FILE_TYPE}
+	</update>
+
+	<!-- 품목 관련 파일 다운로드(관련 파일 정보) -->
+	<select id="bpr300ukrvService.selectFileInfo" parameterType="Map" resultType="gMap">
+		/* bpr300ukrvService.selectFileInfo */
+		SELECT FILE_ID     AS FID
+		     , CERT_FILE   AS ORIGINAL_FILE_NAME
+		     , FILE_PATH   AS PATH
+		     , MIME_TYPE   AS MIME_TYPE         -- 'image/jpeg'
+		     , FILE_SIZE   AS SIZE
+		  FROM BPR101T WITH (NOLOCK)
+		 WHERE FILE_ID = #{fid}
+	</select>
+
+
+
+
+
+
+
+
+	<!--일단 백업 -->
+	<select id="bpr300ukrvService.checkCompCode_BAK" parameterType="Map" resultType="rMap">
+		SELECT A.COMP_CODE, A.COMP_NAME
+		  FROM       BOR100T   A  WITH(NOLOCK)
+		  LEFT  JOIN BSA100T   M1 WITH(NOLOCK) ON M1.COMP_CODE = #{S_COMP_CODE}
+		                                      AND M1.MAIN_CODE = 'B107'
+		                                      AND M1.SUB_CODE  = '20'
+		 WHERE (A.COMP_CODE &gt; ''          AND ISNULL(M1.REF_CODE1, 'N') = 'Y')
+		    OR (A.COMP_CODE = #{S_COMP_CODE} AND ISNULL(M1.REF_CODE1, 'N') = 'N')
+	</select>
+
+	<select id="bpr300ukrvService.checkItemCode_BAK" parameterType="Map" resultType="rMap">
+		SELECT COUNT(ITEM_CODE) AS CNT
+		  FROM BPR200T WITH(NOLOCK)
+		 WHERE COMP_CODE = #{COMP_CODE}
+		   AND DIV_CODE  = #{DIV_CODE}
+		   AND ITEM_CODE = #{ITEM_CODE}
+	</select>
+
+	<select id="bpr300ukrvService.selectDivList" parameterType="Map" resultType="rMap">
+		SELECT DIV_CODE AS ADD_DIV_CODE
+		  FROM BOR120T WITH(NOLOCK)
+		 WHERE COMP_CODE = #{COMP_CODE}
+		   AND DIV_CODE != #{SEL_DIV_CODE}
+		   AND USE_YN    = 'Y'
+	</select>
+
+	<insert id="bpr300ukrvService.allDivInsert" parameterType="Map" useGeneratedKeys="false">
+		/* bpr300ukrvService.allDivinsert */
+		BEGIN
+			SET NOCOUNT	ON
+			SET ARITHABORT ON
+
+		/*   1. (파라메터)변수 선언> ------------------------------------------------------------------------------------------- */
+		DECLARE @COMP_CODE				NVARCHAR(10)		-- 법인코드
+				  , @DIV_CODE				NVARCHAR(10)		-- 사업장코드
+				  , @ITEM_CODE				NVARCHAR(20)		-- 품목코드
+				  , @ITEM_NAME				NVARCHAR(200)		-- 품목명
+				  , @ITEM_NAME1				NVARCHAR(200)		-- 별칭
+				  , @ITEM_NAME2				NVARCHAR(200)		-- 별칭
+				  , @SPEC					NVARCHAR(160)		-- 규격
+				  , @ITEM_LEVEL1			NVARCHAR(20)		-- 대분류
+				  , @ITEM_LEVEL2			NVARCHAR(20)		-- 중분류
+				  , @ITEM_LEVEL3			NVARCHAR(20)		-- 소분류
+				  , @STOCK_UNIT				NVARCHAR(06)		-- 재고단위
+				  , @SALE_UNIT				NVARCHAR(06)		-- 판매단위
+				  , @SALE_TRNS_RATE			NUMERIC(12, 6)		-- 판매입수
+				  , @PUR_TRNS_RATE			NUMERIC(12, 6)		-- 구매입수
+				  , @SALE_BASIS_P			NUMERIC(30, 6)		-- 매출단가
+				  , @TAX_TYPE				NVARCHAR(01)		-- 세구분
+				  , @DOM_FORIGN				NVARCHAR(01)		-- 국내외
+				  , @STOCK_CARE_YN			NVARCHAR(01)		-- 재고관리여부
+				  , @START_DATE				NVARCHAR(08)		-- 사용시작일
+				  , @STOP_DATE				NVARCHAR(08)		-- 사용중단일
+				  , @USE_YN					NVARCHAR(01)		-- 사용여부
+				  , @BARCODE				NVARCHAR(30)		-- 바코드
+				  , @ITEM_MAKER_PN 			NVARCHAR(30)		-- 메이커 Part No
+				  , @REMARK1				NVARCHAR(300)		-- 비고1
+				  , @REMARK2				NVARCHAR(300)		-- 비고2
+				  , @REMARK3				NVARCHAR(300)		-- 비고3
+				  , @USER_ID				NVARCHAR(100)		-- 사용자ID
+
+				  , @ITEM_ACCOUNT			NVARCHAR(02)		-- 아이템계정
+				  , @SUPPLY_TYPE			NVARCHAR(01)
+				  , @ORDER_UNIT				NVARCHAR(03)
+				  , @PURCHASE_BASE_P		NUMERIC(30, 6)
+				  , @ORDER_PRSN				NVARCHAR(02)
+				  , @WH_CODE				NVARCHAR(08)
+				  , @ORDER_PLAN				NVARCHAR(01)
+				  , @CUSTOM_CODE			NVARCHAR(08)
+				  , @BASIS_P				NUMERIC(30, 6)
+				  , @REAL_CARE_YN			NVARCHAR(01)
+				  , @MINI_PACK_Q			NUMERIC(30, 6)
+				  , @ORDER_KIND				NVARCHAR(01)
+				  , @NEED_Q_PRESENT			NVARCHAR(01)
+				  , @EXC_STOCK_CHECK_YN		NVARCHAR(01)
+				  , @SAFE_STOCK_Q			NUMERIC(30, 6)
+				  , @DIST_LDTIME			NUMERIC(3, 0)
+				  , @ROP_YN					NVARCHAR(01)
+				  , @DAY_AVG_SPEND			NUMERIC(30, 6)
+				  , @ORDER_POINT			NUMERIC(30, 6)
+				  , @ORDER_METH				NVARCHAR(02)
+				  , @OUT_METH				NVARCHAR(01)
+				  , @RESULT_YN				NVARCHAR(01)
+				  , @WORK_SHOP_CODE			NVARCHAR(08)
+				  , @PRODUCT_LDTIME			NUMERIC(3, 0)
+				  , @INSPEC_YN				NVARCHAR(01)
+				  , @INSPEC_METH_MATRL		NVARCHAR(02)
+				  , @INSPEC_METH_PROG		NVARCHAR(02)
+				  , @INSPEC_METH_PRODT		NVARCHAR(02)
+				  , @COST_YN				NVARCHAR(01)
+				  , @COST_PRICE				NUMERIC(30, 6)
+				  , @ITEM_TYPE				NVARCHAR(02)
+
+				-- 20180514 추가
+				  , @EXCESS_RATE1			NUMERIC(8, 4)		-- 과출고허용율 (BPR100T)
+				  , @SPEC_NUM				NVARCHAR(30)		-- 도면번호 (BPR100T)
+				  , @EXCESS_RATE2			NUMERIC(9, 4)		-- 과입고허용율 (BPR200T)
+				  , @REAL_CARE_PERIOD		NVARCHAR(2)			-- 실사주기 (BPR200T)
+				  , @LOT_YN					NVARCHAR(1)			-- LOT관리여부 (BPR200T)
+				  , @MINI_PURCH_Q			NUMERIC(30, 6)		-- 최소발주량 (BPR200T)
+				  , @MAX_PURCH_Q			NUMERIC(30, 6)		-- 최대발주량 (BPR200T)
+
+				-- 20180528 추가
+				  , @ITEM_MODEL				NVARCHAR(100)		-- 모델 (BPR100T)
+				  , @ITEM_WIDTH				NUMERIC(30 ,6)		-- 폭 (BPR100T)
+				  , @PACK_QTY				NUMERIC(30, 6)		-- 포장수량 (BPR200T)
+				  , @ARRAY_CNT				NUMERIC(30, 6)		-- 배열수 (BPR200T)
+
+				  , @EXPIRATION_DAY			NVARCHAR(10)
+				--20190911 CIR_PERIOD_YN 추가
+				  , @CIR_PERIOD_YN			NVARCHAR(01)
+				  , @PACK_TYPE				NVARCHAR(10)
+
+				-- 20190305 추가
+				  , @CARE_YN				NVARCHAR(01)		-- 관리대상품목 (BPR200T)
+				  , @CARE_REASON			NVARCHAR(100)		-- 사유 (BPR200T)
+
+			SET @COMP_CODE	  		= #{S_COMP_CODE}
+			SET @DIV_CODE			= #{ADD_DIV_CODE}
+			SET @ITEM_CODE	  		= #{ITEM_CODE}
+			SET @ITEM_NAME	  		= #{ITEM_NAME}
+			SET @ITEM_NAME1	 		= #{ITEM_NAME1}
+			SET @ITEM_NAME2	 		= #{ITEM_NAME2}
+			SET @SPEC		   		= #{SPEC}
+			SET @ITEM_LEVEL1		= #{ITEM_LEVEL1}
+			SET @ITEM_LEVEL2		= #{ITEM_LEVEL2}
+			SET @ITEM_LEVEL3		= #{ITEM_LEVEL3}
+			SET @STOCK_UNIT	 		= #{STOCK_UNIT}
+			SET @SALE_UNIT	  		= #{SALE_UNIT}
+			SET @SALE_TRNS_RATE		= #{SALE_TRNS_RATE}
+			SET @PUR_TRNS_RATE	  		= #{PUR_TRNS_RATE}
+			SET @SALE_BASIS_P   	= #{SALE_BASIS_P}
+			SET @TAX_TYPE	   		= #{TAX_TYPE}
+			SET @DOM_FORIGN	 		= #{DOM_FORIGN}
+			SET @STOCK_CARE_YN  	= #{STOCK_CARE_YN}
+			SET @START_DATE	 		= #{START_DATE}
+			SET @STOP_DATE	  		= #{STOP_DATE}
+			SET @USE_YN		 		= #{USE_YN}
+			SET @BARCODE			= #{BARCODE}
+			SET @ITEM_MAKER_PN 		= #{ITEM_MAKER_PN}
+			SET @REMARK1			= #{REMARK1}
+			SET @REMARK2			= #{REMARK2}
+			SET @REMARK3			= #{REMARK3}
+			SET @USER_ID			= #{S_USER_ID}
+
+			SET @ITEM_ACCOUNT		= #{ITEM_ACCOUNT}
+			SET @SUPPLY_TYPE		= #{SUPPLY_TYPE}
+			SET @ORDER_UNIT			= #{ORDER_UNIT}
+			SET @PURCHASE_BASE_P	= #{PURCHASE_BASE_P}
+			SET @ORDER_PRSN			= #{ORDER_PRSN}
+			SET @WH_CODE			= #{WH_CODE}
+			SET @ORDER_PLAN			= #{ORDER_PLAN}
+			SET @CUSTOM_CODE		= #{CUSTOM_CODE}
+			SET @BASIS_P			= #{BASIS_P}
+			SET @REAL_CARE_YN		= #{REAL_CARE_YN}
+			SET @MINI_PACK_Q		= #{MINI_PACK_Q}
+			SET @ORDER_KIND			= #{ORDER_KIND}
+			SET @NEED_Q_PRESENT		= #{NEED_Q_PRESENT}
+			SET @EXC_STOCK_CHECK_YN	= #{EXC_STOCK_CHECK_YN}
+			SET @SAFE_STOCK_Q		= #{SAFE_STOCK_Q}
+			SET @DIST_LDTIME		= #{DIST_LDTIME}
+			SET @ROP_YN				= #{ROP_YN}
+			SET @DAY_AVG_SPEND		= #{DAY_AVG_SPEND}
+			SET @ORDER_POINT		= #{ORDER_POINT}
+			SET @ORDER_METH			= #{ORDER_METH}
+			SET @OUT_METH			= #{OUT_METH}
+			SET @RESULT_YN			= #{RESULT_YN}
+			SET @WORK_SHOP_CODE		= #{WORK_SHOP_CODE}
+			SET @PRODUCT_LDTIME		= #{PRODUCT_LDTIME}
+			SET @INSPEC_YN			= #{INSPEC_YN}
+			SET @INSPEC_METH_MATRL	= #{INSPEC_METH_MATRL}
+			SET @INSPEC_METH_PROG	= #{INSPEC_METH_PROG}
+			SET @INSPEC_METH_PRODT	= #{INSPEC_METH_PRODT}
+			SET @COST_YN			= #{COST_YN}
+			SET @COST_PRICE			= #{COST_PRICE}
+			SET @ITEM_TYPE			= #{ITEM_TYPE}
+
+			-- 20180514 추가
+			SET @EXCESS_RATE1		= #{EXCESS_RATE1}
+			SET @SPEC_NUM			= #{SPEC_NUM}
+			SET @EXCESS_RATE2		= #{EXCESS_RATE2}
+			SET @REAL_CARE_PERIOD	= #{REAL_CARE_PERIOD}
+			SET @LOT_YN				= #{LOT_YN}
+			SET @MINI_PURCH_Q		= #{MINI_PURCH_Q}
+			SET @MAX_PURCH_Q		= #{MAX_PURCH_Q}
+
+			-- 20180528 추가
+			SET @ITEM_MODEL			= #{ITEM_MODEL}
+			SET @ITEM_WIDTH			= #{ITEM_WIDTH}
+			SET @PACK_QTY			= #{PACK_QTY}
+			SET @ARRAY_CNT			= #{ARRAY_CNT}
+
+			SET @EXPIRATION_DAY		= #{EXPIRATION_DAY}
+			--20190911 CIR_PERIOD_YN 추가
+			SET @CIR_PERIOD_YN		= #{CIR_PERIOD_YN}
+			SET @PACK_TYPE			= #{PACK_TYPE}
+
+			-- 20190305 추가
+			SET @CARE_YN			= #{CARE_YN}
+			SET @CARE_REASON		= #{CARE_REASON}
+
+			/* 사업장 조회 2021210 추가 -------------------------------------------------------------------------------------------------- */
+			-- 창고
+			IF EXISTS ( SELECT WH_CODE
+				          FROM BPR220T WITH (NOLOCK)
+				         WHERE COMP_CODE       = @COMP_CODE      --법인코드
+				           AND DIV_CODE        = @DIV_CODE       --사업장
+				           AND ITEM_ACCOUNT    = @ITEM_ACCOUNT   --품목계정
+				       )
+
+				SET @WH_CODE        = ( SELECT WH_CODE
+				                          FROM BPR220T WITH (NOLOCK)
+				                         WHERE COMP_CODE       = @COMP_CODE      --법인코드
+				                           AND DIV_CODE        = @DIV_CODE       --사업장
+				                           AND ITEM_ACCOUNT    = @ITEM_ACCOUNT   --품목계정
+				                      )
+
+			-- 작업장고
+			IF EXISTS ( SELECT  WORK_SHOP_CODE
+				          FROM BPR220T  WITH (NOLOCK)
+				         WHERE COMP_CODE       = @COMP_CODE      --법인코드
+				           AND DIV_CODE        = @DIV_CODE       --사업장
+				           AND ITEM_ACCOUNT    = @ITEM_ACCOUNT   --품목계정
+				      )
+				SET @WORK_SHOP_CODE = (SELECT WORK_SHOP_CODE
+				                         FROM BPR220T WITH (NOLOCK)
+				                        WHERE COMP_CODE       = @COMP_CODE      --법인코드
+				                          AND DIV_CODE        = @DIV_CODE       --사업장
+				                          AND ITEM_ACCOUNT    = @ITEM_ACCOUNT   --품목계정
+				                       )
+
+		/*  2. 데이타 저장(BPR100T) -------------------------------------------------------------------------------------------------- */
+			IF NOT EXISTS ( SELECT  TOP 1 1
+							FROM	BPR200T WITH (NOLOCK)
+							WHERE   COMP_CODE = @COMP_CODE
+							AND   DIV_CODE 		  = @DIV_CODE
+							AND	 ITEM_CODE      = @ITEM_CODE
+						  )
+			BEGIN
+			/*  3. 데이타 저장(BPR200T) -------------------------------------------------------------------------------------------------- */
+				INSERT INTO BPR200T
+					 ( COMP_CODE
+					 , ITEM_CODE
+					 , ITEM_NAME
+					 , ITEM_ACCOUNT
+					 , SUPPLY_TYPE
+					 , ORDER_UNIT
+					 , TRNS_RATE
+					 , PURCHASE_BASE_P
+					 , ORDER_PRSN
+					 , WH_CODE
+					 , ORDER_PLAN
+					 , CUSTOM_CODE
+					 , BASIS_P
+					 , REAL_CARE_YN
+					 , MINI_PACK_Q
+					 , ORDER_KIND
+					 , NEED_Q_PRESENT
+					 , EXC_STOCK_CHECK_YN
+					 , SAFE_STOCK_Q
+					 , DIST_LDTIME
+					 , ROP_YN
+					 , DAY_AVG_SPEND
+					 , ORDER_POINT
+					 , ORDER_METH
+					 , OUT_METH
+					 , RESULT_YN
+					 , WORK_SHOP_CODE
+					 , PRODUCT_LDTIME
+					 , INSPEC_YN
+					 , INSPEC_METH_MATRL
+					 , INSPEC_METH_PROG
+					 , INSPEC_METH_PRODT
+					 , COST_YN
+					 , COST_PRICE
+					 , DIV_CODE
+					 , ITEM_TYPE
+					 , INSERT_DB_USER  , INSERT_DB_TIME	, UPDATE_DB_USER	, UPDATE_DB_TIME
+					 -- 20180514 추가
+					 , EXCESS_RATE
+					 , REAL_CARE_PERIOD
+					 , LOT_YN
+					 , MINI_PURCH_Q
+					 , MAX_PURCH_Q
+					 -- 20180528 추가
+					 , PACK_QTY
+					 , ARRAY_CNT
+					 , PACK_TYPE
+					 -- 20190305 추가
+					 , CARE_YN
+					 , CARE_REASON
+					 --20191210 추가
+					 , WH_CELL_CODE
+					 , NATIVE_AREA
+					 --20200131 추가
+					 , TEMPC_01
+					 --20210705 추가
+					 , COST_KIND
+					 )
+				VALUES
+					 ( @COMP_CODE
+					 , @ITEM_CODE
+					 , @ITEM_NAME
+					 , @ITEM_ACCOUNT
+					 , @SUPPLY_TYPE
+					 , @ORDER_UNIT
+					 , @PUR_TRNS_RATE
+					 , @PURCHASE_BASE_P
+					 , @ORDER_PRSN
+					 , @WH_CODE
+					 , @ORDER_PLAN
+					 , @CUSTOM_CODE
+					 , @BASIS_P
+					 , @REAL_CARE_YN
+					 , @MINI_PACK_Q
+					 , @ORDER_KIND
+					 , @NEED_Q_PRESENT
+					 , @EXC_STOCK_CHECK_YN
+					 , @SAFE_STOCK_Q
+					 , @DIST_LDTIME
+					 , @ROP_YN
+					 , @DAY_AVG_SPEND
+					 , @ORDER_POINT
+					 , @ORDER_METH
+					 , @OUT_METH
+					 , @RESULT_YN
+					 , @WORK_SHOP_CODE
+					 , @PRODUCT_LDTIME
+					 , @INSPEC_YN
+					 , @INSPEC_METH_MATRL
+					 --20180528 수정 (동일한 값 INSERT)
+					 , @INSPEC_METH_MATRL
+					 , @INSPEC_METH_MATRL
+					 --, @INSPEC_METH_PROG
+					 --, @INSPEC_METH_PRODT
+					 , @COST_YN
+					 , @COST_PRICE
+					 , @DIV_CODE
+					 , @ITEM_TYPE
+					 , @USER_ID		, GETDATE()		 , @USER_ID		  , GETDATE()
+					 -- 20180514 추가
+					 , @EXCESS_RATE2
+					 , @REAL_CARE_PERIOD
+					 , @LOT_YN
+					 , @MINI_PURCH_Q
+					 , @MAX_PURCH_Q
+					 -- 20180528 추가
+					 , @PACK_QTY
+					 , @ARRAY_CNT
+					 , @PACK_TYPE
+					 -- 20190305 추가
+					 , @CARE_YN
+					 , @CARE_REASON
+					 --20191210 추가
+					 , #{WH_CELL_CODE}
+					 , #{NATIVE_AREA}
+					 --20200131 추가
+					 , #{SALES_DEPT}
+					 , #{COST_KIND}
+					 )
+			END
+			SET NOCOUNT	OFF
+			SET ARITHABORT OFF
+		END
+	</insert>
+
+
+	<!-- 품목관련 파일 다운로드 정보 -->
+	<select id="bpr300ukrvService.getItemInfoFileDown" parameterType="Map" resultType="rMap">
+		SELECT *
+		     , CONVERT(NVARCHAR, UPDATE_DB_TIME) AS CHANGE_YN
+		  FROM BPR101T WITH(NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND ITEM_CODE = #{ITEM_CODE}
+		   AND MANAGE_NO = #{MANAGE_NO}
+		 ORDER BY FILE_TYPE, MANAGE_NO
+	</select>
+	<select id="bpr300ukrvService.deleteItemCodeChk" parameterType="Map" resultType="rMap">
+		SELECT COUNT(ITEM_CODE) AS CNT
+		  FROM BPR200T WITH (NOLOCK)
+		 WHERE COMP_CODE = #{COMP_CODE}
+		   AND DIV_CODE  = #{DIV_CODE}
+		   AND ITEM_CODE = #{ITEM_CODE}
+	</select>
+	
+	<select id="bpr300ukrvService.selectListCbm700" parameterType="Map" resultType="comboItem">
+    	--bpr300ukrvService.selectListCbm700
+	    SELECT 
+	           COST_POOL_CODE as value
+	         , COST_POOL_NAME as text
+	         , COST_POOL_CODE + COST_POOL_NAME search
+	      FROM CBM700T WITH (NOLOCK)
+	     WHERE COMP_CODE  = #{S_COMP_CODE}
+	       AND USE_YN       = 'Y'
+	       AND COST_POOL_GB = '01'
+	     ORDER BY COST_POOL_CODE
+	</select>
+</mapper>

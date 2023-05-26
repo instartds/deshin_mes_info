@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mms101skrvServiceImpl">
+					
+	<select id="mms101skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+/* mms101skrv.Cmms101skrv[fnQms101q]Query02	*/
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+	DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+	      , @UserId			NVARCHAR(100)	/* 사용자ID		*/
+	      , @LangType		NVARCHAR(2)		/* 언어구분		*/
+          , @RefItem		NVARCHAR(01)
+          , @DateFormat		NVARCHAR(10)
+
+    SET @CompCode = #{S_COMP_CODE}
+    SET @UserId   = #{S_USER_ID}
+    SET @LangType = N'KR'
+
+	/* 명칭 참조 유형 */
+    SELECT TOP 1 @RefItem = REF_ITEM
+    FROM BSA300T WITH (NOLOCK)
+    WHERE USER_ID = @UserId
+
+    SET @RefItem = ISNULL(@RefItem, N'0')
+
+	/* 날짜 포맷 유형 설정 */
+    SELECT TOP 1 @DateFormat = CODE_NAME
+    FROM BSA100T WITH (NOLOCK)
+    WHERE COMP_CODE = @CompCode
+		AND MAIN_CODE = N'B044'
+        AND REF_CODE1 = N'Y'
+
+    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+	/* 데이터 조회 */
+    SELECT  A.DIV_CODE
+          , A.CUSTOM_CODE
+          , CASE WHEN @RefItem = '1' THEN G.CUSTOM_NAME1
+                 WHEN @RefItem = '2' THEN G.CUSTOM_NAME2
+                 ELSE G.CUSTOM_NAME
+            END				AS CUSTOM_NAME									/* 거래처명	*/
+          , A.ORDER_TYPE
+          , CASE WHEN ISNULL(A.ORDER_DATE, '') = '' THEN ''
+                 ELSE REPLACE(
+                      REPLACE(
+                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.ORDER_DATE, 1, 4))
+                                         , 'MM',   SUBSTRING(A.ORDER_DATE, 5, 2))
+                                         , 'DD',   SUBSTRING(A.ORDER_DATE, 7, 2))
+            END				AS ORDER_DATE									/* 발주일	*/
+          , B.ITEM_CODE
+          , CASE WHEN @RefItem = '1' THEN F.ITEM_NAME1		
+                 WHEN @RefItem = '2' THEN F.ITEM_NAME2
+                 ELSE F.ITEM_NAME
+            END				AS ITEM_NAME									/* 품명		*/
+          , F.SPEC AS SPEC
+          , CASE WHEN ISNULL(B.DVRY_DATE, '') = '' THEN ''
+                 ELSE REPLACE(
+                      REPLACE(
+                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.DVRY_DATE, 1, 4))
+                                         , 'MM',   SUBSTRING(B.DVRY_DATE, 5, 2))
+                                         , 'DD',   SUBSTRING(B.DVRY_DATE, 7, 2))
+            END				AS DVRY_DATE									/* 납기일	*/
+          , B.ORDER_UNIT
+          , B.ORDER_Q
+          , CASE WHEN ISNULL(C.RECEIPT_DATE, '') = '' THEN ''
+                 ELSE REPLACE(
+                      REPLACE(
+                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(C.RECEIPT_DATE, 1, 4))
+                                         , 'MM',   SUBSTRING(C.RECEIPT_DATE, 5, 2))
+                                         , 'DD',   SUBSTRING(C.RECEIPT_DATE, 7, 2))
+            END				AS RECEIPT_DATE									/* 접수일	*/
+          , C.RECEIPT_PRSN
+          , C.RECEIPT_Q
+          , D.INSPEC_TYPE
+          , (CASE WHEN D.INSPEC_TYPE = '01'
+					THEN '' 
+					ELSE D.GOODBAD_TYPE 
+             END)			AS GOODBAD_TYPE
+          , D.END_DECISION
+		  , D.INSPEC_PRSN
+          , D.INSPEC_Q
+          , D.GOOD_INSPEC_Q
+          , D.BAD_INSPEC_Q
+          , C.RECEIPT_Q - ISNULL(E.TOT_INSPEC_Q,0) AS NOTINSPEC_Q
+          , A.ORDER_NUM
+          , B.ORDER_SEQ
+          , C.RECEIPT_NUM
+          , C.RECEIPT_SEQ
+          , D.INSPEC_NUM
+          , D.INSPEC_SEQ
+          , B.REMARK		AS ORDER_REMARK
+          , B.PROJECT_NO	AS ORDER_PROJECT_NO
+          , C.REMARK		AS RECEIPT_REMARK
+          , C.PROJECT_NO	AS RECEIPT_PROJECT_NO
+          , D.REMARK		AS INSPEC_REMARK
+          , D.PROJECT_NO	AS INSPEC_PROJECT_NO
+	FROM MPO100T A WITH (NOLOCK)
+		INNER JOIN MPO200T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+										  AND B.ORDER_NUM = A.ORDER_NUM
+		INNER JOIN QMS100T C WITH (NOLOCK) ON C.COMP_CODE = B.COMP_CODE
+										  AND C.ORDER_NUM = B.ORDER_NUM
+										  AND C.ORDER_SEQ = B.ORDER_SEQ
+		LEFT  JOIN QMS200T D WITH (NOLOCK) ON D.COMP_CODE   = C.COMP_CODE
+										  AND D.RECEIPT_NUM = C.RECEIPT_NUM
+										  AND D.RECEIPT_SEQ = C.RECEIPT_SEQ
+		LEFT  JOIN (SELECT  RECEIPT_NUM
+						, RECEIPT_SEQ
+						, SUM(ISNULL(GOOD_INSPEC_Q,0) + ISNULL(BAD_INSPEC_Q,0)) AS TOT_INSPEC_Q
+						, COMP_CODE
+					 FROM QMS200T WITH (NOLOCK)
+					WHERE COMP_CODE = @CompCode
+					GROUP BY RECEIPT_NUM, RECEIPT_SEQ, COMP_CODE) E 
+			   ON E.COMP_CODE   = C.COMP_CODE
+			  AND E.RECEIPT_NUM = C.RECEIPT_NUM
+			  AND E.RECEIPT_SEQ = C.RECEIPT_SEQ
+		LEFT  JOIN BPR100T F WITH (NOLOCK) ON F.COMP_CODE	= B.COMP_CODE
+ 									      AND F.ITEM_CODE	= B.ITEM_CODE
+		LEFT  JOIN BCM100T G WITH (NOLOCK) ON G.COMP_CODE   = A.COMP_CODE
+										  AND G.CUSTOM_CODE = A.CUSTOM_CODE
+
+     WHERE  B.COMP_CODE   = @CompCode
+		AND B.INSPEC_FLAG = N'Y'
+
+<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		AND A.DIV_CODE    = #{DIV_CODE}
+		</if>      
+<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+		/* 거래처	*/
+		AND A.CUSTOM_CODE = #{CUSTOM_CODE}
+		</if>      
+<if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+		/* 발주유형 */
+		AND A.ORDER_TYPE  = #{ORDER_TYPE}
+		</if>      
+<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		/* 품목		*/
+		AND B.ITEM_CODE   = #{ITEM_CODE}
+		</if>      
+<if test="@foren.Ognl@isNotEmpty(RECEIPT_DATE_FR)">
+		/* 접수일자 */
+		AND ISNULL(C.RECEIPT_DATE,'99999999') &gt;= #{RECEIPT_DATE_FR}
+		</if>      
+<if test="@foren.Ognl@isNotEmpty(RECEIPT_DATE_TO)">
+		AND ISNULL(C.RECEIPT_DATE,'00000000') &lt;= #{RECEIPT_DATE_TO}
+		</if>      
+<if test="@foren.Ognl@isNotEmpty(INSPEC_DATE_FR)">
+		/* 검사일자 */
+		AND ISNULL(D.INSPEC_DATE ,'99999999') &gt;= #{INSPEC_DATE_FR}
+		</if>      
+<if test="@foren.Ognl@isNotEmpty(INSPEC_DATE_TO)">
+		AND ISNULL(D.INSPEC_DATE ,'00000000') &lt;= #{INSPEC_DATE_TO}
+		</if>
+
+		/* 조회구분 = 미지정, 조건없음 */
+        /* 조회구분 = 미접수(N)	*/ 
+        <if test="TOT_INSPEC_Q == &quot;N&quot;">
+		AND C.RECEIPT_Q &gt; ISNULL(E.TOT_INSPEC_Q,0)
+		</if>
+		/* 조회구분 = 접수(Y)	*/
+		<if test="TOT_INSPEC_Q == &quot;Y&quot;">
+		AND ISNULL(E.TOT_INSPEC_Q,0) &gt; 0
+		</if>
+<if test="@foren.Ognl@isNotEmpty(END_DECISION)">
+		/* 최종판정	*/
+		AND D.END_DECISION = #{END_DECISION}
+		</if>
+
+    SET NOCOUNT OFF
+    SET ARITHABORT OFF
+END
+    </select>
+	
+	
+</mapper>

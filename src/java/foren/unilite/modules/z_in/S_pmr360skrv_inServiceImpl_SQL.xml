@@ -1,0 +1,366 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_pmr360skrv_inServiceImpl">
+	<select id="s_pmr360skrv_inServiceImpl.selectColumns" parameterType="Map" resultType="rMap">
+		SELECT SUB_CODE, CODE_NAME
+		  FROM BSA100T WITH(NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND MAIN_CODE = 'P003'
+		   AND SUB_CODE != '$'
+		   AND USE_YN    = 'Y'
+	</select>
+
+	<select id="s_pmr360skrv_inServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* s_pmr360skrv_inServiceImpl.selectList */
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE ID=OBJECT_ID('tempdb..#PRODT_VIEW'))
+		    DROP TABLE #PRODT_VIEW
+
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.PLAN_ITEM_CODE                                                              --    품목코드
+		     , D.ITEM_NAME                                                                   --    품목명
+		     , CASE WHEN FLOOR(D3.ITEM_WIDTH) = 0 THEN ''
+		            ELSE CONVERT(NVARCHAR, FLOOR(D3.ITEM_WIDTH)) END        AS ITEM_WIDTH    --    규격
+		     , CASE WHEN FLOOR(D2.PACK_QTY)   = 0 THEN ''
+		            ELSE CONVERT(NVARCHAR, FLOOR(D2.PACK_QTY))   END        AS PACK_QTY      --    단위
+		     , CONVERT(NUMERIC(30,6) , 0)                                   AS WKORD_Q
+		     , SUM(ISNULL(B.WORK_Q, 0))                                     AS GOOD_WORK_Q   --    총제조수량(EA)
+		     , ISNULL(D.BASIS_P, 0)                                         AS BASIS_P       --    제조원가
+		     , SUM(ISNULL(B.WORK_Q, 0)) * ISNULL(D.BASIS_P, 0)              AS PRODT_AMT     --    생산금액
+		     , B.LOT_NO
+		  INTO      #PRODT_VIEW
+		  FROM      PMP100TV5_IN A  WITH (NOLOCK)
+		  LEFT JOIN PMR100T      B  WITH (NOLOCK) ON A.COMP_CODE      = B.COMP_CODE
+		                                         AND A.DIV_CODE       = B.DIV_CODE
+		                                         AND A.WKORD_NUM      = B.WKORD_NUM
+		                                         AND A.PROG_WORK_CODE = B.PROG_WORK_CODE
+		  LEFT JOIN BPR200T      D  WITH (NOLOCK) ON A.COMP_CODE      = D.COMP_CODE
+		                                         AND A.DIV_CODE       = D.DIV_CODE
+		                                         AND A.ITEM_CODE      = D.ITEM_CODE
+		  LEFT JOIN BPR200T      D2 WITH (NOLOCK) ON A.COMP_CODE      = D2.COMP_CODE
+		                                         AND A.DIV_CODE       = D2.DIV_CODE
+		                                         AND A.PLAN_ITEM_CODE = D2.ITEM_CODE
+		  LEFT JOIN BPR100T      D3 WITH (NOLOCK) ON A.COMP_CODE      = D3.COMP_CODE
+		                                         AND A.PLAN_ITEM_CODE = D3.ITEM_CODE
+		 WHERE A.COMP_CODE          = #{S_COMP_CODE}
+		   AND A.DIV_CODE           = #{DIV_CODE}
+		   AND A.PRODT_START_DATE  &gt;= #{ORDER_DATE_FR}
+		   AND A.PRODT_START_DATE  &lt;= #{ORDER_DATE_TO}
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		   AND A.PLAN_ITEM_CODE     = #{ITEM_CODE}
+		</if>
+		   AND A.PROG_WORK_CODE     = 'P50'
+		   AND ISNULL(A.PLAN_ITEM_CODE, '') != ''
+		   --20200616 추가
+		   AND B.COMP_CODE IS NOT NULL
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.PLAN_ITEM_CODE, D.ITEM_NAME, D.BASIS_P, D3.ITEM_WIDTH, D2.PACK_QTY
+		        , B.LOT_NO
+
+		UPDATE A SET WKORD_Q= ISNULL(B.WKORD_Q,0)
+		  FROM #PRODT_VIEW A
+		  LEFT JOIN (
+		             SELECT A.COMP_CODE, A.DIV_CODE, A.PLAN_ITEM_CODE, SUM(A.WKORD_Q) AS WKORD_Q
+		               FROM PMP100TV5_IN A WITH(NOLOCK)
+		              WHERE A.COMP_CODE          = #{S_COMP_CODE}
+		                AND A.DIV_CODE           = #{DIV_CODE}
+		                AND A.PRODT_START_DATE  &gt;= #{ORDER_DATE_FR}
+		                AND A.PRODT_START_DATE  &lt;= #{ORDER_DATE_TO}
+		                AND A.PROG_WORK_CODE     = 'P10'
+		                AND ISNULL(A.PLAN_ITEM_CODE, '') != ''
+		                --20200616 추가
+		                AND A.LOT_NO IN (SELECT ISNULL(LOT_NO, '') FROM #PRODT_VIEW WHERE PLAN_ITEM_CODE = A.PLAN_ITEM_CODE)
+		              GROUP BY A.COMP_CODE, A.DIV_CODE, A.PLAN_ITEM_CODE
+		  ) B ON A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE=B.DIV_CODE AND A.PLAN_ITEM_CODE=B.PLAN_ITEM_CODE
+
+		SELECT Z.COMP_CODE
+		     , Z.DIV_CODE
+		     , Z.PLAN_ITEM_CODE                                                              --품목코드
+		     , Z.ITEM_NAME                                                                   --품목명
+		     , Z.ITEM_WIDTH                                                                  --규격
+		     , Z.PACK_QTY                                                                    --단위
+		     , Z.WKORD_Q                                                                     --총제조량(L)
+		     , Z.GOOD_Q     - SUM(CASE WHEN LEFT(C.BAD_CODE, 1) IN ('Q') OR (LEFT(C.BAD_CODE, 1) IN ('P') AND C.REF_CODE2 = 'P50')
+		                                THEN ISNULL(C.BAD_Q,0)
+		                                ELSE 0
+		                           END)                                 AS GOOD_Q            --양품수량
+		     , Z.GOOD_WORK_Q + SUM(CASE WHEN LEFT(C.BAD_CODE,1) NOT IN ('Q') /*AND ((LEFT(C.BAD_CODE,1) != 'P') OR (LEFT(C.BAD_CODE,1) = 'P' AND Y.ITEM_ACCOUNT != '10'))*/ --20200615 수정
+		                                     THEN ISNULL(C.BAD_Q,0)
+		                                     ELSE 0
+		                                END)
+		                     - SUM(CASE WHEN /* LEFT(C.BAD_CODE, 1) IN ('Q') OR */ (LEFT(C.BAD_CODE, 1) IN ('P') AND C.REF_CODE2 = 'P50')     --20200623 주석: LEFT(C.BAD_CODE, 1) IN ('Q') OR
+		                                THEN ISNULL(C.BAD_Q,0)                                                                                               /* 불량코드가 Q로 시작하는 유형은 생산실적 입력 완료 후 추가로 등록. 그래서 실적테이블에서 양품수량에 포함되지 않아 수량계산에서 제외   */
+		                                ELSE 0
+		                           END)                                 AS GOOD_WORK_Q       --총제조수량(EA)  A.GOOD_WORK_Q(포장전체수량) + 분주시불량수량(포장,전수검사는 제조이후이므로 제거)
+		     , SUM(CASE WHEN LEFT(C.BAD_CODE,1) NOT IN ('P','Q') AND C.BAD_CODE != '1000'
+		                THEN ISNULL(C.BAD_Q,0)
+		                ELSE 0
+		           END)                                                 AS BAD_PRODT_Q       --분주불량(QC제외)
+		     , SUM(CASE WHEN LEFT(C.BAD_CODE, 1) IN ('Q') OR (LEFT(C.BAD_CODE, 1) IN ('P') AND C.REF_CODE2 = 'P50')
+		                THEN ISNULL(C.BAD_Q,0)
+		                ELSE 0
+		           END)                                                 AS BAD_PACK_Q        --포장불량       --20200615 수정
+		     --20200615 추가
+		     , SUM(CASE WHEN LEFT(C.BAD_CODE, 1) IN ('P') AND C.REF_CODE2 = 'P40'
+		                THEN ISNULL(C.BAD_Q,0)
+		                ELSE 0
+		           END)                                                 AS BAD_1             --1중불량
+		     , SUM(C.BAD_Q)+ Z.INSPECT_OUT_Q                            AS BAD_TOT_Q         --불량합(QC제외)  --20200615 수정
+		     , SUM(ISNULL(C.QC_Q, 0))                                   AS QC_Q              --QC사용내역
+		     , MAX(Z.BASIS_P)                                           AS BASIS_P           --제조원가
+		     , (Z.GOOD_WORK_Q + SUM(CASE WHEN LEFT(C.BAD_CODE,1) NOT IN ('Q') /*AND ((LEFT(C.BAD_CODE,1) != 'P') OR (LEFT(C.BAD_CODE,1) = 'P' AND Y.ITEM_ACCOUNT != '10'))*/ --20200615 수정
+		                                 THEN ISNULL(C.BAD_Q,0)
+		                                 ELSE 0
+		                            END)) * Z.BASIS_P                   AS PRODT_AMT         --생산금액
+		     , SUM(ISNULL(C.QC_Q, 0)) * Z.BASIS_P                       AS PRODT_QC_AMT      --QC사용금액
+		     , Z.INSPECT_OUT_Q                                                               --제품 QC테스트용
+		     , Z.BEFORE_LOT_OUTQ                                                             --제품 QC테스트용
+		<foreach collection="badQtyArray" item="item" separator="" close="" open="">
+		     , SUM(CASE WHEN C.BAD_CODE = '${item}' THEN C.BAD_Q ELSE 0 END)    AS BAD_${item}
+		</foreach>
+		  FROM (
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , A.PLAN_ITEM_CODE                                                               --품목코드
+		              , A.ITEM_NAME                                                                    --품목명
+		              , A.ITEM_WIDTH                                                                   --규격
+		              , A.PACK_QTY                                                                     --단위
+		              , A.WKORD_Q                                                                      --총제조량(L)
+		              , SUM(A.GOOD_WORK_Q) - ISNULL(D.INSPECT_OUT_Q,0)           AS GOOD_Q             --양품수량
+		              , SUM(A.GOOD_WORK_Q)                                       AS GOOD_WORK_Q
+		              , MAX(A.BASIS_P)                                           AS BASIS_P            --제조원가
+		              , ISNULL(D.INSPECT_OUT_Q,0)                                AS INSPECT_OUT_Q      --제품 QC테스트용
+		              , ISNULL(E.INSPECT_OUT_Q,0)                                AS BEFORE_LOT_OUTQ    --제품 QC테스
+		           FROM #PRODT_VIEW A
+		           LEFT JOIN (
+		                           SELECT S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE, SUM(INOUT_Q) AS INSPECT_OUT_Q
+		                             FROM       BTR100T S1 WITH (NOLOCK)
+		                             INNER JOIN BSA100T S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.INOUT_TYPE_DETAIL=S2.SUB_CODE AND S2.MAIN_CODE='M104'
+		                            WHERE S1.COMP_CODE    = #{S_COMP_CODE}
+		                              AND S1.DIV_CODE     = #{DIV_CODE} 
+		                              AND S1.INOUT_TYPE   = '2'                --고정
+		                              AND S2.REF_CODE10   = 'Y'
+		                              AND S1.INOUT_DATE  &gt;= #{ORDER_DATE_FR}
+		                              AND S1.INOUT_DATE  &lt;= #{ORDER_DATE_TO}
+		                              AND S1.LOT_NO IN (SELECT ISNULL(LOT_NO, '') FROM #PRODT_VIEW WHERE PLAN_ITEM_CODE = S1.ITEM_CODE)
+		                            GROUP BY S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+		                       ) D ON A.COMP_CODE=D.COMP_CODE AND A.DIV_CODE=D.DIV_CODE AND A.PLAN_ITEM_CODE=D.ITEM_CODE
+		          LEFT JOIN (
+		                          SELECT S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE, SUM(INOUT_Q) AS INSPECT_OUT_Q
+		                            FROM       BTR100T S1 WITH (NOLOCK)
+		                            INNER JOIN BSA100T S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.INOUT_TYPE_DETAIL=S2.SUB_CODE AND S2.MAIN_CODE='M104'
+		                           WHERE S1.COMP_CODE    = #{S_COMP_CODE}
+		                             AND S1.DIV_CODE     = #{DIV_CODE}
+		                             AND S1.INOUT_TYPE   = '2'                --고정
+		                             AND S2.REF_CODE10   = 'Y'
+		                             AND S1.INOUT_DATE  &gt;= #{ORDER_DATE_FR}
+		                             AND S1.INOUT_DATE  &lt;= #{ORDER_DATE_TO}
+		                             AND S1.LOT_NO NOT IN (SELECT ISNULL(LOT_NO, '') FROM #PRODT_VIEW WHERE PLAN_ITEM_CODE = S1.ITEM_CODE)
+		                           GROUP BY S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+		                      ) E ON A.COMP_CODE=E.COMP_CODE AND A.DIV_CODE=E.DIV_CODE AND A.PLAN_ITEM_CODE=E.ITEM_CODE                
+		        GROUP BY A.COMP_CODE, A.DIV_CODE, A.PLAN_ITEM_CODE, A.ITEM_NAME, A.ITEM_WIDTH, A. PACK_QTY, A.WKORD_Q,/* A.GOOD_WORK_Q, A.BASIS_P, A.PRODT_AMT, */ISNULL(D.INSPECT_OUT_Q,0), ISNULL(E.INSPECT_OUT_Q,0)
+		) Z
+		LEFT JOIN (
+		                SELECT S1.COMP_CODE, S1.DIV_CODE, S2.PLAN_ITEM_CODE, S1.WKORD_NUM, S1.PROG_WORK_CODE, S1.WORK_SHOP_CODE, S1.BAD_CODE, SUM(S1.BAD_Q) AS BAD_Q
+		                     , SUM(CASE WHEN S1.BAD_CODE = '1000' THEN S1.BAD_Q ELSE 0 END) AS QC_Q
+		                     --20200615 추가
+		                     , S3.REF_CODE2
+		                 FROM PMR300T S1 WITH (NOLOCK)
+		                      INNER JOIN PMP100TV5_IN S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.DIV_CODE=S2.DIV_CODE AND S1.WKORD_NUM=S2.WKORD_NUM AND S1.PROG_WORK_CODE=S2.PROG_WORK_CODE
+		                      --20200615 추가
+		                      LEFT  JOIN BSA100T      S3 WITH (NOLOCK) ON S3.COMP_CODE=S1.COMP_CODE AND S3.MAIN_CODE='P003' AND S3.SUB_CODE=S1.BAD_CODE
+		                  WHERE S1.COMP_CODE          = #{S_COMP_CODE}
+		                    AND S1.DIV_CODE           = #{DIV_CODE}
+		                    AND S2.PRODT_START_DATE  &gt;= #{ORDER_DATE_FR}
+		                    AND S2.PRODT_START_DATE  &lt;= #{ORDER_DATE_TO}
+		                    --20200616 추가
+		                    AND S2.LOT_NO IN (SELECT ISNULL(LOT_NO, '') FROM #PRODT_VIEW WHERE PLAN_ITEM_CODE = S2.PLAN_ITEM_CODE)
+		                 <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		                    AND S2.PLAN_ITEM_CODE     = #{ITEM_CODE}
+		                 </if>
+		                 GROUP BY S1.COMP_CODE, S1.DIV_CODE, S2.PLAN_ITEM_CODE, S1.WKORD_NUM, S1.PROG_WORK_CODE, S1.WORK_SHOP_CODE, S1.BAD_CODE
+		                        --20200615 추가
+		                        , S3.REF_CODE2
+		            ) C
+		                ON C.COMP_CODE       = Z.COMP_CODE
+		               AND C.DIV_CODE        = Z.DIV_CODE
+		               AND C.PLAN_ITEM_CODE  = Z.PLAN_ITEM_CODE
+		--20200615 추가
+		INNER JOIN BPR200T Y WITH(NOLOCK) ON Y.COMP_CODE = Z.COMP_CODE
+		                                 AND Y.DIV_CODE  = Z.DIV_CODE
+		                                 AND Y.ITEM_CODE = Z.PLAN_ITEM_CODE
+		GROUP BY Z.COMP_CODE, Z.DIV_CODE, Z.PLAN_ITEM_CODE, Z.ITEM_NAME, Z.ITEM_WIDTH, Z.PACK_QTY, Z.WKORD_Q, Z.GOOD_Q, Z.INSPECT_OUT_Q, Z.BEFORE_LOT_OUTQ, Z.BASIS_P, Z.GOOD_WORK_Q
+		       --20200615 추가
+		       , Y.ITEM_ACCOUNT
+		ORDER BY Z.PLAN_ITEM_CODE
+	</select>
+
+
+
+	<select id="s_pmr360skrv_inServiceImpl.selectPop1List" parameterType="Map" resultType="rMap">
+		/* s_pmr360skrv_inServiceImpl.selectPop1List" */
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE ID=OBJECT_ID('tempdb..#PRODT_VIEW'))
+		    DROP TABLE #PRODT_VIEW
+
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.PLAN_ITEM_CODE                                                              --    품목코드
+		     , D.ITEM_NAME                                                                   --    품목명
+		     , CASE WHEN FLOOR(D3.ITEM_WIDTH) = 0 THEN ''
+		            ELSE CONVERT(NVARCHAR, FLOOR(D3.ITEM_WIDTH)) END        AS ITEM_WIDTH    --    규격
+		     , CASE WHEN FLOOR(D2.PACK_QTY)   = 0 THEN ''
+		            ELSE CONVERT(NVARCHAR, FLOOR(D2.PACK_QTY))   END        AS PACK_QTY      --    단위
+		     -- , SUM(CASE WHEN LINE_SEQ = 1 THEN A.WKORD_Q ELSE 0 END)        AS WKORD_Q      --    총제조량(L)
+		     , CONVERT(NUMERIC(30,6) , 0) AS WKORD_Q
+		     , SUM(ISNULL(B.WORK_Q, 0))                                     AS GOOD_WORK_Q   --    총제조수량(EA)
+		     , ISNULL(D.BASIS_P, 0)                                         AS BASIS_P       --    제조원가
+		     , SUM(ISNULL(B.WORK_Q, 0)) * ISNULL(D.BASIS_P, 0)              AS PRODT_AMT     --    생산금액
+		     , B.LOT_NO
+		     --20200512 추가: 생산일, 시작시간, 종료시간
+		     , B.PRODT_DATE
+		     , CASE WHEN ISNULL(Z2.PRODT_START_TIME, '') = '' THEN '00:00'
+		            ELSE SUBSTRING(Z2.PRODT_START_TIME, 1, 2) + ':' + SUBSTRING(Z2.PRODT_START_TIME, 3, 2)
+		       END                                                           AS PRODT_START_TIME --20200616 수정: 시간 가져오는 로직 수정을 위해 Z1, Z2으로 수정
+		     , CASE WHEN ISNULL(Z2.PRODT_END_TIME, '') = '' THEN '00:00'
+		            ELSE SUBSTRING(Z2.PRODT_END_TIME, 1, 2) + ':' + SUBSTRING(Z2.PRODT_END_TIME, 3, 2)
+		       END                                                           AS PRODT_END_TIME   --20200616 수정: 시간 가져오는 로직 수정을 위해 Z1, Z2으로 수정
+		  INTO      #PRODT_VIEW
+		  FROM      PMP100TV5_IN A  WITH (NOLOCK)
+		  LEFT JOIN PMR100T      B  WITH (NOLOCK) ON A.COMP_CODE       = B.COMP_CODE
+		                                         AND A.DIV_CODE        = B.DIV_CODE
+		                                         AND A.WKORD_NUM       = B.WKORD_NUM
+		                                         AND A.PROG_WORK_CODE  = B.PROG_WORK_CODE
+		  --20200616 추가: 시간 가져오는 로직 수정을 위해 Z1, Z2 추가
+		  LEFT JOIN PMP100TV5_IN Z1 WITH (NOLOCK) ON Z1.COMP_CODE      = A.COMP_CODE
+		                                         AND Z1.DIV_CODE       = A.DIV_CODE
+		                                         AND Z1.TOP_WKORD_NUM  = A.TOP_WKORD_NUM
+		                                         AND Z1.WKORD_NUM     != A.WKORD_NUM
+		                                         AND Z1.PROG_WORK_CODE = 'P40'
+		  LEFT JOIN PMR100T      Z2 WITH (NOLOCK) ON Z2.COMP_CODE      = Z1.COMP_CODE
+		                                         AND Z2.DIV_CODE       = Z1.DIV_CODE
+		                                         AND Z2.WKORD_NUM      = Z1.WKORD_NUM
+		                                         AND Z2.PROG_WORK_CODE = Z1.PROG_WORK_CODE
+		  LEFT JOIN BPR200T      D  WITH (NOLOCK) ON A.COMP_CODE       = D.COMP_CODE
+		                                         AND A.DIV_CODE        = D.DIV_CODE
+		                                         AND A.ITEM_CODE       = D.ITEM_CODE
+		  LEFT JOIN BPR200T      D2 WITH (NOLOCK) ON A.COMP_CODE       = D2.COMP_CODE
+		                                         AND A.DIV_CODE        = D2.DIV_CODE
+		                                         AND A.PLAN_ITEM_CODE  = D2.ITEM_CODE
+		  LEFT JOIN BPR100T      D3 WITH (NOLOCK) ON A.COMP_CODE       = D3.COMP_CODE
+		                                         AND A.PLAN_ITEM_CODE  = D3.ITEM_CODE
+		 WHERE A.COMP_CODE          = #{S_COMP_CODE}
+		   AND A.DIV_CODE           = #{DIV_CODE}
+		   AND A.PRODT_START_DATE  &gt;= #{ORDER_DATE_FR}
+		   AND A.PRODT_START_DATE  &lt;= #{ORDER_DATE_TO}
+		   AND A.PLAN_ITEM_CODE     = #{ITEM_CODE}
+		   AND A.PROG_WORK_CODE     = 'P50'
+		   AND ISNULL(A.PLAN_ITEM_CODE, '') != ''
+		   --20200616 추가
+		   AND B.COMP_CODE IS NOT NULL
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.PLAN_ITEM_CODE, D.ITEM_NAME, B.LOT_NO, D.BASIS_P, D3.ITEM_WIDTH, D2.PACK_QTY
+		    --20200512 추가: 생산일, 시작시간, 종료시간
+		    , B.PRODT_DATE, Z2.PRODT_START_TIME, Z2.PRODT_END_TIME   --20200616 수정: 시간 가져오는 로직 수정을 위해 Z1, Z2으로 수정
+		
+		UPDATE A SET WKORD_Q= ISNULL(B.WKORD_Q,0)
+		  FROM #PRODT_VIEW A
+		        LEFT JOIN (
+		                   SELECT COMP_CODE, DIV_CODE, PLAN_ITEM_CODE, SUM(WKORD_Q) AS WKORD_Q,LOT_NO
+		                     FROM PMP100TV5_IN
+		                    WHERE COMP_CODE          = #{S_COMP_CODE}
+		                      AND DIV_CODE           = #{DIV_CODE}
+		                      AND PRODT_START_DATE  &gt;= #{ORDER_DATE_FR}
+		                      AND PRODT_START_DATE  &lt;= #{ORDER_DATE_TO}
+		                      AND PROG_WORK_CODE     = 'P10'
+		                      AND PLAN_ITEM_CODE     = #{ITEM_CODE}
+		                   GROUP BY COMP_CODE, DIV_CODE, PLAN_ITEM_CODE, LOT_NO
+		        ) B ON A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE=B.DIV_CODE AND A.PLAN_ITEM_CODE=B.PLAN_ITEM_CODE AND A.LOT_NO = B.LOT_NO
+		
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.PLAN_ITEM_CODE                                                                --    품목코드
+		     , A.ITEM_NAME                                                                    --    품목명
+		     , A.ITEM_WIDTH       --    규격
+		     , A.PACK_QTY         --    단위
+		     , A.WKORD_Q          --    총제조량(L)
+		     --20190927 ADD
+		     , A.GOOD_WORK_Q - ISNULL(D.INSPECT_OUT_Q,0)- SUM(CASE WHEN LEFT(C.BAD_CODE, 1) IN ('Q') OR (LEFT(C.BAD_CODE, 1) IN ('P') AND C.REF_CODE2 = 'P50')
+		                                                           THEN ISNULL(C.BAD_Q,0)
+		                                                           ELSE 0
+		                                                      END)           AS GOOD_Q    --양품수량
+		     , A.GOOD_WORK_Q + SUM(CASE WHEN LEFT(C.BAD_CODE,1) NOT IN ('Q') /*AND ((LEFT(C.BAD_CODE,1) != 'P') OR (LEFT(C.BAD_CODE,1) = 'P' AND Y.ITEM_ACCOUNT != '10'))*/ --20200615 수정
+		                                     THEN ISNULL(C.BAD_Q,0)
+		                                     ELSE 0
+		                                END)
+		                     - SUM(CASE WHEN LEFT(C.BAD_CODE, 1) IN ('Q') OR (LEFT(C.BAD_CODE, 1) IN ('P') AND C.REF_CODE2 = 'P50')
+		                                THEN ISNULL(C.BAD_Q,0)
+		                                ELSE 0
+		                           END)                                      AS GOOD_WORK_Q        --    총제조수량(EA)  A.GOOD_WORK_Q(포장전체수량) + 분주시불량수량(포장,전수검사는 제조이후이므로 제거)
+		     --, A.GOOD_WORK_Q + SUM(CASE WHEN LEFT(C.BAD_CODE,1) NOT IN ('P','Q') THEN ISNULL(C.BAD_Q,0) ELSE 0 END) AS GOOD_WORK_Q        --    총제조수량(EA)  A.GOOD_WORK_Q(포장전체수량) + 분주시불량수량(포장,전수검사는 제조이후이므로 제거)
+		     --, A.GOOD_WORK_Q
+		     , SUM(CASE WHEN LEFT(C.BAD_CODE,1) NOT IN ('P','Q') AND C.BAD_CODE != '1000' THEN ISNULL(C.BAD_Q,0) ELSE 0 END) AS BAD_PRODT_Q    --분주불량(QC제외)
+		     --, SUM(CASE WHEN LEFT(C.BAD_CODE,1) IN ('P','Q')  THEN ISNULL(C.BAD_Q,0) ELSE 0 END) AS BAD_PACK_Q    --포장불량
+		     , SUM(CASE WHEN LEFT(C.BAD_CODE, 1) IN ('Q') OR (LEFT(C.BAD_CODE, 1) IN ('P') AND C.REF_CODE2 = 'P50')
+		                THEN ISNULL(C.BAD_Q,0)
+		                ELSE 0
+		           END)                                                 AS BAD_PACK_Q        --포장불량       --20200615 수정
+		     --20200615 추가
+		     , SUM(CASE WHEN LEFT(C.BAD_CODE, 1) IN ('P') AND C.REF_CODE2 = 'P40'
+		                THEN ISNULL(C.BAD_Q,0)
+		                ELSE 0
+		           END)                                                 AS BAD_1             --1중불량
+		     , SUM(C.BAD_Q)+ ISNULL(D.INSPECT_OUT_Q,0)                  AS BAD_TOT_Q         --불량합(QC제외)  --20200615 수정
+		     --, SUM(CASE WHEN C.BAD_CODE != '1000' THEN ISNULL(C.BAD_Q,0) ELSE 0 END) AS BAD_TOT_Q    --불량합(QC제외)
+		     , SUM(ISNULL(C.QC_Q, 0))                                        AS QC_Q            --    QC사용내역
+		     , ISNULL(D.INSPECT_OUT_Q,0)            AS INSPECT_OUT_Q    --제품 QC테스트용
+		     --, A.BASIS_P        --    제조원가
+		     --, (A.GOOD_WORK_Q    + SUM(CASE WHEN LEFT(C.BAD_CODE,1) NOT IN ('P','Q') THEN ISNULL(C.BAD_Q,0) ELSE 0 END)) * A.BASIS_P AS PRODT_AMT    --생산금액
+		     --, SUM(ISNULL(C.QC_Q, 0))         * ISNULL(A.BASIS_P, 0)            AS PRODT_QC_AMT    --    QC사용금액
+		<foreach collection="badQtyArray" item="item" separator="" close="" open="">
+		     , SUM(CASE WHEN C.BAD_CODE = '${item}' THEN C.BAD_Q ELSE 0 END)    AS BAD_${item}
+		</foreach>
+		     , A.LOT_NO
+		     --20200512 추가: 생산일, 시작시간, 종료시간
+		     , A.PRODT_DATE
+		     , A.PRODT_START_TIME
+		     , A.PRODT_END_TIME
+		  FROM #PRODT_VIEW A
+		  LEFT JOIN (
+		             SELECT S1.COMP_CODE, S1.DIV_CODE, S2.PLAN_ITEM_CODE, S1.WKORD_NUM, S1.PROG_WORK_CODE, S1.WORK_SHOP_CODE, S1.BAD_CODE, SUM(S1.BAD_Q) AS BAD_Q,LOT_NO
+		                  , SUM(CASE WHEN S1.BAD_CODE = '1000' THEN S1.BAD_Q ELSE 0 END) AS QC_Q
+		                  --20200615 추가
+		                  , S3.REF_CODE2
+		               FROM PMR300T S1 WITH (NOLOCK)
+		               INNER JOIN PMP100TV5_IN S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.DIV_CODE=S2.DIV_CODE AND S1.WKORD_NUM=S2.WKORD_NUM AND S1.PROG_WORK_CODE=S2.PROG_WORK_CODE
+		               LEFT  JOIN BSA100T      S3 WITH (NOLOCK) ON S3.COMP_CODE=S1.COMP_CODE AND S3.MAIN_CODE='P003' AND S3.SUB_CODE=S1.BAD_CODE
+		              WHERE S1.COMP_CODE          = #{S_COMP_CODE}
+		                AND S1.DIV_CODE           = #{DIV_CODE}
+		                AND S2.PRODT_START_DATE  &gt;= #{ORDER_DATE_FR}
+		                AND S2.PRODT_START_DATE  &lt;= #{ORDER_DATE_TO}
+		                AND S2.PLAN_ITEM_CODE     = #{ITEM_CODE}
+		              GROUP BY S1.COMP_CODE, S1.DIV_CODE, S2.PLAN_ITEM_CODE,S2.LOT_NO, S1.WKORD_NUM, S1.PROG_WORK_CODE, S1.WORK_SHOP_CODE, S1.BAD_CODE
+		                     --20200615 추가
+		                     , S3.REF_CODE2
+		            ) C
+		                ON A.COMP_CODE     = C.COMP_CODE
+		            AND A.DIV_CODE         = C.DIV_CODE
+		            AND A.PLAN_ITEM_CODE   = C.PLAN_ITEM_CODE
+		            AND A.LOT_NO           = C.LOT_NO
+		  LEFT JOIN (
+		             SELECT S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE, SUM(INOUT_Q) AS INSPECT_OUT_Q, S1.LOT_NO
+		               FROM BTR100T S1 WITH (NOLOCK)
+		               INNER JOIN BSA100T S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.INOUT_TYPE_DETAIL=S2.SUB_CODE AND S2.MAIN_CODE='M104'
+		              WHERE S1.COMP_CODE    = #{S_COMP_CODE}
+		                AND S1.DIV_CODE     = #{DIV_CODE}
+		                AND S1.INOUT_TYPE   = '2'                --고정
+		                --AND S1.INOUT_TYPE_DETAIL='92'        --qc테스트용
+		                AND S2.REF_CODE10   = 'Y'
+		                AND S1.INOUT_DATE  &gt;= #{ORDER_DATE_FR}
+		                AND S1.INOUT_DATE  &lt;= #{ORDER_DATE_TO}
+		                AND S1.ITEM_CODE    =  #{ITEM_CODE}
+		              GROUP BY S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE, S1.LOT_NO
+		            ) D ON A.COMP_CODE=D.COMP_CODE AND A.DIV_CODE=D.DIV_CODE AND A.PLAN_ITEM_CODE=D.ITEM_CODE AND A.LOT_NO = D.LOT_NO
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.PLAN_ITEM_CODE, A.ITEM_NAME    ,A.LOT_NO, A.ITEM_WIDTH, A. PACK_QTY, A.WKORD_Q, A.GOOD_WORK_Q, A.BASIS_P, A.PRODT_AMT, ISNULL(D.INSPECT_OUT_Q,0)
+		        --20200512 추가: 생산일, 시작시간, 종료시간
+		        , A.PRODT_DATE, A.PRODT_START_TIME, A.PRODT_END_TIME
+		 ORDER BY A.PLAN_ITEM_CODE
+	</select>
+</mapper>

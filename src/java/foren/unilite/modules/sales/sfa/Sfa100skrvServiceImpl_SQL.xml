@@ -1,0 +1,1094 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sfa100skrvServiceImpl">
+
+	<select id="sfa100skrvServiceImpl.selectList1" parameterType="Map" resultType="rMap">
+    --sfa100skrv.Csfa100skrv[fnsfa100nq] Query01
+    SELECT DISTINCT
+           ISNULL(A.CUSTOM_CODE,C.PLAN_TYPE2_CODE) CUSTOM_CODE
+         , (SELECT    uniLITE.fnCustNameComp(COMP_CODE, #{S_USER_ID}, CUSTOM_CODE)
+              FROM BCM100T WITH (NOLOCK)
+             WHERE CUSTOM_CODE = ISNULL(A.CUSTOM_CODE,C.PLAN_TYPE2_CODE)
+               AND COMP_CODE   = #{S_COMP_CODE})                 AS CUSTOM_NAME
+         , A.BUSI_PRSN
+         , ISNULL(A.MONEY_UNIT,'')                                      AS MONEY_UNIT
+         , ISNULL(A.UN_COLLECT_AMT / #{MONEY_RATE}, 0)          AS UN_COLLECT_AMT
+         , ISNULL(B.SALE_AVG,0)                                         AS SALE_AVG
+         , ISNULL(C.MONTH_PLAN / #{MONEY_RATE}, 0)              AS MONTH_PLAN
+         , ISNULL(B.SALE_SUB_TOT / #{MONEY_RATE}, 0)            AS SALE_SUB_TOT
+         , (CASE WHEN B.SALE_SUB_TOT IS NULL OR B.SALE_SUB_TOT = 0 THEN 0
+                 WHEN C.MONTH_PLAN   IS NULL OR C.MONTH_PLAN   = 0 THEN 0
+                                                                   ELSE B.SALE_SUB_TOT / C.MONTH_PLAN * 100
+             END)                                                       AS TARGET_RATE
+         , ISNULL(D.SALE_BEFORE_TOT / #{MONEY_RATE}, 0)         AS SALE_BEFORE_TOT
+         , (CASE WHEN B.SALE_SUB_TOT    IS NULL OR B.SALE_SUB_TOT    = 0 THEN 0
+                 WHEN D.SALE_BEFORE_TOT IS NULL OR D.SALE_BEFORE_TOT = 0 THEN 0
+                                                                         ELSE B.SALE_SUB_TOT / D.SALE_BEFORE_TOT * 100
+             END)                                                       AS UP_RATE
+         , ISNULL(E.DAY_Q, 0)                                           AS DAY_Q
+         , ISNULL(E.DAY_AMT       / #{MONEY_RATE}, 0)           AS DAY_AMT
+         , ISNULL(E.DAY_TAX       / #{MONEY_RATE}, 0)           AS DAY_TAX
+         , ISNULL(F.DAY_COLLECT   / #{MONEY_RATE}, 0)           AS DAY_COLLECT
+         , ISNULL(G.MONTH_COLLECT / #{MONEY_RATE}, 0)           AS MONTH_COLLECT
+         , ISNULL((ISNULL(A.UN_COLLECT_AMT,0) + ISNULL(E.DAY_AMT,0) + ISNULL(E.DAY_TAX,0) - ISNULL(E.CARD_AMT_O,0) - ISNULL(F.DAY_COLLECT,0)) / #{MONEY_RATE}, 0) AS BLAN_AMT
+      FROM (SELECT DISTINCT    B.DIV_CODE
+                 , A.CUSTOM_CODE
+                 , A.COMP_CODE
+                 , uniLITE.fnCustNameComp(A.COMP_CODE, #{S_USER_ID}, A.CUSTOM_CODE) AS CUSTOM_NAME
+                 , A.BUSI_PRSN
+                 , uniLITE.fnGetBalanceT(#{S_COMP_CODE}, B.DIV_CODE, A.CUSTOM_CODE, #{SALE_DATE}, B.MONEY_UNIT, '3') AS UN_COLLECT_AMT
+                 , B.MONEY_UNIT
+              FROM            SAR200T B WITH (NOLOCK)
+                   INNER JOIN BCM100T A WITH (NOLOCK) ON A.CUSTOM_CODE = B.CUSTOM_CODE
+                                                     AND A.COMP_CODE   = B.COMP_CODE
+             WHERE A.COMP_CODE      = #{S_COMP_CODE}
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+               AND B.DIV_CODE       = #{DIV_CODE}
+    </if>
+    
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+              AND B.CUSTOM_CODE 		= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+              AND B.CUSTOM_CODE 		LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+              AND A.CUSTOM_NAME 		LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+    
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+               AND A.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+               AND A.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+    <if test="traden == &quot;S&quot;">
+               AND B.MONEY_UNIT     = #{GS_MONEY_UNIT}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(BUSI_PRSN)">
+               AND A.BUSI_PRSN      = #{BUSI_PRSN}
+    </if>
+           ) A
+
+        --'잔액누계테이블(전일미수)
+           FULL OUTER JOIN (SELECT
+                                   G.COMP_CODE
+                                 , G.DIV_CODE
+                                 , G.CUSTOM_CODE
+                                 , (CASE WHEN MAX(G.SALE_SUB_TOT) IS NULL OR MAX(G.SALE_SUB_TOT) = 0 THEN 0
+                                         WHEN SUM(F.SALE_AMT_TOT) IS NULL OR SUM(F.SALE_AMT_TOT) = 0 THEN 0
+                                                                                                     ELSE MAX(G.SALE_SUB_TOT) / SUM(F.SALE_AMT_TOT) * 100
+                                     END) AS SALE_AVG
+                                 , MAX(G.SALE_SUB_TOT) AS SALE_SUB_TOT
+                                 , G.MONEY_UNIT
+                              FROM ((SELECT
+                                             A.DIV_CODE
+                                           , A.COMP_CODE
+                                           , SUM(C.SALE_AMT_O) AS SALE_AMT_TOT
+                                           , A.MONEY_UNIT
+                                        FROM            SSA100T A WITH (NOLOCK)
+                                             INNER JOIN SSA110T C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                                               AND C.DIV_CODE    = A.DIV_CODE
+                                                                               AND C.BILL_NUM    = A.BILL_NUM
+                                             INNER JOIN BCM100T B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                                               AND B.CUSTOM_CODE = A.SALE_CUSTOM_CODE
+                                       WHERE A.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                         AND A.DIV_CODE       = #{DIV_CODE}
+    </if>
+    
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                         AND A.SALE_CUSTOM_CODE 		= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                         AND A.SALE_CUSTOM_CODE 		LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                         AND B.CUSTOM_NAME 				LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                         AND B.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                         AND B.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(BUSI_PRSN)">
+                                         AND B.BUSI_PRSN      = #{BUSI_PRSN}
+    </if>
+                                         AND A.SALE_DATE     &gt;= SUBSTRING(#{SALE_DATE},1,6) + '01'
+                                         AND A.SALE_DATE     &lt;= #{SALE_DATE}
+                                       GROUP BY A.COMP_CODE, A.DIV_CODE, A.MONEY_UNIT)
+
+    <if test="traden == &quot;T&quot;">      --'무역포함.
+                                      UNION
+                                     (SELECT C.COMP_CODE
+                                           , C.DIV_CODE
+                                           , ISNULL(SUM(C.BL_AMT),0) AS SALE_AMT_TOT
+                                           , C.AMT_UNIT AS MONEY_UNIT
+                                        FROM BCM100T A WITH (NOLOCK)
+                                           , TED100T C WITH (NOLOCK)
+                                           , TEA100T D WITH (NOLOCK)
+                                       WHERE C.COMP_CODE      = D.COMP_CODE
+                                         AND C.SO_SER_NO      = D.SO_SER_NO
+                                         AND A.COMP_CODE      = D.COMP_CODE
+                                         AND A.CUSTOM_CODE    = D.IMPORTER
+                                         AND C.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                         AND C.DIV_CODE       = #{DIV_CODE}
+    </if>
+    
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                         AND A.CUSTOM_CODE 		= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                         AND A.CUSTOM_CODE 		LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                         AND A.CUSTOM_NAME 		LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                         AND A.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                         AND A.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+                                         AND C.BL_DATE       &gt;= SUBSTRING(#{SALE_DATE},1,6) + '01'
+                                         AND C.BL_DATE       &lt;= #{SALE_DATE}
+                                       GROUP BY C.COMP_CODE, C.DIV_CODE, C.AMT_UNIT)
+                                      UNION
+                                     (SELECT C.COMP_CODE
+                                           , C.DIV_CODE
+                                           , ISNULL(SUM(C.PASS_AMT),0) AS SALE_AMT_TOT
+                                           , C.AMT_UNIT AS MONEY_UNIT
+                                        FROM BCM100T A WITH (NOLOCK)
+                                           , TEC120T C WITH (NOLOCK)
+                                       WHERE A.COMP_CODE      = C.COMP_CODE
+                                         AND A.CUSTOM_CODE    = C.APPLICANT
+                                         AND C.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                         AND C.DIV_CODE       = #{DIV_CODE}
+    </if>
+    
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                         AND A.CUSTOM_CODE 		= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                         AND A.CUSTOM_CODE 		LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                         AND A.CUSTOM_NAME 		LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                         AND A.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                         AND A.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+                                         AND C.ACCEPT_DATE   &gt;= SUBSTRING(#{SALE_DATE},1,6) + '01'
+                                         AND C.ACCEPT_DATE   &lt;= #{SALE_DATE}
+                                       GROUP BY C.COMP_CODE, C.DIV_CODE, C.AMT_UNIT)
+    </if>
+
+                                   ) F
+
+                                   , (
+
+    <if test="traden == &quot;T&quot;">      --'무역포함.
+                                      SELECT Y.COMP_CODE
+                                           , Y.DIV_CODE
+                                           , Y.CUSTOM_CODE
+                                           , Y.MONEY_UNIT
+                                           , SUM(Y.SALE_SUB_TOT) AS SALE_SUB_TOT
+                                        FROM (
+    </if>
+                                              (SELECT
+                                                      A.DIV_CODE
+                                                    , A.COMP_CODE
+                                                    , B.CUSTOM_CODE
+                                                    , SUM(C.SALE_AMT_O) AS SALE_SUB_TOT
+                                                    , A.MONEY_UNIT
+                                                 FROM            SSA100T A WITH (NOLOCK)
+                                                      INNER JOIN SSA110T C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                                                        AND C.DIV_CODE    = A.DIV_CODE
+                                                                                        AND C.BILL_NUM    = A.BILL_NUM
+                                                      INNER JOIN BCM100T B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                                                        AND B.CUSTOM_CODE = A.SALE_CUSTOM_CODE
+                                                WHERE A.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                                  AND A.DIV_CODE       = #{DIV_CODE}
+    </if>
+     <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                                  AND A.SALE_CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                                  AND A.SALE_CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                                  AND B.CUSTOM_NAME 		LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                                  AND B.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                                  AND B.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(BUSI_PRSN)">
+                                                  AND B.BUSI_PRSN      = #{BUSI_PRSN}
+    </if>
+                                                  AND A.SALE_DATE     &gt;= SUBSTRING(#{SALE_DATE},1,6) + '01'
+                                                  AND A.SALE_DATE     &lt;= #{SALE_DATE}
+                                                GROUP BY A.COMP_CODE, A.DIV_CODE, B.CUSTOM_CODE, A.MONEY_UNIT)
+
+    <if test="traden == &quot;T&quot;">      --'무역포함.
+                                               UNION
+                                              (SELECT C.COMP_CODE
+                                                    , C.DIV_CODE
+                                                    , A.CUSTOM_CODE
+                                                    , ISNULL(SUM(C.BL_AMT),0) AS SALE_SUB_TOT
+                                                    , C.AMT_UNIT AS MONEY_UNIT
+                                                 FROM BCM100T A WITH (NOLOCK)
+                                                    , TED100T C WITH (NOLOCK)
+                                                    , TEA100T D WITH (NOLOCK)
+                                                WHERE C.COMP_CODE      = D.COMP_CODE
+                                                  AND C.SO_SER_NO      = D.SO_SER_NO
+                                                  AND A.COMP_CODE      = D.COMP_CODE
+                                                  AND A.CUSTOM_CODE    = D.IMPORTER
+                                                  AND C.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                                  AND C.DIV_CODE       = #{DIV_CODE}
+    </if>
+    
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                                  AND A.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                                  AND A.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                                  AND A.CUSTOM_NAME 		LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                                  AND A.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                                  AND A.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+                                                  AND C.BL_DATE       &gt;= SUBSTRING(#{SALE_DATE},1,6) + '01'
+                                                  AND C.BL_DATE       &lt;= #{SALE_DATE}
+                                                GROUP BY C.COMP_CODE, C.DIV_CODE, A.CUSTOM_CODE, C.AMT_UNIT)
+                                               UNION
+                                              (SELECT C.COMP_CODE
+                                                    , C.DIV_CODE
+                                                    , A.CUSTOM_CODE
+                                                    , ISNULL(SUM(C.PASS_AMT),0) AS SALE_SUB_TOT
+                                                    , C.AMT_UNIT AS MONEY_UNIT
+                                                 FROM BCM100T A WITH (NOLOCK)
+                                                    , TEC120T C WITH (NOLOCK)
+                                                WHERE A.COMP_CODE      = C.COMP_CODE
+                                                  AND A.CUSTOM_CODE    = C.APPLICANT
+                                                  AND C.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                                  AND C.DIV_CODE       = #{DIV_CODE}
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                                  AND A.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                                  AND A.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                                  AND A.CUSTOM_NAME 		LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                                  AND A.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                                  AND A.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+                                                  AND C.ACCEPT_DATE   &gt;= SUBSTRING(#{SALE_DATE},1,6) + '01'
+                                                  AND C.ACCEPT_DATE   &lt;= #{SALE_DATE}
+                                                GROUP BY C.COMP_CODE, C.DIV_CODE, A.CUSTOM_CODE, C.AMT_UNIT) ) Y
+                                       GROUP BY Y.COMP_CODE, Y.DIV_CODE, Y.CUSTOM_CODE, Y.MONEY_UNIT
+    </if>
+
+                                     ) G
+                               WHERE F.DIV_CODE   = G.DIV_CODE
+                                 AND F.COMP_CODE  = G.COMP_CODE
+                                 AND F.MONEY_UNIT = G.MONEY_UNIT
+                               GROUP BY G.COMP_CODE, G.DIV_CODE, G.CUSTOM_CODE, G.MONEY_UNIT) B ON B.COMP_CODE   = A.COMP_CODE
+                                                                                               AND B.DIV_CODE    = A.DIV_CODE
+                                                                                               AND B.CUSTOM_CODE = A.CUSTOM_CODE
+                                                                                               AND B.MONEY_UNIT  = A.MONEY_UNIT
+
+        --'매출테이블(매출계)
+             FULL OUTER JOIN
+
+    <if test="RDO == &quot;F&quot;">   --'A-년초계획,F-수정계획
+                             (SELECT
+                                     B.COMP_CODE
+                                   , B.PLAN_TYPE2_CODE
+                                   , SUM((CASE B.ENT_MONEY_UNIT
+                                               WHEN '1' THEN B.MONTH_PLAN*1
+                                               WHEN '2' THEN B.MONTH_PLAN*1000
+                                               WHEN '3' THEN B.MONTH_PLAN*1000000
+                                               WHEN '4' THEN B.MONTH_PLAN*100000000
+                                           END)) AS MONTH_PLAN
+                                   , B.MONEY_UNIT
+                                FROM            BCM100T A WITH (NOLOCK)
+                                     INNER JOIN (SELECT
+                                                        PLAN_TYPE2_CODE
+                                                      , A.COMP_CODE
+                                                      , ENT_MONEY_UNIT
+                                                      , (CASE SUBSTRING(#{SALE_DATE},5,2)
+                                                              WHEN '01' THEN PLAN_AMT1
+                                                              WHEN '02' THEN PLAN_AMT2
+                                                              WHEN '03' THEN PLAN_AMT3
+                                                              WHEN '04' THEN PLAN_AMT4
+                                                              WHEN '05' THEN PLAN_AMT5
+                                                              WHEN '06' THEN PLAN_AMT6
+                                                              WHEN '07' THEN PLAN_AMT7
+                                                              WHEN '08' THEN PLAN_AMT8
+                                                              WHEN '09' THEN PLAN_AMT9
+                                                              WHEN '10' THEN PLAN_AMT10
+                                                              WHEN '11' THEN PLAN_AMT11
+                                                              WHEN '12' THEN PLAN_AMT12
+                                                          END) AS MONTH_PLAN
+                                                      , A.MONEY_UNIT
+                                                   FROM            SSP100T A WITH (NOLOCK)
+                                                        INNER JOIN BCM100T B WITH (NOLOCK) ON B.CUSTOM_CODE = LTRIM(A.PLAN_TYPE2_CODE)
+                                                                                          AND B.COMP_CODE   = A.COMP_CODE
+                                                  WHERE A.COMP_CODE     = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                                    AND A.DIV_CODE      = #{DIV_CODE}
+    </if>
+                                                    AND A.PLAN_TYPE2    = '2'
+                                                    
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                                  AND B.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                                  AND B.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                                  AND B.CUSTOM_NAME 	LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                                    AND B.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                                    AND B.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(BUSI_PRSN)">
+                                                    AND B.BUSI_PRSN      = #{BUSI_PRSN}
+    </if>
+                                                    AND A.PLAN_YEAR      = SUBSTRING(#{SALE_DATE},1,4)
+                                                    AND A.MONEY_UNIT     = #{GS_MONEY_UNIT}) B ON A.CUSTOM_CODE = LTRIM(B.PLAN_TYPE2_CODE)
+                                                                                                  AND A.COMP_CODE   = B.COMP_CODE
+                               GROUP BY B.COMP_CODE, B.PLAN_TYPE2_CODE, B.MONEY_UNIT) C ON A.CUSTOM_CODE = LTRIM(C.PLAN_TYPE2_CODE)
+                                                                                       AND A.MONEY_UNIT  = C.MONEY_UNIT
+                                                                                       AND A.COMP_CODE   = C.COMP_CODE
+    </if>
+    <if test="RDO == &quot;A&quot;">
+                             (SELECT
+                                     B.COMP_CODE
+                                   , B.PLAN_TYPE2_CODE
+                                   , SUM((CASE B.ENT_MONEY_UNIT
+                                               WHEN '1' THEN B.MONTH_PLAN*1
+                                               WHEN '2' THEN B.MONTH_PLAN*1000
+                                               WHEN '3' THEN B.MONTH_PLAN*1000000
+                                               WHEN '4' THEN B.MONTH_PLAN*100000000
+                                           END)) AS MONTH_PLAN
+                                   , B.MONEY_UNIT
+                                FROM            BCM100T A WITH (NOLOCK)
+                                     INNER JOIN (SELECT
+                                                        PLAN_TYPE2_CODE
+                                                      , A.COMP_CODE
+                                                      , ENT_MONEY_UNIT
+                                                      , (CASE SUBSTRING(#{SALE_DATE},5,2)
+                                                              WHEN '01' THEN MOD_PLAN_AMT1
+                                                              WHEN '02' THEN MOD_PLAN_AMT2
+                                                              WHEN '03' THEN MOD_PLAN_AMT3
+                                                              WHEN '04' THEN MOD_PLAN_AMT4
+                                                              WHEN '05' THEN MOD_PLAN_AMT5
+                                                              WHEN '06' THEN MOD_PLAN_AMT6
+                                                              WHEN '07' THEN MOD_PLAN_AMT7
+                                                              WHEN '08' THEN MOD_PLAN_AMT8
+                                                              WHEN '09' THEN MOD_PLAN_AMT9
+                                                              WHEN '10' THEN MOD_PLAN_AMT10
+                                                              WHEN '11' THEN MOD_PLAN_AMT11
+                                                              WHEN '12' THEN MOD_PLAN_AMT12
+                                                          END) AS MONTH_PLAN
+                                                      , A.MONEY_UNIT
+                                                   FROM            SSP100T A WITH (NOLOCK)
+                                                        INNER JOIN BCM100T B WITH (NOLOCK) ON B.CUSTOM_CODE = LTRIM(A.PLAN_TYPE2_CODE)
+                                                                                          AND B.COMP_CODE   = A.COMP_CODE
+                                                  WHERE A.COMP_CODE     = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                                    AND A.DIV_CODE      = #{DIV_CODE}
+    </if>
+                                                    AND A.PLAN_TYPE2    = '2'
+
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                                  AND B.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                                  AND B.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                                  AND B.CUSTOM_NAME 	LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                                    AND B.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                                    AND B.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(BUSI_PRSN)">
+                                                    AND B.BUSI_PRSN      = #{BUSI_PRSN}
+    </if>
+                                                    AND A.PLAN_YEAR      = SUBSTRING(#{SALE_DATE},1,4)
+                                                    AND A.MONEY_UNIT     = #{GS_MONEY_UNIT}) B ON A.CUSTOM_CODE = LTRIM(B.PLAN_TYPE2_CODE)
+                                                                                                  AND A.COMP_CODE   = B.COMP_CODE
+                               GROUP BY B.COMP_CODE, B.PLAN_TYPE2_CODE, B.MONEY_UNIT) C ON A.CUSTOM_CODE = LTRIM(C.PLAN_TYPE2_CODE)
+                                                                                       AND A.MONEY_UNIT  = C.MONEY_UNIT
+                                                                                       AND A.COMP_CODE   = C.COMP_CODE
+    </if>
+
+        --'판매계획
+             FULL OUTER JOIN (
+
+    <if test="traden == &quot;T&quot;">      --'무역포함.
+                              SELECT X.COMP_CODE
+                                   , X.DIV_CODE
+                                   , X.CUSTOM_CODE
+                                   , X.MONEY_UNIT
+                                   , SUM(X.SALE_BEFORE_TOT) AS SALE_BEFORE_TOT
+                                FROM (
+    </if>
+                                      (SELECT
+                                              A.COMP_CODE
+                                            , A.DIV_CODE
+                                            , B.CUSTOM_CODE
+                                            , SUM(C.SALE_AMT_O) AS SALE_BEFORE_TOT
+                                            , A.MONEY_UNIT
+                                         FROM            SSA100T A WITH (NOLOCK)
+                                              INNER JOIN SSA110T C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                                                AND C.DIV_CODE    = A.DIV_CODE
+                                                                                AND C.BILL_NUM    = A.BILL_NUM
+                                              INNER JOIN BCM100T B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                                                AND B.CUSTOM_CODE = A.SALE_CUSTOM_CODE
+                                        WHERE A.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                          AND A.DIV_CODE       = #{DIV_CODE}
+    </if>
+    
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                          AND B.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                          AND B.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                          AND B.CUSTOM_NAME 	LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                          AND B.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                          AND B.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(BUSI_PRSN)">
+                                          AND B.BUSI_PRSN      = #{BUSI_PRSN}
+    </if>
+                                          AND A.SALE_DATE     &gt;= LEFT(CONVERT(VARCHAR(8),DATEADD(yyyy,-1,CONVERT(DATETIME,#{SALE_DATE})),112),6) + '01'
+                                          AND A.SALE_DATE     &lt;= LEFT(CONVERT(VARCHAR(8),DATEADD(yyyy,-1,CONVERT(DATETIME,#{SALE_DATE})),112),8)
+                                        GROUP BY A.COMP_CODE, B.CUSTOM_CODE, A.DIV_CODE, A.MONEY_UNIT)
+
+    <if test="traden == &quot;T&quot;">      --'무역포함.
+                                       UNION
+                                      (SELECT C.COMP_CODE
+                                            , C.DIV_CODE
+                                            , D.IMPORTER AS CUSTOM_CODE
+                                            , ISNULL(SUM(C.BL_AMT),0) AS SALE_BEFORE_TOT
+                                            , C.AMT_UNIT AS MONEY_UNIT
+                                         FROM BCM100T A WITH (NOLOCK)
+                                            , TED100T C WITH (NOLOCK)
+                                            , TEA100T D WITH (NOLOCK)
+                                        WHERE C.COMP_CODE      = D.COMP_CODE
+                                          AND C.SO_SER_NO      = D.SO_SER_NO
+                                          AND A.COMP_CODE      = D.COMP_CODE
+                                          AND A.CUSTOM_CODE    = D.IMPORTER
+                                          AND C.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                          AND C.DIV_CODE       = #{DIV_CODE}
+    </if>
+    
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                          AND A.CUSTOM_NAME 	LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                          AND A.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                          AND A.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+                                          AND C.BL_DATE       &gt;= LEFT(CONVERT(VARCHAR(8),DATEADD(yyyy,-1,CONVERT(DATETIME,#{SALE_DATE})),112),6) + '01'
+                                          AND C.BL_DATE       &lt;= LEFT(CONVERT(VARCHAR(8),DATEADD(yyyy,-1,CONVERT(DATETIME,#{SALE_DATE})),112),8)
+                                        GROUP BY C.COMP_CODE, D.IMPORTER, C.DIV_CODE, C.AMT_UNIT)
+                                       UNION
+                                      (SELECT C.COMP_CODE
+                                            , C.DIV_CODE
+                                            , C.APPLICANT
+                                            , ISNULL(SUM(C.PASS_AMT),0) AS SALE_BEFORE_TOT
+                                            , C.AMT_UNIT AS MONEY_UNIT
+                                         FROM BCM100T A WITH (NOLOCK)
+                                            , TEC120T C WITH (NOLOCK)
+                                        WHERE A.COMP_CODE      = C.COMP_CODE
+                                          AND A.CUSTOM_CODE    = C.APPLICANT
+                                          AND C.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                          AND C.DIV_CODE       = #{DIV_CODE}
+    </if>
+    
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                          AND A.CUSTOM_NAME 	LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                          AND A.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                          AND A.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+                                          AND C.ACCEPT_DATE   &gt;= LEFT(CONVERT(VARCHAR(8),DATEADD(yyyy,-1,CONVERT(DATETIME,#{SALE_DATE})),112),6) + '01'
+                                          AND C.ACCEPT_DATE   &lt;= LEFT(CONVERT(VARCHAR(8),DATEADD(yyyy,-1,CONVERT(DATETIME,#{SALE_DATE})),112),8)
+                                        GROUP BY C.COMP_CODE, C.APPLICANT, C.DIV_CODE, C.AMT_UNIT) ) X
+                               GROUP BY X.COMP_CODE, X.DIV_CODE, X.CUSTOM_CODE, X.MONEY_UNIT
+    </if>
+                             ) D ON A.COMP_CODE   = D.COMP_CODE
+                                AND A.DIV_CODE    = D.DIV_CODE
+                                AND A.CUSTOM_CODE = D.CUSTOM_CODE
+                                AND A.MONEY_UNIT  = D.MONEY_UNIT
+
+        --'전년도매출계
+             FULL OUTER JOIN (
+
+    <if test="traden == &quot;T&quot;">      --'무역포함.
+                              SELECT X.COMP_CODE
+                                   , X.DIV_CODE
+                                   , X.CUSTOM_CODE
+                                   , X.MONEY_UNIT
+                                   , SUM(X.DAY_Q     ) AS DAY_Q
+                                   , SUM(X.DAY_AMT   ) AS DAY_AMT
+                                   , SUM(X.DAY_TAX   ) AS DAY_TAX
+                                   , SUM(X.CARD_AMT_O) AS CARD_AMT_O
+                                FROM (
+    </if>
+                                      (SELECT
+                                              A.COMP_CODE
+                                            , A.DIV_CODE
+                                            , B.CUSTOM_CODE
+                                            , SUM(C.SALE_Q)     AS DAY_Q
+                                            , SUM(C.SALE_AMT_O) AS DAY_AMT
+                                            , SUM(C.TAX_AMT_O)  AS DAY_TAX
+                                            , ISNULL(SUM(CASE A.BILL_TYPE
+                                                              WHEN '40'
+                                                              THEN C.SALE_LOC_AMT_I + C.TAX_AMT_O
+                                                          END),0) AS CARD_AMT_O
+                                            , A.MONEY_UNIT
+                                         FROM            SSA100T A WITH (NOLOCK)
+                                              INNER JOIN SSA110T C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                                                AND C.DIV_CODE    = A.DIV_CODE
+                                                                                AND C.BILL_NUM    = A.BILL_NUM
+                                              INNER JOIN BCM100T B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                                                AND B.CUSTOM_CODE = A.SALE_CUSTOM_CODE
+                                        WHERE A.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                          AND A.DIV_CODE       = #{DIV_CODE}
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                          AND B.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                          AND B.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                          AND B.CUSTOM_NAME 	LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                          AND B.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                          AND B.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(BUSI_PRSN)">
+                                          AND B.BUSI_PRSN      = #{BUSI_PRSN}
+    </if>
+                                          AND A.SALE_DATE      =  #{SALE_DATE}
+                                        GROUP BY A.COMP_CODE, B.CUSTOM_CODE, A.DIV_CODE, A.MONEY_UNIT)
+
+    <if test="traden == &quot;T&quot;">      --'무역포함.
+                                       UNION
+                                      (SELECT C.COMP_CODE
+                                            , C.DIV_CODE
+                                            , D.IMPORTER AS CUSTOM_CODE
+                                            , SUM(E.QTY) AS DAY_Q
+                                            , SUM(C.BL_AMT) AS DAY_AMT
+                                            , 0 AS DAY_TAX
+                                            , 0 AS CARD_AMT_O
+                                            , C.AMT_UNIT AS MONEY_UNIT
+                                         FROM BCM100T A WITH (NOLOCK)
+                                            , TED100T C WITH (NOLOCK)
+                                            , TEA100T D WITH (NOLOCK)
+                                            , TED110T E WITH (NOLOCK)
+                                        WHERE C.COMP_CODE      = D.COMP_CODE
+                                          AND C.SO_SER_NO      = D.SO_SER_NO
+                                          AND A.COMP_CODE      = D.COMP_CODE
+                                          AND A.CUSTOM_CODE    = D.IMPORTER
+                                          AND C.COMP_CODE      = E.COMP_CODE
+                                          AND C.BL_SER_NO      = E.BL_SER_NO
+                                          AND C.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                          AND C.DIV_CODE       = #{DIV_CODE}
+    </if>
+    
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                          AND A.CUSTOM_NAME 	LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                          AND A.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                          AND A.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+                                          AND C.BL_DATE        = #{SALE_DATE}
+                                        GROUP BY C.COMP_CODE, D.IMPORTER, C.DIV_CODE, C.AMT_UNIT)
+                                       UNION
+                                      (SELECT C.COMP_CODE
+                                            , C.DIV_CODE
+                                            , C.APPLICANT
+                                            , SUM(D.QTY) AS DAY_Q
+                                            , SUM(D.ACCEPT_AMT) AS DAY_AMT
+                                            , 0 AS DAY_TAX
+                                            , 0 AS CARD_AMT_O
+                                            , C.AMT_UNIT AS MONEY_UNIT
+                                         FROM BCM100T A WITH (NOLOCK)
+                                            , TEC120T C WITH (NOLOCK)
+                                            , TEC130T D WITH (NOLOCK)
+                                        WHERE A.COMP_CODE      = C.COMP_CODE
+                                          AND A.CUSTOM_CODE    = C.APPLICANT
+                                          AND C.COMP_CODE      = D.COMP_CODE
+                                          AND C.ACCEPT_NO      = D.ACCEPT_NO
+                                          AND C.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                          AND C.DIV_CODE       = #{DIV_CODE}
+    </if>
+    
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                          AND A.CUSTOM_NAME 	LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                          AND A.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                          AND A.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+                                          AND C.ACCEPT_DATE    = #{SALE_DATE}
+                                        GROUP BY C.COMP_CODE, C.APPLICANT, C.DIV_CODE, C.AMT_UNIT) ) X
+                               GROUP BY X.COMP_CODE, X.DIV_CODE, X.CUSTOM_CODE, X.MONEY_UNIT
+    </if>
+                             ) E ON A.COMP_CODE   = E.COMP_CODE
+                                AND A.DIV_CODE    = E.DIV_CODE
+                                AND A.CUSTOM_CODE = E.CUSTOM_CODE
+                                AND A.MONEY_UNIT  = E.MONEY_UNIT
+
+        --'당일매출계
+             FULL OUTER JOIN (
+
+    <if test="traden == &quot;T&quot;">      --'무역포함.
+                              SELECT X.COMP_CODE
+                                   , X.DIV_CODE
+                                   , X.CUSTOM_CODE
+                                   , X.MONEY_UNIT
+                                   , SUM(X.DAY_COLLECT) AS DAY_COLLECT
+                                FROM (
+    </if>
+                                      (SELECT
+                                              A.COMP_CODE
+                                            , A.DIV_CODE
+                                            , B.CUSTOM_CODE
+                                            , SUM(A.COLLECT_AMT) AS DAY_COLLECT
+                                            , A.MONEY_UNIT
+                                         FROM            SCO100T A WITH (NOLOCK)
+                                              INNER JOIN BCM100T B WITH (NOLOCK) ON A.CUSTOM_CODE = B.CUSTOM_CODE
+                                                                                AND A.COMP_CODE   = B.COMP_CODE
+                                        WHERE A.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                          AND A.DIV_CODE       = #{DIV_CODE}
+    </if>
+    
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                          AND B.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                          AND B.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                          AND B.CUSTOM_NAME 	LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                          AND B.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                          AND B.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(BUSI_PRSN)">
+                                          AND B.BUSI_PRSN      = #{BUSI_PRSN}
+    </if>
+                                          AND (SELECT (CASE ISNULL(AA.REF_CODE1,'')
+                                                          WHEN ''
+                                                          THEN AA.SUB_CODE
+                                                          ELSE AA.REF_CODE1
+                                                        END)
+                                                 FROM BSA100T AA WITH (NOLOCK)
+                                                WHERE AA.MAIN_CODE   = 'S017'
+                                                  AND AA.COMP_CODE   = A.COMP_CODE
+                                                  AND AA.SUB_CODE    = A.COLLECT_TYPE) != '80'
+                                                  AND A.COLLECT_DATE = #{SALE_DATE}
+                                                  AND (A.DISHONOR_DATE IS NULL OR A.DISHONOR_DATE ='')
+                                        GROUP BY A.COMP_CODE, B.CUSTOM_CODE, A.DIV_CODE, A.MONEY_UNIT)
+
+    <if test="traden == &quot;T&quot;">      --'무역포함.
+                                       UNION
+                                      (SELECT D.COMP_CODE
+                                            , D.DIV_CODE
+                                            , A.CUSTOM_CODE
+                                            , SUM(D.PAY_AMT) AS DAY_COLLECT
+                                            , D.MONEY_UNIT
+                                         FROM BCM100T A WITH (NOLOCK)
+                                            , TEE100T D WITH (NOLOCK)
+                                        WHERE A.COMP_CODE      = D.COMP_CODE
+                                          AND A.CUSTOM_CODE    = D.IMPORTER
+                                          AND D.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                          AND D.DIV_CODE       = #{DIV_CODE}
+    </if>
+                                          AND D.NEGO_TYPE      = '1'
+                                          
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                          AND A.CUSTOM_NAME 	LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                          AND A.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                          AND A.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+                                          AND D.NEGO_DATE      =  #{SALE_DATE}
+                                        GROUP BY D.COMP_CODE, A.CUSTOM_CODE, D.DIV_CODE, D.MONEY_UNIT)
+                                       UNION
+                                      (SELECT D.COMP_CODE
+                                            , D.DIV_CODE
+                                            , A.CUSTOM_CODE
+                                            , SUM(D.PAY_AMT) AS DAY_COLLECT
+                                            , D.MONEY_UNIT
+                                         FROM BCM100T A WITH (NOLOCK)
+                                            , TEE100T D WITH (NOLOCK)
+                                        WHERE A.COMP_CODE      = D.COMP_CODE
+                                          AND A.CUSTOM_CODE    = D.IMPORTER
+                                          AND D.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                          AND D.DIV_CODE       = #{DIV_CODE}
+    </if>
+                                          AND D.NEGO_TYPE      = '2'
+                                          
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                          AND A.CUSTOM_NAME 	LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                          AND A.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                          AND A.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+                                          AND D.PAY_DATE       = #{SALE_DATE}
+                                        GROUP BY D.COMP_CODE, A.CUSTOM_CODE, D.DIV_CODE, D.MONEY_UNIT) ) X
+                               GROUP BY X.COMP_CODE, X.CUSTOM_CODE,X.DIV_CODE,X.MONEY_UNIT
+    </if>
+
+                             ) F ON A.COMP_CODE   = F.COMP_CODE
+                                AND A.DIV_CODE    = F.DIV_CODE
+                                AND A.CUSTOM_CODE = F.CUSTOM_CODE
+                                AND A.MONEY_UNIT  = F.MONEY_UNIT
+
+        --'당일수금
+             FULL OUTER JOIN (
+
+    <if test="traden == &quot;T&quot;">      --'무역포함.
+                              SELECT X.COMP_CODE
+                                   , X.DIV_CODE
+                                   , X.CUSTOM_CODE
+                                   , X.MONEY_UNIT
+                                   , SUM(X.MONTH_COLLECT) AS MONTH_COLLECT
+                                FROM (
+    </if>
+                                      (SELECT
+                                              A.COMP_CODE
+                                            , A.DIV_CODE
+                                            , B.CUSTOM_CODE
+                                            , SUM(A.COLLECT_AMT) AS MONTH_COLLECT
+                                            , A.MONEY_UNIT
+                                         FROM            SCO100T A WITH (NOLOCK)
+                                              INNER JOIN BCM100T B WITH (NOLOCK) ON A.CUSTOM_CODE = B.CUSTOM_CODE
+                                                                                AND A.COMP_CODE   = B.COMP_CODE
+                                        WHERE A.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                          AND A.DIV_CODE       = #{DIV_CODE}
+    </if>
+    
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                          AND B.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                          AND B.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                          AND B.CUSTOM_NAME 	LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                          AND B.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                          AND B.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(BUSI_PRSN)">
+                                          AND B.BUSI_PRSN      = #{BUSI_PRSN}
+    </if>
+                                          AND (SELECT (CASE ISNULL(AA.REF_CODE1,'')
+                                                          WHEN ''
+                                                          THEN AA.SUB_CODE
+                                                          ELSE AA.REF_CODE1
+                                                        END)
+                                                 FROM BSA100T AA WITH (NOLOCK)
+                                                WHERE AA.MAIN_CODE    = 'S017'
+                                                  AND AA.COMP_CODE    = A.COMP_CODE
+                                                  AND AA.SUB_CODE     = A.COLLECT_TYPE) != '80'
+                                                  AND A.COLLECT_DATE &gt;=  SUBSTRING(#{SALE_DATE},1,6)+'01'
+                                                  AND A.COLLECT_DATE &lt;=  #{SALE_DATE}
+                                                  AND (A.DISHONOR_DATE IS NULL OR A.DISHONOR_DATE ='')
+                                        GROUP BY A.COMP_CODE, B.CUSTOM_CODE, A.DIV_CODE, A.MONEY_UNIT)
+
+    <if test="traden == &quot;T&quot;">      --'무역포함.
+                                       UNION
+                                      (SELECT D.COMP_CODE
+                                            , D.DIV_CODE
+                                            , A.CUSTOM_CODE
+                                            , SUM(D.PAY_AMT) AS MONTH_COLLECT
+                                            , D.MONEY_UNIT
+                                         FROM BCM100T A WITH (NOLOCK)
+                                            , TEE100T D WITH (NOLOCK)
+                                        WHERE A.COMP_CODE      = D.COMP_CODE
+                                          AND A.CUSTOM_CODE    = D.IMPORTER
+                                          AND D.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                          AND D.DIV_CODE       = #{DIV_CODE}
+    </if>
+                                          AND D.NEGO_TYPE      = '1'
+                                          
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                          AND A.CUSTOM_NAME 	LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                          AND A.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                          AND A.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+                                          AND D.NEGO_DATE     &gt;= SUBSTRING(#{SALE_DATE},1,6) + '01'
+                                          AND D.NEGO_DATE     &lt;= #{SALE_DATE}
+                                        GROUP BY D.COMP_CODE, A.CUSTOM_CODE, D.DIV_CODE, D.MONEY_UNIT)
+                                       UNION
+                                      (SELECT D.COMP_CODE
+                                            , D.DIV_CODE
+                                            , A.CUSTOM_CODE
+                                            , SUM(D.PAY_AMT) AS MONTH_COLLECT
+                                            , D.MONEY_UNIT
+                                         FROM BCM100T A WITH (NOLOCK)
+                                            , TEE100T D WITH (NOLOCK)
+                                        WHERE A.COMP_CODE      = D.COMP_CODE
+                                          AND A.CUSTOM_CODE    = D.IMPORTER
+                                          AND D.COMP_CODE      = #{S_COMP_CODE}
+
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                          AND D.DIV_CODE       = #{DIV_CODE}
+    </if>
+                                          AND D.NEGO_TYPE      = '2'
+                                          
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	= #{CUSTOM_CODE}					/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+                                          AND A.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+                                          AND A.CUSTOM_NAME 	LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+    </if>
+
+    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+                                          AND A.AGENT_TYPE     = #{AGENT_TYPE}
+    </if>
+    <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+                                          AND A.AREA_TYPE      = #{AREA_TYPE}
+    </if>
+                                          AND D.PAY_DATE      &gt;= SUBSTRING(#{SALE_DATE},1,6) + '01'
+                                          AND D.PAY_DATE      &lt;= #{SALE_DATE}
+                                        GROUP BY D.COMP_CODE, A.CUSTOM_CODE, D.DIV_CODE, D.MONEY_UNIT) ) X
+                               GROUP BY X.COMP_CODE, X.CUSTOM_CODE,X.DIV_CODE,X.MONEY_UNIT
+    </if>
+
+                             ) G ON A.COMP_CODE   = G.COMP_CODE
+                                AND A.DIV_CODE    = G.DIV_CODE
+                                AND A.CUSTOM_CODE = G.CUSTOM_CODE
+                                AND A.MONEY_UNIT  = G.MONEY_UNIT
+
+    <if test="traden == &quot;T&quot;">
+        <if test="@foren.Ognl@isNotEmpty(AMT_UNIT)">
+            <if test="moneyzeron == &quot;2&quot;">
+                WHERE A.MONEY_UNIT = #{AMT_UNIT}
+            </if>
+        </if>
+    </if>
+    <if test="traden == &quot;T&quot;">
+        <if test="@foren.Ognl@isNotEmpty(AMT_UNIT)">
+            <if test="moneyzeron == &quot;1&quot;">
+                WHERE A.MONEY_UNIT = #{AMT_UNIT}
+                   AND (ISNULL(ABS(C.MONTH_PLAN)/'1',0) +        --'판매계획
+                        ISNULL(ABS(B.SALE_SUB_TOT)/'1',0)  +     --'실적
+                        ISNULL(ABS(D.SALE_BEFORE_TOT)/'1',0)  +  --'전년실적
+                        ISNULL(ABS(E.DAY_Q),0)  +                --'매출량
+                        ISNULL(ABS(E.DAY_AMT)/'1',0)  +          --'매출금액
+                        ISNULL(ABS(F.DAY_COLLECT)/'1',0)  +      --'당일수금
+                        ISNULL(ABS(G.MONTH_COLLECT)/'1',0)  +    --'당월누계
+                        (ISNULL(ABS((ISNULL(A.UN_COLLECT_AMT,0) + ISNULL(E.DAY_AMT,0) + ISNULL(E.DAY_TAX,0) - ISNULL(E.CARD_AMT_O,0) - ISNULL(F.DAY_COLLECT,0))) / '1',0))) != 0 --'현재미수
+                   AND A.COMP_CODE = #{S_COMP_CODE}
+            </if>
+        </if>
+    </if>
+    <if test="traden == &quot;T&quot;">
+        <if test="@foren.Ognl@isEmpty(AMT_UNIT)">
+            <if test="moneyzeron == &quot;1&quot;">
+                 WHERE
+                      (ISNULL(ABS(C.MONTH_PLAN)/'1',0) +        --'판매계획
+                       ISNULL(ABS(B.SALE_SUB_TOT)/'1',0)  +     --'실적
+                       ISNULL(ABS(D.SALE_BEFORE_TOT)/'1',0)  +  --'전년실적
+                       ISNULL(ABS(E.DAY_Q),0)  +                --'매출량
+                       ISNULL(ABS(E.DAY_AMT)/'1',0)  +          --'매출금액
+                       ISNULL(ABS(F.DAY_COLLECT)/'1',0)  +      --'당일수금
+                       ISNULL(ABS(G.MONTH_COLLECT)/'1',0)  +    --'당월누계
+                       (ISNULL(ABS((ISNULL(A.UN_COLLECT_AMT,0) + ISNULL(E.DAY_AMT,0) + ISNULL(E.DAY_TAX,0) - ISNULL(E.CARD_AMT_O,0) - ISNULL(F.DAY_COLLECT,0))) / '1',0))) != 0 --'현재미수
+                   AND A.COMP_CODE = #{S_COMP_CODE}
+            </if>
+        </if>
+    </if>
+    <if test="traden == &quot;S&quot;">
+        <if test="@foren.Ognl@isEmpty(AMT_UNIT)">
+            <if test="moneyzeron == &quot;1&quot;">
+             WHERE
+                  (ISNULL(ABS(C.MONTH_PLAN)/'1',0) +        --'판매계획
+                   ISNULL(ABS(B.SALE_SUB_TOT)/'1',0)  +     --'실적
+                   ISNULL(ABS(D.SALE_BEFORE_TOT)/'1',0)  +  --'전년실적
+                   ISNULL(ABS(E.DAY_Q),0)  +                --'매출량
+                   ISNULL(ABS(E.DAY_AMT)/'1',0)  +          --'매출금액
+                   ISNULL(ABS(F.DAY_COLLECT)/'1',0)  +      --'당일수금
+                   ISNULL(ABS(G.MONTH_COLLECT)/'1',0)  +    --'당월누계
+                   (ISNULL(ABS((ISNULL(A.UN_COLLECT_AMT,0) + ISNULL(E.DAY_AMT,0) + ISNULL(E.DAY_TAX,0) - ISNULL(E.CARD_AMT_O,0) - ISNULL(F.DAY_COLLECT,0))) / '1',0))) != 0 --'현재미수
+               AND A.COMP_CODE = #{S_COMP_CODE}
+            </if>
+        </if>
+    </if>
+
+     ORDER BY 2, 1
+    </select>
+
+</mapper>

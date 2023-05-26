@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_pmr918skrv_kdService">
+	<select id="s_pmr918skrv_kdService.selectList" parameterType="Map" resultType="rMap">     
+        /* 공용부품내역 조회 */
+        BEGIN
+        
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+        
+        DECLARE @COMP_CODE        NVARCHAR(08)
+               ,@DIV_CODE         NVARCHAR(08)
+               ,@CHILD_ITEM_CODE  NVARCHAR(20)
+               ,@BASIS_YYYMM      NVARCHAR(06)
+        
+        SET @COMP_CODE       = #{S_COMP_CODE}           --법인(필수)
+        SET @DIV_CODE        = #{DIV_CODE}              --사업장(필수)
+        SET @CHILD_ITEM_CODE = #{ITEM_CODE}             --품목코드(필수)
+        SET @BASIS_YYYMM     = #{BASIS_DATE}           --기준년월(필수)
+        
+        DECLARE @STOCK_Q       NUMERIC(30, 6)
+               ,@NOT_INSTOCK_Q NUMERIC(30, 6)
+        
+        /* 현재고 */
+        SELECT @STOCK_Q = ISNULL(SUM(STOCK_Q), 0)
+                        FROM BIV100T WITH(NOLOCK) 
+                       WHERE COMP_CODE = @COMP_CODE
+                         AND DIV_CODE  = @DIV_CODE
+                         AND ITEM_CODE = @CHILD_ITEM_CODE
+        
+        /* 발주대비 미입고수량 */
+        SELECT @NOT_INSTOCK_Q = ISNULL(SUM(ISNULL(ORDER_UNIT_Q, 0) - ISNULL(INSTOCK_Q, 0)), 0)
+               FROM MPO200T WITH(NOLOCK) 
+              WHERE COMP_CODE = @COMP_CODE
+                AND DIV_CODE  = @DIV_CODE
+                AND ITEM_CODE = @CHILD_ITEM_CODE
+                AND ISNULL(ORDER_UNIT_Q, 0) - ISNULL(INSTOCK_Q, 0) > 0
+                AND CONTROL_STATUS != '9'
+
+    		/* 발주등록되지 않은 생산구매요청 수량 180710 ADD 이준상 요청*/
+    		SELECT @NOT_INSTOCK_Q = @NOT_INSTOCK_Q + ISNULL(SUM(A.ORDER_PLAN_Q),0)
+    		FROM	S_MRE091T_KD A
+    				LEFT JOIN MRE110T B ON A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE=B.DIV_CODE AND A.PRDT_REQ_NUM=B.PRDT_REQ_NUM AND A.PRDT_REQ_SEQ=B.PRDT_REQ_SEQ
+    				LEFT JOIN MPO200T C ON B.COMP_CODE=C.COMP_CODE AND B.DIV_CODE=C.DIV_CODE AND B.PO_REQ_NUM=C.PO_REQ_NUM AND B.PO_SER_NO=C.PO_REQ_SEQ
+    		WHERE A.COMP_CODE=@COMP_CODE
+    		AND A.DIV_CODE=@DIV_CODE
+    		AND A.ITEM_CODE=@CHILD_ITEM_CODE
+    		AND C.COMP_CODE IS NULL
+    
+        
+        SELECT
+         A.COMP_CODE                                           AS COMP_CODE      -- 법인
+        ,A.DIV_CODE                                            AS DIV_CODE       -- 사업장
+        ,B.ITEM_CODE                                           AS ITEM_CODE      -- 제품코드
+        ,B.ITEM_NAME                                           AS ITEM_NAME      -- 제품
+        ,B.SPEC                                                AS SPEC           -- 규격
+        ,B.STOCK_UNIT                                          AS STOCK_UNIT     -- 재고단위
+        ,SUM(ISNULL(A.ORDER_UNIT_Q,0))                              AS UNIT_Q         -- 소요량
+        ,D.TREE_NAME                                           AS WORK_SHOP_NAME -- 주작업장
+        ,SUM(ISNULL(E.SALES_PLAN_Q, 0))                             AS SALES_PLAN_Q   -- 판매계획량
+        ,SUM(ISNULL(E.SALES_PLAN_Q, 0) * ISNULL(A.ORDER_UNIT_Q, 0)) AS PROG_UNIT_Q    -- 공정소요량
+        ,@STOCK_Q                                              AS STOCK_Q        -- 현재고
+        ,@NOT_INSTOCK_Q                                        AS NOT_INSTOCK_Q  -- 발주미입고
+        
+        FROM       unilite.S_fnGetExpandBOM_KD(@COMP_CODE, @DIV_CODE, @CHILD_ITEM_CODE, '') A
+        INNER JOIN unilite.BPR100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+                                                 AND A.PARENT    = B.ITEM_CODE
+        INNER JOIN unilite.BPR200T C WITH(NOLOCK) ON A.COMP_CODE = C.COMP_CODE
+                                                 AND A.DIV_CODE  = C.DIV_CODE
+                                                 AND A.PARENT    = C.ITEM_CODE
+                                                 AND C.ITEM_ACCOUNT = '10'
+        LEFT  JOIN unilite.BSA230T D WITH(NOLOCK) ON D.COMP_CODE  = C.COMP_CODE
+                                                 AND D.TYPE_LEVEL = C.DIV_CODE
+                                                 AND D.TREE_CODE  = C.WORK_SHOP_CODE
+        LEFT  JOIN (
+                    SELECT
+                    COMP_CODE
+                   ,DIV_CODE
+                   ,PLAN_TYPE2_CODE AS ITEM_CODE
+                   ,SUM(CASE WHEN RIGHT(@BASIS_YYYMM, 2) = '01' THEN (CASE WHEN ISNULL(MOD_PLAN_Q1, 0) != 0 THEN MOD_PLAN_Q1  ELSE PLAN_QTY1  END)
+                          WHEN RIGHT(@BASIS_YYYMM, 2) = '02' THEN (CASE WHEN ISNULL(MOD_PLAN_Q2, 0) != 0 THEN MOD_PLAN_Q2  ELSE PLAN_QTY2  END)
+                          WHEN RIGHT(@BASIS_YYYMM, 2) = '03' THEN (CASE WHEN ISNULL(MOD_PLAN_Q3, 0) != 0 THEN MOD_PLAN_Q3  ELSE PLAN_QTY3  END)
+                          WHEN RIGHT(@BASIS_YYYMM, 2) = '04' THEN (CASE WHEN ISNULL(MOD_PLAN_Q4, 0) != 0 THEN MOD_PLAN_Q4  ELSE PLAN_QTY4  END)
+                          WHEN RIGHT(@BASIS_YYYMM, 2) = '05' THEN (CASE WHEN ISNULL(MOD_PLAN_Q5, 0) != 0 THEN MOD_PLAN_Q5  ELSE PLAN_QTY5  END)
+                          WHEN RIGHT(@BASIS_YYYMM, 2) = '06' THEN (CASE WHEN ISNULL(MOD_PLAN_Q6, 0) != 0 THEN MOD_PLAN_Q6  ELSE PLAN_QTY6  END)
+                          WHEN RIGHT(@BASIS_YYYMM, 2) = '07' THEN (CASE WHEN ISNULL(MOD_PLAN_Q7, 0) != 0 THEN MOD_PLAN_Q7  ELSE PLAN_QTY7  END)
+                          WHEN RIGHT(@BASIS_YYYMM, 2) = '08' THEN (CASE WHEN ISNULL(MOD_PLAN_Q8, 0) != 0 THEN MOD_PLAN_Q8  ELSE PLAN_QTY8  END)
+                          WHEN RIGHT(@BASIS_YYYMM, 2) = '09' THEN (CASE WHEN ISNULL(MOD_PLAN_Q9, 0) != 0 THEN MOD_PLAN_Q9  ELSE PLAN_QTY9  END)
+                          WHEN RIGHT(@BASIS_YYYMM, 2) = '10' THEN (CASE WHEN ISNULL(MOD_PLAN_Q10,0) != 0 THEN MOD_PLAN_Q10 ELSE PLAN_QTY10 END)
+                          WHEN RIGHT(@BASIS_YYYMM, 2) = '11' THEN (CASE WHEN ISNULL(MOD_PLAN_Q11,0) != 0 THEN MOD_PLAN_Q11 ELSE PLAN_QTY11 END)
+                          WHEN RIGHT(@BASIS_YYYMM, 2) = '12' THEN (CASE WHEN ISNULL(MOD_PLAN_Q12,0) != 0 THEN MOD_PLAN_Q12 ELSE PLAN_QTY12 END)
+                   ELSE 0 END) AS SALES_PLAN_Q
+                   FROM unilite.S_SSP100T_KD WITH(NOLOCK)
+                    WHERE COMP_CODE   = @COMP_CODE
+                      AND DIV_CODE    = @DIV_CODE
+                      AND PLAN_YEAR   = CONVERT(NVARCHAR(4), @BASIS_YYYMM)
+                      AND PLAN_TYPE2  = '6'   ---품목별
+                    --  AND PLAN_TYPE1  = '10'  ---계정(제품)
+                    --  AND MONEY_UNIT  = 'KRW' ---기준화폐
+                  GROUP BY COMP_CODE, DIV_CODE, PLAN_TYPE2_CODE
+                   ) E
+                   ON A.COMP_CODE = E.COMP_CODE
+                  AND A.DIV_CODE  = E.DIV_CODE
+                  AND A.PARENT    = E.ITEM_CODE
+        
+        WHERE A.COMP_CODE = @COMP_CODE
+          AND A.DIV_CODE  = @DIV_CODE
+        GROUP BY A.COMP_CODE, A.DIV_CODE, B.ITEM_CODE, B.ITEM_NAME, B.SPEC, B.STOCK_UNIT, D.TREE_NAME
+        ORDER BY B.ITEM_CODE
+        
+        SET ARITHABORT OFF
+        SET NOCOUNT OFF
+        
+        END                 
+    </select>
+</mapper>

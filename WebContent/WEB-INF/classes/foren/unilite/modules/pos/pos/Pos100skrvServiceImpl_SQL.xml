@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="pos100skrvServiceImpl">
+	
+	<select id="pos100skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* pos100skrv.Cpos100skrv [fnPrpt310QSt1] QUERY01 */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		    
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+		    
+			 SELECT
+			  A.COMP_CODE
+			, A.DIV_CODE
+			, A.POS_NO
+			, A.RECEIPT_NO
+			, C.COLLECT_DATE
+			, ISNULL(SUM(CASE WHEN C.COLLECT_TYPE = '10' THEN C.COLLECT_AMT ELSE 0 END),0) AS CASH_O  
+			, ISNULL(SUM(CASE WHEN C.COLLECT_TYPE = '20' THEN C.COLLECT_AMT ELSE 0 END),0) AS BANK_O  
+			, ISNULL(SUM(CASE WHEN C.COLLECT_TYPE = '22' THEN C.COLLECT_AMT ELSE 0 END),0) AS CARD_O  
+			, ISNULL(SUM(CASE WHEN C.COLLECT_TYPE = '23' THEN C.COLLECT_AMT ELSE 0 END),0) AS TICKET_O  
+			, ISNULL(SUM(CASE WHEN C.COLLECT_TYPE = '40' THEN C.COLLECT_AMT ELSE 0 END),0) AS CREDIT_O
+			, ISNULL(SUM(CASE WHEN C.COLLECT_TYPE = '50' THEN C.COLLECT_AMT ELSE 0 END),0) AS FEE_O   
+			, ISNULL(SUM(CASE WHEN C.COLLECT_TYPE = '70' THEN C.COLLECT_AMT ELSE 0 END),0) AS ADVANCE_O  
+			, ISNULL(SUM(CASE WHEN C.COLLECT_TYPE = '80' THEN C.COLLECT_AMT ELSE 0 END),0) AS READVANCE_O    
+			, ISNULL(SUM(CASE WHEN C.COLLECT_TYPE = '90' THEN C.COLLECT_AMT ELSE 0 END),0) AS OFFER_O  
+			INTO #T_SCO100T
+			    FROM	   SSA100T A  WITH (NOLOCK)
+				INNER JOIN SCO100T C  WITH (NOLOCK) ON A.COMP_CODE     = C.COMP_CODE  
+													AND A.DIV_CODE     = C.DIV_CODE  
+													AND A.POS_NO	   = C.POS_NO  
+													AND A.RECEIPT_NO   = C.RECEIPT_NO
+													AND A.SALE_DATE    = C.COLLECT_DATE
+				WHERE A.COMP_CODE  = #{S_COMP_CODE}
+				  AND A.DIV_CODE   = #{DIV_CODE}
+				  AND A.SALE_DATE  = #{SALE_DATE}
+				  AND A.ORDER_TYPE = '10'
+				  AND A.INSERT_DB_USER = 'POS_TRAN'
+				  <if test="@foren.Ognl@isNotEmpty(RECEIPT_NO)">
+			 	  AND A.RECEIPT_NO = #{RECEIPT_NO}
+             	  </if>
+	           GROUP BY A.COMP_CODE, A.DIV_CODE, A.POS_NO, A.RECEIPT_NO, C.COLLECT_DATE
+           		    
+		    SELECT H.COMP_CODE                   AS COMP_CODE
+		         , H.DIV_CODE                    AS DIV_CODE
+		         , H.POS_NO                      AS POS_NO           /* POS_NO                    */  
+		         , ISNULL(C.POS_NAME,'')         AS POS_NAME         /* POS명                     */  
+		         , H.RECEIPT_NO                  AS RECEIPT_NO       /* 영수증NO                  */  
+		         , SUBSTRING(H.SALE_TIME,1,2) + ':' +   
+		           SUBSTRING(H.SALE_TIME,3,2) + ':' +   
+		           SUBSTRING(H.SALE_TIME,5,2)    AS SALE_TIME        /* 거래시간                  */  
+		         , H.STAFF_CODE                  AS STAFF_CODE       /* 캐셔                      */  
+		         , ISNULL(D.USER_NAME,'')        AS STAFF_NM         /* 담당자명 공통코드(S010)   */  
+		         , I.SALE_Q                      AS SALE_Q           /* 매출수량                  */  
+		         , H.DETAIL_CNT                  AS DETAIL_CNT       /* 종수                      */  
+		         , I.DISCOUNT_O                  AS DISCOUNT_O       /* 할인금액                  */  
+		         , B.CARD_O                      AS CARD_O           /* 카드                      */  
+		         , B.CREDIT_O                    AS CREDIT_O         /* 외상                      */  
+		         , B.CASH_O                      AS CASH_O           /* 현금                      */
+		         , B.BANK_O			                                /* 예금                      */  
+		         + B.TICKET_O                                        /* 상품권                    */  
+		         + B.ADVANCE_O                                       /* 선수금                    */  
+		         + B.FEE_O                                           /* 수수료                    */
+		         + B.OFFER_O                     AS ETC              /* 할인                      */     
+		         , B.CARD_O + B.CREDIT_O + B.CASH_O + B.BANK_O + B.TICKET_O + B.ADVANCE_O + B.FEE_O + B.OFFER_O AS TOTAL_AMT_O
+		         , H.SALE_DATE                   AS SALE_DATE        /* 매출일자                  */  
+		         , ISNULL(C.DEPT_CODE,'')        AS DEPT_CODE        /* 부서                      */  
+		      FROM            SSA100T H WITH (NOLOCK)  
+		           INNER JOIN (SELECT COMP_CODE  
+		                            , DIV_CODE  
+		                            , BILL_NUM   
+		                            , POS_NO  
+		                            , RECEIPT_NO  
+		                            , SUM(SALE_Q)                                       AS SALE_Q  
+		                            , SUM(SALE_Q * DISCOUNT_P) AS DISCOUNT_O  
+		                         FROM SSA110T WITH (NOLOCK)
+		                        GROUP BY COMP_CODE, DIV_CODE, BILL_NUM, POS_NO, RECEIPT_NO) I ON I.COMP_CODE = H.COMP_CODE  
+		                                                                                     AND I.DIV_CODE  = H.DIV_CODE  
+		                                                                                     AND I.BILL_NUM  = H.BILL_NUM
+                  INNER JOIN #T_SCO100T B WITH (NOLOCK) ON  B.POS_NO      = H.POS_NO  
+                                                       AND B.RECEIPT_NO   = H.RECEIPT_NO
+                                                       AND B.COLLECT_DATE = H.SALE_DATE
+                                                       AND B.DIV_CODE     = H.DIV_CODE
+													   AND B.COMP_CODE    = H.COMP_CODE
+		           /*                                                                          
+		           LEFT  JOIN (SELECT M1.COMP_CODE
+		                            , M1.DIV_CODE
+		                            , M1.COLLECT_DATE  
+		                            , M1.POS_NO
+		                            , M1.RECEIPT_NO  
+		                            , ISNULL(SUM(CASE WHEN M2.SUB_CODE = '10' THEN COLLECT_AMT ELSE 0 END),0) AS CASH_O
+		                            , ISNULL(SUM(CASE WHEN M2.SUB_CODE = '20' THEN COLLECT_AMT ELSE 0 END),0) AS BANK_O  
+		                            , ISNULL(SUM(CASE WHEN M2.SUB_CODE = '22' THEN COLLECT_AMT ELSE 0 END),0) AS CARD_O  
+		                            , ISNULL(SUM(CASE WHEN M2.SUB_CODE = '23' THEN COLLECT_AMT ELSE 0 END),0) AS TICKET_O  
+		                            , ISNULL(SUM(CASE WHEN M2.SUB_CODE = '40' THEN COLLECT_AMT ELSE 0 END),0) AS CREDIT_O
+		                            , ISNULL(SUM(CASE WHEN M2.SUB_CODE = '50' THEN COLLECT_AMT ELSE 0 END),0) AS FEE_O   
+		                            , ISNULL(SUM(CASE WHEN M2.SUB_CODE = '70' THEN COLLECT_AMT ELSE 0 END),0) AS ADVANCE_O  
+		                            , ISNULL(SUM(CASE WHEN M2.SUB_CODE = '80' THEN COLLECT_AMT ELSE 0 END),0) AS READVANCE_O    
+		                            , ISNULL(SUM(CASE WHEN M2.SUB_CODE = '90' THEN COLLECT_AMT ELSE 0 END),0) AS OFFER_O  
+		                         FROM           SCO100T M1 WITH (NOLOCK)  
+		                              LEFT JOIN BSA100T M2 WITH (NOLOCK) ON M2.COMP_CODE = M1.COMP_CODE  
+		                                                                AND M2.MAIN_CODE = 'S017'  
+		                                                                AND M2.SUB_CODE  = M1.COLLECT_TYPE
+		                        GROUP BY M1.COMP_CODE, M1.DIV_CODE, M1.COLLECT_DATE, M1.POS_NO, M1.RECEIPT_NO) B ON B.COMP_CODE    = H.COMP_CODE  
+		                                                                                                        AND B.DIV_CODE     = H.DIV_CODE
+		                                                                                                        AND B.COLLECT_DATE = H.SALE_DATE
+		                                                                                                        AND B.POS_NO       = H.POS_NO  
+		                                                                                                        AND B.RECEIPT_NO   = H.RECEIPT_NO
+		           */                                                                                                                                                           
+		           LEFT  JOIN BSA240T C WITH (NOLOCK) ON C.COMP_CODE = H.COMP_CODE  
+		                                             AND C.DIV_CODE  = H.DIV_CODE  
+		                                             AND C.POS_NO    = H.POS_NO                      
+		           LEFT  JOIN BSA300T D WITH (NOLOCK) ON D.COMP_CODE = H.COMP_CODE
+		                                             AND D.POS_ID    = H.STAFF_CODE
+		           LEFT  JOIN BSA210T E WITH (NOLOCK) ON E.COMP_CODE = H.COMP_CODE
+		                                             AND E.TYPE_LEVEL= H.DIV_CODE
+		                                             AND E.TREE_CODE = H.DEPT_CODE
+			 WHERE  H.COMP_CODE  = #{S_COMP_CODE}
+ 			 <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+			   AND H.DIV_CODE   = #{DIV_CODE}
+             </if>
+			 <if test="@foren.Ognl@isNotEmpty(SALE_DATE)">
+			   AND H.SALE_DATE  = #{SALE_DATE}
+             </if>
+             <if test="@foren.Ognl@isNotEmpty(SALE_TIME)">
+               AND H.SALE_TIME > #{SALE_TIME}
+             </if>
+               AND H.ORDER_TYPE 	= '10'
+               AND H.INSERT_DB_USER = 'POS_TRAN'
+
+             <if test="@foren.Ognl@isNotEmpty(POS_CODE)">					
+		       AND H.POS_NO IN
+					<foreach collection="POS_CODE" item="item" separator="," close=")" open="(">
+					 #{item}
+					</foreach>									
+			 </if>
+		 	 <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">     
+		       AND E.TREE_LEVEL  LIKE (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =E.COMP_CODE AND TYPE_LEVEL=E.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+	         </if>
+	         <if test="@foren.Ognl@isNotEmpty(RECEIPT_NO)">
+			   AND H.RECEIPT_NO 		= #{RECEIPT_NO}
+             </if>
+	          
+			 ORDER BY H.DIV_CODE, H.POS_NO, H.RECEIPT_NO, H.SALE_TIME
+		    
+		    DROP TABLE #T_SCO100T
+		    
+		    
+SET @END_TIME   = GETDATE()
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'pos100skrv', '거래건별 매출현황조회', #{SALE_DATE}, '', @DIFF_TIME
+		    
+		    SET ARITHABORT OFF
+		    SET NOCOUNT OFF
+		END
+    </select>
+    
+    
+    <select id="pos100skrvServiceImpl.userPosCode" parameterType="Map" resultType="rMap">
+		SELECT POS_NO
+		FROM BSA240T WITH(NOLOCK)
+		WHERE COMP_CODE = #{S_COMP_CODE}
+		  AND DIV_CODE  = #{DIV_CODE}
+		  <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">				
+		  AND DEPT_CODE = #{DEPT_CODE}
+		  </if>
+	</select>
+	
+</mapper>

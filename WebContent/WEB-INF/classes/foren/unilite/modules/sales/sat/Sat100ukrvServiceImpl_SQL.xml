@@ -1,0 +1,336 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sat100ukrvServiceImpl">
+	<select id="sat100ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	    BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		    DECLARE @CompCode       NVARCHAR(08)    /* (필수)법인코드          */
+		          , @DivCode        NVARCHAR(08)    /* (필수)사업장코드        */
+		          , @UserId         NVARCHAR(100)   /* (필수)사용자ID          */
+		
+		    SET @CompCode    = #{S_COMP_CODE}
+		    SET @DivCode     = #{DIV_CODE}   
+		    SET @UserId      = #{S_USER_ID}
+				
+		    -- 반납예정일 정보
+		    BEGIN
+		        IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#OMEGA202104231210')) 
+		            DROP TABLE #OMEGA202104231210
+		    	     
+		        CREATE TABLE #OMEGA202104231210
+		             ( COMP_CODE            NVARCHAR(08)
+		             , DIV_CODE             NVARCHAR(08)
+		             , LAST_REQ_NO_SEQ      NVARCHAR(20)
+		             , REQ_NO               NVARCHAR(20)
+		             , REQ_SEQ              NUMERIC(5, 0)
+		             , ASST_CODE            NVARCHAR(20)
+		             , USE_FR_DATE          NVARCHAR(08)
+		             , USE_TO_DATE          NVARCHAR(08)
+		             , LAST_CHANGE_NO       NVARCHAR(20)
+		             , LAST_CHANGE_SEQ      NUMERIC(5, 0)
+		             , LAST_USE_FR_DATE     NVARCHAR(08)
+		             , LAST_USE_TO_DATE     NVARCHAR(08)
+		             , RETURN_DATE          NVARCHAR(08) )
+		
+		        INSERT #OMEGA202104231210
+		             ( COMP_CODE    , DIV_CODE  , LAST_REQ_NO_SEQ, ASST_CODE )
+		        SELECT A.COMP_CODE
+		             , A.DIV_CODE
+		             , MAX(B.REQ_NO + RIGHT('00000' + CONVERT(NVARCHAR,B.REQ_SEQ), 5)) AS LAST_REQ_NO_SEQ
+		             , B.ASST_CODE
+		          FROM            SAT200T A WITH (NOLOCK)
+		               INNER JOIN SAT210T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                 AND B.DIV_CODE  = A.DIV_CODE
+		                                                 AND B.REQ_NO    = A.REQ_NO
+		         WHERE A.COMP_CODE = @CompCode
+		           AND A.DIV_CODE  = @DivCode
+		         GROUP BY A.COMP_CODE, A.DIV_CODE, B.ASST_CODE
+		
+		        UPDATE A
+		           SET REQ_NO  = LEFT(A.LAST_REQ_NO_SEQ,14)
+		             , REQ_SEQ = CONVERT(NUMERIC(5,0),RIGHT(A.LAST_REQ_NO_SEQ,5))
+		          FROM #OMEGA202104231210 A 
+		
+		        UPDATE A
+		           SET USE_FR_DATE = B.USE_FR_DATE
+		             , USE_TO_DATE = B.USE_TO_DATE
+		          FROM #OMEGA202104231210 A 
+		               INNER JOIN SAT200T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                 AND B.DIV_CODE  = A.DIV_CODE
+		                                                 AND B.REQ_NO    = A.REQ_NO
+		
+		        UPDATE A
+		           SET LAST_CHANGE_NO   = LEFT(B.LAST_CHANGE_NO_SEQ ,14)
+		             , LAST_CHANGE_SEQ  = CONVERT(NUMERIC(5,0),RIGHT(B.LAST_CHANGE_NO_SEQ,5))
+		          FROM #OMEGA202104231210 A 
+		               INNER JOIN 
+		               (SELECT A.COMP_CODE
+		                     , A.DIV_CODE
+		                     , A.REQ_NO
+		                     , A.REQ_SEQ
+		                     , MAX(B.CHANGE_NO + RIGHT('00000' + CONVERT(NVARCHAR,B.CHANGE_SEQ), 5)) AS LAST_CHANGE_NO_SEQ
+		                  FROM #OMEGA202104231210 A
+		                       INNER JOIN SAT410T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                         AND B.DIV_CODE  = A.DIV_CODE
+		                                                         AND B.REQ_NO    = A.REQ_NO
+		                                                         AND B.REQ_SEQ   = A.REQ_SEQ
+		                       INNER JOIN SAT400T C WITH (NOLOCK) ON C.COMP_CODE = B.COMP_CODE
+		                                                         AND C.DIV_CODE  = B.DIV_CODE
+		                                                         AND C.CHANGE_NO = B.CHANGE_NO
+		                 GROUP BY A.COMP_CODE, A.DIV_CODE, A.REQ_NO, A.REQ_SEQ) B ON B.COMP_CODE = A.COMP_CODE
+		                                                                         AND B.DIV_CODE  = A.DIV_CODE
+		                                                                         AND B.REQ_NO    = A.REQ_NO
+		                                                                         AND B.REQ_SEQ   = A.REQ_SEQ
+		
+		        UPDATE A
+		           SET LAST_USE_FR_DATE = B.USE_FR_DATE
+		             , LAST_USE_TO_DATE = B.USE_TO_DATE
+		          FROM #OMEGA202104231210 A 
+		               INNER JOIN SAT400T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                 AND B.DIV_CODE  = A.DIV_CODE
+		                                                 AND B.CHANGE_NO = A.LAST_CHANGE_NO
+		
+		        UPDATE A
+		           SET RETURN_DATE = (CASE WHEN ISNULL(LAST_USE_TO_DATE,'') = ''
+		                                   THEN CONVERT(NVARCHAR(8),DATEADD(D, 1, USE_TO_DATE     ),112)
+		                                   ELSE CONVERT(NVARCHAR(8),DATEADD(D, 1, LAST_USE_TO_DATE),112)
+		                               END)
+		          FROM #OMEGA202104231210 A 
+		    END
+
+		    -- 최종 예약정보
+		    BEGIN
+		        IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#OMEGA202104220441')) 
+		            DROP TABLE #OMEGA202104220441
+		    	     
+		        CREATE TABLE #OMEGA202104220441
+		             ( COMP_CODE            NVARCHAR(08)
+		             , DIV_CODE             NVARCHAR(08)
+		             , ASST_CODE            NVARCHAR(20)
+		             , LAST_RESERVE_NO_SEQ  NVARCHAR(25)
+		             , RESERVE_DATE         NVARCHAR(08)
+		             , RESERVE_USER_ID      NVARCHAR(100)
+		             , RESERVE_USER_NAME    NVARCHAR(100)
+		             , USE_FR_DATE          NVARCHAR(08) )
+		
+		        INSERT #OMEGA202104220441
+		             ( COMP_CODE    , DIV_CODE  , ASST_CODE    , LAST_RESERVE_NO_SEQ )
+		        SELECT A.COMP_CODE
+		             , A.DIV_CODE
+		             , B.ASST_CODE
+		             , MAX(B.RESERVE_NO + RIGHT('00000' + CONVERT(NVARCHAR,B.RESERVE_SEQ), 5)) AS LAST_RESERVE_NO_SEQ
+		          FROM            SAT300T A WITH (NOLOCK)
+		               INNER JOIN SAT310T B WITH (NOLOCK) ON B.COMP_CODE  = A.COMP_CODE
+		                                                 AND B.DIV_CODE   = A.DIV_CODE
+		                                                 AND B.RESERVE_NO = A.RESERVE_NO
+		         WHERE A.COMP_CODE = @CompCode
+		           AND A.DIV_CODE  = @DivCode
+		         GROUP BY A.COMP_CODE, A.DIV_CODE, B.ASST_CODE
+		
+		        UPDATE A
+		           SET RESERVE_DATE      = B.RESERVE_DATE
+		             , RESERVE_USER_ID   = B.REQ_USER
+		             , RESERVE_USER_NAME = C.USER_NAME
+		             , USE_FR_DATE       = B.USE_FR_DATE
+		          FROM #OMEGA202104220441 A 
+		               INNER JOIN SAT300T B WITH (NOLOCK) ON B.COMP_CODE  = A.COMP_CODE
+		                                                 AND B.DIV_CODE   = A.DIV_CODE
+		                                                 AND B.RESERVE_NO = LEFT(A.LAST_RESERVE_NO_SEQ,14)
+		               LEFT  JOIN BSA300T C WITH (NOLOCK) ON C.COMP_CODE  = B.COMP_CODE
+		                                                 AND C.USER_ID    = B.REQ_USER
+		    END
+
+			/* 데이터 조회 */
+		    SELECT A.COMP_CODE                                  -- 법인코드        
+		    	 , A.DIV_CODE                                   -- 사업장코드      
+		         , A.ASST_CODE                                  -- 자산코드        
+		         , A.ASST_NAME                                  -- 자산명(모델명)  
+		         , A.SERIAL_NO                                  -- S/N             
+		    	 , A.ASST_INFO                                  -- 자산정보(S178)  
+		    	 , A.ASST_GUBUN                                 -- 자산구분(S179)  
+		    	 , CASE WHEN ISNULL(A.NOW_LOC,'') = ''
+		                THEN '창고'
+		                ELSE ISNULL(A.NOW_LOC,'')
+		            END AS NOW_LOC                              -- 현위치          
+		         , (CASE WHEN A.ASST_STATUS = 'S'
+		                 THEN ISNULL(B.INOUT_DATE,'')
+		                 ELSE ''
+		             END) AS INOUT_DATE                         -- 창고입고일
+		    	 , A.ASST_STATUS                                -- 현재상태(S177)  
+		         , (CASE WHEN A.ASST_STATUS = 'O'
+		                 THEN ISNULL(F.RETURN_DATE,'')
+		                 ELSE ''
+		             END) AS RETURN_DATE                        -- 반납예정일
+		         , (CASE WHEN ISNULL(A.RESERVE_YN,'N') = 'N'
+		                 THEN ''
+		                 ELSE LEFT(G.LAST_RESERVE_NO_SEQ,14)
+		             END) AS RESERVE_NO                         -- 예약번호
+		         , (CASE WHEN ISNULL(A.RESERVE_YN,'N') = 'N'
+		                 THEN ''
+		                 ELSE ISNULL(A.RESERVE_YN,'N')
+		             END) AS RESERVE_STATUS   					-- 예약상태
+		         , (CASE WHEN ISNULL(A.RESERVE_YN,'N') = 'N'
+		                 THEN ''
+		                 ELSE G.USE_FR_DATE
+		             END) AS RESERVE_DATE                       -- 사용예정일
+		         , (CASE WHEN ISNULL(A.RESERVE_YN,'N') = 'N'
+		                 THEN ''
+		                 ELSE G.RESERVE_USER_ID
+		             END) AS RESERVE_USER_ID                    -- 예약담당자
+		         , (CASE WHEN ISNULL(A.RESERVE_YN,'N') = 'N'
+		                 THEN ''
+		                 ELSE G.RESERVE_USER_NAME
+		             END) AS RESERVE_USER_NAME                  -- 예약담당자
+		    	 , A.ACCNT_ASST                                 -- 회계자산코드
+		         , ISNULL(D.ASST_NAME,'') AS ACCNT_ASST_NAME    -- 회계자산명
+		         , F.REQ_NO
+		         , F.REQ_SEQ
+		      FROM SAT100T A WITH (NOLOCK)
+		           LEFT JOIN (SELECT COMP_CODE
+		                           , DIV_CODE
+		                           , ASST_CODE
+		                           , MAX(INOUT_DATE) AS INOUT_DATE
+		                        FROM SAT600T WITH (NOLOCK)
+		                       WHERE COMP_CODE = @CompCode
+		                         AND DIV_CODE  = @DivCode
+		                         AND INOUT_TYPE = '1'
+		                       GROUP BY COMP_CODE, DIV_CODE, ASST_CODE) B ON B.COMP_CODE = A.COMP_CODE
+		                                                                 AND B.DIV_CODE  = A.DIV_CODE
+		                                                                 AND B.ASST_CODE = A.ASST_CODE
+		           LEFT JOIN AISS300T D WITH (NOLOCK) ON D.COMP_CODE = A.COMP_CODE
+		                                             AND D.DIV_CODE  = A.DIV_CODE
+		                                             AND D.ASST      = A.ACCNT_ASST
+		           LEFT  JOIN #OMEGA202104231210 F    ON F.COMP_CODE = A.COMP_CODE
+		                                             AND F.DIV_CODE  = A.DIV_CODE
+		                                             AND F.ASST_CODE = A.ASST_CODE
+		           LEFT  JOIN #OMEGA202104220441 G    ON G.COMP_CODE = A.COMP_CODE
+		                                             AND G.DIV_CODE  = A.DIV_CODE
+		                                             AND G.ASST_CODE = A.ASST_CODE
+		     WHERE A.COMP_CODE = @CompCode
+		       AND A.DIV_CODE  = @DivCode
+		       <if test="@foren.Ognl@isNotEmpty(ASST)">
+		       AND (A.ASST_CODE LIKE #{ASST}+'%' OR A.ASST_NAME LIKE '%'+#{ASST}+'%')
+		       </if>
+		       <if test="@foren.Ognl@isNotEmpty(NOW_LOC)">
+		       AND ISNULL(A.NOW_LOC,'') LIKE '%'+#{NOW_LOC}+'%'
+		       </if>
+		       <if test="@foren.Ognl@isNotEmpty(SERIAL_NO)">
+		       AND A.SERIAL_NO          LIKE '%'+#{SERIAL_NO}+'%'
+		       </if>
+		       <if test="@foren.Ognl@isNotEmpty(ASST_STATUS)">
+		       AND A.ASST_STATUS IN 
+		        <foreach collection="ASST_STATUS" item="item" separator="," close=")" open="(">
+						  #{item}
+				</foreach>
+		       </if>
+		     ORDER BY A.ASST_CODE
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+	<select id="sat100ukrvServiceImpl.selectDupPK" parameterType="Map" resultType="rMap">
+		SELECT COUNT(ASST_CODE) AS CNT
+		  FROM SAT100T WITH (NOLOCK)
+		 WHERE COMP_CODE  = #{S_COMP_CODE}
+		   AND DIV_CODE   = #{DIV_CODE}
+		   AND ASST_CODE  = #{ASST_CODE}
+	</select>
+	<select id="sat100ukrvServiceImpl.selectDupSerialNo" parameterType="Map" resultType="rMap">
+		SELECT COUNT(SERIAL_NO) AS CNT
+		  FROM SAT100T WITH (NOLOCK)
+		 WHERE COMP_CODE  = #{S_COMP_CODE}
+		   AND DIV_CODE   = #{DIV_CODE}
+		   AND SERIAL_NO  = #{SERIAL_NO}
+	</select>
+	<insert id="sat100ukrvServiceImpl.insert" parameterType="Map">
+		/*sat100ukrvServiceImpl.insert*/
+		INSERT INTO SAT100T	
+		     (    COMP_CODE                               --법인
+				, DIV_CODE                                --사업장코드
+				, ASST_CODE                               --자산코드
+				, ASST_NAME                               --자산명
+				, SERIAL_NO                               --S/N
+				, ASST_INFO                               --자산정보(S178)
+				, ASST_GUBUN                              --자산구분(S179)
+				, NOW_LOC                                 --현위치
+				, ASST_STATUS                             --현재상태(S177)
+				, ACCNT_ASST                              --회계자산코드
+				, INSERT_DB_USER                          --
+				, INSERT_DB_TIME                          --
+				, UPDATE_DB_USER                          --
+				, UPDATE_DB_TIME                          --
+			 )
+		VALUES
+		     (    #{S_COMP_CODE}
+				, #{DIV_CODE}
+				, #{ASST_CODE}
+				, #{ASST_NAME}
+				, #{SERIAL_NO}
+				, #{ASST_INFO}
+				, #{ASST_GUBUN}
+				, ''
+				, #{ASST_STATUS}
+				, #{ACCNT_ASST}
+		     	, #{S_USER_ID}           
+		     	, GETDATE()               
+		     	, #{S_USER_ID}            
+		     	, GETDATE()
+		     )
+	</insert>
+	<update id="sat100ukrvServiceImpl.update" parameterType="Map">
+		UPDATE   SAT100T
+		   SET    ASST_NAME          = #{ASST_NAME}
+				, SERIAL_NO          = #{SERIAL_NO}
+				, ASST_INFO          = #{ASST_INFO}
+				, ASST_GUBUN         = #{ASST_GUBUN}
+				, ACCNT_ASST         = #{ACCNT_ASST}
+				, ASST_STATUS        = #{ASST_STATUS}
+				, UPDATE_DB_USER     = #{S_USER_ID}           
+		     	, UPDATE_DB_TIME     = GETDATE()   
+		WHERE  COMP_CODE             = #{S_COMP_CODE}
+		  AND  DIV_CODE              = #{DIV_CODE}
+		  AND  ASST_CODE             = #{ASST_CODE}
+	</update>
+	<update id="sat100ukrvServiceImpl.delete" parameterType="Map">
+		DELETE  FROM   SAT100T
+		 WHERE  COMP_CODE    	= #{S_COMP_CODE}
+	 	   AND  DIV_CODE     	= #{DIV_CODE}
+		   AND  ASST_CODE    	= #{ASST_CODE}
+	</update>
+	<select id="sat100ukrvServiceImpl.checkDelete" parameterType="Map" resultType="rMap">
+		SELECT  COUNT(*) AS CNT
+		  FROM  SAT210T  WITH (NOLOCK) 
+		 WHERE  COMP_CODE    	= #{S_COMP_CODE}
+	 	   AND  DIV_CODE     	= #{DIV_CODE}
+	 	   AND  OUT_YN          = 'Y'
+		   <if test="@foren.Ognl@isNotEmpty(ASST_CODE)">
+	       AND ASST_CODE IN 
+	        <foreach collection="ASST_CODE" item="item" separator="," close=")" open="(">
+					  #{item}
+			</foreach>
+	       </if>
+	</select>
+	<update id="sat100ukrvServiceImpl.updateStatus" parameterType="Map">
+		UPDATE   SAT100T
+		   SET   UPDATE_DB_USER                 = #{S_USER_ID}           
+		       , UPDATE_DB_TIME                 =  GETDATE()  
+		   <if test="@foren.Ognl@isNotEmpty(ASST_STATUS)">
+		        , ASST_STATUS                     = #{ASST_STATUS}
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(NOW_LOC)">
+		        , NOW_LOC                         = LTRIM(#{NOW_LOC})                      
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(RESERVE_YN)">
+		        , RESERVE_YN                      = #{RESERVE_YN}                      
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(EXT_REQ_YN)">
+		        , EXT_REQ_YN                      = #{EXT_REQ_YN}                      
+		   </if>
+		WHERE  COMP_CODE    = #{S_COMP_CODE}
+		  AND  DIV_CODE     = #{DIV_CODE}
+		  AND  ASST_CODE    = #{ASST_CODE}
+	</update>
+</mapper>

@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ppl190skrvServiceImpl">
+   
+	<select id="ppl190skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+   		/* ppl190skrv.Cppl190skrv[fnPpl190QStd]query01 */
+	    BEGIN
+	    BEGIN TRY
+	        SET NOCOUNT ON
+	        SET ARITHABORT ON
+	    
+	    /*  입력변수	*/
+	    DECLARE        @COMP_CODE            NVARCHAR(08)              /* (필수)법인코드 		*/
+	                 , @DIV_CODE             NVARCHAR(08)              /* (필수)사업장코드		*/
+	                 , @FROM_DATE            NVARCHAR(08)              /* (필수)조회 시작일자		*/
+	                 , @TO_DATE              NVARCHAR(08)              /* (필수)조회 종료일자		*/
+	                 , @WORK_SHOP_CODE       NVARCHAR(08)              /* (선택)작업장			*/
+					 , @UPDATE_DB_USER		 NVARCHAR(100)
+	/*  변수	*/
+				     , @SCHEDULE_NUM         NVARCHAR(20)              /* 조회번호				*/
+	                 , @ERR_DESC             NVARCHAR(2000)            /* 에러 메세지			*/
+	    
+	        SET @COMP_CODE      = #{S_COMP_CODE}
+	        SET @DIV_CODE       = #{DIV_CODE}
+	        SET @FROM_DATE      = #{ORDER_DATE_FR}
+	        SET @TO_DATE        = #{ORDER_DATE_TO}
+	        SET @WORK_SHOP_CODE = #{WORK_SHOP_CODE}
+	        SET @UPDATE_DB_USER = #{S_USER_ID}
+	        SET @SCHEDULE_NUM = CONVERT(NVARCHAR, GETDATE(), 120)
+	    
+	    /*   날짜 유형 설정  ------------------------------------------------------------------------------------------------	*/
+	        DECLARE             @DateFormat         NVARCHAR(10)
+	    
+	        SELECT TOP 1 @DateFormat = M1.CODE_NAME
+	        FROM   BSA100T M1 WITH (NOLOCK)
+	        WHERE  M1.COMP_CODE = @COMP_CODE
+	        AND    M1.MAIN_CODE = N'B044'
+	        AND    M1.REF_CODE1 = N'Y'
+	        
+	        SET @DateFormat = ISNULL(@DateFormat, 'YYYY/MM/DD')
+	    
+	    /*---------------------------------------------------------------------------------------------------------------*/
+	        IF ISNULL(@DIV_CODE, '') = N''
+	        BEGIN
+	            SELECT  TOP 0
+	                    CONVERT(NVARCHAR(4000), '')         AS BASE_DATE
+	                  , CONVERT(NVARCHAR(30), '')           AS WEEK_DAY
+	                  , CONVERT(NVARCHAR(08), '')           AS WORK_SHOP_CODE
+	                  , CONVERT(NVARCHAR(30), '')           AS WORK_SHOP_CODE_NAME
+	                  , CONVERT(NVARCHAR(02), '')           AS HOLY_TYPE
+	                  , CONVERT(NVARCHAR(100), '')          AS HOLY_TYPE_NAME
+	                  , CONVERT(NUMERIC(30, 6), 0)          AS STD_CAPACITY
+	                  , CONVERT(NUMERIC(30, 6), 0)          AS ALLOC_CAPACITY
+	                  , CONVERT(NUMERIC(32, 6), 0)          AS IDLE_CAPACITY
+	                  , CONVERT(INT, '')                    AS WK_PLAN_COUNT
+	                  , CONVERT(NUMERIC(38, 6), 0)          AS WK_PLAN_ALLOC
+	                  , CONVERT(INT, '')                    AS WKORD_COUNT
+	                  , CONVERT(NUMERIC(38, 6), 0)          AS WKORD_ALLOC
+	    
+	            RETURN
+	        END
+	    
+	    /*---------------------------------------------------------------------------------------------------------------*/
+	    
+	    /*  1) 해당기간에 대하여 작업장별 부하(표준Capa., 생산계획 할당 Capa., 작업지시 할당 Capa.)를 생성	*/
+	        EXEC uniLITE.SP_MPS_WorkShop_Load @COMP_CODE, @DIV_CODE, @FROM_DATE, @TO_DATE, @SCHEDULE_NUM, @UPDATE_DB_USER, @ERR_DESC OUTPUT
+	    
+	    /*  초기화시에도 레코드셋을 받기위해 주설처리함	*/
+	        IF ISNULL(@ERR_DESC, '') != ''
+	            RAISERROR(@ERR_DESC, 16, 1)
+	    
+	        SELECT   
+	                REPLACE(
+	                REPLACE(
+	                REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.BASE_DATE, 1, 4))
+	                                   , 'MM',   SUBSTRING(A.BASE_DATE, 5, 2))
+	                                   , 'DD',   SUBSTRING(A.BASE_DATE, 7, 2))              AS BASE_DATE
+	              , DATENAME(WEEKDAY, A.BASE_DATE)                                          AS WEEK_DAY
+	              , A.WORK_SHOP_CODE                                                        AS WORK_SHOP_CODE
+	              , C1.TREE_NAME                                                            AS WORK_SHOP_CODE_NAME
+	              , A.HOLY_TYPE                                                             AS HOLY_TYPE
+	              , M1.CODE_NAME                                                            AS HOLY_TYPE_NAME
+	              , A.STD_CAPACITY                                                          AS STD_CAPACITY
+	              , A.ALLOC_CAPACITY                                                        AS ALLOC_CAPACITY
+	              , A.IDLE_CAPACITY                                                         AS IDLE_CAPACITY
+	              , SUM(CASE WHEN B.ORDER_TYPE = 'P' THEN 1             ELSE 0 END)         AS WK_PLAN_COUNT
+	              , SUM(CASE WHEN B.ORDER_TYPE = 'P' THEN B.ORDER_ALLOC ELSE 0 END)         AS WK_PLAN_ALLOC
+	              , SUM(CASE WHEN B.ORDER_TYPE = 'W' THEN 1             ELSE 0 END)         AS WKORD_COUNT
+	              , A.ALLOC_CAPACITY
+	              - SUM(CASE WHEN B.ORDER_TYPE = 'P' THEN B.ORDER_ALLOC ELSE 0 END)         AS WKORD_ALLOC
+	        FROM                PPL200T A  WITH (NOLOCK)
+	                INNER JOIN  PPL250T B  WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+	                                                    AND B.DIV_CODE       = A.DIV_CODE
+	                                                    AND B.SCHEDULE_NUM   = A.SCHEDULE_NUM
+	                                                    AND B.BASE_DATE      = A.BASE_DATE
+	                                                    AND B.WORK_SHOP_CODE = A.WORK_SHOP_CODE
+	                LEFT  JOIN  BSA230T C1 WITH (NOLOCK) ON C1.COMP_CODE     = A.COMP_CODE
+	                                                    AND C1.TYPE_LEVEL    = A.DIV_CODE
+	                                                    AND C1.TREE_CODE     = A.WORK_SHOP_CODE
+	                LEFT  JOIN  BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE     = A.COMP_CODE
+	                                                    AND M1.MAIN_CODE     = N'B011'
+	                                                    AND M1.SUB_CODE      = A.HOLY_TYPE
+	        WHERE   A.COMP_CODE      = @COMP_CODE
+	        AND     A.DIV_CODE       = @DIV_CODE
+	        AND     A.SCHEDULE_NUM   = @SCHEDULE_NUM
+	        AND     A.WORK_SHOP_CODE = CASE WHEN ISNULL(@WORK_SHOP_CODE, '') = '' THEN A.WORK_SHOP_CODE ELSE @WORK_SHOP_CODE END
+	        GROUP BY A.BASE_DATE, A.WORK_SHOP_CODE, C1.TREE_NAME, A.HOLY_TYPE, M1.CODE_NAME
+	               , A.STD_CAPACITY, A.ALLOC_CAPACITY, A.IDLE_CAPACITY
+	        ORDER BY A.BASE_DATE, A.WORK_SHOP_CODE
+	    
+	        SET NOCOUNT OFF
+	        SET ARITHABORT OFF
+	    END TRY
+	    /*---------------------------------------------------------------------------------------------------------------*/
+	    BEGIN CATCH
+	        /*	SET @ERR_DESC = ISNULL(CONVERT(NVARCHAR, ERROR_NUMBER()), '') + ';' + ISNULL(ERROR_MESSAGE(), '')	*/
+	        SELECT  TOP 1
+	                63003       AS STD_CAPACITY
+	              , -9999       AS ALLOC_CAPACITY
+	              , CASE WHEN @ERR_DESC > '' THEN SUBSTRING(@ERR_DESC, CHARINDEX(';', @ERR_DESC) + 1, 4000)
+	                     ELSE ISNULL(ERROR_MESSAGE(), '')
+	                END         AS BASE_DATE
+	    
+	        SET NOCOUNT OFF
+	        SET ARITHABORT OFF
+	    END CATCH
+	END
+	</select>
+   
+</mapper>

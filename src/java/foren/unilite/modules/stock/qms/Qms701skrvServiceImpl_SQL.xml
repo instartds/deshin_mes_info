@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="qms701skrvServiceImpl">
+				
+	<select id="qms701skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		
+	/* qms700skrv.Cqms700skrv[fnQms700QStd] Query01 */
+	BEGIN
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+	
+		DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+		      , @UserId			NVARCHAR(100)	/* 사용자ID		*/
+		      , @LangType		NVARCHAR(2)		/* 언어구분		*/
+	          , @RefItem		NVARCHAR(01)
+	          , @DateFormat		NVARCHAR(10)
+	
+	    SET @CompCode = #{S_COMP_CODE}
+	    SET @UserId   = #{S_USER_ID}
+	    SET @LangType = N'KR'
+	
+		/* 명칭 참조 유형 */
+	    SELECT TOP 1 @RefItem = REF_ITEM
+		FROM BSA300T WITH (NOLOCK)
+		WHERE USER_ID = @UserId
+	
+	    SET @RefItem = ISNULL(@RefItem, N'0')
+	
+		/* 날짜 포맷 유형 설정 */
+		SELECT TOP 1 @DateFormat = CODE_NAME
+		FROM BSA100T WITH (NOLOCK)
+		WHERE COMP_CODE = @CompCode
+			AND MAIN_CODE = N'B044'
+			AND REF_CODE1 = N'Y'
+	
+	    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+	
+		/* 데이터 조회 */
+		
+	    SELECT  B.ITEM_CODE     AS ITEM_CODE					/* 품목코드  */
+	          , CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+	                 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+	                 ELSE C1.ITEM_NAME
+	            END				AS ITEM_NAME					/* 품목명	*/
+	          , C1.SPEC         AS SPEC							/* 규격		*/
+	          , A.INSPEC_Q      AS INSPEC_Q						/* 총검사량	*/
+	          , A.GOOD_INSPEC_Q AS GOOD_INSPEC_Q				/* 양품검사량*/
+	          , A.BAD_INSPEC_Q  AS BAD_INSPEC_Q					/* 불량검사량*/
+	          , B.INOUT_Q       AS TOT_OUT_Q					/* 총출고량	*/
+	          , (B.GOOD_INOUT_Q + B.BAD_INOUT_Q) AS TOT_IN_Q    /* 총입고량	*/
+	    
+	          , B.GOOD_INOUT_Q  AS GOOD_IN_Q					/* 양품입고량*/
+	          , B.BAD_INOUT_Q   AS BAD_IN_Q						/* 불량입고량*/
+	          , B.OUT_WH_CODE   AS OUT_WH_CODE					/* 출고창고	*/
+	          , C2.TREE_NAME    AS OUT_WH_NAME					/* 출고창고명*/ 
+	          , B.IN_WH_CODE    AS IN_WH_CODE					/* 입고창고	*/
+	          , C3.TREE_NAME    AS IN_WH_NAME					/* 입고창고명*/ 
+	   
+	          , CASE WHEN ISNULL(A.INSPEC_DATE, '') = '' THEN ''
+	                 ELSE REPLACE(
+	                      REPLACE(
+	                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.INSPEC_DATE, 1, 4))
+	                                         , 'MM',   SUBSTRING(A.INSPEC_DATE, 5, 2))
+	                                         , 'DD',   SUBSTRING(A.INSPEC_DATE, 7, 2))
+	            END				AS INSPEC_DATE					/* 검사일	*/
+	          , A.INSPEC_PRSN   AS INSPEC_PRSN					/* 검사담당	*/
+			  , CASE WHEN @LangType = 'KR' THEN M1.CODE_NAME
+					 WHEN @LangType = 'EN' THEN M1.CODE_NAME_EN
+					 WHEN @LangType = 'CN' THEN M1.CODE_NAME_CN
+					 WHEN @LangType = 'JP' THEN M1.CODE_NAME_JP
+										   ELSE M1.CODE_NAME
+				END				AS INSPEC_PRSN_NM				/* 검사담당자명*/
+	
+	          , A.INSPEC_NUM    AS INSPEC_NUM					/* 검사번호	*/
+	          , A.INSPEC_SEQ    AS INSPEC_SEQ					/* 검사순번	*/
+	          , A.INOUT_NUM     AS INOUT_NUM					/* 수불번호	*/
+	          , A.INOUT_SEQ     AS INOUT_SEQ					/* 수불순번	*/
+	    
+		FROM           QMS700T A WITH (NOLOCK)
+			INNER JOIN (
+				SELECT	B1.COMP_CODE
+					  , B1.DIV_CODE
+					  , B1.INSPEC_NUM
+					  , B1.INSPEC_SEQ
+					  , B1.ITEM_CODE
+					  , MAX(B1.OUT_WH_CODE)				AS OUT_WH_CODE
+					  , MAX(B1.IN_WH_CODE)				AS IN_WH_CODE
+					  , ISNULL(SUM(B1.INOUT_Q), 0)		AS INOUT_Q
+					  , ISNULL(SUM(B1.GOOD_INOUT_Q), 0) AS GOOD_INOUT_Q
+					  , ISNULL(SUM(B1.BAD_INOUT_Q), 0)	AS BAD_INOUT_Q		           
+				FROM  (
+					/* 출고	------------------------------------------------------------------- */
+					SELECT A1.COMP_CODE
+						, A1.DIV_CODE
+						, (CASE WHEN A1.INSPEC_NUM IS NULL THEN A11.INSPEC_NUM 
+								ELSE A1.INSPEC_NUM
+						   END)			AS INSPEC_NUM
+						, (CASE WHEN A1.INSPEC_SEQ = 0 THEN A11.INSPEC_SEQ 
+							    ELSE A1.INSPEC_SEQ 
+						   END)			AS INSPEC_SEQ
+						, A1.ITEM_CODE	AS ITEM_CODE
+						, A1.WH_CODE	AS OUT_WH_CODE 
+						, ''			AS IN_WH_CODE 
+						, A1.INOUT_Q	AS INOUT_Q
+						, 0				AS GOOD_INOUT_Q
+						, 0				AS BAD_INOUT_Q
+					FROM           BTR100T A1  WITH (NOLOCK)
+						LEFT  JOIN BTR100T A11 WITH (NOLOCK) ON A11.COMP_CODE = A1.COMP_CODE
+														 AND A11.DIV_CODE  = A1.DIV_CODE
+														 AND A11.INOUT_NUM = A1.BASIS_NUM
+														 AND A11.INOUT_SEQ = A1.BASIS_SEQ
+														 AND A11.ITEM_CODE = A1.ITEM_CODE
+					WHERE A1.COMP_CODE         = @CompCode
+						AND A1.INOUT_METH        = '3'
+						AND A1.CREATE_LOC        = '4'
+						AND A1.INOUT_TYPE_DETAIL = '99'
+						AND A1.INOUT_CODE_TYPE   = '2'
+						AND A1.INOUT_TYPE        = '2'
+						/* 선택조건	*/
+						AND A1.DIV_CODE   = #{DIV_CODE}
+						AND A1.INSPEC_NUM = #{INSPEC_NUM}
+					UNION
+					/* 양품입고 ----------------------------------------------------------------- */
+					SELECT COMP_CODE
+						, DIV_CODE
+						, INSPEC_NUM
+						, INSPEC_SEQ
+						, ITEM_CODE
+						, ''			AS OUT_WH_CODE
+						, WH_CODE		AS IN_WH_CODE 
+						, 0				AS INOUT_Q
+						, INOUT_Q		AS GOOD_INOUT_Q
+						, 0				AS BAD_INOUT_Q
+					FROM BTR100T A2 WITH (NOLOCK)
+					WHERE A2.COMP_CODE         = @CompCode
+						AND A2.INOUT_METH        = '3'
+						AND A2.CREATE_LOC        = '4'
+						AND A2.INOUT_TYPE_DETAIL = '99'
+						AND A2.INOUT_CODE_TYPE   = '2'
+						AND A2.INOUT_TYPE        = '1'
+						AND A2.ITEM_STATUS       = '1'  
+						/* 선택조건	*/                        
+						AND A2.DIV_CODE   = #{DIV_CODE}
+						AND A2.INSPEC_NUM = #{INSPEC_NUM}
+					UNION
+					/* 불량입고 ----------------------------------------------------------------- */
+					SELECT COMP_CODE 
+						, DIV_CODE
+						, INSPEC_NUM
+						, INSPEC_SEQ
+						, ITEM_CODE 
+						, ''			AS OUT_WH_CODE
+						, WH_CODE		AS IN_WH_CODE 
+						, 0				AS INOUT_Q
+						, 0				AS GOOD_INOUT_Q
+						, INOUT_Q		AS BAD_INOUT_Q
+					FROM BTR100T A3 WITH (NOLOCK)
+					WHERE A3.COMP_CODE         =   @CompCode
+						AND A3.INOUT_METH        = '3'
+						AND A3.CREATE_LOC        = '4'
+						AND A3.INOUT_TYPE_DETAIL = '99'
+						AND A3.INOUT_CODE_TYPE   = '2'
+						AND A3.INOUT_TYPE        = '1'
+						AND A3.ITEM_STATUS       = '2'
+						/* 선택조건 */
+						AND A3.DIV_CODE   =   #{DIV_CODE}
+						AND A3.INSPEC_NUM =   #{INSPEC_NUM}
+				) B1
+				GROUP BY B1.COMP_CODE, B1.DIV_CODE, B1.INSPEC_NUM, B1.INSPEC_SEQ, B1.ITEM_CODE
+			) B  ON B.COMP_CODE  = A.COMP_CODE
+				AND B.DIV_CODE   = A.DIV_CODE
+				AND B.INSPEC_NUM = A.INSPEC_NUM
+				AND B.INSPEC_SEQ = A.INSPEC_SEQ
+				AND B.ITEM_CODE  = A.ITEM_CODE
+			LEFT  JOIN BPR100T C1 WITH (NOLOCK)  ON C1.COMP_CODE  = A.COMP_CODE
+												AND C1.ITEM_CODE  = A.ITEM_CODE
+			LEFT  JOIN BSA220T C2 WITH (NOLOCK)  ON C2.COMP_CODE  = B.COMP_CODE
+												AND C2.TREE_CODE  = B.OUT_WH_CODE
+			LEFT  JOIN BSA220T C3 WITH (NOLOCK)  ON C3.COMP_CODE  = B.COMP_CODE
+												AND C3.TREE_CODE  = B.IN_WH_CODE
+			LEFT  JOIN BSA100T M1 WITH (NOLOCK)  ON M1.COMP_CODE  = A.COMP_CODE
+												AND M1.MAIN_CODE  = 'Q036'
+												AND M1.SUB_CODE  != '$'
+												AND M1.SUB_CODE   = A.INSPEC_PRSN
+		WHERE A.COMP_CODE			= @CompCode
+			/* 선택조건 Start	*/
+		<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">		
+			AND A.DIV_CODE			= #{DIV_CODE}
+		</if>	
+		<if test="@foren.Ognl@isNotEmpty(INSPEC_PRSN)">	
+			AND A.INSPEC_PRSN		= #{INSPEC_PRSN}
+		</if>	
+		<if test="@foren.Ognl@isNotEmpty(FR_DATE)">	
+			AND A.INSPEC_DATE	   &gt;= #{FR_DATE}
+		</if>	
+		<if test="@foren.Ognl@isNotEmpty(TO_DATE)">	    
+			AND A.INSPEC_DATE	   &lt;= #{TO_DATE}
+		</if>	
+		<if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">	    
+			AND A.ITEM_CODE		 LIKE @ITEM_CODE + '%' 
+			AND (CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+					  WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+										  ELSE C1.ITEM_NAME
+				 END)            LIKE '%' + #{ITEM_NAME} + '%'
+		</if>	
+		<if test="@foren.Ognl@isNotEmpty(IN_WH_CODE)">		 	 
+			AND B.IN_WH_CODE		= #{IN_WH_CODE}
+		</if>	
+		<if test="@foren.Ognl@isNotEmpty(INSPEC_NUM)">	     
+			AND A.INSPEC_NUM		= #{INSPEC_NUM}
+		</if>		     
+			/* 선택조건 End		*/
+	
+		SET NOCOUNT OFF
+		SET ARITHABORT OFF
+	END
+	</select>
+</mapper>

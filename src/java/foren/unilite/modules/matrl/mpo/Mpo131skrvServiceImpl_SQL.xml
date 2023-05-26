@@ -1,0 +1,277 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mpo131skrvServiceImpl">
+	<select id="mpo131skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+		    DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+		          , @UserId			NVARCHAR(100)	/* 사용자ID	*/
+		          , @LangType		NVARCHAR(2)		/* 언어구분		*/
+		          , @RefItem		NVARCHAR(01)
+		          , @DateFormat		NVARCHAR(10)
+
+		    SET @CompCode = #{S_COMP_CODE}
+		    SET @UserId   = #{S_USER_ID}
+		    SET @LangType = #{S_LANG_CODE}
+
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		      FROM BSA100T WITH (NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+		       AND MAIN_CODE = N'B044'
+		       AND REF_CODE1 = N'Y'
+
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+		    /* 데이터 조회 */
+		    SELECT -- CASE WHEN A.ORDER_TYPE = '4' THEN '외주'  ELSE '구매' END    AS ORDER_TYPE
+		           B.ITEM_CODE
+		         , CASE WHEN @RefItem = '1' THEN C2.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN C2.ITEM_NAME2
+		                                    ELSE C2.ITEM_NAME
+		           END                                                       AS ITEM_NAME
+		         , C2.SPEC
+		         , A.CUSTOM_CODE
+		         , CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+		                WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+		                                    ELSE C1.CUSTOM_NAME
+		           END                                                       AS CUSTOM_NAME
+		         , A.PROJECT_NO
+		         , C3.PJT_NAME
+		         , A.REMARK                                                  AS REMARK1
+		         , B.REMARK                                                  AS REMARK2
+		         , A.ORDER_DATE
+		         , B.DVRY_DATE
+		         , B.ORDER_UNIT_Q                                            AS ORDER_Q
+		         , B.MONEY_UNIT
+		         , B.ORDER_UNIT_P                                            AS ORDER_P
+		         , CASE WHEN B.CONTROL_STATUS = '9' THEN ISNULL(E.INOUT_Q,0) * B.ORDER_P
+		                ELSE B.ORDER_O
+		           END                                                       AS ORDER_O
+		         , D.RECEIPT_Q                                               AS TEMP_INOUT_Q
+		         , D.RECEIPT_DATE                                            AS TEMP_INOUT_DATE
+		         , ISNULL(E.ORDER_UNIT_Q,0)                                  AS INSTOCK_Q
+		         , ISNULL(E.ORDER_UNIT_Q,0) * B.ORDER_UNIT_P                 AS INSTOCK_O
+		         , CASE WHEN B.CONTROL_STATUS = '9' THEN B.ORDER_Q - ISNULL(E.INOUT_Q,0)
+		                ELSE 0
+		           END                                                       AS END_ORDER_Q
+		         , CASE WHEN B.CONTROL_STATUS = '9' THEN (B.ORDER_Q - ISNULL(E.INOUT_Q,0)) * B.ORDER_P
+		                ELSE 0
+		           END                                                       AS END_ORDER_O
+		         , A.AGREE_STATUS
+		         , B.CONTROL_STATUS
+		         , A.ORDER_NUM
+		         , B.IN_DIV_CODE
+		         --20191029 추가: 수주번호, 수주처, 수주품목명
+		         , F.ORDER_NUM                                               AS SO_NUM
+		         , (CASE WHEN @RefItem = '1' THEN F2.CUSTOM_NAME1
+		                 WHEN @RefItem = '2' THEN F2.CUSTOM_NAME2
+		                                     ELSE F2.CUSTOM_NAME
+		             END)                                                    AS SO_CUSTOM_NAME
+		         , (CASE WHEN @RefItem = '1' THEN F3.ITEM_NAME1
+		                 WHEN @RefItem = '2' THEN F3.ITEM_NAME2
+		                                     ELSE F3.ITEM_NAME
+		             END)                                                    AS SO_ITEM_NAME
+		         , CASE ISNULL(B.IF_YN, 'N') WHEN 'Y' THEN '확인' ELSE '미확인'	END  AS IF_YN
+		         , B.DVRY_ESTI_DATE
+		         --20200528 추가: D-Day
+		         , CASE WHEN B.DVRY_DATE > CONVERT(NVARCHAR(08), GETDATE(), 112) THEN 'D' + CONVERT(NVARCHAR, DATEDIFF(DAY, B.DVRY_DATE, CONVERT(NVARCHAR(08), GETDATE(), 112)))
+		                ELSE ''
+		           END                                                       AS D_DAY
+
+                 --20200922 추가:발주형태,구매단위,화폐,자사발주단가,자사발주금액,미입고량,최종입고일
+                 ,  S1.CODE_NAME  AS ORDER_TYPE                     /* 발주형태     */
+                 ,  B.ORDER_UNIT                                    /* 구매단위     */
+				 ,  A.MONEY_UNIT				          			/* 화폐         */
+				 ,  B.ORDER_LOC_P			                        /* 자사발주단가 */
+				 ,  B.ORDER_LOC_O			                        /* 자사발주금액 */
+                 ,  CASE WHEN B.ORDER_UNIT_Q - ISNULL(G.ORDER_UNIT_Q,0) &lt; 0
+                         THEN 0
+					 	 ELSE B.ORDER_UNIT_Q - ISNULL(G.ORDER_UNIT_Q,0)
+                     END AS UNDVRY_Q                                /* 미입고량     */
+                 ,  CASE WHEN B.CONTROL_STATUS != '1'
+                         THEN (SELECT MAX(CASE WHEN ISNULL(INOUT_DATE, '') = ''
+                                               THEN ''
+                                               ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(INOUT_DATE, 1, 4))
+                                                                                       , 'MM',   SUBSTRING(INOUT_DATE, 5, 2))
+                                                                                       , 'DD',   SUBSTRING(INOUT_DATE, 7, 2))
+                                           END)
+                                 FROM BTR100T WITH(NOLOCK)
+                                WHERE COMP_CODE  = B.COMP_CODE
+                                  AND DIV_CODE   = B.DIV_CODE
+                                  AND ORDER_NUM  = B.ORDER_NUM
+                                  AND ORDER_SEQ  = B.ORDER_SEQ
+                                  AND INOUT_TYPE = '1')
+                         ELSE ''
+                      END AS MAX_INOUT_DATE                         /* 최종입고일    */
+		      FROM               MPO100T A  WITH (NOLOCK)
+		              INNER JOIN MPO200T B  WITH (NOLOCK) ON  B.COMP_CODE    =  A.COMP_CODE
+		                                                 AND  B.DIV_CODE     =  A.DIV_CODE
+		                                                 AND  B.CUSTOM_CODE  =  A.CUSTOM_CODE
+		                                                 AND  B.ORDER_NUM    =  A.ORDER_NUM
+		              INNER JOIN BCM100T C1 WITH (NOLOCK) ON C1.COMP_CODE    =  A.COMP_CODE
+		                                                 AND C1.CUSTOM_CODE  =  A.CUSTOM_CODE
+		              INNER JOIN BPR100T C2 WITH (NOLOCK) ON C2.COMP_CODE    =  B.COMP_CODE
+		                                                 AND C2.ITEM_CODE    =  B.ITEM_CODE
+		              LEFT JOIN BCM600T C3 WITH (NOLOCK)  ON C3.COMP_CODE    =  A.COMP_CODE
+		                                                 AND C3.PJT_CODE     =  A.PROJECT_NO
+		              LEFT JOIN (SELECT COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ, SUM(RECEIPT_Q) AS RECEIPT_Q, MAX(RECEIPT_DATE) AS RECEIPT_DATE
+		                           FROM QMS100T WITH (NOLOCK)
+		                          GROUP BY  COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ) D ON D.COMP_CODE = B.COMP_CODE
+		                                                                                AND D.DIV_CODE  = B.IN_DIV_CODE
+		                                                                                AND D.ORDER_NUM = B.ORDER_NUM
+		                                                                                AND D.ORDER_SEQ = B.ORDER_SEQ
+		              --20190619 조회조건 item_account 추가
+		              INNER JOIN BPR200T I WITH (NOLOCK) ON I.COMP_CODE  = A.COMP_CODE
+		                                                AND I.DIV_CODE   = A.DIV_CODE
+		                                                AND I.ITEM_CODE  = B.ITEM_CODE
+		              LEFT  JOIN  (SELECT S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+										, CASE S1.CREATE_LOC WHEN '2' THEN S1.ORDER_NUM ELSE S2.ORDER_NUM END AS ORDER_NUM
+										, CASE S1.CREATE_LOC WHEN '2' THEN S1.ORDER_SEQ ELSE S2.ORDER_SEQ END AS ORDER_SEQ
+		                                , SUM(ISNULL(S1.INOUT_Q, 0))                 AS INOUT_Q
+		                                , SUM(ISNULL(S1.INOUT_I, 0))                 AS INOUT_I
+		                                , SUM(ISNULL(S1.ORDER_UNIT_Q, 0))            AS ORDER_UNIT_Q
+		                                , SUM(ISNULL(S1.ORDER_UNIT_O, 0))            AS ORDER_UNIT_O
+		                                , MAX(ISNULL(S1.ORDER_UNIT_P, 0))            AS ORDER_UNIT_P
+		                             FROM BTR100T S1 WITH (NOLOCK)
+										  LEFT JOIN TIA110T S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.DIV_CODE=S2.DIV_CODE AND S1.ORDER_NUM=S2.SO_SER_NO AND S1.ORDER_SEQ=S2.SO_SER
+		                            WHERE S1.COMP_CODE  = #{S_COMP_CODE}
+		                              -- 20210305 multi조회로 변경
+		                              -- 20210316 품목팝업 멀티 사업장 문제로 임시로 복원
+		                              <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+										  AND S1.DIV_CODE = #{DIV_CODE}
+									  </if>
+
+		                              AND S1.INOUT_TYPE = '1'
+		                              AND S1.CREATE_LOC IN ('2','6')
+		                             GROUP BY S1.COMP_CODE, S1.DIV_CODE, S1.ITEM_CODE
+											, CASE S1.CREATE_LOC WHEN '2' THEN S1.ORDER_NUM ELSE S2.ORDER_NUM END
+											, CASE S1.CREATE_LOC WHEN '2' THEN S1.ORDER_SEQ ELSE S2.ORDER_SEQ END  ) E ON  E.COMP_CODE = B.COMP_CODE
+																													  AND  E.DIV_CODE  = B.IN_DIV_CODE
+																													  AND  E.ITEM_CODE = B.ITEM_CODE
+																													  AND  E.ORDER_NUM = B.ORDER_NUM
+																													  AND  E.ORDER_SEQ = B.ORDER_SEQ
+		              --20191029 추가: 수주번호, 수주처, 수주품목명 가져오기 위한 JOIN
+		              LEFT JOIN SOF110T F  WITH (NOLOCK) ON F.COMP_CODE   = B.COMP_CODE
+		                                                AND F.OUT_DIV_CODE= B.DIV_CODE
+		                                                AND F.ORDER_NUM   = B.SO_NUM
+		                                                AND F.SER_NO      = B.SO_SEQ
+		              LEFT JOIN SOF100T F1 WITH (NOLOCK) ON F1.COMP_CODE  = F.COMP_CODE
+		                                                AND F1.DIV_CODE   = F.DIV_CODE
+		                                                AND F1.ORDER_NUM  = F.ORDER_NUM
+		              LEFT JOIN BCM100T F2 WITH (NOLOCK) ON F2.COMP_CODE  = F1.COMP_CODE
+		                                                AND F2.CUSTOM_CODE= F1.CUSTOM_CODE
+		              LEFT JOIN BPR100T F3 WITH (NOLOCK) ON F3.COMP_CODE  = F.COMP_CODE
+		                                                AND F3.ITEM_CODE  = F.ITEM_CODE
+                      --20200922 추가:발주형태
+                      LEFT JOIN BSA100T S1 WITH (NOLOCK) ON S1.COMP_CODE  = A.COMP_CODE
+                                                        AND S1.MAIN_CODE  = 'M001'
+                                                        AND S1.SUB_CODE   = A.ORDER_TYPE
+
+                      --20200922 추가:미입고량
+				      LEFT JOIN (SELECT COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ
+									  , SUM(ISNULL(INOUT_Q, 0)) AS INOUT_Q , SUM(ISNULL(INOUT_I, 0)) AS INOUT_I
+									  , SUM(ISNULL(ORDER_UNIT_Q, 0)) AS ORDER_UNIT_Q, SUM(ISNULL(ORDER_UNIT_O, 0)) AS ORDER_UNIT_O
+									  , MAX(ISNULL(ORDER_UNIT_P, 0)) AS ORDER_UNIT_P
+					               FROM BTR100T WITH (NOLOCK)
+								  WHERE COMP_CODE  = #{S_COMP_CODE}
+								   -- 20210305 multi조회로 변경
+								   -- 20210316 품목팝업 멀티 사업장 문제로 임시로 복원
+								    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+										AND DIV_CODE = #{DIV_CODE}
+									</if>
+
+
+									AND INOUT_TYPE = '1'
+									AND CREATE_LOC = '2'
+								   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, ORDER_NUM, ORDER_SEQ) G ON G.COMP_CODE = B.COMP_CODE
+																					               AND G.DIV_CODE  = B.IN_DIV_CODE
+																					               AND G.ITEM_CODE = B.ITEM_CODE
+																					               AND G.ORDER_NUM = B.ORDER_NUM
+																					               AND G.ORDER_SEQ = B.ORDER_SEQ
+		     WHERE A.COMP_CODE = #{S_COMP_CODE}
+		     -- 20210305 multi조회로 변경
+		     -- 20210316 품목팝업 멀티 사업장 문제로 임시로 복원
+		    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+				AND A.DIV_CODE = #{DIV_CODE}
+			</if>
+
+			<if test="@foren.Ognl@isNotEmpty(ORDER_DATE_FR)">
+		       AND A.ORDER_DATE &gt;= #{ORDER_DATE_FR}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ORDER_DATE_TO)">
+		       AND A.ORDER_DATE &lt;= #{ORDER_DATE_TO}
+			</if>
+			<if test="INOUT_FLAG == &quot;3&quot;"> -- 천제
+		       AND ISNULL(B.ORDER_Q, 0) &gt; 0
+			</if>
+			<if test="INOUT_FLAG == &quot;2&quot;"> -- 미입고
+		       AND ISNULL(B.ORDER_Q, 0) &gt;  ISNULL(D.RECEIPT_Q,0)
+			</if>
+			<if test="INOUT_FLAG == &quot;1&quot;"> -- 입고
+		       AND ((ISNULL(B.ORDER_Q, 0) = ISNULL(D.RECEIPT_Q,0))
+		         OR (ISNULL(B.ORDER_Q, 0) = ISNULL(B.INSTOCK_Q,0)))
+			</if>
+			
+			<!--2021.08 표준화 작업 Start-->  /* 거래처(FR) */
+	        <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_FR) and @foren.Ognl@isNotEmpty(CUSTOM_NAME_FR)">
+				AND A.CUSTOM_CODE = #{CUSTOM_CODE_FR}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_FR) and @foren.Ognl@isEmpty(CUSTOM_NAME_FR)">
+				AND A.CUSTOM_CODE LIKE #{CUSTOM_CODE_FR} + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(CUSTOM_CODE_FR) and @foren.Ognl@isNotEmpty(CUSTOM_NAME_FR)">
+				AND		(@RefItem       = N'0' AND C1.CUSTOM_NAME  LIKE N'%' + #{CUSTOM_NAME_FR} + N'%')
+					OR	(@RefItem       = N'1' AND C1.CUSTOM_NAME1 LIKE N'%' + #{CUSTOM_NAME_FR} + N'%')
+					OR	(@RefItem       = N'2' AND C1.CUSTOM_NAME2 LIKE N'%' + #{CUSTOM_NAME_FR} + N'%')
+			</if>
+			<!--2021.08 표준화 작업 End-->
+			
+			<if test="@foren.Ognl@isNotEmpty(PROJECT_NO)">
+		       AND A.PROJECT_NO   =  #{PROJECT_NO}              /* 프로젝트번호 */
+			</if>
+			<if test="GUBUN == &quot;1&quot;"> -- 구매
+		       AND A.ORDER_TYPE  !=  '4'
+			</if>
+			<if test="GUBUN == &quot;2&quot;"> -- 외주
+		       AND A.ORDER_TYPE   =  '4'
+			</if>
+
+       		<!--2021.08 표준화 작업 Start-->
+	        <if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+				AND B.ITEM_CODE = #{ITEM_CODE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+				AND B.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+				AND		(@RefItem       = N'0' AND C2.ITEM_NAME  LIKE N'%' + #{ITEM_NAME} + N'%')
+					OR	(@RefItem       = N'1' AND C2.ITEM_NAME1 LIKE N'%' + #{ITEM_NAME} + N'%')
+					OR	(@RefItem       = N'2' AND C2.ITEM_NAME2 LIKE N'%' + #{ITEM_NAME} + N'%')
+			</if>
+			<!--2021.08 표준화 작업 End-->
+			
+			<if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+		       --20190619 조회조건 item_account 추가
+		       AND I.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(SO_NUM)">
+		       --20191029 조회조건 SO_NUM 추가
+		       AND F.ORDER_NUM   LIKE #{SO_NUM} + '%'
+			</if>
+		     ORDER BY A.ORDER_TYPE, A.ORDER_DATE, A.ORDER_NUM, B.ORDER_SEQ, B.ITEM_CODE
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+</mapper>

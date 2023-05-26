@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="hpa970ukrServiceImpl">
+<select id="hpa970ukrServiceImpl.doBatch" parameterType="rMap" resultType="int">		  
+	--UHpa01Krv.CHpa970UK[fnHpa970Save] Query01
+		DECLARE @COMP_CODE        NVARCHAR(08)      --(필수)법인코드
+		      , @PAY_YYYYMM       NVARCHAR(06)      --(필수)급여년월
+		      , @USER_ID          NVARCHAR(100)      --(선택)USERID
+			  , @IMonth 	 	  NVARCHAR(10)
+
+	    <foreach collection="monthOfThisYear" item="month" index="index" >
+			SET @IMonth = #{THIS_YEAR} + Right((#{month}), 2)
+			
+		    SET @COMP_CODE        = #{S_COMP_CODE}
+		    SET @PAY_YYYYMM       = @IMonth
+		    SET @USER_ID          = #{S_USER_ID}
+		
+		
+		BEGIN
+		        DELETE FROM HPA800T
+		              WHERE COMP_CODE            = @COMP_CODE
+		                AND PAY_YYYYMM           = @PAY_YYYYMM
+		              
+		        INSERT INTO HPA800T
+		                  ( COMP_CODE
+		                  , PAY_YYYYMM
+		                  , SUPP_TYPE
+		                  , PERSON_NUMB
+		                  , NONTAX_CODE
+		                  , PRINT_LOCATION 
+		                  , LIMIT_PAY_SUPP_I
+		                  , UPDATE_DB_USER
+		                  , UPDATE_DB_TIME
+		                  , INSERT_DB_USER
+		                  , INSERT_DB_TIME 
+		                  )
+		             SELECT A.COMP_CODE          AS COMP_CODE
+		                  , CASE WHEN C.TAX_CODE = '2'  THEN ISNULL(B2.PAY_YYYYMM, @PAY_YYYYMM)
+		                       WHEN C.TAX_CODE = '6'  THEN ISNULL(C.PAY_YYYYMM, @PAY_YYYYMM)
+		                         ELSE (CASE WHEN ISNULL(B1.AMOUNT_I,0) > ISNULL(C.LIMIT_PAY_SUPP_I,0) THEN ISNULL(C.PAY_YYYYMM, @PAY_YYYYMM)
+		                                    ELSE ISNULL(B1.PAY_YYYYMM, @PAY_YYYYMM)
+		                                 END)
+		                     END                 AS PAY_YYYYMM
+		                  , CASE WHEN C.TAX_CODE = '2'  THEN ISNULL(B2.SUPP_TYPE, '1')
+		                       WHEN C.TAX_CODE = '6'  THEN ISNULL(C.SUPP_TYPE, '1')
+		                         ELSE (CASE WHEN ISNULL(B1.AMOUNT_I,0) > ISNULL(C.LIMIT_PAY_SUPP_I,0) THEN ISNULL(C.SUPP_TYPE, '1')
+		                                    ELSE ISNULL(B1.SUPP_TYPE, '1')
+		                                 END)
+		                     END                 AS SUPP_TYPE
+		                  , A.PERSON_NUMB        AS PERSON_NUMB
+		                  , C.NON_TAX_CODE       AS NON_TAX_CODE
+		                  , D.PRINT_LOCATION     AS PRINT_LOCATION
+		                  , CASE WHEN (C.TAX_CODE = '2' AND A.TAX_CODE   = '2') THEN ISNULL(B2.TAX_EXEMPTION1_I,0)
+		                         WHEN (C.TAX_CODE = '2' AND A.TAX_CODE  != '2') THEN 0                         
+		                         WHEN (C.TAX_CODE = '6' AND A.TAX_CODE2 != '2') THEN 0
+		                         WHEN (C.TAX_CODE = '6' AND A.TAX_CODE2  = '2') THEN (CASE WHEN ISNULL(B1.AMOUNT_I,0) > ISNULL(C.LIMIT_PAY_SUPP_I,0) THEN ISNULL(C.LIMIT_PAY_SUPP_I,0)
+		                                                                                   ELSE ISNULL(B1.AMOUNT_I,0)
+		                                                                               END)
+		                         ELSE (CASE WHEN ISNULL(B1.AMOUNT_I,0) > ISNULL(C.LIMIT_PAY_SUPP_I,0) THEN ISNULL(C.LIMIT_PAY_SUPP_I,0)
+		                                    ELSE ISNULL(B1.AMOUNT_I,0)
+		                                 END)
+		                     END                 AS LIMIT_PAY_SUPP_I
+		                  , @USER_ID             AS UPDATE_DB_USER
+		                  , GETDATE()            AS UPDATE_DB_TIME
+		                  , @USER_ID             AS INSERT_DB_USER
+		                  , GETDATE()            AS INSERT_DB_TIME 
+		               FROM            HUM100T A 
+		                    INNER  JOIN (SELECT DISTINCT 
+		                                        COMP_CODE
+		                                      , @PAY_YYYYMM AS PAY_YYYYMM
+		                                      , '1'         AS SUPP_TYPE
+		                                    , TAX_CODE
+		                                    , NON_TAX_CODE
+		                                    , TAX_AMOUNT_LMT_I AS LIMIT_PAY_SUPP_I
+		                                 FROM HBS300T WITH(NOLOCK)
+		                                WHERE CODE_TYPE      = '1'
+		                                  AND TAX_CODE NOT  IN ('1', '7')
+		                                  AND NON_TAX_CODE  != '' ) AS C ON C.COMP_CODE = A.COMP_CODE
+		                    LEFT JOIN (SELECT A.COMP_CODE
+		                                   , A.PAY_YYYYMM
+		                                   , A.SUPP_TYPE
+		                                   , A.PERSON_NUMB
+		                                     , B.NON_TAX_CODE
+		                                     , SUM(AMOUNT_I) AS AMOUNT_I
+		                                  FROM            HPA300T A
+		                                     INNER JOIN (SELECT COMP_CODE
+		                                                        , WAGES_CODE
+		                                                      , NON_TAX_CODE                                                        
+		                                                   FROM HBS300T WITH(NOLOCK)
+		                                                  WHERE CODE_TYPE      = '1'
+		                                                    AND TAX_CODE NOT  IN ('1', '7')
+		                                                    AND NON_TAX_CODE  != '') AS B ON B.COMP_CODE   = A.COMP_CODE
+		                                                                                   AND B.WAGES_CODE  = A.WAGES_CODE
+		                               WHERE A.COMP_CODE    = @COMP_CODE
+		                                 AND A.PAY_YYYYMM   = @PAY_YYYYMM
+		                                 AND A.SUPP_TYPE    = '1' 
+		                                 GROUP BY A.COMP_CODE, A.SUPP_TYPE, A.PERSON_NUMB, A.PAY_YYYYMM, B.NON_TAX_CODE) B1 ON B1.COMP_CODE    = A.COMP_CODE
+		                                                                                                                   AND B1.PERSON_NUMB  = A.PERSON_NUMB
+		                                                                                                                   AND B1.NON_TAX_CODE = C.NON_TAX_CODE 
+		                    LEFT JOIN (SELECT A.COMP_CODE
+		                                     , A.PERSON_NUMB
+		                                     , A.TAX_EXEMPTION1_I
+		                                   , A.PAY_YYYYMM
+		                                   , A.SUPP_TYPE
+		                                  FROM            HPA600T A 
+		                                     INNER JOIN (SELECT DISTINCT 
+		                                                        COMP_CODE
+		                                                      , NON_TAX_CODE
+		                                                   FROM HBS300T WITH(NOLOCK)
+		                                                  WHERE CODE_TYPE      = '1'
+		                                                    AND TAX_CODE       = '2'
+		                                                    AND NON_TAX_CODE  != ''
+		                                                      AND CODE_TYPE      = '1') AS B ON B.COMP_CODE   = A.COMP_CODE
+		                               WHERE A.COMP_CODE    = @COMP_CODE
+		                                 AND A.PAY_YYYYMM   = @PAY_YYYYMM
+		                                 AND A.SUPP_TYPE    = '1' )B2 ON B2.COMP_CODE    = A.COMP_CODE
+		                                                                AND B2.PERSON_NUMB  = A.PERSON_NUMB 
+		                    INNER JOIN HBS120T D WITH(NOLOCK) ON D.COMP_CODE = C.COMP_CODE
+		                                                   AND D.TAX_YYYY    = LEFT(@PAY_YYYYMM,4)
+		                                                   AND D.NONTAX_CODE = C.NON_TAX_CODE 
+		              WHERE A.COMP_CODE      = @COMP_CODE
+		                AND ISNULL(A.PAY_PROV_YN,'N')      = 'Y'                                                               
+		                AND ISNULL(A.PAY_PROV_STOP_YN,'Y') = 'N'
+		
+		END
+	    </foreach>
+</select>
+
+	
+</mapper>

@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="agb310skrServiceImpl">
+	
+	<select id="agb310skrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/*  agb310skrServiceImpl.selectList  */
+		BEGIN
+			DECLARE	@COMP_CODE		NVARCHAR(08)	= #{S_COMP_CODE}
+				  , @AC_DATE_FR		NVARCHAR(08)	= #{FR_DATE}
+				  , @AC_DATE_TO		NVARCHAR(08)	= #{TO_DATE}
+				  , @ACCNT_FR		NVARCHAR(10)	= #{ACCNT_CODE_FR}
+				  , @ACCNT_TO		NVARCHAR(10)	= #{ACCNT_CODE_TO}
+				  , @CUST_CODE		NVARCHAR(10)	= #{CUST_CODE}
+				  
+				  , @ST_DATE		NVARCHAR(06)	= ''
+				  , @REF_ITEM		NVARCHAR(01)	= #{ACCOUNT_NAME}
+			
+			SELECT @ST_DATE = CASE WHEN SUBSTRING(FN_DATE, 1, 6) &lt; @AC_DATE_FR THEN SUBSTRING(FN_DATE, 1, 6)
+								   ELSE SUBSTRING(@AC_DATE_FR, 1, 4) + SUBSTRING(FN_DATE, 5, 2)
+							  END
+			  FROM BOR100T
+			 WHERE COMP_CODE	= @COMP_CODE
+			
+			SELECT A.COMP_CODE
+				 , A.ACCNT
+				 , A.ACCNT_NAME
+				 , A.PREV_JAN_AMT
+				 , A.DR_AMT_I
+				 , A.CR_AMT_I
+				 , A.JAN_AMT
+			  FROM (
+					SELECT A.COMP_CODE
+						 , A.ACCNT
+						 , CASE WHEN @REF_ITEM = '0' THEN B.ACCNT_NAME
+								WHEN @REF_ITEM = '1' THEN B.ACCNT_NAME2
+								WHEN @REF_ITEM = '2' THEN B.ACCNT_NAME3
+						   END	AS ACCNT_NAME
+						 , SUM(CASE WHEN A.AC_DATE &gt;= @ST_DATE AND A.AC_DATE &lt; @AC_DATE_FR
+									THEN CASE WHEN B.JAN_DIVI = '1'	THEN ISNULL(A.DR_AMT_I, 0) - ISNULL(A.CR_AMT_I, 0)
+																	ELSE ISNULL(A.CR_AMT_I, 0) - ISNULL(A.DR_AMT_I, 0)
+										 END
+									ELSE 0
+							   END)	AS PREV_JAN_AMT
+						 , SUM(CASE WHEN A.AC_DATE &gt;= @AC_DATE_FR AND A.AC_DATE &lt;= @AC_DATE_TO
+									THEN ISNULL(A.DR_AMT_I, 0)
+									ELSE 0
+							   END)	AS DR_AMT_I
+						 , SUM(CASE WHEN A.AC_DATE &gt;= @AC_DATE_FR AND A.AC_DATE &lt;= @AC_DATE_TO
+									THEN ISNULL(A.CR_AMT_I, 0)
+									ELSE 0
+							   END)	AS CR_AMT_I
+						 , SUM(CASE WHEN A.AC_DATE &gt;= @ST_DATE AND A.AC_DATE &lt;= @AC_DATE_TO
+									THEN CASE WHEN B.JAN_DIVI = '1'	THEN ISNULL(A.DR_AMT_I, 0) - ISNULL(A.CR_AMT_I, 0)
+																	ELSE ISNULL(A.CR_AMT_I, 0) - ISNULL(A.DR_AMT_I, 0)
+										 END
+									ELSE 0
+							   END)	AS JAN_AMT
+					  FROM AGB200T A
+							INNER JOIN		ABA400T B
+										 ON A.COMP_CODE	= B.COMP_CODE
+										AND	A.ACCNT		= B.ACCNT
+					 WHERE A.COMP_CODE	= @COMP_CODE
+					   AND A.AC_DATE	BETWEEN @ST_DATE AND @AC_DATE_TO
+		<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">     
+					   AND A.DIV_CODE IN
+						<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+							#{item}
+						</foreach>
+		</if>
+					   AND ((@CUST_CODE	= '') OR (A.BOOK_CODE1 = 'A4' AND A.BOOK_DATA1 = @CUST_CODE) OR (A.BOOK_CODE2 = 'A4' AND A.BOOK_DATA2 = @CUST_CODE))
+					   AND ((@ACCNT_FR	= '') OR (A.ACCNT &gt;= @ACCNT_FR))
+					   AND ((@ACCNT_TO	= '') OR (A.ACCNT &lt;= @ACCNT_TO))
+					   AND ((A.INPUT_PATH != '10') OR (A.INPUT_PATH = '10' AND A.AC_DATE &lt; @AC_DATE_FR))
+					 GROUP BY A.COMP_CODE
+						 , A.ACCNT
+						 , CASE WHEN @REF_ITEM = '0' THEN B.ACCNT_NAME
+								WHEN @REF_ITEM = '1' THEN B.ACCNT_NAME2
+								WHEN @REF_ITEM = '2' THEN B.ACCNT_NAME3
+						   END
+				
+					UNION ALL
+				
+					SELECT A.COMP_CODE
+						 , A.ACCNT
+						 , CASE WHEN @REF_ITEM = '0' THEN B.ACCNT_NAME
+								WHEN @REF_ITEM = '1' THEN B.ACCNT_NAME2
+								WHEN @REF_ITEM = '2' THEN B.ACCNT_NAME3
+						   END	AS ACCNT_NAME
+						 , 0	AS PREV_JAN_AMT
+						 , SUM(CASE WHEN A.DR_CR = '1' THEN ISNULL(A.AMT_I, 0) ELSE 0 END)	AS DR_AMT_I
+						 , SUM(CASE WHEN A.DR_CR = '2' THEN ISNULL(A.AMT_I, 0) ELSE 0 END)	AS CR_AMT_I
+						 , SUM(CASE WHEN A.DR_CR = B.JAN_DIVI THEN ISNULL(A.AMT_I, 0) ELSE ISNULL(A.AMT_I, 0) * -1 END)	AS JAN_AMT
+					  FROM AGJ210T A
+							INNER JOIN		ABA400T B
+										 ON A.COMP_CODE	= B.COMP_CODE
+										AND	A.ACCNT		= B.ACCNT
+										AND (A.BOOK_CODE1 != 'A4' AND A.BOOK_CODE2 != 'A4')
+					 WHERE A.COMP_CODE	= @COMP_CODE
+					   AND A.AC_DATE	BETWEEN @AC_DATE_FR AND @AC_DATE_TO
+		<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">     
+					   AND A.DIV_CODE IN
+						<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+							#{item}
+						</foreach>         
+		</if>
+					   AND ((@CUST_CODE	= '') OR (A.CUSTOM_CODE = @CUST_CODE))
+					   AND ((@ACCNT_FR	= '') OR (A.ACCNT &gt;= @ACCNT_FR))
+					   AND ((@ACCNT_TO	= '') OR (A.ACCNT &lt;= @ACCNT_TO))
+					   AND ISNULL(A.MOD_DIVI, '') != 'D'
+					 GROUP BY A.COMP_CODE
+						 , A.ACCNT
+						 , CASE WHEN @REF_ITEM = '0' THEN B.ACCNT_NAME
+								WHEN @REF_ITEM = '1' THEN B.ACCNT_NAME2
+								WHEN @REF_ITEM = '2' THEN B.ACCNT_NAME3
+						   END
+				   ) A
+			 WHERE (A.PREV_JAN_AMT	!= 0
+				OR  A.DR_AMT_I		!= 0
+				OR	A.CR_AMT_I		!= 0
+				OR	A.JAN_AMT		!= 0)
+			 ORDER BY A.ACCNT
+		
+		END
+	</select>	
+	
+</mapper>

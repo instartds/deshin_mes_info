@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="nboxDocRcvUserService">
+	
+	<select id="nboxDocRcvUserService.selects" parameterType="Map" resultType="rMap">
+		SELECT 
+    		 '' as id
+    		,DocumentID
+    		,RcvType
+    		,DeptType
+    		,RcvUserDeptID
+    		,RcvUserID
+    		,ReadDate
+    		,RcvUserName + ' ' + RcvUserPosName AS RcvUserName
+    		,RcvUserDeptName
+    		,CASE WHEN ReadDate is null then '0' else '1' end AS ReadChk
+		FROM   
+            tbApprovalDocRcvUser
+		WHERE  
+            DocumentID = #{DocumentID}
+    		AND    RcvType = #{RcvType}
+    		AND    DeptType = 'P'
+		UNION ALL
+		SELECT 
+    		 ( select id from uniLITE.nfnDeptTreeData(#{S_COMP_CODE}) c where tree_code = T1.RcvUserDeptID )  as id
+    		,T1.DocumentID
+    		,T1.RcvType
+    		,T1.DeptType
+    		,T1.RcvUserDeptID
+    		,T1.RcvUserID
+    		,T1.ReadDate
+    		,CASE WHEN T2.RcvUserCnt = 0
+    		      THEN T1.RcvUserName + ' ' + T1.RcvUserPosName
+    			  ELSE T1.RcvUserName + ' ' + T1.RcvUserPosName + '&#91;' + '외' + cast(T2.RcvUserCnt as nvarchar) + '명' + '&#93;'
+    		 END AS RcvUserName
+    		,T1.RcvUserDeptName
+    		,CASE WHEN ReadDate is null then '0' else '1' end AS ReadChk
+		FROM   
+            tbApprovalDocRcvUser T1
+            INNER JOIN (
+                SELECT M.DocumentID, M.RcvType, M.DeptType, M.RcvUserDeptID, MIN(M.RcvUserID) AS RcvUserID, MAX(K.RcvUserCnt) AS RcvUserCnt
+                FROM   tbApprovalDocRcvUser M
+                    INNER JOIN BSA300T N ON M.RcvUserID = N.USER_ID
+                    INNER JOIN (
+                        SELECT 
+                            A.DocumentID, A.RcvType, A.DeptType, A.RcvUserDeptID, MIN(B.POST_CODE) AS POST_CODE, COUNT(1) - 1 AS RcvUserCnt
+                        FROM   tbApprovalDocRcvUser A
+                            INNER JOIN BSA300T B ON A.RcvUserID = B.USER_ID
+                        WHERE  A.DocumentID = #{DocumentID}
+                            AND    A.RcvType = #{RcvType}
+                            AND    A.DeptType = 'D'
+                        GROUP BY  A.DocumentID, A.DeptType, A.RcvType, A.RcvUserDeptID ) K ON M.DocumentID = K.DocumentID AND M.RcvUserDeptID = k.RcvUserDeptID AND N.POST_CODE = k.POST_CODE
+                GROUP BY M.DocumentID, M.RcvType, M.DeptType, M.RcvUserDeptID ) T2 ON 
+            T1.DocumentID = T2.DocumentID AND
+            T1.RcvType = T2.RcvType AND
+            T1.DeptType = T2.DeptType AND
+            T1.RcvUserID = t2.RcvUserID			
+	</select>
+    
+    <insert id="nboxDocRcvUserService.insert" parameterType="Map">
+        <if test='DeptType == "P"'>
+            Declare 
+             @uUserName nvarchar(50)
+            ,@uPosName nvarchar(50)
+            ,@uDeptName nvarchar(50)
+            
+            SET @uUserName = uniLITE.nfnGetUserName(#{S_COMP_CODE}, #{RcvUserID})
+            SET @uPosName = uniLITE.nfnGetUserPosName(#{S_COMP_CODE},#{RcvUserID}, #{S_LANG_CODE})
+            SET @uDeptName = uniLITE.nfnGetUserDeptName(#{S_COMP_CODE}, #{RcvUserID} )
+            
+            INSERT INTO tbApprovalDocRcvUser(
+                 DocumentID
+                ,RcvType
+                ,DeptType
+                ,RcvUserID
+                ,RcvUserName
+                ,RcvUserDeptID
+                ,RcvUserDeptName
+                ,RcvUserPosName
+                ,ReadDate
+                ,InsertUserID
+                ,InsertDate
+                ,UpdateUserID
+                ,UpdateDate)
+            VALUES(
+                 #{DocumentID}  
+                ,#{RcvType}     
+                ,#{DeptType}
+                ,#{RcvUserID}             
+                ,@uUserName
+                ,#{RcvUserDeptID}
+                ,@uDeptName
+                ,@uPosName
+                ,null
+                ,#{S_USER_ID}
+                ,getdate()
+                ,#{S_USER_ID}
+                ,getdate() ) 
+        </if>
+        <if test='DeptType == "D"'>
+            with deptcte ( id, parentId, TREE_CODE, text, DeptType, dept_code, Sort )
+            as (
+            SELECT id, parentId, TREE_CODE, text, 'D' as DeptType, TREE_CODE as dept_code, cast(id as nvarchar)  as Sort
+            FROM   uniLITE.nfnDeptTreeData(#{S_COMP_CODE})
+            WHERE  id = #{id}
+            union all
+            SELECT a.id, a.parentId, a.TREE_CODE, a.text, a.DeptType, a.dept_code, cast(a.Sort as nvarchar) as Sort
+            FROM (
+                select id, parentId, TREE_CODE, text, 'D' AS DeptType, TREE_CODE as dept_code, id As Sort
+                from   uniLITE.nfnDeptTreeData(#{S_COMP_CODE})
+                union all
+                SELECT  USER_ID as id, 
+                        N.id as parentid, 
+                        USER_ID as tree_code, 
+                        USER_NAME as text,  
+                        'P' AS DeptType, 
+                        m.DEPT_CODE,
+                        n.Id  + '000' + cast(ROW_NUMBER() over( PARTITION BY M.DEPT_CODE ORDER BY M.POST_CODE ) as nvarchar) AS Sort
+                FROM   BSA300T M
+                INNER JOIN uniLITE.nfnDeptTreeData(#{S_COMP_CODE}) N ON M.DEPT_CODE = N.TREE_CODE
+                WHERE  M.COMP_CODE = #{S_COMP_CODE}
+                AND    M.LOCK_YN = 'N' ) A
+            inner join deptcte B on (a.parentId = b.id )    )
+    
+            INSERT INTO tbApprovalDocRcvUser(
+                 DocumentID
+                ,RcvType
+                ,DeptType
+                ,RcvUserID
+                ,RcvUserName
+                ,RcvUserDeptID
+                ,RcvUserDeptName
+                ,RcvUserPosName
+                ,ReadDate
+                ,InsertUserID
+                ,InsertDate
+                ,UpdateUserID
+                ,UpdateDate)
+            SELECT  
+                 #{DocumentID}  
+                ,#{RcvType}
+                ,#{DeptType}
+                ,id as RcvUserID 
+                ,text as RcvUserName
+                ,#{RcvUserDeptID}
+                ,uniLITE.nfnGetDeptName(#{S_COMP_CODE},#{RcvUserDeptID}) as RcvUserDeptName
+                ,uniLITE.nfnGetUserPosName(#{S_COMP_CODE},TREE_CODE, #{S_LANG_CODE}) as RcvUserPosName
+                ,null
+                ,#{S_USER_ID}
+                ,getdate()
+                ,#{S_USER_ID}
+                ,getdate()
+            FROM    deptcte
+            WHERE   DeptType = 'P'
+            ORDER BY  sort              
+        </if>
+    </insert>
+    
+    <delete id="nboxDocRcvUserService.deletes" parameterType="Map">
+        DELETE FROM tbApprovalDocRcvUser
+        WHERE DocumentID = #{DocumentID}
+        AND   RcvType = #{RcvType}
+    </delete>
+    
+    <select id="nboxDocRcvUserService.selectReadCheck" parameterType="Map" resultType="rMap">
+        SELECT *, T1.TOTALCOUNT
+        FROM (
+            select 
+             RcvUserName
+            ,RcvUserPosName
+            ,convert(nvarchar(10),ReadDate,23) + ' ' + convert(nvarchar(10),ReadDate,24) as ReadDate
+            ,RcvUserDeptID
+            ,ROW_NUMBER() OVER ( ORDER BY ReadDate DESC ) AS ROWNUMBER
+            ,COUNT(*) OVER () AS TOTALCOUNT
+            from   tbApprovalDocRcvUser
+            where  DocumentID = #{DocumentID}
+            and    RcvType = #{RcvType}
+            and    DeptType = #{DeptType}
+            and    RcvUserDeptID = #{RcvUserDeptID}
+        ) T1
+        WHERE T1.ROWNUMBER &gt; #{start} AND T1.ROWNUMBER &lt;= #{limit} * #{page}
+        ORDER BY T1.ROWNUMBER 
+    </select>
+	
+</mapper>

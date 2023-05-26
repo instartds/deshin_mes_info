@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="agb240skrServiceImpl">
+	
+	<select id="agb240skrServiceImpl.selectDetailList" parameterType="Map" resultType="rMap">
+	--agb240skr.Cagb240SKR[fnagb240q] Query1
+	BEGIN
+	   SET NOCOUNT ON
+	   SET ARITHABORT ON
+	
+	   -- 1. 날짜 포맷 유형 설정 ------------------------------------------------------------------------------------------
+	   DECLARE @DateFormat         NVARCHAR(01)
+	         , @TimeFormat         NVARCHAR(01)    
+	
+	   SELECT TOP 1 @DateFormat = SUBSTRING(CODE_NAME, 5, 1)
+	   FROM   BSA100T WITH (NOLOCK)
+	   WHERE  COMP_CODE  = N'MASTER'
+	   AND    MAIN_CODE  = 'B044'
+	   AND    REF_CODE1  = 'Y'
+	
+	   SET @DateFormat = ISNULL(@DateFormat, '.')
+	   SET @TimeFormat = ISNULL(@TimeFormat, ':')
+	
+	   -- 2. 임시테이블 선언 ------------------------------------------------------------------------------------------
+	   IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects  WHERE id=object_id('tempdb..#AGB240SKR_111212'))
+	       DROP TABLE #AGB240SKR_111212
+	
+	   CREATE TABLE #AGB240SKR_111212 ( GUBUN         NVARCHAR(01)
+	                                  , ACCNT         NVARCHAR(16)
+	                                  , ACCNT_NAME    NVARCHAR(100)
+	                                  , CUSTOM_CODE   NVARCHAR(08)
+	                                  , CUSTOM_NAME   NVARCHAR(100)
+	                                  , AC_DATE       NVARCHAR(10)
+	                                  , SLIP_NUM      NUMERIC(7, 0)
+	                                  , REMARK        NVARCHAR(100)
+	                                  , DR_AMT_I      NUMERIC(30, 6)
+	                                  , CR_AMT_I      NUMERIC(30, 6)
+	                                  , DIV_CODE      NVARCHAR(08)
+	                                  , INPUT_PATH    NVARCHAR(02)
+	                                  , INPUT_DIVI    NVARCHAR(02)
+	                                  , KEY_STRING    AS RTRIM(ACCNT) + RTRIM(GUBUN) + RTRIM(CUSTOM_CODE) + RTRIM(AC_DATE)
+	                                  )
+	
+	   -- 3.1 전표거래내역 INSERT ------------------------------------------------------------------------------------------
+	   INSERT INTO #AGB240SKR_111212
+	   SELECT 
+	          '1' AS GUBUN
+	        , A.ACCNT
+	        <if test="ACCOUNT_NAME == &quot;0&quot;">
+	        , M1.ACCNT_NAME 
+	        </if>
+	        <if test="ACCOUNT_NAME == &quot;1&quot;">
+	        , M1.ACCNT_NAME2 
+	        </if>
+	        <if test="ACCOUNT_NAME == &quot;2&quot;">
+	        , M1.ACCNT_NAME3 
+	        </if>
+	        , CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	               WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	               ELSE ISNULL(A.CUSTOM_CODE,'')
+	           END AS CUSTOM_CODE
+	        , CASE ISNULL(A.CUSTOM_CODE,'') WHEN '' THEN  A.CUSTOM_NAME
+	                                        ELSE         M2.CUSTOM_NAME
+	           END AS CUSTOM_NAME
+	        , SUBSTRING(A.AC_DATE, 1, 4) + @DateFormat + 
+	          SUBSTRING(A.AC_DATE, 5, 2) + @DateFormat + 
+	          SUBSTRING(A.AC_DATE, 7, 2)                 AS AC_DATE
+	        , A.SLIP_NUM
+	        , A.REMARK
+	        , CASE A.DR_CR WHEN'1' THEN A.AMT_I ELSE 0 END AS DR_AMT_I
+	        , CASE A.DR_CR WHEN'2' THEN A.AMT_I ELSE 0 END AS CR_AMT_I
+	        , A.DIV_CODE
+	        , A.INPUT_PATH
+	        , A.INPUT_DIVI
+	     FROM            AGJ210T A WITH (NOLOCK)
+	          LEFT  JOIN ABA400T M1 WITH (NOLOCK) ON M1.COMP_CODE  = A.COMP_CODE
+	                                             AND M1.ACCNT      = A.ACCNT
+	          LEFT  JOIN BCM100T M2 WITH (NOLOCK) ON M2.COMP_CODE  = A.COMP_CODE
+	                                             AND M2.CUSTOM_CODE = ISNULL(CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                                                                              WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                                                                              ELSE A.CUSTOM_CODE
+	                                                                          END, '')
+	    WHERE A.COMP_CODE = #{S_COMP_CODE}
+	      AND A.AC_DATE  &gt;= #{FR_DATE}
+	      AND A.AC_DATE  &lt;= #{TO_DATE}
+	      AND (A.MOD_DIVI = '' OR A.MOD_DIVI IS NULL)
+	      AND A.AMT_I    != 0
+	      AND ISNULL(CASE ISNULL(A.CUSTOM_CODE,'') WHEN '' THEN  A.CUSTOM_NAME
+	                                               ELSE         M2.CUSTOM_NAME
+	                  END, '') != ''
+	     <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">
+	      AND A.DIV_CODE IN
+	          <foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+	           #{item}
+	          </foreach>
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(ACCOUNT_CODE_FR)">
+	      AND A.ACCNT &gt;= #{ACCOUNT_CODE_FR}
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(ACCOUNT_CODE_TO)">
+	      AND A.ACCNT &lt;= #{ACCOUNT_CODE_TO}
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(CUST_CODE_FR)">
+	      AND CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                      WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                      ELSE A.CUSTOM_CODE
+	                  END &gt;= #{CUST_CODE_FR}
+	     </if>
+	     <if test="@foren.Ognl@isNotEmpty(CUST_CODE_TO)">
+	      AND CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                      WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                      ELSE A.CUSTOM_CODE
+	                  END &lt;= #{CUST_CODE_TO}
+	     </if>
+	     
+		<if test="@foren.Ognl@isNotEmpty(CUST_NAME_FR) and @foren.Ognl@isEmpty(CUST_CODE_FR)">
+		 	 AND	M2.CUSTOM_NAME  &gt;= #{CUST_NAME_FR}
+		</if>
+		
+		<if test="@foren.Ognl@isNotEmpty(CUST_NAME_TO) and @foren.Ognl@isEmpty(CUST_CODE_TO)">	
+		 	 AND	M2.CUSTOM_NAME  &lt;= #{CUST_NAME_TO}
+		</if>	
+			     
+	   -- 3.2 계정별 합계 INSERT ------------------------------------------------------------------------------------------
+
+	   -- 3.3 총계 INSERT ------------------------------------------------------------------------------------------
+
+	   -- 4. 쿼리 ------------------------------------------------------------------------------------------
+	   SELECT ACCNT
+	        , ACCNT_NAME
+	        , CUSTOM_CODE
+	        , CUSTOM_NAME
+	        , AC_DATE
+	        , SLIP_NUM
+	        , REMARK
+	        , DR_AMT_I
+	        , CR_AMT_I
+	        , DIV_CODE
+	        , GUBUN
+	        , INPUT_PATH
+	        , INPUT_DIVI
+	     FROM #AGB240SKR_111212 WITH (NOLOCK)
+	     ORDER BY ACCNT, GUBUN, CUSTOM_CODE, AC_DATE, SLIP_NUM
+
+	   SET ARITHABORT OFF
+	   SET NOCOUNT OFF
+	END
+	
+	DROP TABLE #AGB240SKR_111212
+	</select>
+</mapper>

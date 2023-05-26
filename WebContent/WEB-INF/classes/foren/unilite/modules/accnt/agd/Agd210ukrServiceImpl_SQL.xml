@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="agd210ukrServiceImpl">
+	<select id="agd210ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	--agd210ukr.Cagd210ukr[fnagd210QStd] QUERY01
+	BEGIN
+	    SET NOCOUNT    ON
+	    SET ARITHABORT ON
+	
+	---- I. 준비 ---------------------------------------------------------------------------------------------------------------------- 
+	
+	    /*------------------------------------------------------------------------*/
+	    /* 1.1. (파라메터)변수 선언                                               */
+	    /*------------------------------------------------------------------------*/
+	    DECLARE @COMP_CODE              NVARCHAR(08)        --(필수) 법인코드
+	          , @FR_DATE                NVARCHAR(08)        --(필수) FROM 발생일
+	          , @TO_DATE                NVARCHAR(08)        --(필수) TO   발생일
+	          , @DIV_CODE               NVARCHAR(08)        --(선택) 사업장
+	          , @FR_INSERT_DATE         NVARCHAR(08)        --(선택) FROM 입력일
+	          , @TO_INSERT_DATE         NVARCHAR(08)        --(선택) TO   입력일
+	          , @TRADE_DIVI             NVARCHAR(05)        --(선택) 무역구분
+	          , @CHARGE_TYPE            NVARCHAR(05)        --(선택) 진행구분
+	          , @CHARGE_CODE            NVARCHAR(15)        --(선택) 경비코드
+	          , @CUSTOM_CODE            NVARCHAR(15)        --(선택) 거래처코드
+	          , @AP_STS                 NVARCHAR(01)        --(선택) 전표승인여부
+	          , @PROC_DATE              NVARCHAR(08)        --(선택) 실행일
+	          , @DATE_OPTION            NVARCHAR(04)        --(필수) 실행구분
+	          , @WORK                   NVARCHAR(04)        --(필수) 작업구분
+	          , @INPUT_USER_ID          NVARCHAR(100)        --(필수) 로그인사용자ID
+	          , @INPUT_DATE             NVARCHAR(08)        --(필수) 시스템일자
+	
+	    /*------------------------------------------------------------------------*/
+	    /* 2.1. 변수값 정의                                                       */
+	    /*------------------------------------------------------------------------*/
+	    SET     @COMP_CODE              = #{S_COMP_CODE}
+	    SET     @FR_DATE                = #{DATE_FR}
+	    SET     @TO_DATE                = #{DATE_TO}
+	    SET     @DIV_CODE               = #{DIV_CODE}
+	    SET     @TRADE_DIVI             = #{TRADE_DIVI}
+	    SET     @CHARGE_TYPE            = #{CHARGE_TYPE}
+	    SET     @CHARGE_CODE            = #{CHARGE_CODE}
+	    SET     @CUSTOM_CODE            = #{CUSTOM_CODE}
+	    SET     @AP_STS                 = #{CUSTOM_CODE}
+	    SET     @PROC_DATE              = #{WORK_DATE}
+	    SET     @DATE_OPTION            = #{PUB_DATE}     --1:계산서일, 2:실행일
+		<if test="WORK_DIVI == &quot;1&quot;"> 
+		    SET     @WORK               = 'PROC'		--Proc:자동기표, Canc:기표취소
+		</if>
+		<if test="WORK_DIVI == &quot;2&quot;"> 
+		    SET     @WORK               = 'CANC'		--Proc:자동기표, Canc:기표취소
+		</if>
+	    SET     @FR_INSERT_DATE         = #{INSERT_DATE_FR}
+	    SET     @TO_INSERT_DATE         = #{INSERT_DATE_TO}
+	    SET     @INPUT_USER_ID          = #{S_USER_ID}
+		SET     @INPUT_DATE				= datename(yyyy, getdate())+datename(mm, getdate())+datename(dd, getdate());
+	    /*------------------------------------------------------------------------*/
+	    /* 2.2. 거래처 명칭 유형 설정                                             */
+	    /*------------------------------------------------------------------------*/
+	    DECLARE @RefItem            NVARCHAR(01)
+	
+	    SELECT TOP 1 @RefItem = REF_ITEM
+	    FROM   BSA300T WITH (NOLOCK)
+	    WHERE  USER_ID = @INPUT_USER_ID
+	
+	    SET @RefItem = ISNULL(@RefItem, '')
+	
+	    /*------------------------------------------------------------------------*/
+	    /* 2.3. 날짜 포맷 유형 설정                                               */
+	    /*------------------------------------------------------------------------*/
+	    DECLARE @DateFormat         NVARCHAR(01)
+	
+	    SELECT TOP 1 @DateFormat = SUBSTRING(CODE_NAME, 5, 1)
+	    FROM   BSA100T WITH (NOLOCK)
+	    WHERE  COMP_CODE = @COMP_CODE
+	    AND    MAIN_CODE = 'B044'
+	    AND    REF_CODE1 = 'Y'
+	
+	    SET @DateFormat = ISNULL(@DateFormat, '.')
+	
+	    /*------------------------------------------------------------------------*/
+	    /* 3.1. 자동기표대상 데이터 조회                                          */
+	    /*------------------------------------------------------------------------*/
+	    SELECT  DISTINCT
+	            CONVERT(BIT, 0)                                             AS CHOICE    
+	         ,  A.COMP_CODE
+	         ,  A.DIV_CODE
+	         ,  A.TRADE_DIV													AS TRADE_DIVI
+	         ,  A.CHARGE_TYPE
+	         ,  CASE WHEN A.TRADE_DIV = 'E' THEN ISNULL(M1.CODE_NAME, '')
+	                                        ELSE ISNULL(M2.CODE_NAME, '')
+	            END                                                         AS CHARGE_TYPE_NAME 
+	         ,  A.CHARGE_SER
+	         ,  A.BASIC_PAPER_NO
+	         ,  A.TRADE_CUSTOM_CODE                                         AS TRADE_CUSTOM_CODE
+	         ,  CASE WHEN @RefItem = '0' THEN B1.CUSTOM_NAME
+	                 WHEN @RefItem = '1' THEN B1.CUSTOM_NAME1
+	                 WHEN @RefItem = '2' THEN B1.CUSTOM_NAME2
+	                 ELSE B1.CUSTOM_NAME
+	           END                                                          AS TRADE_CUSTOM_NAME
+	         ,  A.CHARGE_CODE
+	         ,  D.CHARGE_NAME
+	         ,  A.CUST_CODE                                                 AS CUSTOM_CODE
+	         ,  CASE WHEN @RefItem = '0' THEN B2.CUSTOM_NAME
+	                 WHEN @RefItem = '1' THEN B2.CUSTOM_NAME1
+	                 WHEN @RefItem = '2' THEN B2.CUSTOM_NAME2
+	                 ELSE B2.CUSTOM_NAME
+	           END                                                          AS CUSTOM_NAME
+	         ,  A.VAT_CUSTOM                                                AS VAT_CUSTOM_CODE
+	         ,  CASE WHEN @RefItem = '0' THEN B3.CUSTOM_NAME
+	                 WHEN @RefItem = '1' THEN B3.CUSTOM_NAME1
+	                 WHEN @RefItem = '2' THEN B3.CUSTOM_NAME2
+	                 ELSE B3.CUSTOM_NAME
+	           END                                                          AS VAT_CUSTOM_NAME
+	         ,  SUBSTRING(A.OCCUR_DATE, 1, 4) + @DateFormat + 
+	            SUBSTRING(A.OCCUR_DATE, 5, 2) + @DateFormat + 
+	            SUBSTRING(A.OCCUR_DATE, 7, 2)                               AS OCCUR_DATE
+	         ,  ISNULL(A.CHARGE_AMT    , 0)                                 AS CHARGE_AMT
+	         ,  ISNULL(A.AMT_UNIT      ,'')                                 AS MONEY_UNIT
+	         ,  ISNULL(A.EXCHANGE_RATE , 1)                                 AS EXCHANGE_RATE
+	         ,  ISNULL(A.CHARGE_AMT_WON, 0)                                 AS CHARGE_AMT_WON
+	         ,  ISNULL(A.SUPPLY_AMT    , 0)                                 AS SUPPLY_AMT_I
+	         ,  ISNULL(A.TAX_CLS       ,'')                                 AS PROOF_KIND
+	         ,  ISNULL(A.VAT_AMT       , 0)                                 AS TAX_AMT_I
+	         ,  A.PAY_TYPE
+	         ,  ISNULL(A.OFFER_SER_NO  ,'')                                 AS OFFER_SER_NO
+	         ,  ISNULL(A.LC_NO         , '')                                AS LC_NO
+	         ,  ISNULL(A.BL_NO         , '')                                AS BL_NO
+	         ,  SUBSTRING(A.EX_DATE, 1, 4) + @DateFormat + 
+	            SUBSTRING(A.EX_DATE, 5, 2) + @DateFormat + 
+	            SUBSTRING(A.EX_DATE, 7, 2)                                  AS EX_DATE
+	         ,  CASE WHEN A.EX_NUM = 0 THEN NULL ELSE A.EX_NUM END          AS EX_NUM
+	         ,  ISNULL(C.AP_STS     , '')                                   AS AP_STS
+	         ,  A.INSERT_DB_USER
+	         ,  A.INSERT_DB_TIME
+	         ,  A.UPDATE_DB_USER
+	         ,  A.UPDATE_DB_TIME
+	    FROM           TAA020T  AS A  WITH (NOLOCK) 
+	        LEFT  JOIN BCM100T  AS B1 WITH (NOLOCK) ON  B1.COMP_CODE   = A.COMP_CODE
+	                                                AND B1.CUSTOM_CODE = A.TRADE_CUSTOM_CODE
+	        LEFT  JOIN BCM100T  AS B2 WITH (NOLOCK) ON  B2.COMP_CODE   = A.COMP_CODE
+	                                                AND B2.CUSTOM_CODE = A.CUST_CODE
+	        LEFT  JOIN BCM100T  AS B3 WITH (NOLOCK) ON  B3.COMP_CODE   = A.COMP_CODE
+	                                                AND B3.CUSTOM_CODE = A.VAT_CUSTOM
+			LEFT  JOIN (SELECT COMP_CODE
+                             , EX_DATE
+                             , EX_NUM
+                             , AP_STS
+                          FROM AGJ110T WITH (NOLOCK)
+                         WHERE COMP_CODE  = @COMP_CODE
+                           AND INPUT_PATH = '63'
+                           AND (MOD_DIVI IS NULL OR MOD_DIVI = '')
+                         GROUP BY COMP_CODE, EX_DATE, EX_NUM, AP_STS) C ON C.COMP_CODE    = A.COMP_CODE
+			                                                           AND C.EX_DATE      = A.EX_DATE
+			                                                           AND C.EX_NUM       = A.EX_NUM
+	        LEFT  JOIN TAA010T  AS D  WITH (NOLOCK) ON  D.COMP_CODE    = A.COMP_CODE
+	                                                AND D.TRADE_DIV    = A.TRADE_DIV
+	                                                AND D.CHARGE_TYPE  = A.CHARGE_TYPE
+	                                                AND D.CHARGE_CODE  = A.CHARGE_CODE
+	        LEFT  JOIN BSA100T  AS M1 WITH (NOLOCK) ON  M1.COMP_CODE   = A.COMP_CODE
+	                                                AND M1.MAIN_CODE   = 'T070' 
+	                                                AND M1.SUB_CODE    = A.CHARGE_TYPE
+	        LEFT  JOIN BSA100T  AS M2 WITH (NOLOCK) ON  M2.COMP_CODE   = A.COMP_CODE
+	                                                AND M2.MAIN_CODE   = 'T071' 
+	                                                AND M2.SUB_CODE    = A.CHARGE_TYPE
+	    WHERE A.COMP_CODE               =       @COMP_CODE
+	    AND   A.OCCUR_DATE              BETWEEN @FR_DATE AND @TO_DATE
+	    AND   ((ISNULL(A.EX_DATE , '')  =       ''                      AND
+	            ISNULL(A.EX_NUM  , 0 )  =       0                       AND @WORK = 'PROC')
+	    OR     (ISNULL(A.EX_DATE , '') !=       ''                      AND @WORK = 'CANC'))
+	    AND   ((C.AP_STS                =       @AP_STS                 AND @AP_STS           != '') OR (@AP_STS           = ''))
+	    AND   ((A.DIV_CODE              =       @DIV_CODE               AND @DIV_CODE         != '') OR (@DIV_CODE         = ''))
+	    AND   ((A.TRADE_DIV             =       @TRADE_DIVI             AND @TRADE_DIVI       != '') OR (@TRADE_DIVI       = ''))
+	    AND   ((A.CHARGE_TYPE           =       @CHARGE_TYPE            AND @CHARGE_TYPE      != '') OR (@CHARGE_TYPE      = ''))
+	    AND   ((A.CHARGE_CODE           =       @CHARGE_CODE            AND @CHARGE_CODE      != '') OR (@CHARGE_CODE      = ''))
+	    AND   ((A.CUST_CODE             =       @CUSTOM_CODE            AND @CUSTOM_CODE      != '') OR (@CUSTOM_CODE      = ''))
+	    AND   ((CONVERT(NVARCHAR(8), A.INSERT_DB_TIME,112) &gt;= @FR_INSERT_DATE AND @FR_INSERT_DATE != '') OR (@FR_INSERT_DATE = ''))
+	    AND   ((CONVERT(NVARCHAR(8), A.INSERT_DB_TIME,112) &lt;= @TO_INSERT_DATE AND @TO_INSERT_DATE != '') OR (@TO_INSERT_DATE = ''))
+	
+	    ORDER BY SUBSTRING(A.OCCUR_DATE, 1, 4) + @DateFormat + 
+	             SUBSTRING(A.OCCUR_DATE, 5, 2) + @DateFormat + 
+	             SUBSTRING(A.OCCUR_DATE, 7, 2)
+	           , A.CHARGE_SER
+
+	    SET NOCOUNT    OFF
+	    SET ARITHABORT OFF
+	END
+	</select> 
+	<select id="agd210ukrServiceImpl.getMaxAutoNum" parameterType="Map" resultType="rMap">
+		SELECT ISNULL(MAX(AUTO_NUM),0) +1 AS "MAX_AUTO_NUM" FROM L_AGD210T  WITH (NOLOCK)
+	</select>	
+	<insert id="agd210ukrServiceImpl.insertLog" parameterType="Map">
+		INSERT INTO L_AGD210T
+           (KEY_VALUE
+           ,OPR_FLAG
+           ,COMP_CODE
+           ,AUTO_NUM
+           ,TRADE_DIVI
+           ,CHARGE_TYPE
+           ,CHARGE_SER
+           ,INSERT_DB_USER
+           ,INSERT_DB_TIME
+           ,UPDATE_DB_USER
+           ,UPDATE_DB_TIME)
+     	VALUES
+           (#{KEY_VALUE}
+           ,#{OPR_FLAG}
+           ,#{S_COMP_CODE}
+           ,#{AUTO_NUM}
+           ,#{TRADE_DIVI}
+           ,#{CHARGE_TYPE}
+           ,#{CHARGE_SER}
+           ,#{S_USER_ID}
+           ,getdate()
+           ,#{S_USER_ID}
+           ,getdate())
+	</insert>
+	<update id="agd210ukrServiceImpl.agd210ukrDo" parameterType="Map" statementType="CALLABLE">
+		{call SP_agd210ukrDo (
+			#{S_COMP_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ErrorDesc, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update> 
+
+	<update id="agd210ukrServiceImpl.agd210ukrAllDo" parameterType="Map" statementType="CALLABLE">
+		{call USP_ACCNT_AutoSlip63 (
+			#{S_COMP_CODE         , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DATE_FR             , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DATE_TO             , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DIV_CODE            , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{TRADE_DIVI          , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CHARGE_TYPE         , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CHARGE_SER		  , mode=IN, jdbcType=NUMERIC, javaType=java.lang.Integer},
+			#{CHARGE_CODE         , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CUSTOM_CODE         , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DATE_OPTION         , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{WORK_DATE           , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{INPUT_USER_ID       , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{INPUT_DATE          , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{KEY_VALUE           , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_LANG_CODE         , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CALL_PATH           , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{EBYN_MESSAGE        , mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ERROR_DESC          , mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{SLIP_KEY_VALUE      , mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update> 
+
+	<update id="agd210ukrServiceImpl.agd210ukrCancel" parameterType="Map" statementType="CALLABLE">
+		{call USP_ACCNT_AutoSlip63Cancel (
+			#{S_COMP_CODE         , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DATE_FR             , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DATE_TO             , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DIV_CODE            , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{TRADE_DIVI          , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CHARGE_TYPE         , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CHARGE_SER		  , mode=IN, jdbcType=NUMERIC, javaType=java.lang.Integer},
+			#{CHARGE_CODE         , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CUSTOM_CODE         , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{INPUT_USER_ID       , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{INPUT_DATE          , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{KEY_VALUE           , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_LANG_CODE         , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CALL_PATH           , mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ERROR_DESC          , mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update> 
+</mapper>

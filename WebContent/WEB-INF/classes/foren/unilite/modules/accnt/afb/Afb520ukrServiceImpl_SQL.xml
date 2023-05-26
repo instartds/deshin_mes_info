@@ -1,0 +1,490 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="afb520ukrServiceImpl">
+<select id="afb520ukrServiceImpl.selectBudgName" parameterType="Map" resultType="rMap">		/* BUDG_NAME 컬럼수*/
+--UAccntPopupKrv.CAccntPopupKR[fnGetBudgCode] Query02
+BEGIN
+    DECLARE         @COMP_CODE          NVARCHAR(08)
+
+--  [ 변수 값 할당 ] ------------------------------------------------------------------------------------------
+    SET @COMP_CODE  = #{S_COMP_CODE}
+--  [ 데이터 조회 ] -------------------------------------------------------------------------------------------
+    SELECT  *
+    FROM    uniLITE.fnGetBudgLevelName(@COMP_CODE, #{ST_DATE})
+END	
+</select>	
+
+<select id="afb520ukrServiceImpl.selectChargeInfo" parameterType="Map" resultType="rMap">	/* CHARGE_CODE 정보 가져오기*/	
+--zfa_popupZ.fnGetChargeInfo 
+SELECT  A.SUB_CODE      AS CHARGE_CODE  
+     ,  A.CODE_NAME     AS CHARGE_NAME  
+     ,  A.REF_CODE2     AS CHARGE_DIVI  
+     ,  C.PERSON_NUMB   AS CHARGE_PNUMB 
+     ,  C.NAME          AS CHARGE_PNAME 
+  FROM              BSA100T   A  WITH (NOLOCK)  
+         LEFT  JOIN  BSA300T   B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE   
+                                               AND B.USER_ID     = A.REF_CODE1   
+         LEFT  JOIN  HUM100T   C  WITH (NOLOCK) ON C.COMP_CODE   = B.COMP_CODE   
+                                               AND C.PERSON_NUMB = B.PERSON_NUMB 
+
+ WHERE  A.COMP_CODE = #{S_COMP_CODE}
+   AND  A.MAIN_CODE = N'A009'   
+   AND  A.REF_CODE1 = #{S_USER_ID}  
+</select>
+
+<select id="afb520ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">				/* 조회(메인그리드)*/
+--afb520ukr.Cafb520ukr[fnAfb520QStd] Query02
+BEGIN
+    SET NOCOUNT ON
+
+    DECLARE @COMP_CODE       NVARCHAR(08)   --(필수) 법인코드 
+          , @AC_YYYY         NVARCHAR(04)   --(필수) 예산년도
+          , @DEPT_CODE       NVARCHAR(08)   --(필수) 부서코드
+          , @FR_BUDG_CODE    NVARCHAR(30)   --(선택) FROM 예산과목
+          , @TO_BUDG_CODE    NVARCHAR(30)   --(선택) TO   예산과목
+          , @BUDG_TYPE       NVARCHAR(01)   --(선택) 수지구분
+          , @BUDG_NAME       NVARCHAR(100)  --(선택) 예산명
+          , @PJT_CODE        NVARCHAR(30)   --(선택) 프로젝트코드
+
+          , @FnDate          NVARCHAR(02)   -- 회계시작년월(월)
+          , @FrBudgYyyyMm    NVARCHAR(08)   -- 시작 예산년월
+          , @ToBudgYyyyMm    NVARCHAR(08)   -- 종료 예산년월
+
+    SET @COMP_CODE    = #{S_COMP_CODE}
+    SET @AC_YYYY      = #{AC_YYYY}
+    SET @DEPT_CODE    = #{DEPT_CODE}
+    SET @FR_BUDG_CODE = #{BUDG_CODE_FR}
+    SET @TO_BUDG_CODE = #{BUDG_CODE_TO}
+    SET @BUDG_TYPE    = #{BUDG_TYPE}
+    SET @BUDG_NAME    = #{BUDG_NAME}
+    SET @PJT_CODE     = #{PJT_CODE}
+
+    --회계기간 가져오기
+    SELECT @FnDate = SUBSTRING(FN_DATE, 5, 2)
+      FROM BOR100T  WITH (NOLOCK)
+     WHERE COMP_CODE = @COMP_CODE
+
+    --사업년도의 첫번째,마지막 예산년월 계산
+    SET @FrBudgYyyyMm = @AC_YYYY + @FnDate + '01'
+    SET @ToBudgYyyyMm = CONVERT(NVARCHAR, DATEADD(DD, -1, DATEADD(MM, 12, @FrBudgYyyyMm)),112)
+
+
+    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#TMP_AFB510T_090223'))
+        DROP TABLE #TMP_AFB510T_090223
+
+    --예산확정정보 테이블(AFB510T)에서 데이터 조회하여 그리드 포맷에 맞춰 임시테이블 생성
+    --(예산코드명을 레벨순서대로 펼침, 예산금액을 12개월로 펼침)
+    SELECT A.COMP_CODE
+         , A.AC_YYYY
+         , B.BUDG_YYYYMM
+         , A.DEPT_CODE
+         , A.BUDG_CODE
+    
+    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index" >
+         , CASE WHEN L${budgNameInfoList.size}.CODE_LEVEL &gt;= ${index+1}
+                THEN L${index+1}.BUDG_NAME
+                ELSE ''
+            END AS BUDG_NAME_L${index+1}
+    </foreach>
+    
+         ,  ISNULL(B.BUDG_CONF_I ,0)
+          + ISNULL(B.BUDG_CONV_I ,0)
+          + ISNULL(B.BUDG_ASGN_I ,0)
+          + ISNULL(B.BUDG_SUPP_I ,0)
+          + ISNULL(B.BUDG_IWALL_I,0)    AS BUDG_I
+         ,  ISNULL(B.BUDG_CONF_I ,0)
+          + ISNULL(B.BUDG_CONV_I ,0)
+          + ISNULL(B.BUDG_ASGN_I ,0)
+          + ISNULL(B.BUDG_SUPP_I ,0)
+          + ISNULL(B.BUDG_IWALL_I,0)
+          - ISNULL(B.EX_AMT_I    ,0)
+          - ISNULL(B.AC_AMT_I    ,0)
+          - ISNULL(B.DRAFT_AMT   ,0)
+          - ISNULL(B.ORDER_AMT   ,0)
+          - ISNULL(B.REQ_AMT     ,0)    AS BUDG_I00
+    
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 1 - 1, @FrBudgYyyyMm), 112), 6)
+                     THEN  ISNULL(B.BUDG_CONF_I ,0)
+                         + ISNULL(B.BUDG_CONV_I ,0)
+                         + ISNULL(B.BUDG_ASGN_I ,0)
+                         + ISNULL(B.BUDG_SUPP_I ,0)
+                         + ISNULL(B.BUDG_IWALL_I,0)
+                         - ISNULL(B.EX_AMT_I ,0)
+                         - ISNULL(B.AC_AMT_I ,0)
+                         - ISNULL(B.DRAFT_AMT,0)
+                         - ISNULL(B.ORDER_AMT,0)
+                         - ISNULL(B.REQ_AMT  ,0)
+                     ELSE 0
+            END AS BUDG_I01
+            
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 2 - 1, @FrBudgYyyyMm), 112), 6)
+                     THEN  ISNULL(B.BUDG_CONF_I ,0)
+                         + ISNULL(B.BUDG_CONV_I ,0)
+                         + ISNULL(B.BUDG_ASGN_I ,0)
+                         + ISNULL(B.BUDG_SUPP_I ,0)
+                         + ISNULL(B.BUDG_IWALL_I,0)
+                         - ISNULL(B.EX_AMT_I ,0)
+                         - ISNULL(B.AC_AMT_I ,0)
+                         - ISNULL(B.DRAFT_AMT,0)
+                         - ISNULL(B.ORDER_AMT,0)
+                         - ISNULL(B.REQ_AMT  ,0)
+                     ELSE 0
+            END AS BUDG_I02
+            
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 3 - 1, @FrBudgYyyyMm), 112), 6)
+                     THEN  ISNULL(B.BUDG_CONF_I ,0)
+                         + ISNULL(B.BUDG_CONV_I ,0)
+                         + ISNULL(B.BUDG_ASGN_I ,0)
+                         + ISNULL(B.BUDG_SUPP_I ,0)
+                         + ISNULL(B.BUDG_IWALL_I,0)
+                         - ISNULL(B.EX_AMT_I ,0)
+                         - ISNULL(B.AC_AMT_I ,0)
+                         - ISNULL(B.DRAFT_AMT,0)
+                         - ISNULL(B.ORDER_AMT,0)
+                         - ISNULL(B.REQ_AMT  ,0)
+                     ELSE 0
+            END AS BUDG_I03
+            
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 4 - 1, @FrBudgYyyyMm), 112), 6)
+                     THEN  ISNULL(B.BUDG_CONF_I ,0)
+                         + ISNULL(B.BUDG_CONV_I ,0)
+                         + ISNULL(B.BUDG_ASGN_I ,0)
+                         + ISNULL(B.BUDG_SUPP_I ,0)
+                         + ISNULL(B.BUDG_IWALL_I,0)
+                         - ISNULL(B.EX_AMT_I ,0)
+                         - ISNULL(B.AC_AMT_I ,0)
+                         - ISNULL(B.DRAFT_AMT,0)
+                         - ISNULL(B.ORDER_AMT,0)
+                         - ISNULL(B.REQ_AMT  ,0)
+                     ELSE 0
+            END AS BUDG_I04
+            
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 5 - 1, @FrBudgYyyyMm), 112), 6)
+                     THEN  ISNULL(B.BUDG_CONF_I ,0)
+                         + ISNULL(B.BUDG_CONV_I ,0)
+                         + ISNULL(B.BUDG_ASGN_I ,0)
+                         + ISNULL(B.BUDG_SUPP_I ,0)
+                         + ISNULL(B.BUDG_IWALL_I,0)
+                         - ISNULL(B.EX_AMT_I ,0)
+                         - ISNULL(B.AC_AMT_I ,0)
+                         - ISNULL(B.DRAFT_AMT,0)
+                         - ISNULL(B.ORDER_AMT,0)
+                         - ISNULL(B.REQ_AMT  ,0)
+                     ELSE 0
+            END AS BUDG_I05
+            
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 6 - 1, @FrBudgYyyyMm), 112), 6)
+                     THEN  ISNULL(B.BUDG_CONF_I ,0)
+                         + ISNULL(B.BUDG_CONV_I ,0)
+                         + ISNULL(B.BUDG_ASGN_I ,0)
+                         + ISNULL(B.BUDG_SUPP_I ,0)
+                         + ISNULL(B.BUDG_IWALL_I,0)
+                         - ISNULL(B.EX_AMT_I ,0)
+                         - ISNULL(B.AC_AMT_I ,0)
+                         - ISNULL(B.DRAFT_AMT,0)
+                         - ISNULL(B.ORDER_AMT,0)
+                         - ISNULL(B.REQ_AMT  ,0)
+                     ELSE 0
+            END AS BUDG_I06
+            
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 7 - 1, @FrBudgYyyyMm), 112), 6)
+                     THEN  ISNULL(B.BUDG_CONF_I ,0)
+                         + ISNULL(B.BUDG_CONV_I ,0)
+                         + ISNULL(B.BUDG_ASGN_I ,0)
+                         + ISNULL(B.BUDG_SUPP_I ,0)
+                         + ISNULL(B.BUDG_IWALL_I,0)
+                         - ISNULL(B.EX_AMT_I ,0)
+                         - ISNULL(B.AC_AMT_I ,0)
+                         - ISNULL(B.DRAFT_AMT,0)
+                         - ISNULL(B.ORDER_AMT,0)
+                         - ISNULL(B.REQ_AMT  ,0)
+                     ELSE 0
+            END AS BUDG_I07
+            
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 8 - 1, @FrBudgYyyyMm), 112), 6)
+                     THEN  ISNULL(B.BUDG_CONF_I ,0)
+                         + ISNULL(B.BUDG_CONV_I ,0)
+                         + ISNULL(B.BUDG_ASGN_I ,0)
+                         + ISNULL(B.BUDG_SUPP_I ,0)
+                         + ISNULL(B.BUDG_IWALL_I,0)
+                         - ISNULL(B.EX_AMT_I ,0)
+                         - ISNULL(B.AC_AMT_I ,0)
+                         - ISNULL(B.DRAFT_AMT,0)
+                         - ISNULL(B.ORDER_AMT,0)
+                         - ISNULL(B.REQ_AMT  ,0)
+                     ELSE 0
+            END AS BUDG_I08
+            
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 9 - 1, @FrBudgYyyyMm), 112), 6)
+                     THEN  ISNULL(B.BUDG_CONF_I ,0)
+                         + ISNULL(B.BUDG_CONV_I ,0)
+                         + ISNULL(B.BUDG_ASGN_I ,0)
+                         + ISNULL(B.BUDG_SUPP_I ,0)
+                         + ISNULL(B.BUDG_IWALL_I,0)
+                         - ISNULL(B.EX_AMT_I ,0)
+                         - ISNULL(B.AC_AMT_I ,0)
+                         - ISNULL(B.DRAFT_AMT,0)
+                         - ISNULL(B.ORDER_AMT,0)
+                         - ISNULL(B.REQ_AMT  ,0)
+                     ELSE 0
+            END AS BUDG_I09
+            
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 10 - 1, @FrBudgYyyyMm), 112), 6)
+                     THEN  ISNULL(B.BUDG_CONF_I ,0)
+                         + ISNULL(B.BUDG_CONV_I ,0)
+                         + ISNULL(B.BUDG_ASGN_I ,0)
+                         + ISNULL(B.BUDG_SUPP_I ,0)
+                         + ISNULL(B.BUDG_IWALL_I,0)
+                         - ISNULL(B.EX_AMT_I ,0)
+                         - ISNULL(B.AC_AMT_I ,0)
+                         - ISNULL(B.DRAFT_AMT,0)
+                         - ISNULL(B.ORDER_AMT,0)
+                         - ISNULL(B.REQ_AMT  ,0)
+                     ELSE 0
+            END AS BUDG_I10
+            
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 11 - 1, @FrBudgYyyyMm), 112), 6)
+                     THEN  ISNULL(B.BUDG_CONF_I ,0)
+                         + ISNULL(B.BUDG_CONV_I ,0)
+                         + ISNULL(B.BUDG_ASGN_I ,0)
+                         + ISNULL(B.BUDG_SUPP_I ,0)
+                         + ISNULL(B.BUDG_IWALL_I,0)
+                         - ISNULL(B.EX_AMT_I ,0)
+                         - ISNULL(B.AC_AMT_I ,0)
+                         - ISNULL(B.DRAFT_AMT,0)
+                         - ISNULL(B.ORDER_AMT,0)
+                         - ISNULL(B.REQ_AMT  ,0)
+                     ELSE 0
+            END AS BUDG_I11
+            
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(CONVERT(NVARCHAR, DATEADD(MM, 12 - 1, @FrBudgYyyyMm), 112), 6)
+                     THEN  ISNULL(B.BUDG_CONF_I ,0)
+                         + ISNULL(B.BUDG_CONV_I ,0)
+                         + ISNULL(B.BUDG_ASGN_I ,0)
+                         + ISNULL(B.BUDG_SUPP_I ,0)
+                         + ISNULL(B.BUDG_IWALL_I,0)
+                         - ISNULL(B.EX_AMT_I ,0)
+                         - ISNULL(B.AC_AMT_I ,0)
+                         - ISNULL(B.DRAFT_AMT,0)
+                         - ISNULL(B.ORDER_AMT,0)
+                         - ISNULL(B.REQ_AMT  ,0)
+                     ELSE 0
+            END AS BUDG_I12
+        
+         , B.INSERT_DB_USER
+         , B.INSERT_DB_TIME
+         , B.UPDATE_DB_USER
+         , B.UPDATE_DB_TIME
+         , @FrBudgYyyyMm AS FR_BUDG_YYYYMM
+         , L${budgNameInfoList.size}.CTL_TERM_UNIT
+      INTO #TMP_AFB510T_090223
+      FROM            AFB410T AS A  WITH (NOLOCK)
+           LEFT  JOIN AFB510T AS B  WITH (NOLOCK)  ON B.COMP_CODE      = A.COMP_CODE
+                                                  AND B.BUDG_YYYYMM   &gt;= LEFT(@FrBudgYyyyMm, 6)
+                                                  AND B.BUDG_YYYYMM   &lt;= LEFT(@ToBudgYyyyMm, 6)
+                                                  AND B.DEPT_CODE      = A.DEPT_CODE
+                                                  AND B.BUDG_CODE      = A.BUDG_CODE
+--                                                AND B.BUDG_GUBUN     = '1'   --1:본월예산, 2:이월예산
+    
+           INNER JOIN AFB400T AS L${budgNameInfoList.size} 
+                              ON L${budgNameInfoList.size}.COMP_CODE     = A.COMP_CODE
+                             AND L${budgNameInfoList.size}.AC_YYYY       = A.AC_YYYY
+                             AND L${budgNameInfoList.size}.BUDG_CODE     = A.BUDG_CODE
+    
+    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index">
+	    <if test="index+1 &lt; budgNameInfoList.size">
+           INNER JOIN AFB400T AS L${budgNameInfoList.size-(index+1)} 
+                              ON L${budgNameInfoList.size-(index+1)}.COMP_CODE     = L${budgNameInfoList.size-(index)}.COMP_CODE
+                             AND L${budgNameInfoList.size-(index+1)}.AC_YYYY       = L${budgNameInfoList.size-(index)}.AC_YYYY
+                             AND L${budgNameInfoList.size-(index+1)}.BUDG_CODE     = L${budgNameInfoList.size-(index)}.TREE_LEVEL
+                             AND L${budgNameInfoList.size-(index+1)}.CODE_LEVEL    = L${budgNameInfoList.size-(index)}.CODE_LEVEL - 1
+    	</if>
+	</foreach>
+    
+     WHERE A.COMP_CODE     = @COMP_CODE
+       AND A.AC_YYYY       = @AC_YYYY
+       AND A.DEPT_CODE     = @DEPT_CODE
+       AND A.USE_YN        = N'Y'
+       AND ((A.BUDG_CODE  &gt;= @FR_BUDG_CODE AND @FR_BUDG_CODE != '') OR (@FR_BUDG_CODE = ''))
+       AND ((A.BUDG_CODE  &lt;= @TO_BUDG_CODE AND @TO_BUDG_CODE != '') OR (@TO_BUDG_CODE = ''))
+       AND ((L${budgNameInfoList.size}.BUDG_TYPE  = @BUDG_TYPE    AND @BUDG_TYPE    != '') OR (@BUDG_TYPE    = ''))
+       AND L${budgNameInfoList.size}.GROUP_YN     = 'N'
+       AND ((L${budgNameInfoList.size}.BUDG_NAME LIKE '%' + @BUDG_NAME + '%' AND @BUDG_NAME    != '') OR (@BUDG_NAME    = ''))
+       AND ((L${budgNameInfoList.size}.PJT_CODE  = @PJT_CODE AND @PJT_CODE != '') OR (@PJT_CODE = ''))
+
+
+    --임시테이블(#TMP_AFB510T_090223)에서 데이터 조회
+    SELECT COMP_CODE
+         , AC_YYYY
+         , @DEPT_CODE AS DEPT_CODE
+         , BUDG_CODE
+    
+    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index">
+         , MAX(BUDG_NAME_L${index+1} ) AS BUDG_NAME_L${index+1}
+    </foreach>
+    
+         , SUM(BUDG_I)      AS BUDG_I
+         , SUM(BUDG_I00)    AS BUDG_I00
+    
+    	 , SUM(BUDG_I01)     AS BUDG_I01
+         , SUM(BUDG_I02)     AS BUDG_I02
+         , SUM(BUDG_I03)     AS BUDG_I03
+         , SUM(BUDG_I04)     AS BUDG_I04
+         , SUM(BUDG_I05)     AS BUDG_I05
+         , SUM(BUDG_I06)     AS BUDG_I06
+         , SUM(BUDG_I07)     AS BUDG_I07
+         , SUM(BUDG_I08)     AS BUDG_I08
+         , SUM(BUDG_I09)     AS BUDG_I09
+         , SUM(BUDG_I10)     AS BUDG_I10
+         , SUM(BUDG_I11)     AS BUDG_I11
+         , SUM(BUDG_I12)     AS BUDG_I12
+    
+         , MAX(INSERT_DB_USER) AS INSERT_DB_USER
+         , MAX(INSERT_DB_TIME) AS INSERT_DB_TIME
+         , MAX(UPDATE_DB_USER) AS UPDATE_DB_USER
+         , MAX(UPDATE_DB_USER) AS UPDATE_DB_TIME
+         , MAX(FR_BUDG_YYYYMM) AS FR_BUDG_YYYYMM
+         , MAX(CTL_TERM_UNIT)  AS CTL_TERM_UNIT 
+      FROM #TMP_AFB510T_090223  WITH (NOLOCK)
+     GROUP BY COMP_CODE, AC_YYYY, BUDG_CODE
+
+    SET NOCOUNT OFF
+END
+</select>
+
+<select id="afb520ukrServiceImpl.selectListTab" parameterType="Map" resultType="rMap">				/* 예산조정 조회(탭1)*/
+--afb520ukr.Cafb520ukr[fnAfb520QDtl] Query01
+BEGIN
+    SET NOCOUNT ON
+
+    DECLARE @COMP_CODE       NVARCHAR(08)   --(필수) 법인코드 
+          , @AC_YYYY         NVARCHAR(04)   --(필수) 예산년도
+          , @DEPT_CODE       NVARCHAR(08)   --(필수) 부서코드
+          , @BUDG_CODE       NVARCHAR(30)   --(필수) 예산과목
+          , @MONTH           NUMERIC(2,0)   --(선택) 예산년월
+          , @DIVERT_DIVI     NVARCHAR(01)   --(필수) 전용구분
+
+          , @FnDate          NVARCHAR(02)   -- 회계시작년월(월)
+          , @FrBudgYyyyMm    NVARCHAR(08)   -- 시작 예산년월
+          , @ToBudgYyyyMm    NVARCHAR(08)   -- 종료 예산년월
+          , @BudgYyyyMm      NVARCHAR(06)   -- 예산년월
+
+    SET @COMP_CODE    = #{S_COMP_CODE}
+    SET @AC_YYYY      = #{AC_YYYY}
+    SET @DEPT_CODE    = #{DEPT_CODE}
+    SET @BUDG_CODE    = #{BUDG_CODE}
+    SET @MONTH        = 0
+    SET @DIVERT_DIVI  = #{DIVERT_DIVI}
+
+    --회계기간 가져오기
+    SELECT @FnDate = SUBSTRING(FN_DATE, 5, 2)
+      FROM BOR100T  WITH (NOLOCK)
+     WHERE COMP_CODE = @COMP_CODE
+
+    --사업년도의 첫번째,마지막 예산년월 계산
+    SET @FrBudgYyyyMm = @AC_YYYY + @FnDate + '01'
+    SET @ToBudgYyyyMm = CONVERT(NVARCHAR, DATEADD(DD, -1, DATEADD(MM, 12, @FrBudgYyyyMm)), 112)
+
+    IF ( @MONTH != 0 )
+        SET @BudgYyyyMm = CONVERT(NVARCHAR, DATEADD(DD, -1, DATEADD(MM, @MONTH, @FrBudgYyyyMm)), 112)
+    ELSE
+        SET @BudgYyyyMm = ''
+
+
+    SELECT A.COMP_CODE
+         , @AC_YYYY                    AS AC_YYYY
+         , A.DEPT_CODE
+         , A.BUDG_CODE
+         , uniLITE.fnGetUserDateComp(A.COMP_CODE, A.BUDG_YYYYMM)   AS BUDG_YYYYMM
+         , A.SEQ
+         , A.DIVERT_DIVI
+         , uniLITE.fnGetUserDateComp(A.COMP_CODE, A.DIVERT_YYYYMM) AS DIVERT_YYYYMM
+         , A.DIVERT_DEPT_CODE
+         , A.DIVERT_DEPT_NAME
+         , A.DIVERT_BUDG_CODE
+         , B.BUDG_NAME                 AS DIVERT_BUDG_NAME
+         , A.DIVERT_BUDG_I             AS ORG_DIVERT_BUDG_I
+         , A.DIVERT_BUDG_I
+         , A.REMARK
+         , A.CHARGE_CODE
+         , ISNULL(A.AP_STS,'1')        AS AP_STS
+         , ISNULL(A.AP_DATE,'')        AS AP_DATE
+         , ISNULL(A.AP_USER_ID,'')     AS AP_USER_ID
+         , ISNULL(A.AP_CHARGE_CODE,'') AS AP_CHARGE_CODE
+         , A.INSERT_DB_USER
+         , A.INSERT_DB_TIME
+         , A.UPDATE_DB_USER
+         , A.UPDATE_DB_TIME
+      FROM            AFB520T AS A  WITH (NOLOCK)
+           LEFT  JOIN AFB400T AS B  WITH (NOLOCK) ON B.COMP_CODE  = A.COMP_CODE
+                                                 AND B.AC_YYYY    = @AC_YYYY
+                                                 AND B.BUDG_CODE  = A.DIVERT_BUDG_CODE
+     WHERE A.COMP_CODE       = @COMP_CODE
+       AND A.BUDG_YYYYMM    &gt;= LEFT(@FrBudgYyyyMm, 6)
+       AND A.BUDG_YYYYMM    &lt;= LEFT(@ToBudgYyyyMm, 6)
+       AND ((A.BUDG_YYYYMM   = @BudgYyyyMm       AND @BudgYyyyMm != '') OR (@BudgYyyyMm = ''))
+       AND A.DEPT_CODE       = @DEPT_CODE
+       AND A.BUDG_CODE       = @BUDG_CODE
+       AND A.DIVERT_DIVI     = @DIVERT_DIVI
+     ORDER BY A.INSERT_DB_TIME
+END
+</select>
+
+<insert id="afb520ukrServiceImpl.insertLogAfb520t" parameterType="Map">						/* LOG저장 */
+--afb520ukr.Cafb520ukr[fnAfb520Save] Query06
+INSERT INTO L_AFB520T
+     ( KEY_VALUE      
+	 , OPR_FLAG
+	 , COMP_CODE
+     , DEPT_CODE
+     , BUDG_CODE
+     , BUDG_YYYYMM
+     , SEQ
+     , DIVERT_DEPT_CODE
+     , DIVERT_DEPT_NAME
+     , DIVERT_BUDG_CODE
+     , DIVERT_DIVI
+     , DIVERT_YYYYMM
+     , DIVERT_BUDG_I
+     , CHARGE_CODE
+     , AP_STS
+     , REMARK
+     , INSERT_DB_USER
+     , INSERT_DB_TIME
+     , UPDATE_DB_USER
+     , UPDATE_DB_TIME
+     ) 
+VALUES
+     ( #{KEY_VALUE}                                                   
+     , #{OPR_FLAG}
+     , #{S_COMP_CODE}
+     , #{DEPT_CODE}
+     , #{BUDG_CODE}
+     , #{BUDG_YYYYMM}
+     , #{SEQ}
+     , #{DIVERT_DEPT_CODE}
+     , #{DIVERT_DEPT_NAME}
+     , #{DIVERT_BUDG_CODE}
+     , #{DIVERT_DIVI}
+     , #{DIVERT_YYYYMM}
+     , #{DIVERT_BUDG_I}
+     , #{CHARGE_CODE}
+     , #{AP_STS}
+     , #{REMARK}
+     , #{S_USER_ID}
+     , GETDATE()
+     , #{S_USER_ID}
+     , GETDATE()
+     )
+</insert>
+
+<update id="afb520ukrServiceImpl.spReceiving" parameterType="Map" statementType="CALLABLE">
+{call USP_ACCNT_AFB520UKR (
+	#{KeyValue, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+	#{LangCode, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+	#{UserId, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+	#{ErrorDesc, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+)}
+</update>
+
+</mapper>

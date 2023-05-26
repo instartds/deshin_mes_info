@@ -1,0 +1,263 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="aisc126skrvServiceImpl">
+	<select id="aisc126skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	--Aisc126skrv
+    BEGIN
+        DECLARE @COMP_CODE      NVARCHAR(08)        --(필수) 법인코드
+              , @FR_YYMM        NVARCHAR(06)        --(필수) FROM 상각년월
+              , @TO_YYMM        NVARCHAR(06)        --(필수) TO   상각년월
+    
+              , @AsstDivi       NVARCHAR(01)        --자산구분(1:고정자산, 2:부외자산)
+    
+        SET     @COMP_CODE      = #{S_COMP_CODE}
+        SET     @FR_YYMM        = #{DPR_YYMM_FR}
+        SET     @TO_YYMM        = #{DPR_YYMM_TO}
+    
+        SET     @AsstDivi       = N'1'
+    
+        SET     NOCOUNT    ON
+        SET     ARITHABORT ON
+    
+    
+        --0. 임시테이블 삭제
+        IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#AISC126'))
+            DROP TABLE #AISC126
+    
+    
+        --1. 감가상각비집계 목록
+        SELECT  
+                COMP_CODE
+             ,  ACCNT
+             ,  ACCNT_NAME
+             ,  ACCNT_SPEC                                          --계정특성('E'이면 국고보조금차감 처리)
+             ,  SUM(ISNULL(ACQ_AMT_I      , 0)) AS ACQ_AMT_I        --실취득가액
+             ,  SUM(ISNULL(BA_BALN_I      , 0)) AS BA_BALN_I        --취득가액
+             ,  SUM(ISNULL(CT_INCREASE_I  , 0)) AS CT_INCREASE_I    --당기증가액
+             ,  SUM(ISNULL(CT_REDUCE_I    , 0)) AS CT_REDUCE_I      --당기감소액
+             ,  SUM(ISNULL(ASST_VARI_AMT_I, 0)) AS ASST_VARI_AMT_I  --재평가후자산증감
+             ,  SUM(ISNULL(PT_DPR_TOT_I   , 0)) AS PT_DPR_TOT_I     --충당금누계액(전기말상각누계액)
+             ,  SUM(ISNULL(PT_DMGLOS_TOT_I, 0)) AS PT_DMGLOS_TOT_I  --손상차손누계액(전기말손상차손누계액)
+             ,  SUM(ISNULL(CT_BALN_I      , 0)) AS CT_BALN_I        --미상각잔액
+             ,  SUM(ISNULL(CT_DPR_I       , 0)) AS CT_DPR_I         --당기상각액
+             ,  SUM(ISNULL(CT_DPR_TOT_I   , 0)) AS CT_DPR_TOT_I     --당기말상각누계액
+             ,  SUM(ISNULL(CT_DMGLOS_TOT_I, 0)) AS CT_DMGLOS_TOT_I  --당기말손상차손누계액
+             ,  SUM(ISNULL(FL_BALN_I      , 0)) AS FL_BALN_I        --차기이월액
+        INTO #AISC126
+        FROM (
+                SELECT  A.COMP_CODE
+                     ,  A.ASST
+                     ,  A.ASST_NAME
+                     ,  A.ACCNT
+                     ,  N1.ACCNT_NAME
+                     ,  N1.ACCNT_SPEC
+                     ,  A.ACQ_AMT_I
+                    -------------------------------------------------------------------
+                    --  상각대상금액 : 취득가액(a)
+                    -------------------------------------------------------------------
+                     ,  ISNULL(A.ACQ_AMT_I, 0)
+                        + (ISNULL(A.FI_CAPI_TOT_I    , 0) - ISNULL(S1.TM_CPT_I     , 0))
+                        - (ISNULL(A.FI_SALE_TOT_I    , 0) - ISNULL(S1.TM_SALE_I    , 0))
+                        - (ISNULL(A.FI_SALE_DPR_TOT_I, 0) - ISNULL(S1.TM_REDUCE_I  , 0))
+                        - (CASE WHEN ISNULL(S4.ASST_VARI_AMT_I, 0) != 0
+                                THEN ISNULL(A.ACQ_AMT_I, 0) - ISNULL(A.FI_REVAL_TOT_I, 0) - ISNULL(S1.ASST_VARI_AMT_I, 0)
+                                ELSE 0
+                           END)  AS BA_BALN_I
+                    -------------------------------------------------------------------
+                    --  상각대상금액 : 당기증가액(b)
+                    -------------------------------------------------------------------
+                     ,  ISNULL(S2.TM_CPT_I, 0)    AS CT_INCREASE_I
+                    -------------------------------------------------------------------
+                    --  상각대상금액 : 당기감소액(c)
+                    -------------------------------------------------------------------
+                     ,  ISNULL(S2.TM_SALE_I, 0) + ISNULL(S2.TM_REDUCE_I, 0) AS CT_REDUCE_I
+                    -------------------------------------------------------------------
+                    --  재평가후자산증감
+                    -------------------------------------------------------------------
+                     ,  ISNULL(S2.ASST_VARI_AMT_I, 0)   AS ASST_VARI_AMT_I
+                    -------------------------------------------------------------------
+                    --  상각대상금액 : 충당금누계액(전기말상각누계액)(d)
+                    -------------------------------------------------------------------
+                     ,  CASE WHEN ISNULL(WASTE_SW,'N') = 'Y' AND ISNULL(WASTE_YYYYMM,'999999') &lt;= @FR_YYMM
+                             THEN 0
+                             ELSE ISNULL(A.FI_DPR_TOT_I,0) - (ISNULL(S1.TM_DPR_I, 0) - ISNULL(S1.TM_REDUCE_I, 0) - ISNULL(S1.REVAL_REDUCE_I, 0))
+                        END AS PT_DPR_TOT_I
+                    ---------------------------------------------------------------------------------
+                    --  상각대상금액 : 손상차손누계액(전기말손상차손누계액)(e)
+                    ---------------------------------------------------------------------------------
+                     ,  CASE WHEN ISNULL(WASTE_SW,'N') = 'Y' AND ISNULL(WASTE_YYYYMM,'999999') &lt;= @FR_YYMM
+                             THEN 0
+                             ELSE ISNULL(A.FI_DMGLOS_TOT_I, 0) - (ISNULL(S1.DMGLOS_EX_I, 0) - ISNULL(S1.DMGLOS_IN_I, 0))
+                        END AS PT_DMGLOS_TOT_I
+                    -------------------------------------------------------------------
+                    --  상각대상금액 : 미상각액(f=a+b-c-d-e)
+                    -------------------------------------------------------------------
+                     ,  CONVERT(NUMERIC(30, 6), 0)      AS CT_BALN_I
+
+                    -------------------------------------------------------------------
+                    --  상각액 : 당기상각액(g)
+                    -------------------------------------------------------------------
+                     ,  ISNULL(S2.TM_DPR_I, 0)  AS CT_DPR_I
+                    -------------------------------------------------------------------
+                    --  상각액 : 당기말충당금(당기말상각누계액)(h= d+g)
+                    -------------------------------------------------------------------
+                     ,  CASE WHEN ISNULL(WASTE_SW,'N') = 'Y' AND ISNULL(WASTE_YYYYMM,'999999') &lt;= @TO_YYMM
+                             THEN 0
+                             ELSE ISNULL(A.FI_DPR_TOT_I   , 0) - (ISNULL(S1.TM_DPR_I, 0) - ISNULL(S1.TM_REDUCE_I, 0) - ISNULL(S1.REVAL_REDUCE_I, 0))
+                                  + ISNULL(S2.TM_DPR_I    , 0)
+                                  - (ISNULL(S2.TM_REDUCE_I, 0) + ISNULL(S2.REVAL_REDUCE_I, 0))
+                        END AS CT_DPR_TOT_I
+                    -------------------------------------------------------------------
+                    --  상각액 : 당기말손상차손(누계액)(i)
+                    -------------------------------------------------------------------
+                     ,  CASE WHEN ISNULL(WASTE_SW,'N') = 'Y' AND ISNULL(WASTE_YYYYMM,'999999') &lt;= @TO_YYMM
+                             THEN 0
+                             ELSE ISNULL(A.FI_DMGLOS_TOT_I, 0) - (ISNULL(S1.DMGLOS_EX_I, 0) - ISNULL(S1.DMGLOS_IN_I, 0))
+                                  + (ISNULL(S2.DMGLOS_EX_I, 0) - ISNULL(S2.DMGLOS_IN_I, 0))
+                        END AS CT_DMGLOS_TOT_I
+                    -------------------------------------------------------------------
+                    --상각액 : 차기이월액(취득가액 + 당기증가액 - 당기감소액 - 당기말충당금 - 당기말손상차손)(j=a+b-c-h-i)
+                    -------------------------------------------------------------------
+                     ,  CONVERT(NUMERIC(30, 6), 0)   AS FL_BALN_I 
+                FROM           AISS300T AS A  WITH (NOLOCK)
+                    LEFT  JOIN AISS500T AS C  WITH (NOLOCK) ON  C.COMP_CODE   = A.COMP_CODE
+                                                            AND C.ASST        = A.ASST
+                                                            AND C.ALTER_DIVI  = '8'  --분할
+                                                            AND C.ALTER_DATE &gt;= @FR_YYMM
+                    LEFT  JOIN (SELECT  COMP_CODE
+                                     ,  ASST
+                                     ,  SUM(ISNULL(TM_DPR_I       , 0)) AS TM_DPR_I
+                                     ,  SUM(ISNULL(TM_CPT_I       , 0)) AS TM_CPT_I
+                                     ,  SUM(ISNULL(TM_SALE_I      , 0)) AS TM_SALE_I
+                                     ,  SUM(ISNULL(TM_REDUCE_I    , 0)) AS TM_REDUCE_I
+                                     ,  SUM(ISNULL(REVAL_REDUCE_I , 0)) AS REVAL_REDUCE_I
+                                     ,  SUM(ISNULL(ASST_VARI_AMT_I, 0)) AS ASST_VARI_AMT_I
+                                     ,  SUM(ISNULL(DMGLOS_EX_I    , 0)) AS DMGLOS_EX_I
+                                     ,  SUM(ISNULL(DMGLOS_IN_I    , 0)) AS DMGLOS_IN_I
+                                FROM  AISC100T WITH (NOLOCK)
+                                WHERE COMP_CODE = @COMP_CODE
+                                AND   DPR_YYMM &gt;= @FR_YYMM
+                                GROUP BY COMP_CODE, ASST
+                               )        AS S1               ON  S1.COMP_CODE = A.COMP_CODE
+                                                            AND S1.ASST      = A.ASST
+                    LEFT  JOIN (SELECT  COMP_CODE
+                                     ,  ASST
+                                     ,  SUM(ISNULL(TM_DPR_I       , 0)) AS TM_DPR_I
+                                     ,  SUM(ISNULL(TM_CPT_I       , 0)) AS TM_CPT_I
+                                     ,  SUM(ISNULL(TM_SALE_I      , 0)) AS TM_SALE_I
+                                     ,  SUM(ISNULL(TM_REDUCE_I    , 0)) AS TM_REDUCE_I
+                                     ,  SUM(ISNULL(ASST_VARI_AMT_I, 0)) AS ASST_VARI_AMT_I
+                                     ,  SUM(ISNULL(REVAL_REDUCE_I , 0)) AS REVAL_REDUCE_I
+                                     ,  SUM(ISNULL(DMGLOS_EX_I    , 0)) AS DMGLOS_EX_I
+                                     ,  SUM(ISNULL(DMGLOS_IN_I    , 0)) AS DMGLOS_IN_I
+                                FROM  AISC100T WITH (NOLOCK)
+                                WHERE COMP_CODE = @COMP_CODE
+                                AND   DPR_YYMM &gt;= @FR_YYMM
+                                AND   DPR_YYMM &lt;= @TO_YYMM
+                                GROUP BY COMP_CODE, ASST
+                               )        AS S2               ON  S2.COMP_CODE = A.COMP_CODE
+                                                            AND S2.ASST      = A.ASST
+                    LEFT  JOIN (SELECT  COMP_CODE
+                                     ,  ASST
+                                     ,  SUM(ISNULL(ALTER_AMT_I, 0)) AS ALTER_AMT_I
+                                FROM  AISS500T WITH (NOLOCK)
+                                WHERE COMP_CODE   = @COMP_CODE
+                                AND   ALTER_DIVI  = '2' 
+                                AND   ALTER_DATE &gt;= @FR_YYMM + '01'
+                                AND   ALTER_DATE &lt;= @TO_YYMM + '31'
+                                GROUP BY COMP_CODE, ASST
+                               )        AS S3               ON  S3.COMP_CODE = A.COMP_CODE
+                                                            AND S3.ASST      = A.ASST
+                    LEFT  JOIN (SELECT  COMP_CODE
+                                     ,  ASST
+                                     ,  SUM(ISNULL(ASST_VARI_AMT_I, 0)) AS ASST_VARI_AMT_I
+                                FROM  AISC100T WITH (NOLOCK)
+                                WHERE COMP_CODE = @COMP_CODE
+                                AND   DPR_YYMM  &lt; @FR_YYMM
+                                GROUP BY COMP_CODE, ASST
+                               )        AS S4               ON  S4.COMP_CODE = A.COMP_CODE
+                                                            AND S4.ASST      = A.ASST
+                    LEFT  JOIN ABA400T  AS N1 WITH (NOLOCK) ON  N1.COMP_CODE = A.COMP_CODE 
+                                                            AND N1.ACCNT     = A.ACCNT
+                    LEFT  JOIN BOR120T  AS N2 WITH (NOLOCK) ON  N2.COMP_CODE = A.COMP_CODE
+                                                            AND N2.DIV_CODE  = A.DIV_CODE
+                WHERE A.COMP_CODE          = @COMP_CODE
+                AND   A.ASST_DIVI          = @AsstDivi
+                AND   A.DPR_STS           != '5' -- 명세제외 자산은 집계되지 않도록 함
+                <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">   
+                    AND A.DIV_CODE IN
+                    <foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+                        #{item}
+                    </foreach>       
+                </if>
+                AND   LEFT(A.USE_DATE, 6)          &lt;= @TO_YYMM
+                AND   (ISNULL(A.WASTE_YYYYMM, '' )  = ''       OR A.WASTE_YYYYMM &gt;= @FR_YYMM)
+                AND   (ISNULL(A.PAT_YN      , 'N') != 'Y'      OR C.ASST         IS NULL)
+             ) T
+        --'=======================================================================================================================================
+        GROUP BY T.COMP_CODE, T.ACCNT, T.ACCNT_NAME, T.ACCNT_SPEC
+        ORDER BY T.ACCNT
+    
+        --2. 기말잔액, 미상각잔액 계산
+        DECLARE @CTBalnI    NUMERIC(30, 6)
+              , @FLBalnI    NUMERIC(30, 6)
+        SET     @CTBalnI = 0
+        SET     @FLBalnI = 0
+    
+        UPDATE #AISC126
+        SET     @CTBalnI  = ISNULL(BA_BALN_I, 0) + ISNULL(CT_INCREASE_I, 0) - ISNULL(CT_REDUCE_I, 0) - ISNULL(PT_DPR_TOT_I, 0) - ISNULL(PT_DMGLOS_TOT_I, 0)
+          ,     @FLBalnI  = ISNULL(BA_BALN_I, 0) + ISNULL(CT_INCREASE_I, 0) - ISNULL(CT_REDUCE_I, 0) - ISNULL(CT_DPR_TOT_I, 0) - ISNULL(CT_DMGLOS_TOT_I, 0)
+
+          ,     CT_BALN_I = @CTBalnI
+          ,     FL_BALN_I = @FLBalnI
+    
+        SET     NOCOUNT    OFF
+        SET     ARITHABORT OFF
+    
+        --3. 조회결과 자료 리턴
+        SELECT 
+                COMP_CODE
+             ,  ACCNT
+             ,  ACCNT_NAME
+             ,  CASE WHEN ACCNT_SPEC = 'E' THEN ACQ_AMT_I * (-1)
+                     ELSE ACQ_AMT_I
+                 END                                              AS ACQ_AMT_I        --실취득가액
+             ,  CASE WHEN ACCNT_SPEC = 'E' THEN BA_BALN_I * (-1)
+                     ELSE BA_BALN_I
+                 END                                              AS BA_BALN_I        --취득가액
+             ,  CASE WHEN ACCNT_SPEC = 'E' THEN CT_INCREASE_I * (-1)
+                     ELSE CT_INCREASE_I
+                 END                                              AS CT_INCREASE_I    --당기증가액
+             ,  CASE WHEN ACCNT_SPEC = 'E' THEN CT_REDUCE_I * (-1)
+                     ELSE CT_REDUCE_I
+                 END                                              AS CT_REDUCE_I      --당기감소액
+             ,  CASE WHEN ACCNT_SPEC = 'E' THEN ASST_VARI_AMT_I * (-1)
+                     ELSE ASST_VARI_AMT_I
+                 END                                              AS ASST_VARI_AMT_I  --재평가후자산증감
+             ,  CASE WHEN ACCNT_SPEC = 'E' THEN PT_DPR_TOT_I * (-1)
+                     ELSE PT_DPR_TOT_I
+                 END                                              AS PT_DPR_TOT_I     --충당금누계액(전기말상각누계액)
+             ,  CASE WHEN ACCNT_SPEC = 'E' THEN PT_DMGLOS_TOT_I * (-1)
+                     ELSE PT_DMGLOS_TOT_I
+                 END                                              AS PT_DMGLOS_TOT_I  --손상차손누계액(전기말손상차손누계액)
+             ,  CASE WHEN ACCNT_SPEC = 'E' THEN CT_BALN_I * (-1)
+                     ELSE CT_BALN_I
+                 END                                              AS CT_BALN_I        --미상각잔액
+
+             ,  CASE WHEN ACCNT_SPEC = 'E' THEN CT_DPR_I * (-1)
+                     ELSE CT_DPR_I
+                 END                                              AS CT_DPR_I         --당기상각액
+             ,  CASE WHEN ACCNT_SPEC = 'E' THEN CT_DPR_TOT_I * (-1)
+                     ELSE CT_DPR_TOT_I
+                 END                                              AS CT_DPR_TOT_I     --당기말상각누계액(h=d+g)
+             ,  CASE WHEN ACCNT_SPEC = 'E' THEN CT_DMGLOS_TOT_I * (-1)
+                     ELSE CT_DMGLOS_TOT_I
+                 END                                              AS CT_DMGLOS_TOT_I  --당기말손상차손누계액
+             ,  CASE WHEN ACCNT_SPEC = 'E' THEN FL_BALN_I * (-1)
+                     ELSE FL_BALN_I
+                 END                                              AS FL_BALN_I        --차기이월액(취득가액 + 당기증가액 - 당기감소액 - 당기말충당금 - 당기말손상차손)(j=a+b-c-h-i)
+          FROM  #AISC126 WITH (NOLOCK)
+    END 
+
+	</select>
+</mapper>

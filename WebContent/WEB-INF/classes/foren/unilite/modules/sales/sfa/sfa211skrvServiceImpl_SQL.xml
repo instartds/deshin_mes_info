@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sfa211skrvServiceImpl">
+	
+	<select id="sfa211skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+				SET NOCOUNT ON
+				SET ARITHABORT ON
+				
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+				
+				SELECT 
+					 A.COMP_CODE
+					,A.DIV_CODE
+					,A.TEAM_CODE 
+					,A.TEAM_NAME
+					,A.STORE_CODE
+					,A.STORE_NAME
+					,SUM(GROSS_SALES)									  AS SALE_AMT_O		/* 총매출액*/ 
+					,SUM(DIRECT_SALES)						 			  AS DIRECT_SALES	/* 직영매출*/
+					,SUM(DISCOUNT_O)									  AS DISCOUNT_P		/* 할인*/
+					,SUM(NET_SALES)					      				  AS DIRECT_NET		/* 직영순매출*/
+					,SUM(PRODUCTS_FEE)									  AS PRODUCTS_FEE1	/* 수탁수수료*/
+					,SUM(PRODUCTS)										  AS PRODUCTS1		/* 수탁상품*/
+					,SUM(FIRST_MONEY)									  AS FIRST_MONEY	/* 선수금입금*/
+					,SUM(COLLECT_AMT)									  AS COLLECT_AMT	/*총수금액*/
+					,CASE WHEN SUM(BALANCE) = 0 THEN 0		
+                          ELSE SUM(CASH_O)
+                     END										  		  AS CASH_MONEY		/* 현금*/
+					,SUM(CARD_O)										  AS CARD_MONEY		/* 카드*/
+					,SUM(CRDIT_O)										  AS CRDIT_MONEY	/* 외상*/
+					,SUM(TICKECT_O)										  AS TICKECT_MONEY	/* 상품권*/
+					,SUM(SUBSTITUTES_O)									  AS SUBSTITUTES_MONEY	  /* 매출대체선수 */
+					,SUM(FIRST_O)										  AS FIRST_O		/* 선수금 */
+					,SUM(BALANCE_O)+SUM(VEND_BALANCE)					  AS BALANCE		/* 과부족*/  --수정
+					,SUM(COLLECT_AMT - GROSS_SALES + DISCOUNT_O)		  AS SALE_BALANCE	/* 실과부족-히든*/
+				FROM (
+	
+					SELECT A.COMP_CODE, A.DIV_CODE
+						 , E2.TREE_CODE AS TEAM_CODE 
+						 , E2.TREE_NAME AS TEAM_NAME
+						 , E1.TREE_CODE AS STORE_CODE
+						 , E1.TREE_NAME AS STORE_NAME
+						 , SUM(B.SALE_AMT_O + B.TAX_AMT_O + (ISNULL(B.DISCOUNT_P, 0) * B.SALE_Q)) AS GROSS_SALES  -- 총판매금액
+						 , SUM(CASE WHEN C.ITEM_ACCOUNT NOT IN ( '02', '03', '04', '05' ) THEN (B.SALE_AMT_O + B.TAX_AMT_O + (ISNULL(B.DISCOUNT_P, 0) * B.SALE_Q))   ELSE 0 END) AS DIRECT_SALES  -- 직영
+						 , SUM(ISNULL(B.DISCOUNT_P, 0) * B.SALE_Q) AS DISCOUNT_O  -- 할인(에누리)
+						 , SUM((CASE WHEN C.ITEM_ACCOUNT NOT IN ( '02', '03', '04', '05' ) THEN (B.SALE_AMT_O + B.TAX_AMT_O)   ELSE 0 END))AS NET_SALES  	-- 순매출액(직영)
+						 , SUM(CASE WHEN C.ITEM_ACCOUNT  = '02' OR C.ITEM_ACCOUNT  = '04' THEN (B.CONSIGNMENT_FEE * ABS(B.SALE_Q)) ELSE 0 END) AS PRODUCTS_FEE  -- 수탁수수료
+						 , SUM(CASE WHEN C.ITEM_ACCOUNT  = '02' OR C.ITEM_ACCOUNT  = '04' THEN (B.SALE_AMT_O + B.TAX_AMT_O + (ISNULL(B.DISCOUNT_P, 0) * B.SALE_Q)) - (B.CONSIGNMENT_FEE * ABS(B.SALE_Q)) ELSE 0 END) AS PRODUCTS      -- 수탁상품
+						 , SUM(CASE WHEN C.ITEM_ACCOUNT  IN ('03', '05')  THEN (B.SALE_AMT_O + B.TAX_AMT_O + (ISNULL(B.DISCOUNT_P, 0) * B.SALE_Q))   ELSE 0 END) AS FIRST_MONEY   -- 선수금매출
+						 , SUM(CASE WHEN C.ITEM_ACCOUNT  = '04'  THEN (B.SALE_AMT_O + B.TAX_AMT_O + (ISNULL(B.DISCOUNT_P, 0) * B.SALE_Q))   ELSE 0 END) AS FEE_MONEY   -- 수탁매출
+						 , 0 AS COLLECT_AMT
+						 , 0 AS CASH_O   
+						 , 0 AS CARD_O    	
+						 , 0 AS TICKECT_O     
+						 , 0 AS CRDIT_O    	
+						 , 0 AS SUBSTITUTES_O 
+						 , 0 AS FIRST_O 
+						 , 0 AS BALANCE_O
+						 , 0 AS BALANCE
+						 , SUM(CASE WHEN E3.POS_TYPE = '4' THEN B.SALE_AMT_O + B.TAX_AMT_O + (ISNULL(B.DISCOUNT_P, 0) * B.SALE_Q) ELSE 0 END)*-1 VEND_BALANCE --수정
+					 FROM	SSA100T A WITH(NOLOCK)
+							 INNER JOIN SSA110T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+															  AND A.DIV_CODE  = B.DIV_CODE
+															  AND A.BILL_NUM  = B.BILL_NUM
+							 INNER JOIN BPR200T C WITH(NOLOCK) ON B.COMP_CODE = C.COMP_CODE
+										 					  AND B.DIV_CODE  = C.DIV_CODE
+										 					  AND B.ITEM_CODE = C.ITEM_CODE
+							 INNER JOIN BSA210T E1 WITH(NOLOCK) ON A.COMP_CODE = E1.COMP_CODE
+			 												  AND A.DIV_CODE  = E1.TYPE_LEVEL
+			 												  AND A.DEPT_CODE = E1.TREE_CODE	
+							 INNER JOIN BSA210T E2 WITH(NOLOCK) ON E1.COMP_CODE = E2.COMP_CODE
+															  AND E1.TYPE_LEVEL  = E2.TYPE_LEVEL
+			 												  AND E2.TREE_LEVEL = SUBSTRING(E1.TREE_LEVEL, 1, 4)
+							 LEFT OUTER JOIN BSA240T E3 WITH (NOLOCK) ON A.COMP_CODE = E3.COMP_CODE --추가
+																	AND  A.DIV_CODE  = E3.DIV_CODE
+																	AND  A.POS_NO    = E3.POS_NO			 												  							  
+					WHERE  A.COMP_CODE     = #{S_COMP_CODE} 
+					  AND  A.DIV_CODE	  = #{DIV_CODE}
+					  AND  A.SALE_DATE &gt;= #{SALE_DATE_FR} 			 				      
+					  AND  A.SALE_DATE &lt;= #{SALE_DATE_TO}
+					<if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">  
+					  AND E1.TREE_LEVEL     LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =E1.COMP_CODE AND TYPE_LEVEL=E1.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%' 
+					</if>				
+					GROUP BY A.COMP_CODE, A.DIV_CODE, E2.TREE_CODE	 , E2.TREE_NAME	 , E1.TREE_CODE	 , E1.TREE_NAME
+	
+					UNION ALL
+	
+					SELECT A.COMP_CODE, A.DIV_CODE
+						 , E2.TREE_CODE AS TEAM_CODE 
+						 , E2.TREE_NAME AS TEAM_NAME
+						 , E1.TREE_CODE AS STORE_CODE
+						 , E1.TREE_NAME AS STORE_NAME
+						 , 0 AS GROSS_SALES   -- 총판매금액
+						 , 0 AS DIRECT_SALES  -- 직영
+						 , 0 AS DISCOUNT_O	  -- 할인(에누리)
+						 , 0 AS NET_SALES  	  -- 순매출액(직영)
+						 , 0 AS PRODUCTS_FEE  -- 수탁수수료
+						 , 0 AS PRODUCTS      -- 수탁상품
+						 , 0 AS FIRST_MONEY   -- 선수금매출
+						 , 0 AS FEE_MONEY     -- 수탁매출
+						 , SUM(A.COLLECT_AMT) COLLECT_AMT													-- 총수금액
+						 , SUM(CASE WHEN A.COLLECT_TYPE = '10' THEN A.COLLECT_AMT ELSE 0 END) CASH_O		-- 현금
+						 , SUM(CASE WHEN A.COLLECT_TYPE = '22' THEN A.COLLECT_AMT ELSE 0 END) CARD_O		-- 카드	
+						 , SUM(CASE WHEN A.COLLECT_TYPE = '23' THEN A.COLLECT_AMT ELSE 0 END) TICKECT_O     -- 상품권
+						 , SUM(CASE WHEN A.COLLECT_TYPE = '40' THEN A.COLLECT_AMT ELSE 0 END) CRDIT_O    	-- 외상
+						 , SUM(CASE WHEN A.COLLECT_TYPE = '80' THEN A.COLLECT_AMT ELSE 0 END) SUBSTITUTES_O -- 매출대체선수
+						 , SUM(CASE WHEN A.COLLECT_TYPE = '70' THEN A.COLLECT_AMT ELSE 0 END) FIRST_O		-- 선수금
+						 , 0 AS BALANCE_O	
+ 						 , SUM(CASE WHEN E3.POS_TYPE = '1' THEN 0 ELSE CASE WHEN A.COLLECT_TYPE = '10' THEN A.COLLECT_AMT ELSE 0 END END) BALANCE --수정
+ 						 , SUM(CASE WHEN E3.POS_TYPE = '4' THEN A.COLLECT_AMT ELSE 0 END) VEND_BALANCE  --추가
+					 FROM	SCO100T A WITH(NOLOCK)
+							 INNER JOIN BSA210T E1 WITH(NOLOCK) ON A.COMP_CODE = E1.COMP_CODE
+			 												  AND A.DIV_CODE  = E1.TYPE_LEVEL
+			 												  AND A.DEPT_CODE = E1.TREE_CODE	
+							 INNER JOIN BSA210T E2 WITH(NOLOCK) ON E1.COMP_CODE = E2.COMP_CODE
+															  AND E1.TYPE_LEVEL  = E2.TYPE_LEVEL
+			 												  AND E2.TREE_LEVEL = SUBSTRING(E1.TREE_LEVEL, 1, 4)
+							LEFT OUTER JOIN BSA240T E3 WITH (NOLOCK) ON A.DIV_CODE = E3.DIV_CODE --추가
+															  AND A.POS_NO = E3.POS_NO
+															  AND A.COMP_CODE = E3.COMP_CODE			 												  							  
+					WHERE  A.COMP_CODE         = #{S_COMP_CODE}
+					  AND  A.DIV_CODE		   = #{DIV_CODE}  
+					  AND  A.COLLECT_DATE  &gt;= #{SALE_DATE_FR} 				 				      
+					  AND  A.COLLECT_DATE  &lt;= #{SALE_DATE_TO}
+					<if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">  
+					  AND E1.TREE_LEVEL  LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =E1.COMP_CODE AND TYPE_LEVEL=E1.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'		           
+					</if> 
+					AND  ISNULL(A.TEMPC_01,'') = ''
+					GROUP BY A.COMP_CODE, A.DIV_CODE, E2.TREE_CODE	 , E2.TREE_NAME	 , E1.TREE_CODE	 , E1.TREE_NAME
+				UNION ALL
+
+				SELECT A.COMP_CODE, A.DIV_CODE
+					 , E2.tree_code AS TEAM_CODE 
+					 , E2.tree_name AS TEAM_NAME
+					 , E1.tree_code AS STORE_CODE
+					 , E1.tree_name AS STORE_NAME
+					 , 0 AS GROSS_SALES  -- 총판매금액
+					 , 0 AS DIRECT_SALES  -- 직영
+					 , 0 AS DISCOUNT_O  -- 할인(에누리)
+					 , 0 AS NET_SALES  -- 순매출액(직영)
+					 , 0 AS PRODUCTS_FEE  -- 수탁수수료
+					 , 0 AS PRODUCTS      -- 수탁상품
+					 , 0 AS FIRST_MONEY   -- 선수금매출
+					 , 0 AS FEE_MONEY   -- 수탁매출
+					 , 0 AS COLLECT_AMT												-- 총수금액
+					 , SUM(A.BALANCE_OS) AS CASH_O	-- 현금
+					 , 0 AS CARD_O		-- 카드	
+					 , 0 AS TICKECT_O     -- 상품권
+					 , 0 AS CRDIT_O    	-- 외상
+					 , 0 AS SUBSTITUTES_O -- 매출대체선수
+					 , 0 AS FIRST_O		-- 선수금
+					 , SUM(A.BALANCE_OS) AS 	BALANCE_O												-- 과부족
+					 , SUM(A.BALANCE_O)  AS     BALANCE                                                 -- 현금입금시재
+					 , 0 AS VEND_BALANCE
+				 FROM	SCO150T A WITH(NOLOCK)
+						 LEFT  JOIN BSA240TV1 B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+										 				  AND A.DIV_CODE   = B.DIV_CODE
+										 				  AND A.POS_NO 	   = B.POS_NO	
+										 				  AND A.SALE_DATE  BETWEEN B.APLY_START_DATE AND B.APLY_END_DATE
+						 INNER JOIN BSA210T E1 WITH(NOLOCK) ON A.COMP_CODE = E1.COMP_CODE
+		 												  AND A.DIV_CODE  = E1.TYPE_LEVEL
+		 												  AND B.DEPT_CODE = E1.TREE_CODE	
+						 INNER JOIN BSA210T E2 WITH(NOLOCK) ON E1.COMP_CODE = E2.COMP_CODE
+														  AND E1.TYPE_LEVEL  = E2.TYPE_LEVEL
+		 												  and E2.tree_level = substring(E1.tree_level, 1, 4)							  
+				WHERE 				   A.COMP_CODE         = #{S_COMP_CODE} 
+								AND	   A.DIV_CODE			= #{DIV_CODE}
+								AND    A.SALE_DATE      &gt;= #{SALE_DATE_FR}				 				      
+								AND    A.SALE_DATE      &lt;= #{SALE_DATE_TO}	
+								<if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+								AND    E1.TREE_LEVEL     LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =E1.COMP_CODE AND TYPE_LEVEL=E1.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%' 		           
+								</if>
+				GROUP BY A.COMP_CODE, A.DIV_CODE, E2.tree_code	 , E2.tree_name	 , E1.tree_code	 , E1.tree_name
+	
+					) A
+				GROUP BY A.COMP_CODE, A.DIV_CODE, A.TEAM_CODE, A.TEAM_NAME, A.STORE_CODE, A.STORE_NAME
+				ORDER BY A.COMP_CODE, A.DIV_CODE, A.TEAM_CODE, A.STORE_CODE
+			
+			
+SET @END_TIME   = GETDATE()
+
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'SFA211SKRV', '부서별매출일보', #{SALE_DATE_FR}, #{SALE_DATE_TO}, @DIFF_TIME
+			
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+		
+    </select>	
+</mapper>

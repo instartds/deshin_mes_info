@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="map040skrvServiceImpl">
+	
+	<select id="map040skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+				SET NOCOUNT ON
+				SET ARITHABORT ON
+					
+				DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+				      , @UserId			NVARCHAR(100)	/* 사용자ID */
+				      , @LangType		NVARCHAR(2)		/* 언어구분 */
+				      , @RefItem		NVARCHAR(01)
+				      , @DateFormat		NVARCHAR(10)
+					
+				SET @CompCode = #{S_COMP_CODE}
+				SET @UserId   = #{S_USER_ID}
+				SET @LangType = #{S_LANG_CODE}
+					
+				/* 명칭 참조 유형 */
+				SELECT TOP 1 @RefItem = REF_ITEM
+					FROM BSA300T WITH (NOLOCK)
+					WHERE COMP_CODE = @CompCode
+						AND USER_ID = @UserId
+					
+				SET @RefItem = ISNULL(@RefItem, N'0')
+					
+				/* 날짜 포맷 유형 설정 */
+				SELECT TOP 1 @DateFormat = CODE_NAME
+					FROM BSA100T WITH (NOLOCK)
+					WHERE COMP_CODE = @CompCode
+					AND MAIN_CODE = N'B044'
+					AND REF_CODE1 = N'Y'
+					
+				SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')	
+
+			/* 거래처별잔액현황조회		*/
+			   DECLARE @COMP_CODE NVARCHAR(20) 
+			          ,@DIV_CODE  NVARCHAR(10) 
+			          ,@FR_DATE   NVARCHAR(8) 
+			          ,@TO_DATE   NVARCHAR(8) 
+			          ,@DEPT_CODE NVARCHAR(10) 
+			          ,@CUSTOM_CODE NVARCHAR(20)  
+			          ,@CUSTOM_NAME NVARCHAR(50) 
+			          ,@CUSTOM_TYPE NVARCHAR(10) 
+			          
+			          ,@BasisMonth             NVARCHAR(06)		-- 2015.7.24 추가
+			          ,@MaxMonth               NVARCHAR(06)		-- 2015.7.24 추가
+			          ,@StMonth                NVARCHAR(02)		-- 2015.7.24 추가
+					  ,@QRY_YEAR               NVARCHAR(04)		-- 2015.7.24 추가
+			    
+			   SET @COMP_CODE = #{S_COMP_CODE}
+			   SET @DIV_CODE  = #{DIV_CODE}
+			   SET @FR_DATE   = #{FR_DATE}
+			   SET @TO_DATE   = #{TO_DATE}
+			   SET @DEPT_CODE = #{DEPT_CODE}
+			   SET @CUSTOM_CODE = #{CUSTOM_CODE} 
+			   SET @CUSTOM_NAME = #{CUSTOM_NAME} 
+			   SET @CUSTOM_TYPE = #{CUSTOM_TYPE} 
+			   
+			    SELECT  @StMonth = SUBSTRING(FN_DATE,5,2)
+					FROM    BOR100T WITH (NOLOCK)
+					WHERE   COMP_CODE = @COMP_CODE
+			
+			    SELECT  @BasisMonth = MAX(A.AC_DATE)
+					FROM    AGB200T A  WITH (NOLOCK)
+					WHERE   A.COMP_CODE  = @COMP_CODE
+					AND     A.AC_DATE   &lt;= @QRY_YEAR + @StMonth
+				    --추가
+				    AND  LEN(AC_DATE) = 6
+					
+			
+			    SET @BasisMonth = SUBSTRING(ISNULL(@BasisMonth, '190001'), 1, 6)
+			   
+			   
+			   SELECT 
+			         
+			          A.DEPT_CODE   AS DEPT_CODE 																	 /* 부서코드		*/
+        			, B.TREE_NAME AS DEPT_NAME  																	 /* 부서명		*/
+			        , A.CUSTOM_CODE, 																					 /* 거래처코드		*/
+			        (SELECT CUSTOM_NAME FROM BCM100T WHERE COMP_CODE = @COMP_CODE AND CUSTOM_CODE = A.CUSTOM_CODE) CUSTOM_NAME, /* 거래처 명 	*/
+			        ISNULL(SUM(IWAL_OUT_AMT_I),0.0) IWAL_OUT_AMT_I,													 /* 매출이월잔액	*/
+			        SUM(OUTPUT_DR_AMT_I) OUT_DR_AMT_I,																 /* 매출액		*/
+			        SUM(OUTPUT_CR_AMT_I) OUT_CR_AMT_I,																 /* 입금액		*/
+			        ISNULL(SUM(IWAL_OUT_AMT_I),0.0) + SUM(OUTPUT_DR_AMT_I) - SUM(OUTPUT_CR_AMT_I) OUT_JAN_AMT_I,	 /* 매출잔액		*/
+			        ISNULL(SUM(IWAL_IN_AMT_I),0.0) IWAL_IN_AMT_I,													 /* 매입이월잔액	*/
+			        SUM(INPUT_CR_AMT_I) IN_CR_AMT_I,																 /* 매입액		*/
+			        SUM(INPUT_DR_AMT_I) IN_DR_AMT_I,														    	 /* 출금액		*/
+			        ISNULL(SUM(IWAL_IN_AMT_I),0.0) + SUM(INPUT_CR_AMT_I) - SUM(INPUT_DR_AMT_I) IN_JAN_AMT_I			 /* 매입잔액		*/
+			    FROM ( 
+			        SELECT  DEPT_CODE, ACCNT
+			            , CUSTOM_CODE, CUSTOM_NAME, CUSTOM_TYPE, 
+			            0.0000 IWAL_OUT_AMT_I, 0.0000 IWAL_IN_AMT_I, 
+			            SUM(OUTPUT_DR_AMT_I) OUTPUT_DR_AMT_I, 
+			            SUM(OUTPUT_CR_AMT_I) OUTPUT_CR_AMT_I, 
+			            SUM(INPUT_CR_AMT_I) INPUT_CR_AMT_I, 
+			            SUM(INPUT_DR_AMT_I) INPUT_DR_AMT_I 
+			        FROM    ( 
+			            SELECT  ISNULL(A.DEPT_CODE, '') AS DEPT_CODE, A.ACCNT, B.CUSTOM_TYPE, B.CUSTOM_NAME, 
+			                CASE BOOK_CODE1 
+			                    WHEN    'A4' THEN BOOK_DATA1 
+			                    ELSE BOOK_DATA2 
+			                END CUSTOM_CODE, 
+			                CASE WHEN ACCNT IN ('108', '259') THEN ISNULL(SUM(DR_AMT_I),0.0) 
+			                    ELSE    0.0 
+			                END OUTPUT_DR_AMT_I, 
+			                CASE WHEN ACCNT IN ('108', '259') THEN ISNULL(SUM(CR_AMT_I),0.0) 
+			                    ELSE    0.0 
+			                END OUTPUT_CR_AMT_I, 
+			                CASE ACCNT 
+			                    WHEN    '251' THEN ISNULL(SUM(DR_AMT_I),0.0) 
+			                    ELSE    0.0 
+			                END INPUT_DR_AMT_I, 
+			                CASE ACCNT 
+			                    WHEN    '251' THEN ISNULL(SUM(CR_AMT_I),0.0) 
+			                    ELSE    0.0 
+			                END INPUT_CR_AMT_I 
+			            FROM AGB200T A WITH(NOLOCK) 
+			           LEFT JOIN BCM100T B WITH(NOLOCK)  
+			             ON A.COMP_CODE = B.COMP_CODE 
+			            AND (A.BOOK_DATA1 = B.CUSTOM_CODE OR A.BOOK_DATA2 = B.CUSTOM_CODE ) 
+			           WHERE A.COMP_CODE  = @COMP_CODE 
+			             AND A.DIV_CODE   = @DIV_CODE 
+			             AND ACCNT IN ('108', '251', '259') 
+			             AND AC_DATE &gt;= @FR_DATE 
+			             AND AC_DATE &lt;= @TO_DATE 
+			             AND ((B.CUSTOM_CODE LIKE @CUSTOM_CODE + '%' AND @CUSTOM_CODE != '') OR @CUSTOM_CODE = '') 
+			             AND ((B.CUSTOM_NAME LIKE '%' + @CUSTOM_NAME + '%' AND @CUSTOM_NAME != '') OR @CUSTOM_NAME = '') 
+			             AND LEN(AC_DATE) != 6 
+			            GROUP BY A.DEPT_CODE, A.ACCNT, B.CUSTOM_TYPE, B.CUSTOM_NAME, A.BOOK_CODE1, A.BOOK_DATA1, A.BOOK_DATA2 
+			            ) A 
+			        GROUP BY A.DEPT_CODE, A.ACCNT, A.CUSTOM_CODE, A.CUSTOM_NAME, A.CUSTOM_TYPE 
+			     
+			        UNION ALL 
+			     
+			        SELECT  DEPT_CODE, ACCNT, CUSTOM_CODE, CUSTOM_NAME, CUSTOM_TYPE,   /* 이월매출잔액, 이월매입잔액	*/
+			            SUM(IWAL_OUTPUT_AMT_I) IWAL_OUTPUT_AMT_I, 
+			            SUM(IWAL_INPUT_AMT_I) IWAL_INPUT_AMT_I, 
+			            0.0000 OUTPUT_DR_AMT_I, 0.0000 OUTPUT_CR_AMT_I, 
+			            0.0000 INPUT_CR_AMT_I, 0.0000 INPUT_DR_AMT_I 
+			        FROM    ( 
+			            SELECT  ISNULL(A.DEPT_CODE, '') AS DEPT_CODE, A.ACCNT, B.CUSTOM_TYPE, B.CUSTOM_NAME, 
+			                CASE BOOK_CODE1 
+			                    WHEN    'A4' THEN BOOK_DATA1 
+			                    ELSE BOOK_DATA2                 /* 거래처코드	*/
+			                END CUSTOM_CODE, 
+			                CASE WHEN ACCNT IN ('108', '259') THEN ISNULL(SUM(DR_AMT_I) - SUM(CR_AMT_I),0.0) 
+			                    ELSE    0.0 
+			                END IWAL_OUTPUT_AMT_I,              /* '108' 외상매출금, '259' 선수금	*/
+			                CASE ACCNT 
+			                    WHEN    '251' THEN ISNULL(SUM(CR_AMT_I) - SUM(DR_AMT_I),0.0) 
+			                    ELSE    0.0 
+			                END IWAL_INPUT_AMT_I                /* '251' 외상매입금	*/
+			           FROM AGB200T A WITH(NOLOCK) 
+			            LEFT JOIN BCM100T B WITH(NOLOCK) 
+			              ON A.COMP_CODE = B.COMP_CODE  
+			             AND (A.BOOK_DATA1 = B.CUSTOM_CODE OR A.BOOK_DATA2 = B.CUSTOM_CODE ) 
+			            WHERE A.COMP_CODE  = @COMP_CODE 
+			              AND A.DIV_CODE = @DIV_CODE 
+			              AND ((B.CUSTOM_CODE LIKE @CUSTOM_CODE + '%' AND @CUSTOM_CODE != '') OR @CUSTOM_CODE = '') 
+			              AND ((B.CUSTOM_NAME LIKE '%' + @CUSTOM_NAME + '%' AND @CUSTOM_NAME != '') OR @CUSTOM_NAME = '') 
+			              AND ACCNT IN ('108', '251', '259')
+			              
+			              AND AC_DATE &gt;= @BasisMonth											-- 2015.7.24 추가
+			              AND AC_DATE &lt; @FR_DATE												-- 2015.7.24 추가
+			          GROUP BY A.DEPT_CODE, A.ACCNT, B.CUSTOM_TYPE, B.CUSTOM_NAME, A.BOOK_CODE1, A.BOOK_DATA1, A.BOOK_DATA2 
+			          ) A 
+			      GROUP BY A.DEPT_CODE, A.ACCNT, A.CUSTOM_CODE, A.CUSTOM_NAME, A.CUSTOM_TYPE 
+			      ) A 
+			  LEFT JOIN BSA210T B WITH(NOLOCK) 
+			     ON B.COMP_CODE	 = @COMP_CODE 
+			    AND B.TYPE_LEVEL = @DIV_CODE
+			    AND B.TREE_CODE  = A.DEPT_CODE
+			  WHERE A.CUSTOM_CODE LIKE @CUSTOM_CODE + '%' 
+			    AND ((A.CUSTOM_TYPE = @CUSTOM_TYPE AND @CUSTOM_TYPE != '') OR @CUSTOM_TYPE = '')
+				AND (   ISNULL(@DEPT_CODE,'') = ''
+					 OR(ISNULL(@DEPT_CODE,'') != '' AND TREE_LEVEL LIKE (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) 
+																					WHERE COMP_CODE  = @COMP_CODE 
+																					  AND TYPE_LEVEL = @DIV_CODE 
+																					  AND TREE_CODE  = @DEPT_CODE) + '%')
+				     )
+
+
+			    /*	AND B.REF_CODE2 LIKE @BUSI_OFFICE + '%' */
+			  GROUP BY A.DEPT_CODE, B.TREE_NAME, A.CUSTOM_CODE 
+			  HAVING (ISNULL(SUM(IWAL_OUT_AMT_I), 0.0) + SUM(OUTPUT_DR_AMT_I) + SUM(OUTPUT_CR_AMT_I)) != 0 
+			          OR (ISNULL(SUM(IWAL_IN_AMT_I),0.0) + SUM(INPUT_DR_AMT_I) + SUM(INPUT_CR_AMT_I)) != 0 
+			  ORDER BY A.DEPT_CODE, CUSTOM_NAME
+			  
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+		END
+		
+    </select>	
+</mapper>

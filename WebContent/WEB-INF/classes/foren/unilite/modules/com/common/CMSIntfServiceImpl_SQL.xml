@@ -1,0 +1,912 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cMSIntfServiceImpl">
+	<!-- 최신 CMS 데이터 조회 -->
+	<select id="cMSIntfServiceImpl.selectBaseInfo" parameterType="Map" resultType="rMap">
+		SELECT TOP 1
+			   COMP_CODE
+			 , MAIN_CODE
+			 , SUB_CODE
+			 , CODE_NAME
+			 , SYSTEM_CODE_YN
+			 , REF_CODE1
+			 , REF_CODE2
+			 , REF_CODE3
+			 , REF_CODE4
+			 , uniLITE.fnCipherDecrypt(REF_CODE5, '')	AS REF_CODE5
+			 , REF_CODE6
+			 , REF_CODE7
+			 , REF_CODE8
+			 , REF_CODE9
+			 , REF_CODE10
+			 , REF_CODE11
+			 , REF_CODE12
+			 , REF_CODE13
+			 , REF_CODE14
+			 , REF_CODE15
+			 , USE_YN
+			 , SORT_SEQ
+			 , SUB_LENGTH
+		  FROM BSA100T WITH (NOLOCK)
+		 WHERE COMP_CODE	= #{S_COMP_CODE}
+		   AND MAIN_CODE	= 'BT02'
+		   AND SUB_CODE		= '01'
+	</select>
+    
+	<!-- 최신 CMS 데이터 조회 -->
+    <select id="cMSIntfServiceImpl.selectMaxSeq" parameterType="Map" resultType="Integer">
+    	SELECT ISNULL(MAX(SEQ), 0) AS MAX_SEQ
+		  FROM L_CMS
+    </select>
+    
+	<!-- 최신 CMS 데이터 조회 -->
+    <select id="cMSIntfServiceImpl.getID" parameterType="Map" resultType="String">
+    	SELECT ISNULL(MAX(ID), 1) AS ID
+		  FROM L_CMS
+    </select>
+    
+    <!-- CMS 데이터 조회 -->
+    <select id="cMSIntfServiceImpl.getCmsData" parameterType="Map" resultType="rMap">
+	SELECT ID
+	     , SEQ
+	     , COMPANY_NO
+	     , JSON_DATA
+	  FROM L_CMS
+	 WHERE ID = #{ID}
+	   AND PROC_YN IS NULL
+	 ORDER BY SEQ
+    </select>
+    
+    <!-- CMS 데이터 조회 -->
+    <select id="cMSIntfServiceImpl.getCmsDataByCompNo" parameterType="Map" resultType="rMap">
+	SELECT ID
+	     , SEQ
+	     , COMPANY_NO
+	     , JSON_DATA
+	  FROM L_CMS
+	 WHERE COMPANY_NO = #{COMPANY_NO}
+	   AND PROC_YN IS NULL
+	 ORDER BY SEQ
+    </select>
+    
+    <!-- SmartFinder 데이터 조회 -->
+    <insert id="cMSIntfServiceImpl.insertCMSData"  parameterType="rMap" useGeneratedKeys="false">
+		/* cMSIntfServiceImpl.insertCMSData */
+		
+		DECLARE @KEY_VALUE             NVARCHAR(20)
+		
+		-- 1.1 로그키값 생성  
+		SET @KEY_VALUE = LEFT(REPLACE(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(30), GETDATE(), 121), '-', ''), ':', ''), '.', ''), ' ', '') + RIGHT(N'0000' + CONVERT(NVARCHAR, CONVERT(INT, RAND() * 10000)), 3), 20)
+
+		BEGIN
+			INSERT INTO L_CMS (
+                   ID
+                 , SEQ
+                 , COMPANY_NO
+                 , JSON_DATA
+                 , CREATE_DATE
+                 , CREATE_BY
+                 , UPDATE_DATE
+                 , UPDATE_BY
+                 , INSERT_DB_TIME)
+            VALUES 
+            <foreach collection="SMARTFINDERData" item="item" separator=",">					
+                 ( @KEY_VALUE
+                 , #{item.SEQ}
+                 , #{item.COMPANY_NO}
+                 , #{item.JSON_DATA}
+                 , #{item.CREATE_DATE}
+                 , #{item.CREATE_BY}
+                 , #{item.UPDATE_DATE}
+                 , #{item.UPDATE_BY}
+				 , GETDATE()
+				 )
+				 </foreach>
+		END
+	</insert>
+    
+    <!-- 전자세금계산서통합내역 기존 데이터 삭제 -->
+	<update id="cMSIntfServiceImpl.deleteElectronicBill" parameterType="Map">
+    	/* [1] SF_CMS200T(전자세금계산서 디테일) 데이터 삭제 */
+		DELETE A
+		  FROM SF_CMS200T A
+         WHERE A.COMP_CODE  = #{COMP_CODE}
+           AND A.COMPANY_NO = #{COMPANY_NO}
+           AND A.CONFIRM_NO = #{CARD_LIMIT.승인번호}
+           
+        /* [2] SF_CMS210T(전자세금계산서 마스터) 데이터 삭제  */
+		DELETE A
+		  FROM SF_CMS210T A
+         WHERE A.COMP_CODE  = #{COMP_CODE}
+           AND A.COMPANY_NO = #{COMPANY_NO}
+           AND A.CONFIRM_NO = #{CARD_LIMIT.승인번호}
+           
+        /* [3] ACM400T(CMS 전자세금계산서 ) 데이터 삭제 */
+		DELETE A
+		  FROM ACM400T A
+         WHERE A.COMP_CODE  = #{COMP_CODE}
+           AND A.APPR_NO    = #{CARD_LIMIT.승인번호}
+           
+	</update>
+    
+    <!-- 전자세금계산서통합내역 추가 -->
+	<select id="cMSIntfServiceImpl.updateElectronicBill" parameterType="Map" resultType="rMap">	
+	BEGIN
+		/* 	[1] SF_CMS210T(전자세금계산서 마스터) 데이터 추가 */
+		INSERT INTO SF_CMS200T
+		     ( COMP_CODE	    	-- 법인코드
+		     , COMPANY_NO	    	-- 기업번호
+		     , CONFIRM_NO	    	-- 승인번호
+		     , WRITING_DT	    	-- 작성일자
+		     , ISSUE_DT		    	-- 발급일자
+		     , TRNSMIS_DT	    	-- 전송일자
+		     , BILL_KIND	    	-- 분류 - 1.전자세금계산서 2.전자계산서
+		     , TAX_AMT		    	-- 세액
+		     , TAX_KIND		    	-- 매입/매출구분- 1.매출 2.매입
+		     
+		     , RECIPTER_REG_NO	    -- 공급받는자등록번호
+		     , RECIPTER_SITE_NO	    -- 공급받는자종사업장번호
+		     , RECIPTER_COMPANY_NM  -- 공급받는자상호
+		     , RECIPTER_SITE_ADD    -- 공급받는자사업장주소
+		     , RECIPTER_BIZCND	    -- 공급받는자 업태
+		     , RECIPTER_ITEM	    -- 공급받는자 종목
+		     , RECIPTER_CEO_NM	    -- 공급받는자대표자명
+		     
+		     , SUPLER_REG_NO	    -- 공급자사업자등록번호
+		     , SUPLER_SITE_NO	    -- 공급자종사업장번호
+		     , SUPLER_COMPANY_NM    -- 공급자상호
+		     , SUPLER_SITE_ADD	    -- 공급자사업장주소
+		     , SUPLER_BIZCND	    -- 공급자업종
+		     , SUPLER_ITEM	    	-- 공급자종목
+		     , SUPLER_CEO_NM	    -- 공급자대표자명
+		     
+		     , TOT_AMT		    	-- 합계금액
+		     , SUPPLY_AMT	    	-- 공급가액
+		     , E_TAX_BILL_KIND	    -- 전자세금계산서 종류
+		     , E_BILL_NO	    	-- 전자계산서 종류
+		     , ISSUE_TP		    	-- 발급유형
+		     , REMARK		    	-- 비고
+		     , RECEIPT_REQ_KIND	    -- 영수청구구분
+		     , SUPLER_EMAIL	    	-- 공급자이메일
+		     , RECIPTER_EMAIL1	    -- 공급받는자이메일1
+		     , RECIPTER_EMAIL2	    -- 공급받는자이메일2
+		     , CASH_AMT		    	-- 현금
+		     , BILL_AMT		    	-- 어음
+		     , CHECK_AMT	    	-- 수표
+		     , CREDIT_UNCL_AMT	    -- 외상미수금
+		     , CREATE_DATE
+		     , CREATE_BY
+		     , UPDATE_DATE
+		     , UPDATE_BY
+		     )
+		VALUES
+		     ( #{COMP_CODE}
+		     , #{COMPANY_NO}
+		     , #{CARD_LIMIT.승인번호}
+		 	 , #{CARD_LIMIT.작성일자}
+	 		 , #{CARD_LIMIT.발급일자}
+			 , #{CARD_LIMIT.전송일자}
+			 , #{INPUT.분류}
+			 , #{CARD_LIMIT.세액}
+			 , #{INPUT.매입매출구분}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급받는자[0].등록번호}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급받는자[0].종사업장번호}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급받는자[0].상호}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급받는자[0].사업장}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급받는자[0].업태}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급받는자[0].종목}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급받는자[0].성명}
+			 
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급자[0].등록번호}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급자[0].종사업장번호}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급자[0].상호}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급자[0].사업장}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급자[0].업태}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급자[0].종목}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급자[0].성명}
+			 
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].합계금액}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급가액}
+			 , #{CARD_LIMIT.전자세금계산서종류}
+			 , #{CARD_LIMIT.전자계산서종류}
+			 , #{CARD_LIMIT.발급유형}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].비고}
+			 , #{CARD_LIMIT.영수_청구}
+			 , #{CARD_LIMIT.공급자이메일}
+			 , #{CARD_LIMIT.공급받는자이메일1}
+			 , #{CARD_LIMIT.공급받는자이메일2}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].현금}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].어음}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].수표}
+			 , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].외상미수금}
+			 , GETDATE()
+         	 , '0'        -- (임시) 추후 세션값 세팅
+         	 , GETDATE()
+         	 , '0'        -- (임시) 추후 세션값 세팅
+		     ) 
+				
+		<if test="@foren.Ognl@isNotEmpty(CARD_LIMIT_DETAIL)">
+		/* 	[2] SF_CMS200T(전자세금계산서 디테일) 데이터 추가 */
+		INSERT INTO SF_CMS210T
+		     ( COMP_CODE    -- 법인코드
+	 		 , COMPANY_NO   -- 기업번호
+ 			 , CONFIRM_NO   -- 승인번호
+			 , CONFIRM_SEQ  -- 순번
+			 , DELY_DT      -- 월일
+			 , ITEM_NM      -- 품목
+			 , SPEC	        -- 규격
+			 , QY	        -- 수량
+			 , UNIT_PRICE   -- 단기
+			 , SUPPLY_AMT   -- 공급가액
+			 , TAX_AMT      -- 세액
+			 , REMARK       -- 비고
+			 , CREATE_DATE
+			 , CREATE_BY
+			 , UPDATE_DATE
+			 , UPDATE_BY
+		     )
+		VALUES
+		<foreach collection="CARD_LIMIT_DETAIL" item="item" separator="," index="idx">
+		     ( #{COMP_CODE}
+		     , #{COMPANY_NO}
+		     , #{CARD_LIMIT.승인번호}
+		 	 , (#{idx}+1)
+	 		 , #{item.월일}
+			 , #{item.품목}
+			 , #{item.규격}
+			 , COALESCE(NULLIF(#{item.수량}, ''), '0')
+			 , COALESCE(NULLIF(#{item.단가}, ''), '0')
+			 , COALESCE(NULLIF(#{item.공급가액}, ''), '0')
+			 , COALESCE(NULLIF(#{item.세액}, ''), '0')
+			 , #{item.비고}
+			 , GETDATE()
+         	 , '0'        -- (임시) 추후 세션값 세팅
+         	 , GETDATE()
+         	 , '0'        -- (임시) 추후 세션값 세팅
+		     ) 
+		</foreach>
+		</if>
+		
+		/* [3] ACM400T(CMS 전자세금계산서 ) 데이터 추가 */
+		INSERT INTO ACM400T
+		     ( COMP_CODE	  	-- 법인
+			 , APPR_NO		  	-- 국세청승인번호
+			 , INOUT_DIVI	  	-- 매입매출구분(매입:1 매출:2)
+			 , BILL_TYPE	 	-- 계산서유형(B066, 세금계산서:11 계산서:20)
+			 , PUB_DATE	  		-- 작성일자(YYYYMMDD) --> 세금계산서작성일자
+			 , ISSU_DATE	  	-- 발급일자(YYYYMMDD)
+			 , SEND_DATE	  	-- 전송일자(YYYYMMDD)
+		 	 , PROV_REGNO	 	-- 공급자_사업자번호
+			 , PROV_OTHER_REGNO -- 공급자_종사업장번호
+			 , PROV_COMP_NAME	-- 공급자_상호
+			 , PROV_CEO_NAME	-- 공급자_대표자명
+			 , BUY_REGNO	  	-- 공급받는자_사업자번호
+			 , BUY_OTHER_REGNO	-- 공급받는자_종사업장번호
+			 , BUY_COMP_NAME	-- 공급받는자_상호
+			 , BUY_CEO_NAME	  	-- 공급받는자_대표자명
+			 , TOTAL_AMT	  	-- 합계금액
+			 , SUPPLY_AMT	  	-- 공급가액
+			 , TAX_AMT		  	-- 세액
+			 , BILL_FLAG	  	-- 세금계산서유형(세금계산서:1, 수정세금계산서:2)
+			 , EBILL_TYPE	  	-- 세금계산서종류(일반/영세율/위수탁/수입/위수탁영세율)
+			 , ISSUE_TYPE	  	-- 발행유형(인터넷발행,자체발행,ASP발행 등)
+			 , ETC		  		-- 기타
+			 , INSERT_DB_USER	-- 입력자
+			 , INSERT_DB_TIME	-- 입력일
+			 , UPDATE_DB_USER	-- 수정자
+			 , UPDATE_DB_TIME	-- 수정일
+               )
+        VALUES 
+        	 ( #{COMP_CODE}
+        	 , #{CARD_LIMIT.승인번호}
+        	 , (CASE #{INPUT.매입매출구분} WHEN '1' THEN '2'
+        	                          WHEN '2' THEN '1'
+        	                          ELSE #{INPUT.매입매출구분}
+        	                          END)
+             , (CASE #{INPUT.분류} WHEN '1' THEN '11'
+                                 WHEN '2' THEN '20'
+                                 ELSE #{INPUT.분류}
+                                 END) 
+             , #{CARD_LIMIT.작성일자}
+             , #{CARD_LIMIT.발급일자}
+             , #{CARD_LIMIT.전송일자}
+             , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급자[0].등록번호}
+             , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급자[0].종사업장번호}
+             , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급자[0].상호}
+             , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급자[0].성명}
+             , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급받는자[0].등록번호}
+             , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급받는자[0].종사업장번호}
+             , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급받는자[0].상호}
+             , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급받는자[0].성명}
+             , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].합계금액}
+             , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].공급가액}
+             , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].세액}
+             , (CASE WHEN (NULLIF(#{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].수정사유}, '') IS NULL
+                           OR NULLIF(#{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].수정사유}, '') = '해당없음') THEN '1' ELSE '2' END)
+             , #{CARD_LIMIT.전자세금계산서종류}
+             , #{CARD_LIMIT.발급유형}
+             , #{CARD_LIMIT.전자세금계산서통합조회_상세조회[0].비고}
+		     , '0'        -- (임시) 추후 세션값 세팅
+         	 , GETDATE()
+         	 , '0'        -- (임시) 추후 세션값 세팅
+         	 , GETDATE()
+		     ) 
+		
+	    END
+    </select>
+    
+    
+    <!-- 수시전계좌조회 -->
+	<select id="cMSIntfServiceImpl.updateAccount" parameterType="Map" resultType="rMap">	
+	BEGIN
+		IF EXISTS (SELECT 1 FROM SF_CMS100T WHERE COMP_CODE = #{COMP_CODE} AND COMPANY_NO  = #{COMPANY_NO} AND ACNUT_NO = #{ACCOUNT.계좌번호})
+		    UPDATE SF_CMS100T SET
+		           BLCE_AMT    = ISNULL(NULLIF(#{ACCOUNT.잔액}, ''), '0')
+		         , UPDATE_DATE = GETDATE()
+		         , UPDATE_BY   = '0'        -- (임시) 추후 세션값 세팅
+		     WHERE COMP_CODE   = #{COMP_CODE}
+		       AND COMPANY_NO  = #{COMPANY_NO}
+		       AND ACNUT_NO    = #{ACCOUNT.계좌번호}
+		ELSE
+            INSERT INTO SF_CMS100T
+                 ( COMP_CODE           -- 법인코드
+                 , COMPANY_NO          -- 기업번호
+                 , ACNUT_NO            -- 계좌번호
+                 , ACNUT_NM            -- 계좌명
+                 , BANK_CD             -- 은행코드
+                 , DEPOSIT_NM          -- 예금명 - 계좌별칭
+                 , CRNCY_CD            -- 통화코드
+                 , BLCE_AMT            -- 잔액
+                 , NEW_DT              -- 신규일자
+                 , CREATE_DATE
+                 , CREATE_BY
+                 , UPDATE_DATE
+                 , UPDATE_BY
+                 )
+            VALUES 
+            	 ( #{COMP_CODE}
+                 , #{COMPANY_NO}
+                 , #{ACCOUNT.계좌번호}
+                 , #{ACCOUNT.예금명}
+                 , ''         -- (임시) 은행코드 추후 mapping 테이블 만든 후 추가
+                 , ''
+                 , #{ACCOUNT.통화코드}
+                 , ISNULL(NULLIF(#{ACCOUNT.잔액}, ''), '0')
+                 , #{ACCOUNT.신규일자}
+                 , GETDATE()
+		         , '0'        -- (임시) 추후 세션값 세팅
+		         , GETDATE()
+		         , '0'        -- (임시) 추후 세션값 세팅
+                 )
+    END
+    </select>
+    
+    <!-- 수시거래내역조회 -->
+    <update id="cMSIntfServiceImpl.deleteTransactionHistory" parameterType="Map">	
+	BEGIN
+		DELETE A
+		  FROM SF_CMS110T A
+         WHERE A.COMP_CODE  = #{COMP_CODE}
+           AND A.COMPANY_NO = #{COMPANY_NO}
+           AND A.ACNUT_NO   = #{ACNUT_NO}
+           AND A.DEALING_DT BETWEEN #{FROMDATE} AND #{TODATE}
+		
+		DELETE A
+		  FROM ACM100T A
+		 WHERE COMP_CODE      = #{COMP_CODE}
+		   AND A.BANK_ACCOUNT = uniLITE.fnCipherEncrypt(#{ACNUT_NO}, '')
+		   AND A.INOUT_DATE BETWEEN #{FROMDATE} AND #{TODATE}
+		   AND NULLIF(A.AC_DATE, '') IS NULL
+    END
+    </update>
+    
+    <select id="cMSIntfServiceImpl.updateTransactionHistory" parameterType="Map" resultType="rMap">	
+	BEGIN
+		/* SF_CMS110T Table Start ************************************/
+		INSERT INTO SF_CMS110T
+		     ( COMP_CODE           -- 법인코드
+			 , COMPANY_NO          -- 기업번호
+			 , ACNUT_NO            -- 계좌번호
+			 , DEALING_DT          -- 거래일자
+			 , DEALING_TM          -- 거래시각
+			 , DEALING_SEQ         -- 거래순번
+			 , CRNCY_CD            -- 통화코드
+			 , DEFRAY_AMT          -- 출금액
+			 , RCPMNY_AMT          -- 입금액
+			 , BLCE_AMT            -- 잔액
+			 , STATE_MATTER_1      -- 기재사항1
+			 , STATE_MATTER_2      -- 기재사항2
+			 , DELNG_MN_1          -- 거래수단1
+			 , DELNG_MN_2          -- 거래수단2
+			 , CREATE_DATE
+			 , CREATE_BY
+			 , UPDATE_DATE
+			 , UPDATE_BY
+		       )
+        VALUES 
+        <foreach collection="HISTORY_DATA" item="item" index="idx" separator=",">
+        	 ( #{COMP_CODE}
+             , #{COMPANY_NO}
+             , #{ACNUT_NO}
+             , #{item.거래일자}
+             , #{item.거래시각}
+             , (SELECT ISNULL(MAX(DEALING_SEQ), 0) + 1 + ${idx}
+                  FROM SF_CMS110T
+                 WHERE COMP_CODE  = #{COMP_CODE}
+                   AND COMPANY_NO = #{COMPANY_NO}
+                   AND ACNUT_NO   = #{item.계좌번호}
+                   AND DEALING_DT = #{item.거래일자}
+                   AND DEALING_TM = #{item.거래시각})
+             , #{item.통화코드}
+             , #{item.출금액}
+             , #{item.입금액}
+             , #{item.거래후잔액}
+             , #{item.기재사항1}
+             , #{item.기재사항2}
+             , #{item.거래수단1}
+             , #{item.거래수단2}
+             , GETDATE()
+	         , '0'        -- (임시) 추후 세션값 세팅
+	         , GETDATE()
+	         , '0'        -- (임시) 추후 세션값 세팅
+	         )
+		</foreach>
+		/* SF_CMS110T Table End ************************************/
+		
+		
+		/* ACM100T Table(uniLITE CMS입출금정보) Start ************************************/
+		<foreach collection="HISTORY_DATA" item="item">
+			IF NOT EXISTS (	SELECT *
+							  FROM ACM100T
+							 WHERE COMP_CODE		= #{COMP_CODE}
+							   AND BANK_ACCOUNT		= uniLITE.fnCipherEncrypt(#{ACNUT_NO}, '')
+							   AND INOUT_DATE		= #{item.거래일자}
+							   AND INOUT_TIME		= #{item.거래시각} 
+							   AND NULLIF(AC_DATE, '') IS NOT NULL)
+				BEGIN
+					INSERT INTO ACM100T
+						 ( COMP_CODE       -- 법인코드
+						 , INOUT_DATE      -- 입출금일자
+						 , INOUT_TIME      -- 입출금시간
+						 , BANK_ACCOUNT    -- 계좌번호
+						 , MONEY_UNIT      -- 화폐단위
+						 , IN_AMT_I        -- 입금금액
+						 , OUT_AMT_I       -- 출금금액
+						 , JAN_AMT_I       -- 잔액
+						 , REMARK
+						 , INSERT_DB_USER
+						 , INSERT_DB_TIME
+						 , UPDATE_DB_USER
+						 , UPDATE_DB_TIME
+						 )
+					VALUES
+						 ( #{COMP_CODE}
+						 , #{item.거래일자}
+						 , #{item.거래시각}
+						 , uniLITE.fnCipherEncrypt(#{item.계좌번호}, '')
+						 , #{item.통화코드}
+						 , #{item.입금액}
+						 , #{item.출금액}
+						 , #{item.거래후잔액}
+						 , #{item.기재사항1}
+						 , '0'        -- (임시) 추후 세션값 세팅
+						 , GETDATE()
+						 , '0'        -- (임시) 추후 세션값 세팅
+						 , GETDATE()
+						 )
+				END
+			</foreach>
+		/* ACM100T Table End **************************************/
+	END
+	</select>
+	
+	<!-- 보유카드 조회 -->
+	<insert id="cMSIntfServiceImpl.updateCard" parameterType="Map" useGeneratedKeys="false">
+		BEGIN
+		<foreach collection="CARD_DATA" item="item" >
+			IF NOT EXISTS (SELECT 1 FROM SF_CMS300T WHERE CMS_CARD_CD = #{item.카드번호})
+			    INSERT INTO SF_CMS300T
+				     ( COMP_CODE       -- 법인코드
+					 , BANK_CD         -- 은행코드
+					 , CMS_CARD_CD     -- 법인카드번호
+					 , CMS_CARD_NM     -- 법인카드명
+					 , INSERT_DB_TIME
+					 , INSERT_DB_USER
+					 , UPDATE_DB_TIME
+					 , UPDATE_DB_USER
+				       )
+		        VALUES 		
+		        	 ( #{COMP_CODE}
+					 , #{item.회원사}     -- (임시) 은행코드 추후 mapping 테이블 만든 후 추가
+					 , #{item.카드번호}
+					 , #{item.카드명}
+		             , GETDATE()
+			         , '0'             -- (임시) 추후 세션값 세팅
+			         , GETDATE()
+			         , '0'             -- (임시) 추후 세션값 세팅
+			         )
+		</foreach>
+		END
+    </insert>
+    
+    <!-- 승인내역 삭제 -->
+    <update id="cMSIntfServiceImpl.deleteCardHistory" parameterType="Map">
+    	/* SF_CMS310T(CMS 법인타드 이용내역) */
+    	DELETE A
+		  FROM SF_CMS310T A
+		 WHERE COMP_CODE         = #{COMP_CODE}
+		   AND COMPANY_NO        = #{COMPANY_NO}
+		   AND CPR_CARD_NO       = #{INPUT_DATA.카드번호}
+		   AND CPR_CARD_CONFM_DT BETWEEN #{INPUT_DATA.조회시작일} AND #{INPUT_DATA.조회종료일}
+		
+		/* ACM200T(CMS 법인카드승인정보) */   
+		DELETE A
+		  FROM ACM200T A
+		 WHERE COMP_CODE     = #{COMP_CODE}
+		   AND CRDT_FULL_NUM = UNILITE.fnCipherEncrypt(#{INPUT_DATA.카드번호}, '')
+		   AND APPR_DATE BETWEEN #{INPUT_DATA.조회시작일} AND #{INPUT_DATA.조회종료일}
+		   -- 회계일자가 존재할경우 데이터 수정할 수 없음
+		   AND NULLIF(AC_DATE,'') IS NULL
+    </update>
+    
+    <!-- 승인내역 -->
+    <select id="cMSIntfServiceImpl.updateCardHistory" parameterType="Map" resultType="rMap">	
+	BEGIN
+		/* SF_CMS310T(CMS 법인타드 이용내역) */
+		INSERT INTO SF_CMS310T
+		     ( COMP_CODE             -- 법인코드
+		     , COMPANY_NO            -- 기업번호
+			 , CPR_CARD_NO           -- 카드번호
+			 , CPR_CARD_CONFM_NO     -- 법인카드승인번호
+			 , CPR_CARD_CONFM_DT     -- 법인카드승인일
+			 , CPR_CARD_CONFM_TM     -- 카드승인시간
+			 , CPR_CARD_SEQ          -- 순번
+			 , CPR_CARD_TP           -- 법인카드종류
+			 , CPR_CARD_NO_TP        -- 카드번호형식
+			 , MRHST_NM              -- 가맹점명
+			 , CPR_CARD_SALES_TP     -- 법인카드매출종류
+			 , CPR_CARD_INSTLMT_PD   -- 법인카드 할부기간
+			 , CPR_CARD_CONFM_AMT    -- 법인카드승인금액
+			 , CPR_CARD_CONFM_VAT    -- 부가세
+			 , CPR_CARD_CANCEL_DT    -- 법인카드취소년월일
+			 , CPR_CARD_SETT_DT      -- 법인카드결제예정일
+			 , MRHST_REG_NO          -- 가맹점 사업자번호
+			 , MRHST_CD              -- 가맹점 코드
+			 , MRHST_INDUTY          -- 가맹점 업종
+			 , MRHST_ADD             -- 가맹점 주소
+			 , MRHST_TEL_NO          -- 가맹점 전화번호
+			 , MRHST_CEO_NM          -- 가맹점 대표이사명
+			 , PUCHAS_STATUS         -- 매입상태
+			 , CRNCY_CD              -- 통화코드
+			 , HBRD_CD               -- 국내외구분코드 - 1국내, 2국외
+			 , INSERT_DB_TIME
+			 , INSERT_DB_USER
+			 , UPDATE_DB_TIME
+			 , UPDATE_DB_USER
+		       )
+        VALUES 
+        	 ( #{COMP_CODE}
+             , #{COMPANY_NO}
+             , #{INPUT_DATA.카드번호}
+             , #{PROV_HIST.승인번호}
+             , #{PROV_HIST.승인일자}
+             , #{PROV_HIST.승인시간}
+             , (SELECT ISNULL(MAX(CPR_CARD_SEQ), 0) + 1
+                  FROM SF_CMS310T
+                 WHERE COMP_CODE          = #{COMP_CODE}
+                   AND COMPANY_NO         = #{COMPANY_NO}
+                   AND CPR_CARD_NO        = #{PROV_HIST.카드번호}
+                   AND CPR_CARD_CONFM_NO  = #{PROV_HIST.승인번호}
+                   AND CPR_CARD_CONFM_DT  = #{PROV_HIST.승인일자}
+                   AND CPR_CARD_CONFM_TM  = #{PROV_HIST.승인시간}
+               )
+             , #{PROV_HIST.카드종류}
+             , #{PROV_HIST.카드번호형식}
+             , #{PROV_HIST.가맹점명}
+             , #{PROV_HIST.매출종류}
+             , #{PROV_HIST.할부기간}
+             , #{PROV_HIST.승인금액}
+             , COALESCE(NULLIF(#{PROV_HIST.부가세},''), '0')
+             , #{PROV_HIST.취소년월일}
+             , #{PROV_HIST.결제예정일}
+             , #{PROV_HIST.가맹점사업자번호}
+             , #{PROV_HIST.가맹점코드}
+             , #{PROV_HIST.가맹점업종}
+             , #{PROV_HIST.가맹점주소}
+             , #{PROV_HIST.가맹점전화번호}
+             , #{PROV_HIST.가맹점대표자명}
+             , #{PROV_HIST.매입상태}
+             , #{PROV_HIST.통화코드}
+             , #{PROV_HIST.국내외구분}
+             , GETDATE()
+	         , '0'        -- (임시) 추후 세션값 세팅
+	         , GETDATE()
+	         , '0'        -- (임시) 추후 세션값 세팅
+	         )
+	         
+	         
+	         
+		/*******[ ACM200T(CMS 법인카드승인정보) 데이터 저장 ]*********************************************************************************/    
+		/* 부가세, 승인금액, 공급가액 데이터 세팅 */
+		DECLARE @TaxI     NUMERIC(30,6) 				-- 부가세
+      		  , @SuppI    NUMERIC(30,6) 				-- 승인금액
+      		  , @AmtI     NUMERIC(30,6) 			    -- 공급가액
+		
+		-- 부가세가 0인경우
+		IF (COALESCE(NULLIF(#{PROV_HIST.부가세}, ''), '0') = '0')
+			BEGIN
+				SET @AmtI  = CONVERT(NUMERIC(30,6) ,COALESCE(NULLIF(#{PROV_HIST.승인금액}, ''), '0'))
+				SET @TaxI  = ROUND(CONVERT(NUMERIC(30,6), COALESCE(NULLIF(#{PROV_HIST.승인금액}, ''), '0')) / 11, 0)
+				SET @SuppI = @AmtI - @TaxI
+			END
+		-- 부가세가 0이 아닌경우
+		ELSE
+			BEGIN
+			    SET @TaxI  = COALESCE(NULLIF(#{PROV_HIST.부가세}, ''), '0')
+				SET @SuppI = COALESCE(NULLIF(#{PROV_HIST.승인금액}, ''), '0')
+				SET @AmtI  = CONVERT(NUMERIC(30,6) ,@TaxI) + CONVERT(NUMERIC(30,6), @SuppI)
+			END
+		
+		
+		/* ACM200T(CMS 법인카드승인정보) 데이터 추가 */
+		-- AC_DATE(회계일자)의 값이 없을 경우에만 데이터 수정 or 신규추가 가능
+		IF (SELECT NULLIF(AC_DATE,'')
+			  FROM ACM200T
+			 WHERE COMP_CODE     = #{COMP_CODE}
+			   AND CRDT_FULL_NUM = uniLITE.fnCipherEncrypt(#{INPUT_DATA.카드번호}, '')
+			   AND APPR_DATE     = #{PROV_HIST.승인일자}
+			   AND APPR_TIME     = #{PROV_HIST.승인시간}
+			   AND APPR_NO       = #{PROV_HIST.승인번호} ) IS NULL
+			
+			BEGIN  
+				/* ACM200T(CMS 법인카드승인정보) */  
+				INSERT INTO ACM200T  
+				     ( COMP_CODE		 -- 법인
+				     , APPR_DATE		 -- 승인일
+				     , APPR_TIME		 -- 승인시간
+				     , CRDT_FULL_NUM	 -- 신용카드번호
+				     , CANCEL_YN		 -- 취소여부
+				     , APPR_NO			 -- 승인번호
+				     , CHAIN_NAME		 -- 가맹점명
+				     , CHAIN_ID			 -- 가맹점사업자번호
+				     , CHAIN_NO			 -- 가맹점번호
+				     , HALBU			 -- 할부기간
+				     , APPR_AMT_I		 -- 승인금액
+				     , APPR_TAX_I		 -- 부가세
+				     , APPR_SUPP_I		 -- 공급가액
+				     , CANCEL_DATE		 -- 취소년월일
+				     , INSERT_DB_USER
+				     , INSERT_DB_TIME
+				     , UPDATE_DB_USER
+				     , UPDATE_DB_TIME
+				       )
+		        VALUES 
+		        	 ( #{COMP_CODE}
+		        	 , #{PROV_HIST.승인일자}
+		        	 , #{PROV_HIST.승인시간}
+		        	 , uniLITE.fnCipherEncrypt(#{INPUT_DATA.카드번호}, '')
+		        	 , (CASE WHEN NULLIF(#{PROV_HIST.취소년월일}, '') IS NULL THEN 'Y' ELSE 'N' END)
+		        	 , #{PROV_HIST.승인번호}
+		        	 , #{PROV_HIST.가맹점명}
+		        	 , ISNULL(#{PROV_HIST.가맹점사업자번호}, '')
+		        	 , #{PROV_HIST.가맹점전화번호}
+		        	 , #{PROV_HIST.할부기간}
+		        	 , @AmtI
+		        	 , @TaxI
+		        	 , @SuppI
+		        	 , #{PROV_HIST.취소년월일}
+		        	 , '0'        -- (임시) 추후 세션값 세팅
+		             , GETDATE()
+			         , '0'        -- (임시) 추후 세션값 세팅
+			         , GETDATE()
+			         ) 
+			END
+    END
+    </select>
+    
+    <!-- 청구내역 삭제 -->
+    <update id="cMSIntfServiceImpl.deleteBillHistory" parameterType="Map">
+		DELETE A
+		  FROM SF_CMS320T A
+		 WHERE COMP_CODE        = #{COMP_CODE}
+		   AND COMPANY_NO       = #{COMPANY_NO}
+		   AND CPR_CARD_NO      = #{INPUT_DATA.카드번호}
+		   AND ((DATALENGTH(ISNULL(#{INPUT_DATA.결제일},'0'))    = 8 AND CPR_CARD_BILL_DT = #{INPUT_DATA.결제일})
+                OR (DATALENGTH(ISNULL(#{INPUT_DATA.결제일},'0')) = 6 AND CPR_CARD_BILL_DT like #{INPUT_DATA.결제일} + '%') )
+	</update>
+    <!-- 청구내역 추가 -->
+    <update id="cMSIntfServiceImpl.updateBillHistory" parameterType="Map">	
+	BEGIN
+		INSERT INTO SF_CMS320T
+			 ( COMP_CODE            -- 법인코드
+			 , COMPANY_NO           -- 기업번호
+			 , CPR_CARD_NO          -- 카드번호
+			 , CPR_CARD_BILL_DT     -- 청구일자
+			 , CPR_CARD_USE_DT      -- 법인카드이용일자
+			 , CPR_CARD_SEQ         -- 순번
+			 
+			 , CPR_CARD_SETT_BANK   -- 결제계좌은행
+			 , CPR_CARD_SETT_ACNUT  -- 결제계좌번호
+			 , CPR_CARD_TP          -- 법인카드종류
+			 , CPR_CARD_SETT_DT     -- 법인카드결제일자
+			 , CPR_CARD_PRE_DT      -- 출금예정일
+			 , MRHST_NM             -- 가맹점명
+			 , CPR_CARD_INSTLMT_PD  -- 법인카드할부기간
+			 , INPUT_SEQ            -- 입금회차
+			 , CPR_CARD_USE_AMT     -- 법인카드이용금액
+			 , CPR_CARD_REQ_AMT     -- 법인카드청구금액
+			 
+			 , CPR_CARD_USE_FEE     -- 법인카드이용수수료
+			 , CPR_CARD_BLCE_AMT    -- 법인카드잔액
+			 , MRHST_REG_NO         -- 가맹점 사업자번호
+			 , MRHST_INDUTY         -- 가맹점업종
+			 , MRHST_ADD            -- 가맹점주소
+			 , MRHST_TEL_NO         -- 가맹점전화번호
+			 , MRHST_CEO_NM         -- 가맹점 대표이사명
+			 , MBER_BCNC_NM         -- 회원사명
+			 , CPR_CARD_NO_TP       -- 카드번호형식
+			 , CPR_DEPT_CD          -- 부서코드
+			 , INSERT_DB_TIME
+			 , INSERT_DB_USER
+			 , UPDATE_DB_TIME
+			 , UPDATE_DB_USER
+		       )
+        VALUES 
+        	 ( #{COMP_CODE}
+             , #{COMPANY_NO}
+             , #{BILL_HISTORY.카드번호}
+             , (CASE WHEN DATALENGTH(ISNULL(#{INPUT_DATA.결제일},'0')) = 6 THEN #{INPUT_DATA.결제일} + #{BILL_HISTORY.결제일}
+                     ELSE #{INPUT_DATA.결제일}
+                     END
+               )
+             , #{BILL_HISTORY.이용일자}
+             , (SELECT ISNULL(MAX(CPR_CARD_SEQ), 0) + 1
+                  FROM SF_CMS320T
+                 WHERE COMP_CODE          = #{COMP_CODE}
+                   AND COMPANY_NO         = #{COMPANY_NO}
+                   AND CPR_CARD_NO        = #{BILL_HISTORY.카드번호}
+                   AND CPR_CARD_USE_DT    = #{BILL_HISTORY.이용일자}
+               )
+               
+             , #{SETT_BANK}
+             , #{SETT_ACNUT}
+             , #{BILL_HISTORY.카드종류}
+             , #{BILL_HISTORY.결제일}
+             , null
+             , #{BILL_HISTORY.가맹점명}
+             , #{BILL_HISTORY.할부개월}
+             , COALESCE(NULLIF(#{BILL_HISTORY.입금회차},''), '0')
+             , COALESCE(NULLIF(#{BILL_HISTORY.이용대금},''), '0')
+             , COALESCE(NULLIF(#{BILL_HISTORY.청구금액},''), '0')
+             
+             , COALESCE(NULLIF(#{BILL_HISTORY.수수료},''), '0')
+             , COALESCE(NULLIF(#{BILL_HISTORY.결제후잔액},''), '0')
+             , #{BILL_HISTORY.가맹점사업자번호}
+             , #{BILL_HISTORY.가맹점업종}
+             , #{BILL_HISTORY.가맹점주소}
+             , #{BILL_HISTORY.가맹점전화번호}
+             , #{BILL_HISTORY.가맹점대표자명}
+             , #{BILL_HISTORY.회원사}
+             , #{BILL_HISTORY.카드번호형식}
+             , #{INPUT_DATA.부서코드}
+             , GETDATE()
+	         , '0'        -- (임시) 추후 세션값 세팅
+	         , GETDATE()
+	         , '0'        -- (임시) 추후 세션값 세팅
+	         )
+    END
+    </update>
+
+	<!-- 한도조회 -->
+    <select id="cMSIntfServiceImpl.updateLmt" parameterType="Map" resultType="rMap">	
+        <foreach collection="CARD_LIMIT" item="item">
+			BEGIN
+				IF EXISTS (SELECT 1 FROM SF_CMS330T WHERE COMP_CODE = #{COMP_CODE} AND COMPANY_NO  = #{COMPANY_NO} AND CPR_CARD_NO = #{item.카드번호})
+				    UPDATE SF_CMS330T SET
+				           CPR_CARD_TP	   		= #{item.카드종류}
+				         , LMT_AMT              = COALESCE(NULLIF(#{item.카드사용_한도금액}, ''), '0')
+					     , LMT_USE_AMT	    	= COALESCE(NULLIF(#{item.카드사용한도_사용금액}, ''), '0')
+						 , LMT_BLCE_AMT	        = COALESCE(NULLIF(#{item.카드사용한도_잔여금액}, ''), '0')
+					     , LMPS_LMT_AMT	        = COALESCE(NULLIF(#{item.일시불_한도금액}, ''), '0')
+					     , LMPS_LMT_USE_AMT	    = COALESCE(NULLIF(#{item.일시불_사용금액}, ''), '0')
+					     , LMPS_LMT_BLCE_AMT    = COALESCE(NULLIF(#{item.일시불_한도잔여금액}, ''), '0')
+					     , INSTLMT_LMT_AMT	    = COALESCE(NULLIF(#{item.할부_한도금액}, ''), '0')
+					     , INSTLMT_LMT_USE_AMT  = COALESCE(NULLIF(#{item.할부_사용금액}, ''), '0')
+					     , INSTLMT_LMT_BLCE_AMT = COALESCE(NULLIF(#{item.할부_한도잔여금액}, ''), '0')
+					     , OVSEA_LMT_AMT	    = COALESCE(NULLIF(#{item.해외_한도금액}, ''), '0')
+					     , OVSEA_LMT_USE_AMT    = COALESCE(NULLIF(#{item.해외_사용금액}, ''), '0')
+					     , OVSEA_LMT_BLCE_AMT   = COALESCE(NULLIF(#{item.해외_한도잔여금액}, ''), '0')
+					     , CASHSVC_LMT_AMT	    = COALESCE(NULLIF(#{item.현금서비스_한도금액}, ''), '0')
+					     , CASHSVC_LMT_USE_AMT  = COALESCE(NULLIF(#{item.현금서비스_한도사용금액}, ''), '0')
+					     , CASHSVC_LMT_BLCE_AMT = COALESCE(NULLIF(#{item.현금서비스_한도잔여금액}, ''), '0')
+					     , CRNCY_CD		    	= #{item.통화코드}
+					     , MBER_BCNC_NM	    	= #{item.회원사}
+					     , CPR_CARD_NO_TP	    = #{item.카드번호형식}
+					     , DAY_LMT_AMT	    	= COALESCE(NULLIF(#{item.일한도}, ''), '0')
+					     , MTH_LMT_AMT	    	= COALESCE(NULLIF(#{item.월한도}, ''), '0')
+				         , UPDATE_DB_TIME       = GETDATE()
+				         , UPDATE_DB_USER       = '0'        -- (임시) 추후 세션값 세팅
+				     WHERE COMP_CODE   = #{COMP_CODE}
+				       AND COMPANY_NO  = #{COMPANY_NO}
+				       AND CPR_CARD_NO = #{item.카드번호}
+				ELSE
+		            INSERT INTO SF_CMS330T
+		                 ( COMP_CODE             -- 법인코드
+		                 , COMPANY_NO            -- 기업번호
+		                 , CPR_CARD_NO           -- 카드번호
+					     , CPR_CARD_TP           -- 법인카드종류
+					     , LMT_AMT               -- 법인카드 사용한도 금액
+					     , LMT_USE_AMT           -- 법인카드 한도사용 금액
+					     , LMT_BLCE_AMT          -- 법인카드 한도잔여 금액
+					     , LMPS_LMT_AMT          -- 일시불 한도금액
+					     , LMPS_LMT_USE_AMT      -- 일시불 한도사용금액
+					     , LMPS_LMT_BLCE_AMT     -- 일시불 한도잔여금액
+					     , INSTLMT_LMT_AMT       -- 할부한도 금액
+					     , INSTLMT_LMT_USE_AMT   -- 할부한도 사용금액
+					     , INSTLMT_LMT_BLCE_AMT  -- 할부한도 잔여금액
+					     , OVSEA_LMT_AMT         -- 해외 한도금액
+					     , OVSEA_LMT_USE_AMT     -- 해외 한도사용금액
+					     , OVSEA_LMT_BLCE_AMT    -- 해외 한도잔여금액
+					     , CASHSVC_LMT_AMT       -- 현금서비스_한도금액
+					     , CASHSVC_LMT_USE_AMT   -- 현금서비스_한도사용금액
+					     , CASHSVC_LMT_BLCE_AMT  -- 현금서비스_한도잔여금액
+					     , CRNCY_CD              -- 통화코드
+					     , MBER_BCNC_NM          -- 회원사
+					     , CPR_CARD_NO_TP        -- 카드번호형식
+					     , DAY_LMT_AMT           -- 일한도-산은 개인만 사용
+					     , MTH_LMT_AMT           -- 월한도-산은 개인만 사용
+
+					     , INSERT_DB_TIME
+					     , INSERT_DB_USER
+					     , UPDATE_DB_TIME
+					     , UPDATE_DB_USER
+		                 )
+		            VALUES (#{COMP_CODE}
+		                 , #{COMPANY_NO}
+		                 , #{item.카드번호}
+					     , #{item.카드종류}
+					     , COALESCE(NULLIF(#{item.카드사용_한도금액}, ''), '0')
+					     , COALESCE(NULLIF(#{item.카드사용한도_사용금액}, ''), '0')
+					     , COALESCE(NULLIF(#{item.카드사용한도_잔여금액}, ''), '0')
+					     , COALESCE(NULLIF(#{item.일시불_한도금액}, ''), '0')
+					     , COALESCE(NULLIF(#{item.일시불_사용금액}, ''), '0')
+					     , COALESCE(NULLIF(#{item.일시불_한도잔여금액}, ''), '0')
+					     , COALESCE(NULLIF(#{item.할부_한도금액}, ''), '0')
+					     , COALESCE(NULLIF(#{item.할부_사용금액}, ''), '0')
+					     , COALESCE(NULLIF(#{item.할부_한도잔여금액}, ''), '0')
+					     , COALESCE(NULLIF(#{item.해외_한도금액}, ''), '0')
+					     , COALESCE(NULLIF(#{item.해외_사용금액}, ''), '0')
+					     , COALESCE(NULLIF(#{item.해외_한도잔여금액}, ''), '0')
+					     , COALESCE(NULLIF(#{item.현금서비스_한도금액}, ''), '0')
+					     , COALESCE(NULLIF(#{item.현금서비스_사용금액}, ''), '0')
+					     , COALESCE(NULLIF(#{item.현금서비스_한도잔여금액}, ''), '0')
+					     , #{item.통화코드}
+					     , #{item.회원사}
+					     , #{item.카드번호형식}
+					     , COALESCE(NULLIF(#{item.일한도}, ''), '0')
+					     , COALESCE(NULLIF(#{item.월한도}, '') , '0')
+
+		                 , GETDATE()
+				         , '0'        -- (임시) 추후 세션값 세팅
+				         , GETDATE()
+				         , '0'        -- (임시) 추후 세션값 세팅
+		                 )
+		    END
+		</foreach>
+    </select>
+    
+    <!-- 이관한 데이터 저장완료 FLAG 추가 -->
+	<update id="cMSIntfServiceImpl.setProcFlag" parameterType="Map">
+	UPDATE L_CMS
+	   SET PROC_YN = 'Y'
+	 WHERE id      = #{ID}
+	   AND COMPANY_NO = #{COMPANY_NO}
+	</update>
+	
+    <!-- 이관한 데이터 저장완료 FLAG 추가 -->
+	<update id="cMSIntfServiceImpl.setProcFlagByCompNo" parameterType="Map">
+	UPDATE L_CMS
+	   SET PROC_YN = 'Y'
+	 WHERE COMPANY_NO = #{COMPANY_NO}
+	</update>
+</mapper>

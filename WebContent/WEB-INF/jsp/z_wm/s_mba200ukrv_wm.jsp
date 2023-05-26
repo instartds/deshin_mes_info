@@ -1,0 +1,675 @@
+<%@page language="java" contentType="text/html; charset=utf-8"%>
+<t:appConfig pgmId="s_mba200ukrv_wm">
+	<t:ExtComboStore comboType="BOR120"/>				<!-- 사업장 -->
+	<t:ExtComboStore comboType="AU" comboCode="M007"/>	<!-- 승인여부 (1: 미승인, 2: 승인) -->
+	<t:ExtComboStore comboType="AU" comboCode="S010"/>	<!-- 영업담당 -->
+	<t:ExtComboStore comboType="AU" comboCode="Z001"/>	<!-- 단가구분(H-홈페이지, C-카페, Z-기타(기본값, REF1 = 'Y')) -->
+	<t:ExtComboStore comboType="AU" comboCode="ZM01"/>	<!-- 접수구분(10:홈페이지, 20:T전화, 30:카페, 40:입찰) -->
+	<t:ExtComboStore comboType="AU" comboCode="ZM03"/>	<!-- 진행상태(A-접수, B-도착, C-분해작업중, D-분해작업완료, E-검사, F-) -->
+	<t:ExtComboStore comboType="OU"/>
+</t:appConfig>
+<style type="text/css">
+	#search_panel1 .x-panel-header-text-container-default {color: #333333;font-weight: normal;padding: 1px 2px;}
+</style>
+
+<script type="text/javascript" >
+var initFlag = true;
+var saveFlag = false;		//20210315 추가
+var gsOldrowIndex;
+
+function appMain() {
+	var panelResult = Unilite.createSearchForm('resultForm',{
+		region	: 'north',
+		layout	: {type : 'uniTable', columns : 3},
+		padding	: '1 1 1 1',
+		border	: true,
+		items	: [{
+			fieldLabel	: '<t:message code="system.label.purchase.division" default="사업장"/>',
+			name		: 'DIV_CODE',
+			xtype		: 'uniCombobox',
+			comboType	: 'BOR120',
+			allowBlank	: false,
+			listeners	: {
+				change: function(field, newValue, oldValue, eOpts) {
+					panelResult.setValue('INSPEC_PRSN', '');
+				}
+			}
+		},
+		Unilite.popup('AGENT_CUST',{
+			fieldLabel		: '<t:message code="system.label.sales.custom" default="거래처"/>',
+			validateBlank	: false,
+			colspan			: 2,
+			listeners		: {
+				onValueFieldChange: function(field, newValue){
+					if(Ext.isEmpty(newValue)) {
+						panelResult.setValue('CUSTOM_NAME', newValue);
+					}
+				},
+				onTextFieldChange: function(field, newValue){
+				},
+				applyextparam: function(popup){
+					popup.setExtParam({'AGENT_CUST_FILTER'	: ['1','2']});
+					popup.setExtParam({'CUSTOM_TYPE'		: ['1','2']});
+				}
+			}
+		}),{
+			fieldLabel	: '<t:message code="system.label.purchase.clientname" default="고객명"/>',
+			xtype		: 'uniTextfield',
+			name		: 'CUSTOM_PRSN',
+			listeners	: {
+				change: function(field, newValue, oldValue, eOpts) {
+				}
+			}
+		},{
+			fieldLabel		: '<t:message code="system.label.purchase.inspecdate" default="검사일"/>',
+			xtype			: 'uniDateRangefield',
+			startFieldName	: 'INSPEC_DATE_FR',
+			endFieldName	: 'INSPEC_DATE_TO'
+		},{
+			fieldLabel	: '상태',
+			xtype		: 'radiogroup',
+			items		: [{
+				boxLabel	: '미승인',
+				name		: 'rdoSelect',
+				inputValue	: '1',
+				width		: 70
+			},{
+				boxLabel	: '승인',
+				name		: 'rdoSelect',
+				inputValue	: '2',
+				width		: 60
+			},{
+				boxLabel	: '전체',
+				name		: 'rdoSelect',
+				inputValue	: '',
+				width		: 70
+			}],
+			listeners: {
+				change: function(field, newValue, oldValue, eOpts) {
+					if(!initFlag) {
+						masterGrid.down('#agreeBtn').disable();
+						directMasterStore1.loadStoreRecords(newValue.rdoSelect);
+						directMasterStore2.loadStoreRecords(newValue.rdoSelect);
+					}
+				}
+			}
+		}]
+	});
+
+
+	var directProxy = Ext.create('Unilite.com.data.proxy.UniDirectProxy',{
+		api: {
+			read	: 's_mba200ukrv_wmService.selectList1',
+			//20210315 수정: 수정가능하도록 변경
+			update	: 's_mba200ukrv_wmService.updateDetail1',
+			syncAll	: 's_mba200ukrv_wmService.saveAll1'
+		}
+	});
+
+	var directProxy2 = Ext.create('Unilite.com.data.proxy.UniDirectProxy',{
+		api: {
+			read	: 's_mba200ukrv_wmService.selectList2',
+			//20210315 수정: 수정가능하도록 변경
+			update	: 's_mba200ukrv_wmService.updateDetail2',
+			syncAll	: 's_mba200ukrv_wmService.saveAll2'
+		}
+	});
+
+	Unilite.defineModel('s_mba200ukrv_wmModel1', {
+		fields: [
+			//S_MPO010T_WM (MASTER)
+			{name: 'COMP_CODE'		, text: '<t:message code="system.label.purchase.companycode" default="법인코드"/>'		, type: 'string'	, allowBlank: false},
+			{name: 'DIV_CODE'		, text: '<t:message code="system.label.purchase.division" default="사업장"/>'			, type: 'string'	, allowBlank: false	, comboType: 'BOR120'},
+			{name: 'AGREE_STATUS'	, text: '승인여부'		, type: 'string'	, comboType:'AU' , comboCode: 'M007'},
+			{name: 'AGREE_DATE'		, text: '승인일'		, type: 'uniDate'},
+			{name: 'AGREE_PRSN'		, text: '승인자'		, type: 'string'},
+			{name: 'CUSTOM_CODE'	, text: '<t:message code="system.label.purchase.custom" default="거래처"/>'			, type: 'string'	, allowBlank: false},
+			{name: 'CUSTOM_NAME'	, text: '<t:message code="system.label.purchase.customname" default="거래처명"/>'		, type: 'string'	, allowBlank: false},
+			{name: 'CUSTOM_PRSN'	, text: '<t:message code="system.label.purchase.clientname" default="고객명"/>'		, type: 'string'	, allowBlank: false},
+			{name: 'ORDER_PRSN'		, text: '영업담당'		, type: 'string'	, comboType:'AU' , comboCode: 'S010'},
+			{name: 'RECEIPT_DATE'	, text: '<t:message code="system.label.purchase.receiptdate2" default="접수일"/>'		, type: 'uniDate'},
+			{name: 'RECEIPT_NUM'	, text: '<t:message code="system.label.purchase.receiptno2" default="접수번호"/>'		, type: 'string'},
+			{name: 'PRICE_TYPE'		, text: '<t:message code="system.label.common.priceclass" default="단가구분"/>'			, type: 'string'	, comboType:'AU' , comboCode: 'Z001'},
+			//S_MPO020T_WM (DETAIL)
+			{name: 'ITEM_NAMES'		, text: '품목'			, type: 'string'}
+		]
+	});
+
+	Unilite.defineModel('s_mba200ukrv_wmModel2', {
+		fields: [
+			{name: 'COMP_CODE'		, text: '<t:message code="system.label.purchase.companycode" default="법인코드"/>'	, type: 'string', allowBlank: false},
+			{name: 'DIV_CODE'		, text: '<t:message code="system.label.purchase.division" default="사업장"/>'		, type: 'string', allowBlank: false},
+			{name: 'INSPEC_NUM'		, text: '<t:message code="system.label.purchase.inspecno" default="검사번호"/>'		, type: 'string'},
+			{name: 'INSPEC_SEQ'		, text: '<t:message code="system.label.purchase.seq" default="순번"/>'			, type: 'int'},
+			{name: 'ITEM_CODE'		, text: '<t:message code="system.label.purchase.itemcode" default="품목코드"/>'		, type: 'string', allowBlank: false},
+			{name: 'ITEM_NAME'		, text: '<t:message code="system.label.purchase.itemname" default="품목명"/>'		, type: 'string', allowBlank: false},
+			{name: 'SPEC'			, text: '<t:message code="system.label.purchase.spec" default="규격"/>'			, type: 'string'},
+			{name: 'ORDER_UNIT'		, text: '<t:message code="system.label.purchase.unit" default="단위"/>'			, type: 'string'},
+			{name: 'GOOD_INSPEC_Q'	, text: '양품'		, type: 'uniQty'},
+			{name: 'BAD_INSPEC_Q'	, text: '불량'		, type: 'uniQty'},
+			{name: 'RECEIPT_P'		, text: '<t:message code="system.label.purchase.price" default="단가"/>'			, type: 'uniUnitPrice'},
+			{name: 'RECEIPT_O'		, text: '<t:message code="system.label.purchase.amount" default="금액"/>'			, type: 'uniPrice'},
+			{name: 'BAD_INSPEC_Q'	, text: '불량'		, type: 'uniQty'},
+			{name: 'BAD_RECEIPT_P'	, text: '<t:message code="system.label.purchase.price" default="단가"/>'			, type: 'uniUnitPrice'},	//20210204 추가
+			{name: 'BAD_RECEIPT_O'	, text: '<t:message code="system.label.purchase.amount" default="금액"/>'			, type: 'uniPrice'},		//20210204 추가
+			{name: 'RECEIPT_NUM'	, text: '<t:message code="system.label.purchase.receiptno2" default="접수번호"/>'	, type: 'string'},
+			{name: 'RECEIPT_SEQ'	, text: '<t:message code="system.label.purchase.receiptseq" default="접수순번"/>'	, type: 'int'},
+			{name: 'CONFIRM_YN'		, text: '단가확정여부'	, type: 'string'},
+			{name: 'CONFIRM_DATE'	, text: '단가확정일'		, type: 'uniDate'},
+			{name: 'CONFIRM_PRSN'	, text: '단가확정자'		, type: 'string'},
+			{name: 'RECEIPT_DATE'	, text: '<t:message code="system.label.purchase.receiptdate2" default="접수일"/>'	, type: 'uniDate'},
+			{name: 'CONFIRM_YN'		, text: '확정여부'		, type: 'string'	, comboType:'AU' , comboCode:'P401'}
+		]
+	});
+
+	var directMasterStore1 = Unilite.createStore('s_mba200ukrv_wmMasterStore1', {
+		model	: 's_mba200ukrv_wmModel1',
+		proxy	: directProxy,
+		uniOpt	: {
+			isMaster	: true,		// 상위 버튼 연결
+			editable	: true,		// 수정 모드 사용, 20210315 수정: 수정가능하도록 변경
+			deletable	: false,	// 삭제 가능 여부
+			useNavi		: false		// prev | newxt 버튼 사용
+		},
+		autoLoad: false,
+		loadStoreRecords: function(newValue){
+			var param = panelResult.getValues();
+			if(newValue || newValue == '') {
+				param.rdoSelect = newValue;
+			}
+			console.log(param);
+			this.load({
+				params : param
+			});
+		},
+		//20210315 추가
+		saveStore: function() {
+//			var toCreate	= this.getNewRecords();
+//			var toUpdate	= this.getUpdatedRecords();
+//			var toDelete	= this.getRemovedRecords();
+//			var list		= [].concat(toUpdate, toCreate);
+			var inValidRecs	= this.getInvalidRecords();
+
+			//1. 마스터 정보 파라미터 구성
+			var paramMaster= panelResult.getValues();	// syncAll 수정
+			if(inValidRecs.length == 0) {
+				config = {
+					params	: [paramMaster],
+					success: function(batch, option) {
+						panelResult.getForm().wasDirty = false;
+						panelResult.resetDirtyStatus();
+						UniAppManager.setToolbarButtons('save', false);
+						UniAppManager.app.onQueryButtonDown();
+					}
+				};
+				this.syncAllDirect(config);
+			} else {
+				var grid = Ext.getCmp('s_mba200ukrv_wmGrid1');
+				grid.uniSelectInvalidColumnAndAlert(inValidRecs);
+			}
+		},
+		listeners: {
+			load: function(store, records, successful, eOpts) {
+			},
+			add: function(store, records, index, eOpts) {
+			},
+			update: function(store, record, operation, modifiedFieldNames, eOpts) {
+			},
+			remove: function(store, record, index, isMove, eOpts) {
+			}
+		}
+	});
+
+	var directMasterStore2 = Unilite.createStore('s_mba200ukrv_wmMasterStore2', {
+		model	: 's_mba200ukrv_wmModel2',
+		proxy	: directProxy2,
+		uniOpt	: {
+			isMaster	: true,		// 상위 버튼 연결
+			editable	: true,		// 수정 모드 사용, 20210315 수정: 수정가능하도록 변경
+			deletable	: false,	// 삭제 가능 여부
+			useNavi		: false		// prev | newxt 버튼 사용
+		},
+		autoLoad: false,
+		loadStoreRecords: function(newValue){
+			var param = panelResult.getValues();
+			if(newValue || newValue == '') {
+				param.rdoSelect = newValue;
+			}
+			this.load({
+				params : param
+			});
+		},
+		//20210315 추가
+		saveStore: function() {
+//			var toCreate	= this.getNewRecords();
+//			var toUpdate	= this.getUpdatedRecords();
+//			var toDelete	= this.getRemovedRecords();
+//			var list		= [].concat(toUpdate, toCreate);
+			var inValidRecs	= this.getInvalidRecords();
+
+			//1. 마스터 정보 파라미터 구성
+			var paramMaster= panelResult.getValues();	// syncAll 수정
+			if(inValidRecs.length == 0) {
+				config = {
+					params	: [paramMaster],
+					success: function(batch, option) {
+						if(directMasterStore1.isDirty()) {
+							directMasterStore1.saveStore()
+						} else {
+							panelResult.getForm().wasDirty = false;
+							panelResult.resetDirtyStatus();
+							UniAppManager.setToolbarButtons('save', false);
+							UniAppManager.app.onQueryButtonDown();
+						}
+					}
+				};
+				this.syncAllDirect(config);
+			} else {
+				var grid = Ext.getCmp('s_mba200ukrv_wmGrid2');
+				grid.uniSelectInvalidColumnAndAlert(inValidRecs);
+			}
+		},
+		listeners: {
+			load: function(store, records, successful, eOpts) {
+				directMasterStore2.filterBy(function(record){
+					return record.get('RECEIPT_NUM') == 'ZZZZZ';
+				})
+			},
+			add: function(store, records, index, eOpts) {
+			},
+			update: function(store, record, operation, modifiedFieldNames, eOpts) {
+			},
+			remove: function(store, record, index, isMove, eOpts) {
+			}
+		}
+	});
+
+	var masterGrid = Unilite.createGrid('s_mba200ukrv_wmGrid1', {
+		store	: directMasterStore1,
+		layout	: 'fit',
+		region	: 'center',
+		uniOpt	: {
+			onLoadSelectFirst	: false,
+			useLiveSearch		: true,
+			expandLastColumn	: true,
+			useRowNumberer		: false
+		},
+		tbar: [{
+			itemId	: 'agreeBtn',
+			text	: '승인',
+			width	: 100,
+			handler	: function() {
+				var records = masterGrid.getSelectionModel().getSelection();
+				if(Ext.isEmpty(records)) {
+					Unilite.messageBox('선택된 데이터가 없습니다.');
+					return false;
+				}
+				buttonStore.saveStore();
+			}
+		},'-'],
+		features: [
+			{id: 'masterGridSubTotal'	, ftype: 'uniGroupingsummary'	, showSummaryRow: false},
+			{id: 'masterGridTotal'		, ftype: 'uniSummary'			, showSummaryRow: false}
+		],
+		selModel: Ext.create('Ext.selection.CheckboxModel', { checkOnly: true, toggleOnClick: false,
+			listeners: {
+				beforeselect: function(rowSelection, record, index, eOpts) {
+					if(UniAppManager.app._needSave()) {
+						Unilite.messageBox('<t:message code="system.message.sales.message066" default="먼저 저장 후 다시 작업하십시오."/>');
+						return false;
+					}
+					var selectedCustom = rowSelection.selected.items[0];
+					if(Ext.isEmpty(selectedCustom) || selectedCustom.get('AGREE_STATUS') == record.get('AGREE_STATUS')) {
+						if(record.get('AGREE_STATUS') == '1') {
+							masterGrid.down('#agreeBtn').setText('승인');
+						} else {
+							masterGrid.down('#agreeBtn').setText('미승인');
+						}
+						masterGrid.down('#agreeBtn').enable();
+						return true;
+					} else {
+//						Unilite.messageBox('동일한 상태의 데이터만 선택할 수 있습니다.');
+						return false;
+					}
+				},
+				select: function(grid, selectRecord, index, rowIndex, eOpts ){
+				},
+				deselect: function(grid, selectRecord, index, eOpts ){
+					if (this.selected.getCount() == 0) {
+						masterGrid.down('#agreeBtn').disable();
+						directMasterStore2.clearFilter();
+						directMasterStore2.filterBy(function(record){
+							return record.get('RECEIPT_NUM') == 'ZZZZZ';
+						})
+					}
+				}
+			}
+		}),
+		columns: [
+			{dataIndex: 'COMP_CODE'			, width: 100, hidden: true},
+			{dataIndex: 'DIV_CODE'			, width: 100, hidden: true},
+			{dataIndex: 'AGREE_STATUS'		, width: 80	, align: 'center'},
+//			{dataIndex: 'CUSTOM_CODE'		, width: 100},
+			{dataIndex: 'CUSTOM_NAME'		, width: 150,
+				'editor': Unilite.popup('AGENT_CUST_G',{
+					allowBlank		: false,
+					autoPopup		: true,
+					listeners		: {
+						'onSelected': {
+							fn: function(records, type) {
+								var grdRecord = masterGrid.uniOpt.currentRecord;
+								grdRecord.set('CUSTOM_CODE', records[0]['CUSTOM_CODE']);
+								grdRecord.set('CUSTOM_NAME', records[0]['CUSTOM_NAME']);
+							},
+							scope: this
+						},
+						'onClear' : function(type) {
+							var grdRecord = masterGrid.uniOpt.currentRecord;
+							grdRecord.set('CUSTOM_CODE', '');
+							grdRecord.set('CUSTOM_NAME', '');
+						},
+						'applyextparam': function(popup) {
+							popup.setExtParam({'AGENT_CUST_FILTER'	: ['1','2']});
+							popup.setExtParam({'CUSTOM_TYPE'		: ['1','2']});
+						}
+					}
+				})
+			},
+			{dataIndex: 'CUSTOM_PRSN'		, width: 120},
+			{dataIndex: 'ORDER_PRSN'		, width: 120},
+			{dataIndex: 'ITEM_NAMES'		, width: 200},
+			{dataIndex: 'RECEIPT_NUM'		, width: 120},
+			{dataIndex: 'PRICE_TYPE'		, width: 100, align:'center'},
+			{dataIndex: 'CONFIRM_YN'		, width: 100, hidden: true},
+			{dataIndex: 'AGREE_DATE'		, width: 100, hidden: true},
+			{dataIndex: 'AGREE_PRSN'		, width: 100, hidden: true}
+		],
+		listeners: {
+			//20210315 추가: 수정가능하도록 변경
+			beforeedit: function( editor, e, eOpts ) {
+				if (UniUtils.indexOf(e.field,['CUSTOM_NAME', 'CUSTOM_PRSN'])) {
+					return true;
+				} else {
+					return false;
+				}
+			},
+			selectionchange: function( grid, selected, eOpts ){
+				directMasterStore2.clearFilter();
+				//선택된 행의 저장된 데이터만 masterGrid2에 보여주도록 filter
+				if(selected && selected[0]) {
+					directMasterStore2.filterBy(function(record){
+						return record.get('RECEIPT_NUM') == selected[0].get('RECEIPT_NUM');
+					})
+				} else {
+					directMasterStore2.filterBy(function(record){
+						return record.get('RECEIPT_NUM') == 'ZZZZZ';
+					})
+				}
+				UniAppManager.setToolbarButtons('save', saveFlag);	//20210315 추가
+			},
+			beforecellclick: function(grid, td, cellIndex, thisRecord, tr, rowIndex, e, eOpts ){
+				saveFlag = UniAppManager.app._needSave();
+			},
+			cellclick: function(grid, td, cellIndex, thisRecord, tr, rowIndex, e, eOpts ){
+				if(UniAppManager.app._needSave() && (!Ext.isEmpty(gsOldrowIndex) && gsOldrowIndex != rowIndex)) {
+					Unilite.messageBox('<t:message code="system.message.sales.message066" default="먼저 저장 후 다시 작업하십시오."/>');
+					var view		= masterGrid.getView();
+					var navi		= view.getNavigationModel();
+					navi.setPosition(rowIndex -1 , 0);
+					return false;
+				}
+				directMasterStore2.clearFilter();
+				//선택된 행의 저장된 데이터만 masterGrid2에 보여주도록 filter
+				if(thisRecord) {
+					directMasterStore2.filterBy(function(record){
+						return record.get('RECEIPT_NUM') == thisRecord.get('RECEIPT_NUM');
+					})
+				}
+				gsOldrowIndex = rowIndex;
+				UniAppManager.setToolbarButtons('save', saveFlag);	//20210315 추가
+			},
+			//20210108 추가: 링크 넘어가는 로직 추가
+			onGridDblClick :function( grid, record, cellIndex, colName ) {
+				masterGrid.goto_s_mpo010ukrv_wm(record);
+			}
+		},
+		//20210108 추가: 링크 넘어가는 로직 추가
+		goto_s_mpo010ukrv_wm:function(record) {
+			if(record) {
+				var params = {
+					action			: 'select',
+					'PGM_ID'		: PGM_ID,
+					'DIV_CODE'		: record.data['DIV_CODE'],
+					'RECEIPT_NUM'	: record.data['RECEIPT_NUM']
+				}
+				var rec1 = {data : {'s_mpo010ukrv_wm' : PGM_ID, 'text': ''}};
+				parent.openTab(rec1, '/z_wm/s_mpo010ukrv_wm.do', params, CHOST + CPATH);
+			}
+		}
+	});
+
+	var masterGrid2 = Unilite.createGrid('s_mba200ukrv_wmGrid2', {
+		store	: directMasterStore2,
+		layout	: 'fit',
+		region	: 'south',
+		uniOpt	: {
+			useLiveSearch	: true,
+			expandLastColumn: true
+		},
+		features: [
+			{id: 'masterGridSubTotal'	, ftype: 'uniGroupingsummary'	, showSummaryRow: false},
+			{id: 'masterGridTotal'		, ftype: 'uniSummary'			, showSummaryRow: false}
+		],
+		columns: [
+			{dataIndex: 'COMP_CODE'		, width: 100, hidden: true},
+			{dataIndex: 'DIV_CODE'		, width: 100, hidden: true},
+			{dataIndex: 'INSPEC_NUM'	, width: 120, hidden: true},
+			{dataIndex: 'INSPEC_SEQ'	, width: 66	, hidden: true, align:'center'},
+			{dataIndex: 'ITEM_CODE'		, width: 120,
+				editor: Unilite.popup('DIV_PUMOK_G', {
+					textFieldName	: 'ITEM_CODE',
+					DBtextFieldName	: 'ITEM_CODE',
+					autoPopup		: true,
+					listeners		: {
+						'onSelected': {
+							fn: function(records, type) {
+								var grdRecord = masterGrid2.uniOpt.currentRecord;
+								grdRecord.set('ITEM_CODE'	, records[0]['ITEM_CODE']);
+								grdRecord.set('ITEM_NAME'	, records[0]['ITEM_NAME']);
+								grdRecord.set('SPEC'		, records[0]['SPEC']);
+								grdRecord.set('ORDER_UNIT'	, records[0]['SALE_UNIT']);
+							},
+						scope: this
+						},
+						'onClear': function(type) {
+							var grdRecord = masterGrid2.uniOpt.currentRecord;
+							grdRecord.set('ITEM_CODE'	, '');
+							grdRecord.set('ITEM_NAME'	, '');
+							grdRecord.set('SPEC'		, '');
+							grdRecord.set('ORDER_UNIT'	, '');
+						},
+						applyextparam: function(popup){
+							var record = masterGrid2.getSelectedRecord();
+							popup.setExtParam({'DIV_CODE': record.get('DIV_CODE'), 'POPUP_TYPE': 'GRID_CODE'});
+						}
+					}
+				})
+			},
+			{dataIndex: 'ITEM_NAME'		, width: 150,
+				editor: Unilite.popup('DIV_PUMOK_G', {
+					extParam: {SELMODEL: 'MULTI'},
+					autoPopup:true,
+					listeners: {
+						'onSelected': {
+							fn: function(records, type) {
+								var grdRecord = masterGrid2.uniOpt.currentRecord;
+								grdRecord.set('ITEM_CODE'	, records[0]['ITEM_CODE']);
+								grdRecord.set('ITEM_NAME'	, records[0]['ITEM_NAME']);
+								grdRecord.set('SPEC'		, records[0]['SPEC']);
+								grdRecord.set('ORDER_UNIT'	, records[0]['SALE_UNIT']);
+							},
+							scope: this
+							},
+						'onClear': function(type) {
+							var grdRecord = masterGrid2.uniOpt.currentRecord;
+							grdRecord.set('ITEM_CODE'	, '');
+							grdRecord.set('ITEM_NAME'	, '');
+							grdRecord.set('SPEC'		, '');
+							grdRecord.set('ORDER_UNIT'	, '');
+						},
+						applyextparam: function(popup){
+							var record = masterGrid2.getSelectedRecord();
+							popup.setExtParam({'DIV_CODE': record.get('DIV_CODE'), 'POPUP_TYPE': 'GRID_CODE'});
+						}
+					}
+				})
+			},
+			{dataIndex: 'SPEC'			, width: 150},
+			{dataIndex: 'ORDER_UNIT'	, width: 80	,align:'center'},
+			//20210204 수정
+			{text: '양품',
+				columns: [
+					{dataIndex: 'GOOD_INSPEC_Q'	, width: 100},
+					{dataIndex: 'RECEIPT_P'		, width: 100},
+					{dataIndex: 'RECEIPT_O'		, width: 100}
+				]
+			},
+			{text: '불량',
+				columns: [
+					{dataIndex: 'BAD_INSPEC_Q'	, width: 100},
+					{dataIndex: 'BAD_RECEIPT_P'	, width: 100},			//20210204 추가
+					{dataIndex: 'BAD_RECEIPT_O'	, width: 100}			//20210204 추가
+				]
+			},
+			{dataIndex: 'RECEIPT_NUM'	, width: 120, hidden: true},
+			{dataIndex: 'RECEIPT_SEQ'	, width: 120, hidden: true}
+		],
+		listeners: {
+			//20210315 수정: 수정가능하도록 변경
+			beforeedit: function( editor, e, eOpts ) {
+				if (UniUtils.indexOf(e.field,['ITEM_CODE', 'ITEM_NAME'])) {
+					return true;
+				} else {
+					return false;
+				}
+			}
+		}
+	});
+
+
+
+	/*
+	 * 승인/미승인 저장로직
+	 */
+	var directButtonProxy = Ext.create('Unilite.com.data.proxy.UniDirectProxy',{
+		api: {
+			create	: 's_mba200ukrv_wmService.confirmDetail',
+			syncAll	: 's_mba200ukrv_wmService.confirmAll'
+		}
+	});
+	var buttonStore = Unilite.createStore('buttonStore',{
+		proxy		: directButtonProxy,
+		uniOpt		: {
+			isMaster	: false,	// 상위 버튼 연결
+			editable	: false,	// 수정 모드 사용
+			deletable	: false,	// 삭제 가능 여부
+			useNavi		: false		// prev | next 버튼 사용
+		},
+		saveStore	: function(saveFlag) {
+			var inValidRecs	= this.getInvalidRecords();
+			var confirmMsg	= '';
+			var paramMaster	= panelResult.getValues();
+			
+			if(masterGrid.down('#agreeBtn').getText() == '승인') {
+				confirmMsg = '해당 데이터의 단가를 승인하시겠습니까?';
+				paramMaster.confirmFlag	= 'Y';
+			} else {
+				confirmMsg = '해당 데이터의 단가를 승인 취소하시겠습니까?';
+				paramMaster.confirmFlag	= 'N';
+			}
+			//작업진행 여부 확인
+			if(!confirm(confirmMsg)) {
+				return false;
+			}
+
+			var selRecords = masterGrid.getSelectionModel().getSelection();
+			Ext.each(selRecords, function(selRecord, index) {
+				selRecord.phantom = true;
+				buttonStore.insert(index, selRecord);
+			})
+
+			if(inValidRecs.length == 0) {
+				config = {
+					params	: [paramMaster],
+					success	: function(batch, option) {
+						buttonStore.clearData();
+						UniAppManager.app.onQueryButtonDown();
+					},
+					failure: function(batch, option) {
+						buttonStore.clearData();
+					}
+				};
+				this.syncAllDirect(config);
+			}
+		},
+		listeners: {
+			load: function(store, records, successful, eOpts) {
+			},
+			add: function(store, records, index, eOpts) {
+			},
+			update: function(store, record, operation, modifiedFieldNames, eOpts) {
+			},
+			remove: function(store, record, index, isMove, eOpts) {
+			}
+		}
+	});
+
+
+
+	Unilite.Main({
+		id			: 's_mba200ukrv_wmApp',
+		borderItems	: [{
+			region	: 'center',
+			layout	: 'border',
+			border	: false,
+			items	: [
+				masterGrid, masterGrid2, panelResult
+			]
+		}],
+		fnInitBinding : function() {
+			initFlag = true;
+			saveFlag = false;		//20210315 추가
+			panelResult.setValue('DIV_CODE'			, UserInfo.divCode);
+			panelResult.setValue('INSPEC_DATE_TO'	, UniDate.get('today'));
+			panelResult.setValue('INSPEC_DATE_FR'	, UniDate.add(panelResult.getValue('INSPEC_DATE_TO'), {weeks: -1}));
+			panelResult.setValue('rdoSelect'		, '1');
+			masterGrid.down('#agreeBtn').setText('승인');
+			masterGrid.down('#agreeBtn').disable();
+			UniAppManager.setToolbarButtons(['reset'], true);
+			initFlag = false;
+		},
+		onQueryButtonDown: function() {
+			if(!panelResult.getInvalidMessage()) {
+				return false;
+			}
+			masterGrid.down('#agreeBtn').disable();
+			masterGrid2.getStore().loadData({});
+			directMasterStore1.loadStoreRecords();
+			directMasterStore2.loadStoreRecords();
+		},
+		onResetButtonDown: function() {
+			panelResult.clearForm();
+			directMasterStore1.loadData({});
+			directMasterStore2.loadData({});
+			this.fnInitBinding();
+		},
+		onSaveDataButtonDown: function(config) {
+			if(directMasterStore2.isDirty()) {
+				directMasterStore2.saveStore()
+			} else if(directMasterStore1.isDirty()) {
+				directMasterStore1.saveStore()
+			}
+		}
+	});
+};
+</script>

@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="hum307ukrService">
+	<select id="hum307ukrService.checkCompCode" parameterType="Map" resultType="rMap">
+		    SELECT A.COMP_CODE, A.COMP_NAME
+		    FROM              BOR100T   A  WITH (NOLOCK)
+		           LEFT  JOIN BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE    = #{S_COMP_CODE}    
+		                                                AND M1.MAIN_CODE    = 'B107'
+		                                                AND M1.SUB_CODE     = '20'         
+		    WHERE (A.COMP_CODE      &gt; ''        AND ISNULL(M1.REF_CODE1, 'N') = 'Y')
+		       OR (A.COMP_CODE      = #{S_COMP_CODE}  AND ISNULL(M1.REF_CODE1, 'N') = 'N')
+	</select>
+	
+	<select id="hum307ukrService.select" parameterType="Map" resultType="rMap">	/* 조회쿼리 */
+		  	--  [ 날짜 포맷 유형 설정 ] ------------------------------------------------------------
+		        DECLARE         @DateFormat         NVARCHAR(10)
+		    
+		        SELECT  TOP 1 @DateFormat = CODE_NAME
+		        FROM    BSA100T WITH (NOLOCK)
+		        WHERE   COMP_CODE = #{S_COMP_CODE}
+		        AND     MAIN_CODE = N'B044'
+		        AND     REF_CODE1 = N'Y'
+		    
+		        SET @DateFormat = ISNULL(@DateFormat, N'YYYY.MM.DD')
+		        
+		        
+		        DECLARE 		 @FROM_DATE			NVARCHAR(10)	/* 휴직/산재기간 FR */
+		    					,@TO_DATE			NVARCHAR(10)	/* 휴직/산재기간 TO */
+		    					
+				SET @FROM_DATE = #{FROM_DATE}
+				SET @TO_DATE   = #{TO_DATE}
+		        
+		    --  [ 데이터 조회 ] --------------------------------------------------------------------
+		    
+		    SELECT 
+		           A.DOC_ID
+		         , A.COMP_CODE
+		         , B.DIV_CODE
+		         , B.DEPT_NAME
+		         , M4.CODE_NAME AS POST_CODE
+		         , B.NAME
+		         , B.PERSON_NUMB
+		         , A.OFF_CODE1                 --휴직산재구분
+		         , CASE WHEN ISNULL(A.FROM_DATE, '') = N'' THEN N''
+		                ELSE REPLACE(
+		                     REPLACE(
+		                     REPLACE(@DateFormat, N'YYYY', SUBSTRING(A.FROM_DATE, 1, 4))
+		                                        , N'MM',   SUBSTRING(A.FROM_DATE, 5, 2))
+		                                        , N'DD',   SUBSTRING(A.FROM_DATE, 7, 2))
+		            END AS FROM_DATE            --시작일
+		    
+		         , CASE WHEN ISNULL(A.TO_DATE, '') = N'' THEN N''
+		                ELSE REPLACE(
+		                     REPLACE(
+		                     REPLACE(@DateFormat, N'YYYY', SUBSTRING(A.TO_DATE, 1, 4))
+		                                        , N'MM',   SUBSTRING(A.TO_DATE, 5, 2))
+		                                        , N'DD',   SUBSTRING(A.TO_DATE, 7, 2))
+		            END AS TO_DATE              --종료일
+		         , A.YEAR_APPLY_YN              --연차포함여부
+		         , A.OFF_CODE2                  --휴직산재원인 명칭
+                 
+                 , A.SLRY_APLC_YM               --급여적용년월 추가
+                 
+		         , A.DS_TITLE                   --휴직산재내역
+		         , A.MEMO                       --비고
+		    
+		         , A.INSERT_DB_USER
+		         , A.INSERT_DB_TIME
+		         , A.UPDATE_DB_USER
+		         , A.UPDATE_DB_TIME
+		    
+		      FROM       HUM850T A  WITH(NOLOCK)
+		      INNER JOIN HUM100T B  WITH(NOLOCK) ON B.COMP_CODE       = A.COMP_CODE
+		                                        AND B.PERSON_NUMB     = A.PERSON_NUMB
+		    
+		       LEFT JOIN CBM600T M1 WITH(NOLOCK) ON M1.COMP_CODE      = B.COMP_CODE
+		                                        AND M1.COST_POOL_CODE = B.COST_KIND
+		    
+		       LEFT JOIN BSA100T M2 WITH(NOLOCK) ON M2.COMP_CODE      = B.COMP_CODE
+		                                        AND M2.MAIN_CODE      = N'H024'
+		                                        AND M2.SUB_CODE      != N'$'
+		                                        AND M2.SUB_CODE       = B.EMPLOY_TYPE
+		    
+		       LEFT JOIN BSA100T M3 WITH (NOLOCK) ON M3.COMP_CODE     = B.COMP_CODE
+		                                         AND M3.MAIN_CODE     = N'H181'
+		                                         AND M3.SUB_CODE      = M2.REF_CODE1
+		    
+		       LEFT JOIN BSA100T M4 WITH (NOLOCK) ON M4.COMP_CODE     = B.COMP_CODE
+		                                         AND M4.MAIN_CODE     = N'H005'
+		                                         AND M4.SUB_CODE     != N'$'
+		                                         AND M4.SUB_CODE      = B.POST_CODE
+		    
+		     WHERE A.COMP_CODE   = #{S_COMP_CODE}
+		     	<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">					
+			       AND  B.DIV_CODE IN
+						<foreach collection="DIV_CODE" item="item" separator="," close=")" open="(">
+						 #{item}
+						</foreach>									
+			    </if>
+	            <if test="@foren.Ognl@isNotEmpty(DEPTS)">
+				   AND  B.DEPT_CODE	 IN
+					 <foreach collection="DEPTS" item="item" separator="," close=")" open="(">
+			          		 #{item}
+			    	 </foreach>
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(NAME)">
+				   AND B.NAME   LIKE + '%' +  #{NAME} + '%'
+	            </if>
+	            <if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+				   AND B.PERSON_NUMB  = #{PERSON_NUMB}
+				</if>
+				<if test="RDO_TYPE == &quot;A&quot;">
+					AND B.RETR_DATE = '00000000'		-- 재직구분 (재직)
+				</if>
+				<if test="RDO_TYPE == &quot;B&quot;">
+					AND B.RETR_DATE != '00000000'		-- 재직구분 (퇴사)
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(OFF_CODE1)">
+				   AND A.OFF_CODE1  	= #{OFF_CODE1}									-- 휴직산재구분
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(OFF_CODE2)">
+				   AND A.OFF_CODE2  	= #{OFF_CODE2}									-- 휴직산재원인
+				</if>
+			
+                <if test="DATE_TYPE == &quot;FR&quot;">
+                    <if test="@foren.Ognl@isNotEmpty(FROM_DATE)">
+                        AND A.FROM_DATE &gt;= #{FROM_DATE}
+                    </if>
+                    
+                    <if test="@foren.Ognl@isNotEmpty(TO_DATE)">
+                        AND A.FROM_DATE &lt;= #{TO_DATE}
+                    </if>
+                 </if>
+                 
+                 <if test="DATE_TYPE == &quot;TO&quot;">
+                    <if test="@foren.Ognl@isNotEmpty(FROM_DATE)">
+                        AND A.TO_DATE &gt;= #{FROM_DATE}
+                    </if>
+                    <if test="@foren.Ognl@isNotEmpty(TO_DATE)">
+                        AND A.TO_DATE &lt;= #{TO_DATE}
+                    </if>
+                 </if>
+                
+                <if test="DATE_TYPE == &quot;ALL&quot;">
+    				<if test="@foren.Ognl@isNotEmpty(FROM_DATE)">
+    					AND A.TO_DATE &gt;= #{FROM_DATE}
+    				</if>
+                    
+    				<if test="@foren.Ognl@isNotEmpty(TO_DATE)">
+    					AND A.FROM_DATE &lt;= #{TO_DATE}
+    				</if>
+                </if>
+			    
+			    <if test="@foren.Ognl@isNotEmpty(PAY_GUBUN)">
+				   AND B.PAY_GUBUN  	= #{PAY_GUBUN}									-- 고용형태
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(EMPLOY_GUBUN)">
+				   AND B.EMPLOY_TYPE 	= #{EMPLOY_GUBUN}		 						-- 사원구분
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(PAY_CODE)">
+				   AND B.PAY_CODE 		= #{PAY_CODE}		 	 						-- 급여지급방식
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(COST_POOL)">
+				   AND B.COST_KIND 		= #{COST_POOL}		 	 						-- 사업명
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(PAY_PROV_FLAG)">
+				   AND B.PAY_PROV_FLAG 	= #{PAY_PROV_FLAG}		 						-- 급여지급차수
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(PERSON_GROUP)">
+				   AND M3.SUB_CODE 		= #{PERSON_GROUP}		 						-- 사원그룹
+				</if>
+		    
+		    ORDER BY A.COMP_CODE, B.DIV_CODE, A.FROM_DATE
+ 
+	</select>
+	
+	<insert id="hum307ukrService.insertDetail" parameterType="Map">    /* 추가 */    
+		--hum307ukr.Chum307ukr[fnHum307Save] Query02
+		INSERT INTO HUM850T
+		     ( COMP_CODE
+		     , PERSON_NUMB
+		     , OFF_CODE1
+		     , FROM_DATE
+		     , TO_DATE
+		     , YEAR_APPLY_YN
+		     , OFF_CODE2
+             , SLRY_APLC_YM
+		     <if test="@foren.Ognl@isNotEmpty(DS_TITLE)">
+		     , DS_TITLE
+		     </if>
+		     <if test="@foren.Ognl@isNotEmpty(MEMO)">
+		     , MEMO
+		     </if>
+		     , INSERT_DB_USER
+		     , INSERT_DB_TIME
+		     , UPDATE_DB_USER
+		     , UPDATE_DB_TIME
+		     ) 
+		VALUES
+		     ( #{S_COMP_CODE}
+		     , #{PERSON_NUMB}
+		     , #{OFF_CODE1}
+		     , #{FROM_DATE}
+		     , #{TO_DATE}
+		     , #{YEAR_APPLY_YN}
+		     , #{OFF_CODE2}
+		     , #{SLRY_APLC_YM}
+		     <if test="@foren.Ognl@isNotEmpty(DS_TITLE)">
+		     , #{DS_TITLE}
+		     </if>
+		     <if test="@foren.Ognl@isNotEmpty(MEMO)">
+		     , #{MEMO}
+		     </if>
+		     , #{S_USER_ID}
+		     , GETDATE()
+		     , #{S_USER_ID}
+		     , GETDATE()
+		     )
+	</insert>
+	
+	<update id="hum307ukrService.updateDetail" parameterType="Map">		/* 수정 */
+	--hum307ukr.Chum307ukr[fnHum307Save] Query02
+		UPDATE HUM850T
+		   SET COMP_CODE      = #{S_COMP_CODE}
+		     , PERSON_NUMB    = #{PERSON_NUMB}
+		     , OFF_CODE1      = #{OFF_CODE1}
+		     , FROM_DATE      = #{FROM_DATE}
+		     , TO_DATE        = #{TO_DATE}
+		     , YEAR_APPLY_YN  = #{YEAR_APPLY_YN}
+		     , OFF_CODE2      = #{OFF_CODE2}
+             , SLRY_APLC_YM   = #{SLRY_APLC_YM}
+		     <if test="@foren.Ognl@isExists(_parameter, 'DS_TITLE')">
+		     , DS_TITLE       = #{DS_TITLE}
+		     </if>
+		     <if test="@foren.Ognl@isExists(_parameter, 'MEMO')">
+		     , MEMO           = #{MEMO}
+		     </if>
+		     , INSERT_DB_USER = #{S_USER_ID}
+		     , UPDATE_DB_USER = #{S_USER_ID}
+		     , UPDATE_DB_TIME = GETDATE()
+		     
+		 WHERE DOC_ID         = #{DOC_ID}
+
+	</update>
+	
+	<delete id="hum307ukrService.deleteDetail" parameterType="Map">		/* 삭제 */
+		--hum307ukr.Chum307ukr[fnHum307Save] Query01
+		DELETE FROM HUM850T 
+		 WHERE DOC_ID = #{DOC_ID}
+  
+	</delete>
+</mapper>

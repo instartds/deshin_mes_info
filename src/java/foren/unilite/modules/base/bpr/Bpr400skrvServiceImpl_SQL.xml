@@ -1,0 +1,298 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="bpr400skrvServiceImpl">
+	<select id="bpr400skrvServiceImpl.selectList1" parameterType="Map" resultType="rMap">
+		/* bpr400skrv.Cbpr400skrv[fnBpr400QSt1] Query01 */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		/*1. 입력변수 선언 및 정의 */
+		    DECLARE        @USER_ID             NVARCHAR(100)            /* (필수) 사용자 ID */
+		                 , @TYPE                NVARCHAR(01)            /* (필수) 구분(1:매입, 2:매출) */
+		                 , @CUST_ITEM_CODE      NVARCHAR(20)            /* (선택) 고객품목코드 */
+		                 , @CUST_ITEM_NAME      NVARCHAR(200)           /* (선택) 고객품목명 */
+		                 , @CUST_CODE           NVARCHAR(20)            /* (선택) 거래처코드 */
+		                 , @CUST_NAME           NVARCHAR(200)            /* (선택) 거래처명 */
+		                 , @ITEM_CODE           NVARCHAR(20)            /* (선택) 품목코드 */
+		                 , @ITEM_NAME           NVARCHAR(200)           /* (선택) 품목명 */
+		                 , @COMP_CODE           NVARCHAR(08)            /* (필수) 법인코드 */
+		                 , @DIV_CODE            NVARCHAR(08)            /* (필수) 사업장 */
+		                 , @SEARCH_TYPE         NVARCHAR(01)            /* (필수) 단가검색(C:현재 적용단가, A:전체) */
+		
+		/*	S_COMP_CODE :  loginVO.getCompCode() 
+			S_USER_ID : loginVO.getUserID() */
+
+		    SET        @USER_ID             =   #{S_USER_ID}
+		    SET        @TYPE                =   #{TYPE}
+		    SET        @CUST_ITEM_CODE      =   #{CUST_ITEM_CODE}
+		    SET        @CUST_ITEM_NAME      =   #{CUST_ITEM_NAME}
+		    SET        @CUST_CODE           =   #{CUSTOM_CODE}
+		    SET        @CUST_NAME           =   #{CUSTOM_NAME}
+		    SET        @ITEM_CODE           =   #{ITEM_CODE}
+		    SET        @ITEM_NAME           =   #{ITEM_NAME}
+		    SET        @COMP_CODE           =   #{S_COMP_CODE}
+		    SET        @DIV_CODE            =   #{DIV_CODE}
+		    SET        @SEARCH_TYPE         =   #{OPT_APT_PRICE}
+		
+		/* 2. 명칭 조회 유형 설정 */
+		    DECLARE @RefItem            NVARCHAR(01)
+		
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		    FROM   BSA300T WITH (NOLOCK)
+		    WHERE  USER_ID = @USER_ID
+		
+		    SET @RefItem = ISNULL(@RefItem, '0')
+		
+		/* 3. 임시 테이블 선언 */
+		    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#uniLITE201005191845'))
+		        DROP TABLE #uniLITE201005191845
+		
+		    CREATE TABLE #uniLITE201005191845
+		    (      CUST_SEQ            INTEGER      IDENTITY(1,1)   /* 순번 */
+		         , TYPE                NVARCHAR(01)                 /* 구분(1:구매, 2:판매) */
+		         , CUSTOM_CODE         NVARCHAR(20)                 /* 고객코드 */
+		         , CUSTOM_NAME         NVARCHAR(200)                 /* 고객명 */
+		         , ITEM_CODE           NVARCHAR(20)                 /* 품목코드 */
+		         , ITEM_NAME           NVARCHAR(200)                /* 품목명 */
+		         , SPEC                NVARCHAR(160)                /* 규격 */
+		         , MONEY_UNIT          NVARCHAR(03)                 /* 화폐단위 */
+		         , ORDER_UNIT          NVARCHAR(03)                 /* 구매/판매단위 */
+		         , ITEM_P              NUMERIC(30, 6)               /* 구매/판매단가 */
+		         , APLY_START_DATE     NVARCHAR(10)                 /* 적용시작일 */
+		         , STOCK_UNIT          NVARCHAR(03)                 /* 재고단위(품목정보) */
+		         , CUSTOM_UNIT         NVARCHAR(03)                 /* 구매/판매단위(품목정보) */
+		         , CUSTOM_P            NUMERIC(30, 6)               /* 구매/판매단가(품목정보) */
+		         , ITEM_ACCOUNT        NVARCHAR(02)                 /* 품목계정 */
+		         , TRNS_RATE           NUMERIC(30, 6)               /* 입수(변환계수) */
+		    )
+		
+		/* 4. 조회 데이터 생성 (단가정보) */
+		    INSERT INTO #uniLITE201005191845
+		    (      TYPE               , CUSTOM_CODE       , CUSTOM_NAME
+		         , ITEM_CODE          , ITEM_NAME         , SPEC
+		         , MONEY_UNIT         , ORDER_UNIT        , ITEM_P            , APLY_START_DATE
+		         , STOCK_UNIT         , CUSTOM_UNIT       , CUSTOM_P          , ITEM_ACCOUNT      , TRNS_RATE
+		    )
+		    SELECT
+		           A.TYPE
+		         , A.CUSTOM_CODE
+		         , CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+		                WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+		                ELSE C1.CUSTOM_NAME
+		           END                                                      AS CUSTOM_NAME
+		         , A.ITEM_CODE
+		         , CASE WHEN @RefItem = '1' THEN C2.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN C2.ITEM_NAME2
+		                ELSE C2.ITEM_NAME
+		           END                                                      AS ITEM_NAME
+		         , C2.SPEC
+		         , A.MONEY_UNIT
+		         , A.ORDER_UNIT
+		         , ISNULL(A.ITEM_P, 0)                                      AS ITEM_P
+		         , uniLITE.fnGetUserDate(A.COMP_CODE, A.APLY_START_DATE)    AS APLY_START_DATE
+		         , C2.STOCK_UNIT
+		         , CASE WHEN A.TYPE = '1'   THEN C3.ORDER_UNIT
+		                ELSE                     C2.SALE_UNIT
+		           END                                                      AS CUSTOM_UNIT      /* 단위('1':매입시 구매단위, '2':매출시 판매단위) */
+		         , CASE WHEN A.TYPE = '1'   THEN ISNULL(C3.PURCHASE_BASE_P, 0)
+		                ELSE                     ISNULL(C2.SALE_BASIS_P, 0)
+		           END                                                      AS CUSTOM_UNIT      /* 단가('1':매입시 구매단가, '2':매출시 판매단가) */
+		         , C3.ITEM_ACCOUNT
+		         , C2.TRNS_RATE
+		    FROM              BPR400T  A  WITH (NOLOCK)
+		           LEFT  JOIN (
+		                      SELECT S1.COMP_CODE, S1.TYPE, S1.DIV_CODE, S1.ITEM_CODE, S1.CUSTOM_CODE
+		                           , S1.MONEY_UNIT, S1.ORDER_UNIT, MAX(S1.APLY_START_DATE) AS APLY_START_DATE
+		                      FROM   BPR400T  S1 WITH (NOLOCK)
+		                      WHERE  S1.COMP_CODE        = @COMP_CODE
+		                      AND    S1.TYPE             = @TYPE
+		                      AND    S1.DIV_CODE         = @DIV_CODE OR S1.DIV_CODE = '*'
+		                      AND    S1.APLY_START_DATE  &lt;= CONVERT(VARCHAR(08), GETDATE(), 112)
+		                      GROUP  BY S1.COMP_CODE, S1.TYPE, S1.DIV_CODE, S1.ITEM_CODE, S1.CUSTOM_CODE
+		                           , S1.MONEY_UNIT, S1.ORDER_UNIT
+		                      ) B                       ON B.COMP_CODE        = A.COMP_CODE
+		                                               AND B.TYPE             = A.TYPE
+		                                               AND B.DIV_CODE         = A.DIV_CODE
+		                                               AND B.ITEM_CODE        = A.ITEM_CODE
+		                                               AND B.CUSTOM_CODE      = A.CUSTOM_CODE
+		                                               AND B.MONEY_UNIT       = A.MONEY_UNIT
+		                                               AND B.ORDER_UNIT       = A.ORDER_UNIT
+		                                               AND B.APLY_START_DATE  = A.APLY_START_DATE
+		           INNER JOIN BCM100T  C1 WITH (NOLOCK) ON C1.COMP_CODE       = A.COMP_CODE
+		                                               AND C1.CUSTOM_CODE     = A.CUSTOM_CODE
+		           INNER JOIN BPR100T  C2 WITH (NOLOCK) ON C2.COMP_CODE       = A.COMP_CODE
+		                                               AND C2.ITEM_CODE       = A.ITEM_CODE
+		           LEFT  JOIN BPR200T  C3 WITH (NOLOCK) ON C3.COMP_CODE       = A.COMP_CODE
+		                                               AND C3.DIV_CODE        = A.DIV_CODE
+		                                               AND C3.ITEM_CODE       = A.ITEM_CODE
+		    WHERE  A.COMP_CODE           =       @COMP_CODE
+		    AND    A.TYPE                =       @TYPE
+		    AND  ((A.DIV_CODE            =       @DIV_CODE              OR A.DIV_CODE  = '*'))
+		    AND  ((A.CUSTOM_CODE      LIKE       @CUST_CODE      + '%'                    AND @CUST_CODE      != '') OR (@CUST_CODE      = ''))
+		    AND  ((C1.CUSTOM_NAME     LIKE '%' + @CUST_NAME      + '%' AND @RefItem = '0' AND @CUST_NAME      != '')
+		       OR (C1.CUSTOM_NAME1    LIKE '%' + @CUST_NAME      + '%' AND @RefItem = '1' AND @CUST_NAME      != '')
+		       OR (C1.CUSTOM_NAME2    LIKE '%' + @CUST_NAME      + '%' AND @RefItem = '2' AND @CUST_NAME      != '') OR (@CUST_NAME      = ''))
+		    AND  ((A.ITEM_CODE        LIKE       @ITEM_CODE      + '%'                    AND @ITEM_CODE      != '') OR (@ITEM_CODE      = ''))
+		    AND  ((C2.ITEM_NAME       LIKE '%' + @ITEM_NAME      + '%' AND @RefItem = '0' AND @ITEM_NAME      != '')
+		       OR (C2.ITEM_NAME1      LIKE '%' + @ITEM_NAME      + '%' AND @RefItem = '1' AND @ITEM_NAME      != '')
+		       OR (C2.ITEM_NAME2      LIKE '%' + @ITEM_NAME      + '%' AND @RefItem = '2' AND @ITEM_NAME      != '') OR (@ITEM_NAME      = ''))
+		    AND  ((B.COMP_CODE          IS NOT NULL                                       AND @SEARCH_TYPE    = 'C') OR (@SEARCH_TYPE    = 'A'))
+		    ORDER  BY A.CUSTOM_CODE, A.ITEM_CODE
+		
+		/* 5. 단가정보 조회 */
+		    SELECT A.*
+		    FROM   #uniLITE201005191845 A
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+
+	<select id="bpr400skrvServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+		/* bpr400skrvServiceImpl.selectList2 */         
+		/*bpr400skrv.Cbpr400skrv[fnBpr400QSt2] Query01*/
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		/*  1. 입력변수 선언 및 정의 */
+		    DECLARE        @USER_ID             NVARCHAR(100)             /* (필수) 사용자 ID */
+		                 , @TYPE                NVARCHAR(01)             /* (필수) 구분(1:매입, 2:매출) */
+		                 , @CUST_ITEM_CODE      NVARCHAR(20)             /* (선택) 고객품목코드 */
+		                 , @CUST_ITEM_NAME      NVARCHAR(200)            /* (선택) 고객품목명 */
+		                 , @CUST_CODE           NVARCHAR(20)             /* (선택) 거래처코드 */
+		                 , @CUST_NAME           NVARCHAR(40)             /* (선택) 거래처명 */
+		                 , @ITEM_CODE           NVARCHAR(20)             /* (선택) 품목코드 */
+		                 , @ITEM_NAME           NVARCHAR(200)            /* (선택) 품목명 */
+		                 , @COMP_CODE           NVARCHAR(08)             /* (필수) 법인코드 */
+		                 , @DIV_CODE            NVARCHAR(08)             /* (필수) 사업장 */
+		                 , @SEARCH_TYPE         NVARCHAR(01)             /* (필수) 단가검색(C:현재 적용단가, A:전체) */
+		                                                            
+		    SET        @USER_ID             =   #{S_USER_ID}
+		    SET        @TYPE                =   #{TYPE}
+		    SET        @CUST_ITEM_CODE      =   #{CUST_ITEM_CODE}
+		    SET        @CUST_ITEM_NAME      =   #{CUST_ITEM_NAME}
+		    SET        @CUST_CODE           =   #{CUSTOM_CODE}
+		    SET        @CUST_NAME           =   #{CUSTOM_NAME}
+		    SET        @ITEM_CODE           =   #{ITEM_CODE}
+		    SET        @ITEM_NAME           =   #{ITEM_NAME}
+		    SET        @COMP_CODE           =   #{S_COMP_CODE}
+		    SET        @DIV_CODE            =   #{DIV_CODE}
+		    SET        @SEARCH_TYPE         =   #{OPT_APT_PRICE}
+		
+		/*  2. 명칭 조회 유형 설정 */
+		    DECLARE @RefItem            NVARCHAR(01)
+		
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		    FROM   BSA300T WITH (NOLOCK)
+		    WHERE  USER_ID = @USER_ID
+		
+		    SET @RefItem = ISNULL(@RefItem, '0')
+		
+		/*  3. 임시 테이블 선언 -*/
+		    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#uniLITE201005192145'))
+		        DROP TABLE #uniLITE201005192145
+		
+		    CREATE TABLE #uniLITE201005192145
+		    (      CUST_SEQ            INTEGER      IDENTITY(1,1)    /* 순번 */
+		         , TYPE                NVARCHAR(01)                  /* 구분(1:구매, 2:판매) */
+		         , CUSTOM_CODE         NVARCHAR(20)                  /* 고객코드 */
+		         , CUSTOM_NAME         NVARCHAR(40)                  /* 고객명 */
+		         , CUSTOM_ITEM_CODE    NVARCHAR(20)                  /* 고객품목코드 */
+		         , CUSTOM_ITEM_NAME    NVARCHAR(500)                 /* 고객품목명 */
+		         , CUSTOM_ITEM_SPEC    NVARCHAR(40)                  /* 고객규격 */
+		         , ORDER_UNIT          NVARCHAR(03)                  /* 구매/판매단위 */
+		         , CUSTOM_TRNS_RATE    NUMERIC(30, 6)                /* 고객입수(변환계수) */
+		         , APLY_START_DATE     NVARCHAR(10)                  /* 적용시작일 */
+		         , ITEM_CODE           NVARCHAR(20)                  /* 품목코드 */
+		         , ITEM_NAME           NVARCHAR(200)                 /* 품목명 */
+		         , SPEC                NVARCHAR(160)                 /* 규격 */
+		         , STOCK_UNIT          NVARCHAR(03)                  /* 재고단위(품목정보) */
+		         , CUSTOM_UNIT         NVARCHAR(03)                  /* 구매/판매단위(품목정보) */
+		         , ITEM_ACCOUNT        NVARCHAR(02)                  /* 품목계정 */
+		         , TRNS_RATE           NUMERIC(30, 6)                /* 입수(변환계수) */
+		    )
+		
+		/* 4. 조회 데이터 생성 (단가정보) */
+		    INSERT INTO #uniLITE201005192145
+		    (      TYPE               , CUSTOM_CODE       , CUSTOM_NAME
+		         , CUSTOM_ITEM_CODE   , CUSTOM_ITEM_NAME  , CUSTOM_ITEM_SPEC
+		         , ORDER_UNIT         , CUSTOM_TRNS_RATE  , APLY_START_DATE
+		         , ITEM_CODE          , ITEM_NAME         , SPEC
+		         , STOCK_UNIT         , CUSTOM_UNIT       , ITEM_ACCOUNT      , TRNS_RATE
+		    )
+		    SELECT
+		           A.TYPE
+		         , A.CUSTOM_CODE
+		         , CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+		                WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+		                ELSE C1.CUSTOM_NAME
+		           END                                                      AS CUSTOM_NAME
+		         , A.CUSTOM_ITEM_CODE
+		         , A.CUSTOM_ITEM_NAME
+		         , A.CUSTOM_ITEM_SPEC
+		         , A.ORDER_UNIT
+		         , A.TRNS_RATE                                              AS CUSTOM_TRNS_RATE
+		         , uniLITE.fnGetUserDate(A.COMP_CODE, A.APLY_START_DATE)    AS APLY_START_DATE
+		         , A.ITEM_CODE
+		         , CASE WHEN @RefItem = '1' THEN C2.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN C2.ITEM_NAME2
+		                ELSE C2.ITEM_NAME
+		           END                                                      AS ITEM_NAME
+		         , C2.SPEC
+		         , C2.STOCK_UNIT
+		         , CASE WHEN A.TYPE = '1'   THEN C3.ORDER_UNIT
+		                ELSE                     C2.SALE_UNIT
+		           END                                                      AS CUSTOM_UNIT      /* 단위('1':매입시 구매단위, '2':매출시 판매단위)*/
+		         , C3.ITEM_ACCOUNT
+		         , C2.TRNS_RATE
+		    FROM              BPR300T  A  WITH (NOLOCK)
+		           LEFT  JOIN (
+		                      SELECT S1.COMP_CODE, S1.TYPE, S1.DIV_CODE, S1.ITEM_CODE, S1.CUSTOM_CODE
+		                           , MAX(S1.APLY_START_DATE) AS APLY_START_DATE
+		                      FROM   BPR300T  S1 WITH (NOLOCK)
+		                      WHERE  S1.COMP_CODE        = @COMP_CODE
+		                      AND    S1.TYPE             = @TYPE
+		                      AND    S1.DIV_CODE         = @DIV_CODE
+		                      AND    S1.APLY_START_DATE &lt;= CONVERT(VARCHAR(08), GETDATE(), 112)
+		                      GROUP  BY S1.COMP_CODE, S1.TYPE, S1.DIV_CODE, S1.ITEM_CODE, S1.CUSTOM_CODE
+		                      ) B                       ON B.COMP_CODE        = A.COMP_CODE
+		                                               AND B.TYPE             = A.TYPE
+		                                               AND B.DIV_CODE         = A.DIV_CODE
+		                                               AND B.ITEM_CODE        = A.ITEM_CODE
+		                                               AND B.CUSTOM_CODE      = A.CUSTOM_CODE
+		                                            
+		                                               AND B.APLY_START_DATE  = A.APLY_START_DATE
+		           INNER JOIN BCM100T  C1 WITH (NOLOCK) ON C1.COMP_CODE       = A.COMP_CODE
+		                                               AND C1.CUSTOM_CODE     = A.CUSTOM_CODE
+		           INNER JOIN BPR100T  C2 WITH (NOLOCK) ON C2.COMP_CODE       = A.COMP_CODE
+		                                               AND C2.ITEM_CODE       = A.ITEM_CODE
+		           LEFT  JOIN BPR200T  C3 WITH (NOLOCK) ON C3.COMP_CODE       = A.COMP_CODE
+		                                               AND C3.DIV_CODE        = A.DIV_CODE
+		                                               AND C3.ITEM_CODE       = A.ITEM_CODE
+		    WHERE  A.COMP_CODE           =       @COMP_CODE
+		    AND    A.TYPE                =       @TYPE
+		    AND  ((A.DIV_CODE            =       @DIV_CODE              OR A.DIV_CODE  = '*'))
+		    AND  ((A.CUSTOM_ITEM_CODE LIKE       @CUST_ITEM_CODE + '%'                    AND @CUST_ITEM_CODE != '') OR (@CUST_ITEM_CODE = ''))
+		    AND  ((A.CUSTOM_ITEM_NAME LIKE '%' + @CUST_ITEM_NAME + '%'                    AND @CUST_ITEM_NAME != '') OR (@CUST_ITEM_NAME = ''))
+		    AND  ((A.CUSTOM_CODE      LIKE       @CUST_CODE      + '%'                    AND @CUST_CODE      != '') OR (@CUST_CODE      = ''))
+		    AND  ((C1.CUSTOM_NAME     LIKE '%' + @CUST_NAME      + '%' AND @RefItem = '0' AND @CUST_NAME      != '')
+		       OR (C1.CUSTOM_NAME1    LIKE '%' + @CUST_NAME      + '%' AND @RefItem = '1' AND @CUST_NAME      != '')
+		       OR (C1.CUSTOM_NAME2    LIKE '%' + @CUST_NAME      + '%' AND @RefItem = '2' AND @CUST_NAME      != '') OR (@CUST_NAME      = ''))
+		    AND  ((A.ITEM_CODE        LIKE       @ITEM_CODE      + '%'                    AND @ITEM_CODE      != '') OR (@ITEM_CODE      = ''))
+		    AND  ((C2.ITEM_NAME       LIKE '%' + @ITEM_NAME      + '%' AND @RefItem = '0' AND @ITEM_NAME      != '')
+		       OR (C2.ITEM_NAME1      LIKE '%' + @ITEM_NAME      + '%' AND @RefItem = '1' AND @ITEM_NAME      != '')
+		       OR (C2.ITEM_NAME2      LIKE '%' + @ITEM_NAME      + '%' AND @RefItem = '2' AND @ITEM_NAME      != '') OR (@ITEM_NAME      = ''))
+		    AND  ((B.COMP_CODE          IS NOT NULL                                       AND @SEARCH_TYPE    = 'C') OR (@SEARCH_TYPE    = 'A'))
+		    ORDER  BY A.CUSTOM_CODE, A.CUSTOM_ITEM_CODE, A.ITEM_CODE
+		
+		  /*5. 단가정보 조회*/
+		    SELECT A.*
+		    FROM   #uniLITE201005192145 A
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+</mapper>

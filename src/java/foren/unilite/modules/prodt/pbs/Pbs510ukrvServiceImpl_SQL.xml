@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="pbs510ukrvServiceImpl">
+
+	<select id="pbs510ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+BEGIN
+
+	SET ANSI_WARNINGS OFF	-- 0 오륲 처리
+	SET ARITHIGNORE ON
+	SET ARITHABORT OFF
+	SET NOCOUNT ON			-- 실행 메시지 출력 제거
+
+	--  [ 변수 값 할당 ] --------------------------------------------------------------------------------------------------
+	DECLARE	@COMP_CODE		NVARCHAR(08) = #{S_COMP_CODE}		-- (필수) 법인코드
+	,		@DIV_CODE		NVARCHAR(08) = #{DIV_CODE}			-- (필수) 사업장
+	,		@WORK_SHOP_CODE	NVARCHAR(16) = #{WORK_SHOP_CODE}	-- 작업장
+	,		@USER_ID		NVARCHAR(100)						-- USER ID
+	,		@STD_DATE		NVARCHAR(8)  = CONVERT(VARCHAR, CONVERT(DATETIME, #{STD_DATE}), 112)	-- (필수) 기준일
+	,		@PERIOD_PARAM	NVARCHAR(10) = #{PERIOD_PARAM}		-- WEEK, MONTH 구분값
+	,		@STD_DAYOFWEEK	NVARCHAR(10) = #{STD_DAYOFWEEK}		-- 주차 시작요일 (code : B604)
+	
+	--  [ 임시테이블 ] --------------------------------------------------------------------------------------------------
+	IF OBJECT_ID('tempdb..#DYNAMIC_DATE') IS NOT NULL DROP TABLE #DYNAMIC_DATE;	-- 동적 컬럼(날짜)
+	IF OBJECT_ID('tempdb..#ORG_RESULT') IS NOT NULL DROP TABLE #ORG_RESULT;		-- 고정값 Data Table
+	IF OBJECT_ID('tempdb..#PVT_RESULT') IS NOT NULL DROP TABLE #PVT_RESULT;		-- PIVOT Data Table
+
+	--  [ 기준일 포함 된 기간 생성] -------------------------------------------------------------------------------------------
+	DECLARE @DATE DATETIME = CONVERT (DATETIME, @STD_DATE);	-- 기준일 형식 변경
+	DECLARE @P_DT_FROM	NVARCHAR(8);		-- 주간, 월간 시작 날짜
+	DECLARE @P_DT_TO	NVARCHAR(8);		-- 주간, 월간 마지막 날짜
+	
+	IF(@PERIOD_PARAM = 'WEEK')
+	BEGIN
+	--  [ 날짜 시작 요일 설정 ] ----------------------------------------------------------------------------------------------
+
+		IF(@STD_DAYOFWEEK = '일요일')
+		BEGIN
+			SET DATEFIRST 7;	-- 일요일 ~ 토요일	// 일주일의 시작 요일을 1부터 7까지의 숫자로 설정
+		END
+		ELSE IF (@STD_DAYOFWEEK = '월요일')
+		BEGIN
+			SET DATEFIRST 1;	-- 월요일 ~ 일요일
+		END;
+		
+		SET @P_DT_FROM = CONVERT(CHAR(8), DATEADD(DAY, 1-DATEPART(DW, @DATE), CONVERT(DATE, @DATE)), 112);	-- DW : 1~7 = 요일 번호
+		SET @P_DT_TO = CONVERT(CHAR(8), DATEADD(DAY, 7-DATEPART(DW, @DATE), CONVERT(DATE, @DATE)), 112);
+		
+	END
+	ELSE IF (@PERIOD_PARAM = 'MONTH')
+	BEGIN
+		/* 미 구현 */
+		SET @P_DT_FROM = CONVERT(CHAR(8), DATEADD(DAY, 1-DATEPART(DW, @DATE), CONVERT(DATE, @DATE)), 112);	-- DW : 1~7 = 요일 번호
+		SET @P_DT_TO = CONVERT(CHAR(8), DATEADD(DAY, 7-DATEPART(DW, @DATE), CONVERT(DATE, @DATE)), 112);
+		
+	END;
+	-- SELECT @P_DT_FROM, @P_DT_TO;
+	
+	--  [ 고정값 Data Table ] --------------------------------------------------------------------------------------------
+	WITH Q (COMP_CODE, DIV_CODE, OPENING_TIME, WORK_SHOP_CODE, TREE_NAME,
+			PROG_WORK_CODE, PROG_WORK_NAME, EQU_CODE, EQU_NAME,/*STD_CAPA_TIME, OVER_CAPA_TIME,*/ OVER_TIME_YN,
+			REMARK, REAL_TIME, PVT_REAL_TIME, TIME1, TIME2, TIME3, TIME4, TIME5, WORK_DATE)
+	AS
+	(
+		SELECT	A.COMP_CODE
+		,		A.DIV_CODE					-- 사업장코드
+		,		LEFT(B.OPENING_TIME, 5)
+				AS OPENING_TIME				-- 시업시간
+		,		A.WORK_SHOP_CODE			-- 작업장코드
+		,		C.TREE_NAME					-- 작업장명
+		,		A.PROG_WORK_CODE			-- 공정코드
+		,		D.PROG_WORK_NAME			-- 공정명
+		,		A.EQU_CODE					-- 설비코드
+		,		E.EQU_NAME					-- 설비명
+		,		CASE WHEN B.WORK_DATE = @STD_DATE THEN B.OVER_TIME_YN ELSE 'N' END
+				AS OVER_TIME_YN				-- 초과 유무
+		,		CASE WHEN B.WORK_DATE = @STD_DATE THEN 
+					B.REMARK
+				END AS REMARK				-- 비고
+		--,		CONVERT(NUMERIC(4, 1), ROUND(B.STD_CAPA_TIME, 2) / 60)		
+		--		AS STD_CAPA_TIME	-- 기준 공수
+		--,		CONVERT(NUMERIC(4, 1), ROUND(B.OVER_CAPA_TIME, 2) / 60)		
+		--		AS OVER_CAPA_TIME	-- 초과 공수
+		,		CASE WHEN B.WORK_DATE = @STD_DATE THEN 
+					CASE WHEN B.OVER_TIME_YN = 'Y' THEN CONVERT(NUMERIC(4, 1), ROUND((ISNULL(B.TIME1, 0) + ISNULL(B.TIME2, 0) + ISNULL(B.TIME3, 0) + ISNULL(B.TIME4, 0) + ISNULL(B.TIME5, 0)), 2) / 60)
+					WHEN B.OVER_TIME_YN = 'N' THEN CONVERT(NUMERIC(4, 1), ROUND((ISNULL(B.TIME1, 0) + ISNULL(B.TIME2, 0) + ISNULL(B.TIME3, 0) + ISNULL(B.TIME4, 0)), 2) / 60) END
+				ELSE 0 END AS REAL_TIME		-- 실가동시간(h)
+		,		CASE WHEN B.OVER_TIME_YN = 'Y' THEN CONVERT(NUMERIC(4, 1), ROUND((ISNULL(B.TIME1, 0) + ISNULL(B.TIME2, 0) + ISNULL(B.TIME3, 0) + ISNULL(B.TIME4, 0) + ISNULL(B.TIME5, 0)), 2) / 60)
+				WHEN B.OVER_TIME_YN = 'N' THEN CONVERT(NUMERIC(4, 1), ROUND((ISNULL(B.TIME1, 0) + ISNULL(B.TIME2, 0) + ISNULL(B.TIME3, 0) + ISNULL(B.TIME4, 0)), 2) / 60)
+				END AS PVT_REAL_TIME		-- 실가동시간(h) for PIVOT
+		,		CASE WHEN B.WORK_DATE = @STD_DATE THEN													-- (선택 된)기준일 TIME Data만 보이기 위함
+					CASE WHEN ISNULL(CAST(B.TIME1 AS NVARCHAR), '0') = '0' THEN 'false' ELSE 'true' END
+				END AS TIME1
+		,		CASE WHEN B.WORK_DATE = @STD_DATE THEN 
+					CASE WHEN ISNULL(CAST(B.TIME2 AS NVARCHAR), '0') = '0' THEN 'false' ELSE 'true' END
+				END AS TIME2
+		,		CASE WHEN B.WORK_DATE = @STD_DATE THEN 
+					CASE WHEN ISNULL(CAST(B.TIME3 AS NVARCHAR), '0') = '0' THEN 'false' ELSE 'true' END
+				END AS TIME3
+		,		CASE WHEN B.WORK_DATE = @STD_DATE THEN 
+					CASE WHEN ISNULL(CAST(B.TIME4 AS NVARCHAR), '0') = '0' THEN 'false' ELSE 'true' END
+				END AS TIME4
+		,		CASE WHEN B.OVER_TIME_YN = 'Y' THEN
+					CASE WHEN B.WORK_DATE = @STD_DATE THEN 
+						CASE WHEN ISNULL(CAST(B.TIME5 AS NVARCHAR), '') = '' THEN 'false' ELSE 'true' END
+					END
+				ELSE 'false' END AS TIME5
+		,		B.WORK_DATE					-- 가동일자	// 동적 컬럼
+		
+		-- 설비별캘린더정보
+		FROM EQU200T A WITH (NOLOCK)												--COMP_CODE, DIV_CODE, EQU_CODE_TYPE, EQU_CODE
+		
+		-- 공장캘린더정보
+		LEFT OUTER JOIN PBS510T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE		--COMP_CODE, DIV_CODE, EQU_CODE, WORK_DATE
+												AND B.DIV_CODE = A.DIV_CODE
+												AND B.EQU_CODE = A.EQU_CODE
+		-- 작업장정보
+		LEFT OUTER JOIN BSA230T C WITH (NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+												AND C.TYPE_LEVEL = A.DIV_CODE
+												AND C.TREE_CODE = A.WORK_SHOP_CODE
+		-- 공정정보
+		LEFT OUTER JOIN PBS200T D WITH (NOLOCK) ON D.COMP_CODE = A.COMP_CODE
+												AND D.DIV_CODE = A.DIV_CODE
+												AND D.WORK_SHOP_CODE = A.WORK_SHOP_CODE
+												AND D.PROG_WORK_CODE = A.PROG_WORK_CODE
+		-- 설비정보
+		LEFT OUTER JOIN EQU200T E WITH (NOLOCK) ON E.COMP_CODE = A.COMP_CODE
+												AND E.DIV_CODE = A.DIV_CODE
+												AND E.EQU_CODE = A.EQU_CODE
+		WHERE	A.COMP_CODE = @COMP_CODE
+			AND A.DIV_CODE  = @DIV_CODE						<!-- (필수)사업장 -->
+			AND B.WORK_DATE	BETWEEN @P_DT_FROM AND @P_DT_TO	<!-- (필수)기준일 -->
+		<if test="@foren.Ognl@isNotEmpty(WORK_SHOP_CODE)"> 
+			AND A.WORK_SHOP_CODE  = @WORK_SHOP_CODE			<!-- 작업장 -->
+		</if> 
+	)
+	SELECT  *
+	INTO    #ORG_RESULT
+	FROM    Q OPTION(MAXRECURSION 0); -- 수정
+	--SELECT * FROM #ORG_RESULT;
+
+	--  [ 동적 컬럼(날짜) 생성 ] ------------------------------------------------------------------------------------------------
+	CREATE TABLE #DYNAMIC_DATE
+	(
+		WORK_DATE NVARCHAR(16)
+	)
+
+	WHILE @P_DT_FROM <![CDATA[<=]]> @P_DT_TO
+	BEGIN
+		INSERT INTO #DYNAMIC_DATE VALUES (LEFT(@P_DT_FROM, 8));		/* (FORMAT(CAST(@P_DT_FROM AS DATETIME), 'yyyy년MM월dd일')); -- formatting */
+
+		SET @P_DT_FROM = CONVERT(CHAR(8), DATEADD(DD, 1, @P_DT_FROM), 112);
+	END
+
+	--SELECT * FROM #DYNAMIC_DATE;
+	--SELECT WORK_DATE, LEFT(DATENAME(DW, WORK_DATE), 1) AS DATE_NAME FROM #DYNAMIC_DATE;	-- ex) 출력 : 20210523 일
+
+	--  [ DYNAMIC PIVOT ] --------------------------------------------------------------------------------------------------
+	DECLARE @sSql NVARCHAR(MAX); SET @sSql = '';	-- 날짜 동적 목록
+	DECLARE @sCol NVARCHAR(MAX); SET @sCol = '';	-- UI 컬럼 NAME이랑 맞춘 컬럼 명
+	DECLARE @mEXEC NVARCHAR(MAX); SET @mEXEC = '';	-- 최종 Select sql
+
+	SELECT @sSql = @sSql +'[' + WORK_DATE + '],'
+	FROM ( SELECT DISTINCT WORK_DATE FROM #DYNAMIC_DATE ) AS A;
+
+	SET @sSql = LEFT(@sSql, LEN(@sSql) - 1);	-- 마지막 , 제거
+	--PRINT @sSql;
+	
+	SELECT @sCol = @sCol + '
+		SUM(CAST(ISNULL([' + WORK_DATE + '], 0) AS NUMERIC(4, 1))) AS [' + 'WORK_DATE_' + WORK_DATE + '],'	-- UI 컬럼 NAME이랑 맞춤
+	FROM ( SELECT DISTINCT WORK_DATE FROM #DYNAMIC_DATE ) AS B;
+
+	SET @sCol = LEFT(@sCol, LEN(@sCol) - 1);
+	--PRINT @sCol;
+
+	SET @mEXEC = 'SELECT	*
+INTO	#PVT_RESULT
+FROM	#ORG_RESULT
+PIVOT	(SUM(PVT_REAL_TIME) FOR WORK_DATE IN ('+ @sSql +')) AS WORK_DATE;
+
+SELECT	COMP_CODE, DIV_CODE, OPENING_TIME, WORK_SHOP_CODE, TREE_NAME,
+		PROG_WORK_CODE, PROG_WORK_NAME, EQU_CODE, EQU_NAME, /*STD_CAPA_TIME, OVER_CAPA_TIME, OVER_TIME_YN,*/
+		MAX(REAL_TIME) AS REAL_TIME,
+		MAX(REMARK) AS REMARK,
+		MAX(TIME1) AS TIME1,
+		MAX(TIME2) AS TIME2,
+		MAX(TIME3) AS TIME3,
+		MAX(TIME4) AS TIME4,
+		MAX(TIME5) AS TIME5, ' + @sCol +'
+FROM #PVT_RESULT
+GROUP BY COMP_CODE, DIV_CODE, OPENING_TIME, WORK_SHOP_CODE, TREE_NAME, PROG_WORK_CODE, PROG_WORK_NAME, EQU_CODE, EQU_NAME;'
+
+	--PRINT @mEXEC
+	EXEC (@mEXEC);
+	
+	SET DATEFIRST 7;	-- MS SQL default
+END
+
+	</select>
+	
+	<select id="pbs510ukrvServiceImpl.selectOpeningTime" parameterType="Map" resultType="rMap">
+BEGIN
+
+	SET NOCOUNT ON
+
+	--  [ 변수 값 할당 ] --------------------------------------------------------------------------------------------------
+	DECLARE	@COMP_CODE		NVARCHAR(08) = #{S_COMP_CODE}		-- (필수) 법인코드
+	,		@DIV_CODE		NVARCHAR(08) = #{DIV_CODE}			-- (필수) 사업장
+	,		@STD_DATE		NVARCHAR(8)  = #{STD_DATE}			-- (필수) 기준일
+
+		SELECT	TOP 1 LEFT(B.OPENING_TIME, 5) AS OPENING_TIME	-- 시업시간
+		FROM EQU200T A WITH (NOLOCK)
+		LEFT OUTER JOIN PBS510T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+												AND B.DIV_CODE = A.DIV_CODE
+												AND B.EQU_CODE = A.EQU_CODE
+		WHERE	A.COMP_CODE = @COMP_CODE
+			AND A.DIV_CODE  = @DIV_CODE						<!-- (필수)사업장 -->
+			AND B.WORK_DATE	= @STD_DATE						<!-- (필수)기준일 -->
+	
+END 
+	</select>
+
+	<select id="pbs510ukrvServiceImpl.selectTimeInfoStore" parameterType="Map" resultType="rMap">
+BEGIN
+
+	SET NOCOUNT ON
+
+	--  [ 변수 값 할당 ] --------------------------------------------------------------------------------------------------
+	DECLARE	@COMP_CODE		NVARCHAR(08) = #{S_COMP_CODE}		-- (필수) 법인코드
+	,		@DIV_CODE		NVARCHAR(08) = #{DIV_CODE}			-- (필수) 사업장
+	,		@STD_DATE		NVARCHAR(8)  = CONVERT(VARCHAR, CONVERT(DATETIME, #{STD_DATE}), 112)	-- (필수) 기준일
+
+		SELECT	
+			'false' AS SELECT_ALL
+		,A.PROG_WORK_CODE			-- 공정코드
+		,		A.EQU_CODE					-- 설비코드
+		,		CASE WHEN B.OVER_TIME_YN = 'Y' THEN CONVERT(NUMERIC(4, 1), ROUND((ISNULL(B.TIME1, 0) + ISNULL(B.TIME2, 0) + ISNULL(B.TIME3, 0) + ISNULL(B.TIME4, 0) + ISNULL(B.TIME5, 0)), 2) / 60)
+					WHEN B.OVER_TIME_YN = 'N' THEN CONVERT(NUMERIC(4, 1), ROUND((ISNULL(B.TIME1, 0) + ISNULL(B.TIME2, 0) + ISNULL(B.TIME3, 0) + ISNULL(B.TIME4, 0)), 2) / 60)
+				ELSE 0 END AS REAL_TIME		-- 실가동시간(h)
+		,		CASE WHEN ISNULL(CAST(B.TIME1 AS NVARCHAR), '0') = '0' THEN 'false' ELSE 'true' END	AS TIME1
+		,		CASE WHEN ISNULL(CAST(B.TIME2 AS NVARCHAR), '0') = '0' THEN 'false' ELSE 'true' END	AS TIME2
+		,		CASE WHEN ISNULL(CAST(B.TIME3 AS NVARCHAR), '0') = '0' THEN 'false' ELSE 'true' END	AS TIME3
+		,		CASE WHEN ISNULL(CAST(B.TIME4 AS NVARCHAR), '0') = '0' THEN 'false' ELSE 'true' END	AS TIME4
+		,		CASE WHEN B.OVER_TIME_YN = 'Y' THEN
+					CASE WHEN ISNULL(CAST(B.TIME5 AS NVARCHAR), '') = '' THEN 'false' ELSE 'true' END
+				ELSE 'false' END AS TIME5
+		,		B.REMARK	-- 비고
+				
+		FROM EQU200T A WITH (NOLOCK)
+		LEFT OUTER JOIN PBS510T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+												AND B.DIV_CODE = A.DIV_CODE
+												AND B.EQU_CODE = A.EQU_CODE
+		WHERE	A.COMP_CODE = @COMP_CODE
+			AND A.DIV_CODE  = @DIV_CODE						<!-- (필수)사업장 -->
+			AND B.WORK_DATE	= @STD_DATE						<!-- (필수)기준일 -->
+	
+END 
+	</select>
+
+	<update id="pbs510ukrvServiceImpl.update" parameterType="Map">
+	--pbs510ukrvServiceImpl.update.
+	
+	SET ANSI_WARNINGS OFF	-- 0 오륲 처리
+	SET ARITHIGNORE ON
+	SET ARITHABORT OFF
+	SET NOCOUNT ON			-- 실행 메시지 출력 제거
+	
+	
+	
+	UPDATE PBS510T
+	SET	OPENING_TIME	=	#{OPENING_TIME}			-- 시업시간
+	,	TIME1			=	#{TIME1}
+	,	TIME2			=	#{TIME2}
+	,	TIME3			=	#{TIME3}
+	,	TIME4			=	#{TIME4}
+	,	TIME5			=	#{TIME5}
+	,	OVER_TIME_YN	=	#{OVER_TIME_YN}			-- 야근YN
+	,	REMARK			=	#{REMARK}				-- 비고
+	,	UPDATE_DB_USER	=	#{S_USER_ID}
+	,	UPDATE_DB_TIME	=	GETDATE()
+	
+	WHERE	COMP_CODE	= #{COMP_CODE}			-- (필수) 법인코드
+		AND	DIV_CODE	= #{DIV_CODE}			-- (필수) 사업장
+		AND	EQU_CODE	= #{EQU_CODE}			-- 설비코드
+		AND	WORK_DATE	= #{STD_DATE}			-- 가동일자
+    </update>
+
+</mapper>

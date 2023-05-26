@@ -1,0 +1,531 @@
+<?xml version="1.0" encoding="UTF-8"?><!---->
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_ssa700skrv_wmServiceImpl">
+	<select id="s_ssa700skrv_wmServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* s_ssa700skrv_wmServiceImpl.selectList */
+		DECLARE     @CompCode       NVARCHAR(10)
+		          , @DivCode        NVARCHAR(10)
+		          , @BASIS_DATE     NVARCHAR(08)
+		          
+	    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE ID=OBJECT_ID('tempdb..#TMP_SSA613'))
+	        DROP TABLE #TMP_SSA613
+
+
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+
+		SET @CompCode       = #{S_COMP_CODE}
+		SET @DivCode        = #{DIV_CODE}
+		SET @BASIS_DATE     = #{BASIS_DATE}
+
+		SELECT COMP_CODE
+		     , DIV_CODE
+		     , BASE_DATE
+		     , SALE_AMT
+			 , AMT_ECEPT_FEE
+		     , COLLECT_AMT
+		     , GUBUN
+		     , BAL_TYPE
+		     , BASIS_NUM
+		     , AGENT_TYPE
+		     , AMT_I
+		     , TAX_AMT_O
+		  INTO #TMP_SSA613
+		  FROM (
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , A.SALE_DATE                         AS BASE_DATE
+		              , A.MONEY_UNIT
+		              , SUM(A.SALE_LOC_AMT_I)               AS AMT_I
+		              , SUM(A.TAX_AMT_O)                    AS TAX_AMT_O
+		              , SUM(A.SALE_LOC_AMT_I + A.TAX_AMT_O) AS SALE_AMT
+		              --추가
+		              , SUM(A.SALE_LOC_AMT_I + A.TAX_AMT_O) 
+		              * (100 - CASE WHEN ISNULL(S.REF_CODE2, '') = '' THEN 0
+		                            ELSE CONVERT(NUMERIC(30, 6), ISNULL(S.REF_CODE2, ''))
+		                       END) / 100                   AS AMT_ECEPT_FEE   --매출금액(수수료제외)
+		              , 0                                   AS COLLECT_AMT
+		              , 0                                   AS REMAIN_AMT
+		              , '5'                                 AS GUBUN    --매출
+		              , CASE WHEN A.BILL_TYPE = '40' THEN SUM(A.SALE_LOC_AMT_I + A.TAX_AMT_O)
+		                     ELSE 0
+		                END                                 AS CARD_SALE
+		              , '매출'                                AS BAL_TYPE
+		              , A.BILL_NUM                          AS BASIS_NUM
+		              , 0                                   AS PRE_PAY
+		              , Z.AGENT_TYPE
+		           FROM      SALES_V A
+		           LEFT JOIN BCM100T Z WITH(NOLOCK) ON Z.COMP_CODE    = A.COMP_CODE
+		                                           AND Z.CUSTOM_CODE  = A.SALE_CUSTOM_CODE
+		           LEFT JOIN (SELECT COMP_CODE, MAIN_CODE,  REF_CODE1, MAX(REF_CODE2) AS REF_CODE2
+		                        FROM BSA100T WITH(NOLOCK)
+		                       WHERE COMP_CODE = @CompCode
+		                         AND MAIN_CODE = 'Z006'
+		                         AND SUB_CODE != '$'
+		                       GROUP BY COMP_CODE, MAIN_CODE,  REF_CODE1) S ON S.COMP_CODE = A.COMP_CODE
+		                                                                   AND S.MAIN_CODE = 'Z006'
+		                                                                   AND S.REF_CODE1 = A.SALE_CUSTOM_CODE
+		          WHERE A.COMP_CODE        = @CompCode
+		            AND A.SALE_DATE        = @BASIS_DATE
+		          GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_DATE, A.MONEY_UNIT, A.BILL_TYPE, A.BILL_NUM, Z.AGENT_TYPE, S.REF_CODE2
+
+		         UNION ALL
+
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , A.COLLECT_DATE         AS BASE_DATE
+		              , A.MONEY_UNIT
+		              , 0                      AS AMT_I           --20210512 추가
+		              , 0                      AS TAX_AMT_O       --20210512 추가
+		              , 0                      AS SALE_AMT
+		              , 0                      AS AMT_ECEPT_FEE --매출액(수수료제외)
+		              , CASE WHEN A.COLLECT_TYPE = '80' THEN 0
+		                     ELSE SUM(A.COLLECT_FOR_AMT)
+		                END                    AS COLLECT_AMT
+		              , 0                      AS REMAIN_AMT
+		              , '6'                    AS GUBUN           --수금
+		              , 0                      AS CARD_SALE
+		              , '수금'                   AS BAL_TYPE
+		              , A.COLLECT_NUM          AS BASIS_NUM
+		              , CASE WHEN A.COLLECT_TYPE = '80' THEN SUM(A.COLLECT_FOR_AMT)
+		                     ELSE 0
+		                END                    AS PRE_PAY
+		              , C1.AGENT_TYPE
+		           FROM       SCO100T A  WITH(NOLOCK)
+		           INNER JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE
+		                                             AND C1.CUSTOM_CODE = A.CUSTOM_CODE
+		          WHERE A.COMP_CODE     = @CompCode
+		            AND A.COLLECT_DATE  = @BASIS_DATE
+		         GROUP BY A.COMP_CODE, A.DIV_CODE, A.COLLECT_DATE, A.MONEY_UNIT, A.COLLECT_NUM, A.COLLECT_TYPE, C1.AGENT_TYPE
+		  ) X
+		GROUP BY COMP_CODE, DIV_CODE, MONEY_UNIT, BASE_DATE, GUBUN, BAL_TYPE, BASIS_NUM, PRE_PAY, CARD_SALE, SALE_AMT, COLLECT_AMT
+		       , AGENT_TYPE
+		       , AMT_I, TAX_AMT_O
+		       , AMT_ECEPT_FEE
+
+		SELECT Z.BASE_DATE                                                                    --날짜
+		     , Z.AGENT_TYPE
+		     , SUM(Z.AMT_I)                                                                   AS AMT_I
+		     , SUM(Z.TAX_AMT_O)                                                               AS TAX_AMT_O
+		     , SUM(Z.SALE_AMT)                                                                AS SALE_AMT      --총액
+		     , SUM(Z.AMT_ECEPT_FEE)                                                           AS AMT_ECEPT_FEE --수수료제외(추가)
+		     , SUM(Z.COLLECT_FOR_AMT)                                                         AS COLLECT_FOR_AMT
+		     , SUM(Z.SALE_COST)                                                               AS SALE_COST
+		     , SUM(Z.SALE_PROFIT)                                                             AS SALE_PROFIT
+		     , SUM(Z.PROFIT_RATE)                                                             AS PROFIT_RATE
+		  FROM (
+		        SELECT A.BASE_DATE                                                                    --날짜
+		             , A.AGENT_TYPE
+		             , SUM(A.AMT_I)                                                                   AS AMT_I
+		             , SUM(A.TAX_AMT_O)                                                               AS TAX_AMT_O
+		             , SUM(A.SALE_AMT)                                                                AS SALE_AMT      --총액
+		             , SUM(A.AMT_ECEPT_FEE)                                                           AS AMT_ECEPT_FEE --수수료제외(추가)
+		             , SUM(A.COLLECT_AMT)                                                             AS COLLECT_FOR_AMT 
+		             , CASE WHEN GUBUN = '5' THEN unilite.fnAmtWonCalc(SUM(ISNULL(B.SALE_COST, 0)), 3)
+		                    ELSE 0
+		               END                                                                            AS SALE_COST
+		             , SUM(A.AMT_ECEPT_FEE) - CASE WHEN GUBUN = '5' THEN unilite.fnAmtWonCalc(SUM(ISNULL(B.SALE_COST, 0)), 3)
+		                                           ELSE 0
+		                                      END                                                     AS SALE_PROFIT
+		             , CASE WHEN GUBUN = '5' THEN CASE WHEN unilite.fnAmtWonCalc(SUM(ISNULL(B.SALE_COST, 0)), 3) = 0 THEN 100
+		                                               ELSE ROUND(SUM(A.AMT_ECEPT_FEE - unilite.fnAmtWonCalc(ISNULL(B.SALE_COST, 0), 3)) / unilite.fnAmtWonCalc(SUM(ISNULL(B.SALE_COST, 0)), 3) * 100, 2)
+		                                          END
+		                    ELSE 0
+		               END                                                                            AS PROFIT_RATE
+		          FROM        #TMP_SSA613 A WITH(NOLOCK)
+		          LEFT JOIN (
+		                      SELECT X.COMP_CODE
+		                           , X.DIV_CODE
+		                           , X.BILL_NUM
+		                           , CASE WHEN SUM(ISNULL(X.SALE_COST, 0)) != 0 THEN SUM(ISNULL(X.SALE_COST, 0))
+		                                  ELSE SUM(ISNULL(X.BOM_SALE_COST, 0))
+		                             END                                        AS  SALE_COST  --매출원가
+		                        FROM (
+		                              SELECT A.COMP_CODE
+		                                   , A.DIV_CODE
+		                                   , A.BILL_NUM
+		                                   , A.BILL_SEQ
+		                                   , A.ITEM_CODE         AS PROD_ITEM_CODE
+		                                   , B.ITEM_CODE         AS CHILD_ITEM_CODE
+		                                   , A.SALE_Q
+		                                   , B.UNIT_Q
+		                                   , F.AVERAGE_P         AS PROD_AVERAGE_P 
+		                                   , F1.AVERAGE_P        AS OPTION_AVERAGE_P
+		                                   --, A.WH_CODE
+		                                   , CASE WHEN P.ITEM_ACCOUNT IN ('10', '20') THEN F1.AVERAGE_P * B.UNIT_Q 
+		                                          ELSE F.AVERAGE_P * A.SALE_Q 
+		                                     END                 AS SALE_COST
+		                                   , 0                   AS BOM_SALE_COST
+		                                   --, A.*  
+		                                FROM      SALES_V      A  WITH(NOLOCK)
+		                                LEFT JOIN S_SOF115T_WM B  WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE AND B.DIV_CODE = A.DIV_CODE
+		                                                                      AND B.ORDER_NUM = A.ORDER_NUM AND B.SER_NO = A.SER_NO
+		                                LEFT JOIN BPR200T      P  WITH(NOLOCK) ON P.COMP_CODE = A.COMP_CODE AND P.DIV_CODE = A.DIV_CODE
+		                                                                      AND P.ITEM_CODE = A.ITEM_CODE
+		                                LEFT JOIN BIV200T      F  WITH(NOLOCK) ON F.COMP_CODE = A.COMP_CODE AND F.DIV_CODE = A.DIV_CODE  --수주상세(SOF110T) 기준
+		                                                                      AND F.ITEM_CODE = A.ITEM_CODE AND F.WH_CODE = A.WH_CODE
+		                                                                      AND F.BASIS_YYYYMM = SUBSTRING(A.SALE_DATE, 1, 6)
+		                                LEFT JOIN BIV200T      F1 WITH(NOLOCK) ON F1.COMP_CODE = B.COMP_CODE AND F1.DIV_CODE = B.DIV_CODE  --수주옵션(S_SOF115T_WM) 기준
+		                                                                      AND F1.ITEM_CODE = B.ITEM_CODE AND F1.WH_CODE = A.WH_CODE
+		                                                                      AND F1.BASIS_YYYYMM = SUBSTRING(A.SALE_DATE, 1, 6)
+		                               WHERE A.COMP_CODE  = @CompCode
+		                                 AND A.DIV_CODE   = @DivCode
+		                                 AND A.SALE_DATE  = @BASIS_DATE
+
+		                              UNION ALL
+
+		                              SELECT A.COMP_CODE, A.DIV_CODE, A.BILL_NUM, A.BILL_SEQ
+		                                   , A.ITEM_CODE AS PROD_ITEM_CODE
+		                                   , C.CHILD_ITEM_CODE AS CHILD_ITEM_CODE
+		                                   , A.SALE_Q
+		                                   , C.UNIT_Q / C.PROD_UNIT_Q AS UNIT_Q
+		                                   , 0 AS PROD_AVERAGE_P
+		                                   , D.AVERAGE_P AS BOM_AVERAGE_P
+		                                   , 0 AS SALE_COST
+		                                   , D.AVERAGE_P * C.UNIT_Q / C.PROD_UNIT_Q  AS BOM_SALE_COST
+		                                FROM      SALES_V A WITH(NOLOCK)
+		                                LEFT JOIN BPR500T C WITH(NOLOCK) ON C.COMP_CODE        = A.COMP_CODE AND C.DIV_CODE = A.DIV_CODE
+		                                                                AND C.PROD_ITEM_CODE   = A.ITEM_CODE
+		                                                                AND C.CHILD_ITEM_CODE != '$'
+		                                                                AND C.START_DATE      &lt;= A.SALE_DATE
+		                                                                AND C.STOP_DATE       &gt;= A.SALE_DATE
+		                                LEFT JOIN BIV200T D WITH(NOLOCK) ON D.COMP_CODE        = C.COMP_CODE AND D.DIV_CODE = C.DIV_CODE  --수주옵션(S_SOF115T_WM) 기준
+		                                                                AND D.ITEM_CODE        = C.CHILD_ITEM_CODE AND D.WH_CODE = A.WH_CODE
+		                                                                AND D.BASIS_YYYYMM     = SUBSTRING(A.SALE_DATE, 1, 6)
+		                               WHERE A.COMP_CODE  = @CompCode
+		                                 AND A.DIV_CODE   = @DivCode
+		                                 AND A.SALE_DATE  = @BASIS_DATE
+		                      ) X
+		                      GROUP BY  X.COMP_CODE, X.DIV_CODE, X.BILL_NUM ) B ON B.COMP_CODE = A.COMP_CODE
+		                                                                       AND B.DIV_CODE  = A.DIV_CODE
+		                                                                       AND B.BILL_NUM  = A.BASIS_NUM
+		         WHERE A.COMP_CODE = @CompCode
+		           AND A.DIV_CODE  = @DivCode
+		         GROUP BY A.BASE_DATE, A.AGENT_TYPE, GUBUN--, A.BAL_TYPE
+		  ) Z
+		  GROUP BY Z.BASE_DATE, Z.AGENT_TYPE
+		  ORDER BY Z.AGENT_TYPE
+		SET NOCOUNT OFF
+	</select>
+
+	<select id="s_ssa700skrv_wmServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+		/* s_ssa700skrv_wmServiceImpl.selectList2 */
+		DECLARE     @CompCode       NVARCHAR(10)
+		          , @DivCode        NVARCHAR(10)
+		          , @BASIS_DATE     NVARCHAR(08)
+
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+
+		SET @CompCode       = #{S_COMP_CODE}
+		SET @DivCode        = #{DIV_CODE}
+		SET @BASIS_DATE     = #{BASIS_DATE}
+
+		SELECT COMP_CODE
+		     , DIV_CODE
+		     , BASE_DATE
+		     , GUBUN
+		     , BAL_TYPE
+		     , BASIS_NUM
+		     , AGENT_TYPE
+		     , COLLECT_AMT
+			 , PAY_AMT
+		  INTO #TMP_SSA613
+		  FROM (
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , B.CHANGE_BASIS_DATE       AS BASE_DATE
+		              , B.MONEY_UNIT
+		              , SUM(A.AMOUNT_I + A.TAX_I) AS COLLECT_AMT     -- PURCHASE_AMT 
+					  , 0 AS PAY_AMT
+		              , '5'                       AS GUBUN           --지급결의
+		              , '매입'                      AS BAL_TYPE
+		              , A.CHANGE_BASIS_NUM        AS BASIS_NUM
+		              , C1.AGENT_TYPE
+		           FROM       MAP200T A  WITH(NOLOCK)--A.CHANGE_BASIS_NUM,
+		           INNER JOIN MAP100T B  WITH(NOLOCK) ON B.COMP_CODE        = A.COMP_CODE
+		                                             AND B.DIV_CODE         = A.DIV_CODE
+		                                             AND B.CHANGE_BASIS_NUM = A.CHANGE_BASIS_NUM
+		           INNER JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE       = A.COMP_CODE
+		                                             AND C1.CUSTOM_CODE     = A.CUSTOM_CODE
+		          WHERE A.COMP_CODE          = @CompCode
+		            AND A.DIV_CODE 			 = @DivCode
+		            AND B.CHANGE_BASIS_DATE  = @BASIS_DATE
+		          GROUP BY A.COMP_CODE, A.DIV_CODE, B.CHANGE_BASIS_DATE, B.MONEY_UNIT, A.CHANGE_BASIS_NUM, C1.AGENT_TYPE
+UNION  ALL 
+
+			SELECT A.COMP_CODE
+				 , A.DIV_CODE
+				 --, A.ACCNT
+				 --, B.ACCNT_NAME
+				 , A.AC_DATE					AS BASE_DATE
+				 , A.MONEY_UNIT
+				 , 0 AS COLLECT_AMT 
+
+				-- , SUM(CASE WHEN B.JAN_DIVI = '1' THEN A.CR_AMT_I
+				--			WHEN B.JAN_DIVI = '2' THEN A.DR_AMT_I
+				--	   END)											AS PAY_AMT
+				 ,  SUM(A.DR_AMT_I) 										
+					 - SUM((CASE WHEN B.SPEC_DIVI = 'J2' THEN A.CR_AMT_I
+						ELSE 0   END))								AS PAY_AMT		-- 선급 반제
+				
+				, '5' AS GUBUN
+				, '매입' AS BAL_TYPE
+				, A.AC_DATE
+				, C.AGENT_TYPE
+				 --, CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+					--	WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+					--	ELSE ''
+				 --  END												AS CUSTOM_CODE
+				 --, C.CUSTOM_NAME
+			  FROM AGB200T A
+					INNER JOIN		ABA400T B
+								 ON B.COMP_CODE	= A.COMP_CODE
+								AND B.ACCNT		= A.ACCNT
+								AND ((B.SPEC_DIVI	IN ('J1', 'J2'))	OR	--	J1 : 외상매입금, J2 : 선급금
+									 (B.ACCNT		IN ('')))				--	추가 계정
+					INNER JOIN		BCM100T C
+								 ON C.COMP_CODE		= A.COMP_CODE
+								AND C.CUSTOM_CODE	= CASE	WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+															WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+															ELSE ''
+													  END
+			 WHERE A.COMP_CODE	= @CompCode
+				AND A.DIV_CODE = @DivCode
+			   AND A.AC_DATE	= @BASIS_DATE 
+			   AND (A.BOOK_CODE1 = 'A4' OR A.BOOK_CODE2 = 'A4')				--	계정잔액 장부에서 거래처코드로 관리중인 것만.
+			 GROUP BY A.COMP_CODE
+				 , A.DIV_CODE
+				 --, A.ACCNT
+				 --, B.ACCNT_NAME
+				 , A.AC_DATE
+				 , C.AGENT_TYPE
+				 , A.MONEY_UNIT
+				 --, CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+					--	WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+					--	ELSE ''
+				 --  END
+				 --, C.CUSTOM_NAME
+			HAVING SUM(CASE WHEN B.JAN_DIVI = '1' THEN A.CR_AMT_I
+							WHEN B.JAN_DIVI = '2' THEN A.DR_AMT_I
+					   END) != 0
+
+
+
+		  ) X
+		 --GROUP BY COMP_CODE, DIV_CODE, MONEY_UNIT, BASE_DATE, GUBUN, BAL_TYPE, BASIS_NUM, SALE_AMT;
+		GROUP BY COMP_CODE, DIV_CODE, MONEY_UNIT, BASE_DATE, GUBUN, BAL_TYPE, BASIS_NUM, COLLECT_AMT, PAY_AMT
+		       , AGENT_TYPE
+
+		SELECT A.BASE_DATE              --날짜
+		     , A.BAL_TYPE               --구분
+		     , A.AGENT_TYPE
+		     , SUM(A.COLLECT_AMT)       AS AMT_I
+			 , SUM(PAY_AMT)					    AS PAY_AMT
+		  FROM #TMP_SSA613 A WITH(NOLOCK)
+		 WHERE A.COMP_CODE = @CompCode
+		   AND A.DIV_CODE  = @DivCode
+		 GROUP BY A.BASE_DATE, A.BAL_TYPE, A.AGENT_TYPE
+		 ORDER BY A.BASE_DATE
+
+		SET NOCOUNT OFF
+	</select>
+
+	<select id="s_ssa700skrv_wmServiceImpl.selectList3" parameterType="Map" resultType="rMap">
+		/* s_ssa700skrv_wmServiceImpl.selectList3 */
+
+		DECLARE     @CompCode       NVARCHAR(10)
+		          , @DivCode        NVARCHAR(10)
+		          , @BASIS_DATE     NVARCHAR(08)
+
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+
+		SET @CompCode       = #{S_COMP_CODE}
+		SET @DivCode        = #{DIV_CODE}
+		SET @BASIS_DATE     = #{BASIS_DATE}
+
+		
+		--	[현금] 현금
+		SELECT A.COMP_CODE
+			 , A.DIV_CODE
+			 , '1'				AS SORT_ORDER
+			 , A.ACCNT			AS GUBUN
+			 , B.ACCNT_NAME		AS BAL_TYPE --GUBUN_NAME
+			 , @BASIS_DATE 		AS AC_DATE
+			 , SUM(CASE WHEN A.AC_DATE &gt;= SUBSTRING(@BASIS_DATE , 1, 4) + '01' AND A.AC_DATE &lt; @BASIS_DATE 
+							 THEN CASE WHEN B.JAN_DIVI = '1' THEN A.DR_AMT_I - A.CR_AMT_I ELSE A.CR_AMT_I - A.DR_AMT_I END
+						ELSE 0
+				   END)			AS CARRY_AMT
+			 , SUM(CASE WHEN A.AC_DATE = @BASIS_DATE 
+							 THEN CASE WHEN B.JAN_DIVI = '1' THEN A.DR_AMT_I ELSE A.CR_AMT_I END
+						ELSE 0
+				   END)			AS OUT_AMT --RECEIPT_AMT
+			 , SUM(CASE WHEN A.AC_DATE = @BASIS_DATE 
+							 THEN CASE WHEN B.JAN_DIVI = '1' THEN A.CR_AMT_I ELSE A.DR_AMT_I END
+						ELSE 0
+				   END)			AS IN_AMT --PAYMENT_AMT
+			 , SUM(CASE WHEN A.AC_DATE &gt;= SUBSTRING(@BASIS_DATE , 1, 4) + '01' AND A.AC_DATE &lt;= @BASIS_DATE 
+							 THEN CASE WHEN B.JAN_DIVI = '1' THEN A.DR_AMT_I - A.CR_AMT_I ELSE A.CR_AMT_I - A.DR_AMT_I END
+						ELSE 0
+				   END)			AS IN_JAN_AMT --JAN_AMT
+		  FROM AGB100T A
+				INNER JOIN		ABA400T B
+							 ON B.COMP_CODE	= A.COMP_CODE
+							AND B.ACCNT		= A.ACCNT
+							AND B.SPEC_DIVI	= 'A'			--	A : 현금
+		 WHERE A.COMP_CODE	=  @CompCode
+		 	AND A.DIV_CODE = @DivCode
+		   AND A.AC_DATE	BETWEEN SUBSTRING(@BASIS_DATE , 1, 4) + '01' AND @BASIS_DATE 
+		 GROUP BY A.COMP_CODE
+			 , A.DIV_CODE
+			 , A.ACCNT
+			 , B.ACCNT_NAME
+		
+		UNION ALL
+		
+		--	[현금] 은행
+		SELECT A.COMP_CODE
+			 , A.DIV_CODE
+			 , '2'				AS SORT_ORDER
+			 --, A.ACCNT
+			 , C.BANK_KIND		AS GUBUN
+			 , D.CODE_NAME		AS GUBUN_NAME
+			 , @BASIS_DATE 		AS AC_DATE
+			 , SUM(CASE WHEN A.AC_DATE &gt;= SUBSTRING(@BASIS_DATE , 1, 4) + '01' AND A.AC_DATE &lt; @BASIS_DATE 
+							 THEN CASE WHEN B.JAN_DIVI = '1' THEN A.DR_AMT_I - A.CR_AMT_I ELSE A.CR_AMT_I - A.DR_AMT_I END
+						ELSE 0
+				   END)			AS CARRY_AMT
+			 , SUM(CASE WHEN A.AC_DATE = @BASIS_DATE 
+							 THEN CASE WHEN B.JAN_DIVI = '1' THEN A.DR_AMT_I ELSE A.CR_AMT_I END
+						ELSE 0
+				   END)			AS RECEIPT_AMT
+			 , SUM(CASE WHEN A.AC_DATE = @BASIS_DATE 
+							 THEN CASE WHEN B.JAN_DIVI = '1' THEN A.CR_AMT_I ELSE A.DR_AMT_I END
+						ELSE 0
+				   END)			AS PAYMENT_AMT
+			 , SUM(CASE WHEN A.AC_DATE &gt;= SUBSTRING(@BASIS_DATE , 1, 4) + '01' AND A.AC_DATE &lt;= @BASIS_DATE 
+							 THEN CASE WHEN B.JAN_DIVI = '1' THEN A.DR_AMT_I - A.CR_AMT_I ELSE A.CR_AMT_I - A.DR_AMT_I END
+						ELSE 0
+				   END)			AS JAN_AMT
+		  FROM AGB200T A
+				INNER JOIN		ABA400T B
+							 ON B.COMP_CODE	= A.COMP_CODE
+							AND B.ACCNT		= A.ACCNT
+				INNER JOIN		AFS100T C					--	예적금마스터
+							 ON C.COMP_CODE	= A.COMP_CODE
+							AND C.SAVE_CODE	= CASE	WHEN A.BOOK_CODE1 = 'O1' THEN A.BOOK_DATA1
+													WHEN A.BOOK_CODE2 = 'O1' THEN A.BOOK_DATA2
+											  END
+				LEFT OUTER JOIN	BSA100T D
+							 ON D.COMP_CODE	= C.COMP_CODE
+							AND D.MAIN_CODE	= 'A049'		--	예적금구분코드
+							AND D.SUB_CODE	= C.BANK_KIND
+		 WHERE A.COMP_CODE	= @CompCode
+		 	AND A.DIV_CODE = @DivCode
+		   AND A.AC_DATE	BETWEEN SUBSTRING(@BASIS_DATE , 1, 4) + '01' AND @BASIS_DATE 
+		 GROUP BY A.COMP_CODE
+			 , A.DIV_CODE
+			 --, A.ACCNT
+			 , C.BANK_KIND
+			 , D.CODE_NAME
+		
+		UNION ALL
+		
+		--	[현금] 카드
+		SELECT A.COMP_CODE
+			 , A.DIV_CODE
+			 , '3'				AS SORT_ORDER
+			 , A.ACCNT			AS GUBUN
+			 , B.ACCNT_NAME		AS GUBUN_NAME
+			 , @BASIS_DATE 		AS AC_DATE
+			 , 0				AS CARRY_AMT
+			 , 0				AS RECEIPT_AMT
+			 , SUM(CASE WHEN A.AC_DATE = @BASIS_DATE 
+							 THEN CASE WHEN B.JAN_DIVI = '1' THEN A.CR_AMT_I ELSE A.DR_AMT_I END
+						ELSE 0
+				   END)			AS PAYMENT_AMT
+			 , 0				AS JAN_AMT
+		  FROM AGB100T A
+				INNER JOIN		ABA400T B
+							 ON B.COMP_CODE	= A.COMP_CODE
+							AND B.ACCNT		= A.ACCNT
+		 WHERE A.COMP_CODE	= @CompCode
+		 	AND A.DIV_CODE = @DivCode
+		   AND A.AC_DATE	BETWEEN SUBSTRING(@BASIS_DATE , 1, 4) + '01' AND @BASIS_DATE 
+		   AND A.ACCNT		IN ('26205')					--	카드 지출 계정
+		 GROUP BY A.COMP_CODE
+			 , A.DIV_CODE
+			 , A.ACCNT
+			 , B.ACCNT_NAME
+		
+		 ORDER BY COMP_CODE, SORT_ORDER, DIV_CODE, GUBUN
+
+	</select>
+
+	<select id="s_ssa700skrv_wmServiceImpl.selectList4" parameterType="Map" resultType="rMap">
+/* s_ssa700skrv_wmServiceImpl.selectList4 */
+		DECLARE     @CompCode       NVARCHAR(10)
+		          , @DivCode        NVARCHAR(10)
+		          , @BASIS_DATE     NVARCHAR(08)
+
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+
+		SET @CompCode       = #{S_COMP_CODE}
+		SET @DivCode        = #{DIV_CODE}
+		SET @BASIS_DATE     = #{BASIS_DATE}
+
+
+		SELECT COMP_CODE, DIV_CODE, '미수금액' AS BAL_TYPE
+			, SUM(UNCOLLECT_AMT) AS OUT_AMT
+		FROM fnGetBalance4CustomTbl ( @CompCode, @DivCode, '', @BASIS_DATE, 'KRW', '3')
+		GROUP BY COMP_CODE, DIV_CODE
+
+
+	UNION ALL
+
+	SELECT A.COMP_CODE
+		 , A.DIV_CODE
+		 , '미결제액' AS BAL_TYPE
+		 , SUM(CASE WHEN A.AC_DATE &gt;= SUBSTRING(@BASIS_DATE, 1, 4) + '01' AND A.AC_DATE &lt;= @BASIS_DATE
+						 THEN CASE WHEN B.JAN_DIVI = '1' THEN A.DR_AMT_I - A.CR_AMT_I ELSE A.CR_AMT_I - A.DR_AMT_I END
+					ELSE 0
+			   END)	  + MAX(ISNULL(C.OUT_AMT, 0))		AS OUT_AMT -- JAN_AMT
+	  FROM AGB100T A
+			INNER JOIN		ABA400T B
+						 ON B.COMP_CODE	= A.COMP_CODE
+						AND B.ACCNT		= A.ACCNT
+						AND ((B.SPEC_DIVI	IN ('J1', 'J2'))	OR	--	J1 : 외상매입금, J2 : 선급금
+							 (B.ACCNT		IN ('')))				--	추가 계정
+
+		LEFT JOIN  ( SELECT COMP_CODE, DIV_CODE --, LEFT(@FrDate, 6)  AS BASE_DATE
+							, SUM(ISNULL(AMOUNT_I, 0) + ISNULL(VAT_AMOUNT_O, 0) )  AS OUT_AMT
+						FROM MAP100T 
+
+						WHERE COMP_CODE = @CompCode
+							AND DIV_CODE = @DivCode
+							AND ISNULL(AC_DATE, '') = ''	
+						GROUP BY COMP_CODE, DIV_CODE--, CUSTOM_CODE, MONEY_UNIT, CUSTOM_CODE
+				) C ON C.COMP_CODE = A.COMP_CODE AND C.DIV_CODE = A.DIV_CODE 
+	 WHERE A.COMP_CODE	= @CompCode
+	   AND A.DIV_CODE = @DivCode
+	   AND A.AC_DATE	BETWEEN SUBSTRING(@BASIS_DATE, 1, 4) + '01' AND @BASIS_DATE
+
+	 GROUP BY A.COMP_CODE
+		 , A.DIV_CODE
+		 --, A.ACCNT
+		 --, B.ACCNT_NAME
+
+		SET NOCOUNT OFF
+		
+	</select>
+
+	<select id="s_ssa700skrv_wmServiceImpl.selectList5" parameterType="Map" resultType="rMap">
+		/* s_ssa700skrv_wmServiceImpl.selectList5 */
+		SELECT SUM(STOCK_I) AS STOCK_AMT
+		  FROM BIV100T WITH(NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND DIV_CODE  = #{DIV_CODE}
+	</select>
+</mapper>

@@ -1,0 +1,485 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="bpr501ukrvService">
+	
+	<select id="bpr501ukrvService.selectList" parameterType="Map" resultType="foren.framework.lib.tree.GenericTreeDataMap">
+        --bpr501ukrv.Cbpr501ukrv[fnBpr501QStd] Query01
+        BEGIN
+            SET NOCOUNT ON
+        
+            DECLARE    @STATUS                     NVARCHAR(10)             -- (필수) 상태
+                     , @COMP_CODE                  NVARCHAR(08)             -- (필수) 법인코드
+                     , @USER_ID                    NVARCHAR(100)            -- (필수) 사용자명
+                     , @DIV_CODE                   NVARCHAR(08)             -- (필수) 사업장코드
+                     , @ITEM_CODE                  NVARCHAR(20)             -- (선택) 품목코드
+                     , @ITEM_NAME                  NVARCHAR(200)            -- (선택) 품명
+                     , @ITEM_ACCOUNT               NVARCHAR(02)             -- (선택) 품목계정
+        
+            SET @STATUS        = 'QUERY'
+            SET @COMP_CODE     = #{S_COMP_CODE}
+            SET @USER_ID       = #{S_USER_ID}
+            SET @DIV_CODE      = #{DIV_CODE}
+            SET @ITEM_CODE     = #{PROD_ITEM_CODE}
+            SET @ITEM_NAME     = #{ITEM_NAME}
+            SET @ITEM_ACCOUNT  = #{ITEM_ACCOUNT}
+        
+            DECLARE    @RecordSet TABLE    
+                       (
+                       SEQ                         INTEGER IDENTITY (1, 1)  -- 순번
+                     , COMP_CODE                   NVARCHAR(08)             -- 법인
+                     , DIV_CODE                    NVARCHAR(08)             -- 사업장
+                     , ITEM_CODE                   NVARCHAR(20)             -- 품목코드
+                     , SORT_FLD                    NVARCHAR(1000)           -- 정렬필드
+                     , LEVEL                       INTEGER                  -- 레벨
+                       )
+        
+            DECLARE    @Stack     TABLE 
+                       (
+                       key_id                      INTEGER IDENTITY(1, 1)
+                     , prod_item_code              NVARCHAR(20)             -- 모품목코드
+                     , child_item_code             NVARCHAR(20)             -- 자품목코드
+                     , level                       INTEGER
+                       )
+        
+            -- 변수 선언
+            DECLARE    @level                      INTEGER
+                     , @KeyId                      INTEGER
+                     , @ProdItemCode               NVARCHAR(20)
+                     , @ChildItemCode              NVARCHAR(20)
+                     , @UnitQ                      NUMERIC(18, 6)
+                     , @ProdUnitQ                  NUMERIC(18, 6)
+                     , @SortFld                    NVARCHAR(1000)
+        
+            DECLARE    @BaseDate                   NVARCHAR(08)             -- 기준일자
+        
+            SET @BaseDate = CONVERT(NVARCHAR(08), GETDATE(), 112)
+        
+            IF @STATUS != 'INIT'
+            BEGIN
+        
+                DECLARE    @RefItem                    NVARCHAR(01)             -- 사용자 품목명 참조 유형
+        
+                SELECT TOP 1 @RefItem = ref_item
+                FROM   BSA300T WITH (NOLOCK)
+                WHERE  comp_code = @COMP_CODE
+                AND    user_id   = @USER_ID
+        
+                SET @RefItem = ISNULL(@RefItem, '0')
+                SET @level   = 1
+                SET @SortFld = ''
+        
+                --    1) MPS 품목을 Stack에 등록
+                INSERT @Stack(prod_item_code, child_item_code, level)
+                SELECT A.PROD_ITEM_CODE, A.CHILD_ITEM_CODE, @level
+                FROM              uniLITE.fnValidBOM(@COMP_CODE, @DIV_CODE, @BaseDate, 'AA') A
+                       INNER JOIN BPR100T C1 WITH (NOLOCK) ON C1.comp_code = A.comp_code
+                                                          AND C1.item_code = A.prod_item_code
+                       INNER JOIN BPR200T C2 WITH (NOLOCK) ON C2.comp_code = A.comp_code
+                                                          AND C2.div_code  = A.div_code
+                                                          AND C2.item_code = A.prod_item_code
+                WHERE  A.comp_code       = @COMP_CODE
+                AND    A.div_code        = @DIV_CODE
+                AND    A.child_item_code = '$'
+                AND    (
+                       (@ITEM_CODE       = '') OR (@ITEM_CODE    != '' AND A.prod_item_code LIKE @ITEM_CODE + '%')
+                       )
+                AND    (
+                       (@ITEM_NAME       = '') OR (@REFITEM = '0' AND @ITEM_NAME != '' AND C1.item_name  LIKE @ITEM_NAME + '%')
+                                               OR (@REFITEM = '1' AND @ITEM_NAME != '' AND C1.item_name1 LIKE @ITEM_NAME + '%')
+                                               OR (@REFITEM = '2' AND @ITEM_NAME != '' AND C1.item_name2 LIKE @ITEM_NAME + '%')
+                       )
+                AND    (
+                       (@ITEM_ACCOUNT    = '') OR (@ITEM_ACCOUNT != '' AND C2.item_account     = @ITEM_ACCOUNT)
+                       )
+        
+                WHILE @level &gt;= 1
+                BEGIN
+                    IF @level = 1
+                        SET @SortFld = ''
+        
+                    IF EXISTS (SELECT TOP 1 level FROM @Stack WHERE level = @level)    -- 남은 스택의 데이타가 존재하는냐?
+                    BEGIN
+                        -- 데이타 읽기
+                        SELECT TOP 1 @KeyId = A.key_id, @ProdItemCode = A.prod_item_code, @ChildItemCode = A.child_item_code
+                        FROM   @Stack A
+                        WHERE  A.level = @level
+        
+                        IF @level = 1
+                           SET @SortFld = @ProdItemCode
+                        ELSE
+                           -- @SortFld의 마지막품목이 해당 모품목이 아닐경우 해당 모품목 이후의 품목코드는 삭제
+                           SET @SortFld = LEFT(@SortFld, CHARINDEX(@ProdItemCode, @SortFld) + LEN(@ProdItemCode) -1)
+                           SET @SortFld = @SortFld + CASE WHEN @ChildItemCode != '$' THEN @ChildItemCode ELSE '' END
+        
+                        INSERT INTO @RecordSet(COMP_CODE, DIV_CODE, ITEM_CODE, SORT_FLD, LEVEL)
+                        SELECT @COMP_CODE, @DIV_CODE, CASE @ChildItemCode WHEN '$' THEN @ProdItemCode ELSE @ChildItemCode END AS ITEM_CODE
+                             , @SortFld
+                             , A.LEVEL
+                        FROM   @Stack  A
+                        WHERE  key_id = @KeyId
+        
+                        -- 임시 스택은 삭제
+                        DELETE FROM @Stack
+                        WHERE  key_id = @KeyId
+        
+                        -- 자식들을 조사..
+                        INSERT @Stack(prod_item_code, child_item_code, level)
+                        SELECT A.prod_item_code, A.child_item_code, @level + 1
+                        FROM   uniLITE.fnValidBOM(@COMP_CODE, @DIV_CODE, @BaseDate, 'AA') A
+                        WHERE  A.comp_code        = @COMP_CODE
+                        AND    A.div_code         = @DIV_CODE
+                        AND    A.prod_item_code   = CASE @ChildItemCode WHEN '$' THEN @ProdItemCode ELSE @ChildItemCode END
+                        AND    A.child_item_code != '$'
+                        AND    A.child_item_code IN (SELECT prod_item_code FROM BPR500T WITH (NOLOCK) WHERE comp_code = @COMP_CODE AND div_code = @DIV_CODE)
+            
+        --'2008/09/18 BOM등록이므로 사용여부/구성여부에 상관없이 모두 나오도록 수정
+        --'                AND    A.use_yn           = '1'                -- 사용여부가 '2'인 하위 자재 전체 제외
+                        ORDER BY seq
+        
+                        IF @@ROWCOUNT &gt; 0
+                            SET @level = @level + 1
+                    END
+                    ELSE
+                        BEGIN
+                            SELECT TOP 1 @SortFld = REPLACE(@SortFld, item_code, '')
+                            FROM   @RecordSet
+                            WHERE  level &lt;= @level
+                            ORDER BY SEQ DESC
+        
+                            SET @level   = @level - 1
+                        END
+                END -- WHILE
+            END
+        
+            -- 모품목 Tree View 조회
+            SELECT A.LEVEL  AS 'id'
+                 , CASE WHEN ISNULL(A.LEVEL, '') = ''THEN 'root'          
+                        ELSE A.LEVEL 
+                    END 'parentId'
+                 , A.COMP_CODE
+                 , A.DIV_CODE
+                 , A.ITEM_CODE
+                 , CASE WHEN @RefItem = '0' THEN C1.item_name
+                        WHEN @RefItem = '1' THEN C1.item_name1
+                        WHEN @RefItem = '2' THEN C1.item_name2
+                        ELSE C1.item_name
+                   END AS ITEM_NAME
+                 , C1.SPEC
+                 , A.SORT_FLD
+            FROM             @RecordSet A
+                   LEFT JOIN BPR100T C1 WITH (NOLOCK) ON C1.comp_code = @COMP_CODE
+                                                     AND C1.item_code = A.item_code
+            ORDER BY A.SEQ
+        
+            SET NOCOUNT OFF
+        END				
+	</select>
+	
+	<select id="bpr501ukrvService.selectList2" parameterType="Map" resultType="rMap">
+        --bpr501ukrv.Cbpr501ukrv[fnBpr501QSt1] Query01
+        BEGIN
+            DECLARE    @STATUS                     NVARCHAR(10)             -- (필수) 상태
+                     , @COMP_CODE                  NVARCHAR(08)             -- (필수) 법인코드
+                     , @USER_ID                    NVARCHAR(100)             -- (필수) 사용자명
+                     , @DIV_CODE                   NVARCHAR(08)             -- (필수) 사업장코드
+                     , @ITEM_CODE                  NVARCHAR(20)             -- (선택) 모품목코드
+                     , @ITEM_TYPE                  NVARCHAR(10)             -- (선택) 품목구분(PROD:모품목, CHILD:자품목)
+                     , @ITEM_SEARCH                NVARCHAR(01)             -- (선택) 품목검색(C:현재품목,  A:전체)
+                     , @ST_PATH_YN                 NVARCHAR(01)             -- (선택) 표준PATH 여부(Y:예,   N:아니오)
+        
+            SET @STATUS      = 'QUERY'
+            SET @COMP_CODE   = #{S_COMP_CODE}
+            SET @USER_ID     = #{S_USER_ID}
+            SET @DIV_CODE    = #{DIV_CODE}
+            SET @ITEM_CODE   = #{ITEM_CODE}
+            SET @ITEM_TYPE   = 'CHILD'
+            SET @ITEM_SEARCH = #{ITEM_SEARCH}
+            SET @ST_PATH_YN  = #{StPathY}
+        
+            DECLARE    @BaseDate                   NVARCHAR(08)             -- 기준일자
+        
+            IF @ITEM_SEARCH = 'C'
+                SET @BaseDate = CONVERT(NVARCHAR(08), GETDATE(), 112)
+            IF @ITEM_SEARCH = 'A'
+                SET @BaseDate = ''
+        
+            IF @STATUS != 'INIT'
+            BEGIN
+        
+                DECLARE    @RefItem                    NVARCHAR(01)             -- 사용자 품목명 참조 유형
+        
+                SELECT TOP 1 @RefItem = ref_item
+                FROM   BSA300T WITH (NOLOCK)
+                WHERE  comp_code = @COMP_CODE
+                AND    user_id   = @USER_ID
+        
+                SET @RefItem = ISNULL(@RefItem, '0')
+        
+            END
+        
+            -- 자품목 목록 조회 (모품목이 ROOT일 경우)
+            IF @ITEM_TYPE = 'PROD'
+                SELECT A.COMP_CODE
+                     , A.DIV_CODE
+                     , A.SEQ
+                     , A.PROD_ITEM_CODE
+                     , A.PROD_ITEM_CODE AS CHILD_ITEM_CODE
+                     , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                            WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                            WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                            ELSE                     C1.ITEM_NAME
+                       END              AS ITEM_NAME
+                     , C1.SPEC
+                     , C1.STOCK_UNIT
+                     , C2.ITEM_ACCOUNT
+            
+            --'2008/03/26 PK인 PATH_CODE를 수정할 수 있도록 하기 위해 조건에 넣기 위한 Old_Data 필드를 추가함
+                     , A.PATH_CODE                                                          AS OLD_PATH_CODE
+                     , A.PATH_CODE
+                     , ISNULL(A.UNIT_Q, 0)                                                  AS UNIT_Q
+        --           , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.UNIT_Q, 0), 'B_FSET_QS')       AS UNIT_Q       -- 그리드에서 수량포맷 설정안함
+                     , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.PROD_UNIT_Q, 0), 'B_FSET_QS')  AS PROD_UNIT_Q
+                     , ISNULL(A.LOSS_RATE, 0)                                               AS LOSS_RATE
+                     , A.USE_YN
+                     , A.BOM_YN
+                     , uniLITE.fnGetUserDate(A.COMP_CODE, A.START_DATE)                     AS START_DATE
+                     , uniLITE.fnGetUserDate(A.COMP_CODE, A.STOP_DATE)                      AS STOP_DATE
+                     , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.UNIT_P1, 0), 'B_FSET_PS')      AS UNIT_P1
+                     , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.UNIT_P2, 0), 'B_FSET_PS')      AS UNIT_P2
+                     , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.UNIT_P3, 0), 'B_FSET_PS')      AS UNIT_P3
+                     , ISNULL(A.MAN_HOUR, 0)                                                AS MAN_HOUR
+                     , A.GRANT_TYPE
+                     , A.REMARK
+                     , ISNULL(B.CHILD_CNT, 0)                                               AS CHILD_CNT
+                     , A.UPDATE_DB_USER
+                     , A.UPDATE_DB_TIME
+                FROM              BPR500T A  WITH (NOLOCK)
+                       LEFT  JOIN (
+                                  SELECT COMP_CODE, DIV_CODE, PROD_ITEM_CODE
+                                       , COUNT(CHILD_ITEM_CODE) AS CHILD_CNT
+                                  FROM   BPR500T WITH (NOLOCK)
+                                  WHERE  COMP_CODE        = @COMP_CODE
+                                  AND    DIV_CODE         = @DIV_CODE
+                                  AND    CHILD_ITEM_CODE != '$'
+                                  GROUP  BY COMP_CODE, DIV_CODE, PROD_ITEM_CODE
+                                  ) B ON A.COMP_CODE      = B.COMP_CODE
+                                     AND A.DIV_CODE       = B.DIV_CODE
+                                     AND A.PROD_ITEM_CODE = B.PROD_ITEM_CODE
+                       LEFT  JOIN BPR100T C1 WITH (NOLOCK) ON C1.comp_code = A.comp_code
+                                                          AND C1.item_code = A.prod_item_code
+                       LEFT  JOIN BPR200T C2 WITH (NOLOCK) ON C2.comp_code = A.comp_code
+                                                          AND C2.div_code  = A.div_code
+                                                          AND C2.item_code = A.prod_item_code
+                WHERE  A.comp_code       = @COMP_CODE
+                AND    A.div_code        = @DIV_CODE
+                AND    A.child_item_code = '$'
+                AND    (
+                       (@BaseDate        = '')
+                 OR    (@BaseDate  != '' AND A.START_DATE     = (
+                                                                SELECT MAX(START_DATE)
+                                                                  FROM BPR500T WITH(NOLOCK)
+                                                                 WHERE COMP_CODE        = @COMP_CODE
+                                                                   AND DIV_CODE         = @DIV_CODE
+                                                                   AND PROD_ITEM_CODE   = A.PROD_ITEM_CODE
+                                                                   AND CHILD_ITEM_CODE  = A.CHILD_ITEM_CODE
+                                                                   AND PATH_CODE        = A.PATH_CODE
+                                                                   AND START_DATE      &lt;= @BaseDate
+                                                                )
+                       )
+                       )
+                AND    (
+                       (@BaseDate        = '') OR (@BaseDate  != '' AND A.STOP_DATE    &gt;= @BaseDate)
+                 OR    A.STOP_DATE      IS NULL
+                       )
+                ORDER BY A.PROD_ITEM_CODE
+            
+            -- 자품목 목록 조회 (모품목이 ROOT가 아닐 경우)
+            ELSE
+                SELECT A.COMP_CODE
+                     , A.DIV_CODE
+                     , A.SEQ
+                     , A.PROD_ITEM_CODE
+                     , A.CHILD_ITEM_CODE
+                     , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                            WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                            WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                            ELSE                     C1.ITEM_NAME
+                       END              AS ITEM_NAME
+                     , C1.SPEC
+                     , C1.STOCK_UNIT
+                     , C2.ITEM_ACCOUNT
+            
+            --'2008/03/26 PK인 PATH_CODE를 수정할 수 있도록 하기 위해 조건에 넣기 위한 Old_Data 필드를 추가함
+                     , A.PATH_CODE                                                          AS OLD_PATH_CODE
+                     , A.PATH_CODE
+                     , ISNULL(A.UNIT_Q, 0)                                                  AS UNIT_Q
+        --           , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.UNIT_Q, 0), 'B_FSET_QS')       AS UNIT_Q       -- 그리드에서 수량포맷 설정안함
+                     , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.PROD_UNIT_Q, 0), 'B_FSET_QS')  AS PROD_UNIT_Q
+                     , ISNULL(A.LOSS_RATE, 0)                                               AS LOSS_RATE
+                     , A.USE_YN
+                     , A.BOM_YN
+                     , uniLITE.fnGetUserDate(A.COMP_CODE, A.START_DATE)                     AS START_DATE
+                     , uniLITE.fnGetUserDate(A.COMP_CODE, A.STOP_DATE)                      AS STOP_DATE
+                     , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.UNIT_P1, 0), 'B_FSET_PS')      AS UNIT_P1
+                     , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.UNIT_P2, 0), 'B_FSET_PS')      AS UNIT_P2
+                     , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.UNIT_P3, 0), 'B_FSET_PS')      AS UNIT_P3
+                     , ISNULL(A.MAN_HOUR, 0)                                                AS MAN_HOUR
+                     , A.GRANT_TYPE
+                     , A.REMARK
+                     , 0                                                                    AS CHILD_CNT
+                     , A.UPDATE_DB_USER
+                     , A.UPDATE_DB_TIME
+                FROM              BPR500T A  WITH (NOLOCK)
+                       LEFT  JOIN BPR100T C1 WITH (NOLOCK) ON C1.comp_code = A.comp_code
+                                                          AND C1.item_code = A.child_item_code
+                       LEFT  JOIN BPR200T C2 WITH (NOLOCK) ON C2.comp_code = A.comp_code
+                                                          AND C2.div_code  = A.div_code
+                                                          AND C2.item_code = A.child_item_code
+                WHERE  A.comp_code        = @COMP_CODE
+                AND    A.div_code         = @DIV_CODE
+                AND    A.prod_item_code   = @ITEM_CODE
+                AND    A.child_item_code != '$'
+                AND    (
+                       (@BaseDate         = '')
+                 OR    (@BaseDate  != '' AND A.START_DATE     = (
+                                                                SELECT MAX(START_DATE)
+                                                                  FROM BPR500T WITH(NOLOCK)
+                                                                 WHERE COMP_CODE        = @COMP_CODE
+                                                                   AND DIV_CODE         = @DIV_CODE
+                                                                   AND PROD_ITEM_CODE   = A.PROD_ITEM_CODE
+                                                                   AND CHILD_ITEM_CODE  = A.CHILD_ITEM_CODE
+                                                                   AND PATH_CODE        = A.PATH_CODE
+                                                                   AND START_DATE      &lt;= @BaseDate
+                                                                )
+                       )
+                       )
+                AND    (
+                       (@BaseDate         = '') OR (@BaseDate  != '' AND A.STOP_DATE     &gt;= @BaseDate)
+                 OR    A.STOP_DATE       IS NULL
+                       )
+ <!-- 20190718 주석처리
+               AND    (
+                       (@ST_PATH_YN = 'Y' AND (A.path_code = '0' OR A.path_code LIKE '1%'))
+                 OR    (@ST_PATH_YN = 'N' AND  A.path_code = A.path_code)
+                       )
+-->
+                ORDER BY A.SEQ
+        END                
+    </select>
+    
+    <select id="bpr501ukrvService.selectList3" parameterType="Map" resultType="rMap">
+        --bpr501ukrv.Cbpr501ukrv[fnBpr501QSt2] Query01
+        BEGIN
+            DECLARE    @STATUS                     NVARCHAR(10)             -- (필수) 상태
+                     , @COMP_CODE                  NVARCHAR(08)             -- (필수) 법인코드
+                     , @USER_ID                    NVARCHAR(100)             -- (필수) 사용자명
+                     , @DIV_CODE                   NVARCHAR(08)             -- (필수) 사업장코드
+                     , @PROD_ITEM_CODE             NVARCHAR(20)             -- (선택) 모품목코드
+                     , @CHILD_ITEM_CODE            NVARCHAR(20)             -- (선택) 자품목코드
+                     , @ITEM_SEARCH                NVARCHAR(01)             -- (선택) 품목검색(C:현재품목,  A:전체)
+        
+            SET @STATUS          = 'QUERY'
+            SET @COMP_CODE       = #{S_COMP_CODE}
+            SET @USER_ID         = #{S_USER_ID}
+            SET @DIV_CODE        = #{DIV_CODE}
+            SET @PROD_ITEM_CODE  = #{PROD_ITEM_CODE}
+            SET @CHILD_ITEM_CODE = #{CHILD_ITEM_CODE}
+            SET @ITEM_SEARCH     = #{ITEM_SEARCH}
+        
+            DECLARE    @BaseDate                   NVARCHAR(08)             -- 기준일자
+        
+            IF @ITEM_SEARCH = 'C'
+                SET @BaseDate = CONVERT(NVARCHAR(08), GETDATE(), 112)
+            IF @ITEM_SEARCH = 'A'
+                SET @BaseDate = ''
+        
+            IF @STATUS != 'INIT'
+            BEGIN
+        
+                DECLARE    @RefItem                    NVARCHAR(01)             -- 사용자 품목명 참조 유형
+        
+                SELECT TOP 1 @RefItem = ref_item
+                FROM   BSA300T WITH (NOLOCK)
+                WHERE  comp_code = @COMP_CODE
+                AND    user_id   = @USER_ID
+        
+                SET @RefItem = ISNULL(@RefItem, '0')
+        
+            END
+        
+            -- 1) 대체품목 목록 조회
+            SELECT A.COMP_CODE
+                 , A.DIV_CODE
+                 , A.SEQ
+                 , A.PROD_ITEM_CODE
+                 , A.CHILD_ITEM_CODE
+                 , A.EXCHG_ITEM_CODE
+                 , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                        WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                        WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                        ELSE                     C1.ITEM_NAME
+                   END              AS ITEM_NAME
+                 , C1.SPEC
+                 , C1.STOCK_UNIT
+                 , C2.ITEM_ACCOUNT
+                 , ISNULL(A.UNIT_Q, 0)                                                  AS UNIT_Q
+        --       , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.UNIT_Q, 0), 'B_FSET_QS')       AS UNIT_Q       -- 그리드에서 수량포맷 설정안함
+                 , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.PROD_UNIT_Q, 0), 'B_FSET_QS')  AS PROD_UNIT_Q
+                 , ISNULL(A.LOSS_RATE, 0)                                               AS LOSS_RATE
+                 , A.USE_YN
+                 , A.BOM_YN
+                 , A.PRIOR_SEQ
+                 , uniLITE.fnGetUserDate(A.COMP_CODE, A.START_DATE) AS START_DATE
+                 , uniLITE.fnGetUserDate(A.COMP_CODE, A.STOP_DATE)  AS STOP_DATE
+                 , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.UNIT_P1, 0), 'B_FSET_PS')      AS UNIT_P1
+                 , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.UNIT_P2, 0), 'B_FSET_PS')      AS UNIT_P2
+                 , uniLITE.fnFormat(@COMP_CODE, ISNULL(A.UNIT_P3, 0), 'B_FSET_PS')      AS UNIT_P3
+                 , ISNULL(A.MAN_HOUR, 0)                                                AS MAN_HOUR
+                 , A.GRANT_TYPE
+                 , A.REMARK
+                 , A.UPDATE_DB_USER
+                 , A.UPDATE_DB_TIME
+            FROM              BPR510T A  WITH (NOLOCK)
+                   LEFT  JOIN BPR100T C1 WITH (NOLOCK) ON C1.comp_code = A.comp_code
+                                                      AND C1.item_code = A.exchg_item_code
+                   LEFT  JOIN BPR200T C2 WITH (NOLOCK) ON C2.comp_code = A.comp_code
+                                                      AND C2.div_code  = A.div_code
+                                                      AND C2.item_code = A.exchg_item_code
+            WHERE  A.comp_code        = @COMP_CODE
+            AND    A.div_code         = @DIV_CODE
+            AND    A.prod_item_code   = @PROD_ITEM_CODE
+            AND    A.child_item_code  = @CHILD_ITEM_CODE
+            AND    (
+                   (@BaseDate         = '')
+             OR    (@BaseDate  != '' AND A.START_DATE     = (
+                                                            SELECT MAX(START_DATE)
+                                                              FROM BPR510T WITH(NOLOCK)
+                                                             WHERE COMP_CODE        = @COMP_CODE
+                                                               AND DIV_CODE         = @DIV_CODE
+                                                               AND PROD_ITEM_CODE   = A.PROD_ITEM_CODE
+                                                               AND CHILD_ITEM_CODE  = A.CHILD_ITEM_CODE
+                                                               AND EXCHG_ITEM_CODE  = A.EXCHG_ITEM_CODE
+                                                               AND START_DATE      &lt;= @BaseDate
+                                                            )
+                   )
+                   )
+            AND    (
+                   (@BaseDate         = '') OR (@BaseDate  != '' AND A.STOP_DATE     &gt;= @BaseDate)
+             OR    A.STOP_DATE       IS NULL
+                   )
+            ORDER BY A.SEQ
+        END                
+    </select>
+    
+    
+    
+	<select id="bpr501ukrvService.checkCompCode" parameterType="Map" resultType="rMap">
+    SELECT A.COMP_CODE, A.COMP_NAME
+    FROM              BOR100T   A  WITH (NOLOCK)
+           LEFT  JOIN BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE    = #{S_COMP_CODE}    
+                                                AND M1.MAIN_CODE    = 'B107'
+                                                AND M1.SUB_CODE     = '20'         
+    WHERE (A.COMP_CODE      &gt; ''        AND ISNULL(M1.REF_CODE1, 'N') = 'Y')
+           OR (A.COMP_CODE      = #{S_COMP_CODE}  AND ISNULL(M1.REF_CODE1, 'N') = 'N')
+    </select>
+</mapper>

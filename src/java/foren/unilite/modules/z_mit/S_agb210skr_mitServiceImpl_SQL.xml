@@ -1,0 +1,598 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="S_agb210skr_mitServiceImpl">
+	
+	<select id="S_agb210skr_mitServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/*S_agb210skr_mitServiceImpl.selectList*/
+	    BEGIN
+	        SET NOCOUNT ON
+	        SET ARITHABORT ON
+	    
+	        --- 1. 변수 선언 및 설정
+	        DECLARE @MONEY_UNIT        NVARCHAR(03)
+	              , @REF_ITEM          NVARCHAR(01)
+	              , @ACCNT_LEVEL       NVARCHAR(01)
+	    
+	        SET     @MONEY_UNIT        = #{MONEY_UNIT}
+	        SET     @REF_ITEM          = #{ACCOUNT_NAME}
+	        SET     @ACCNT_LEVEL       = #{ACCOUNT_LEVEL}
+	    
+	        --- 2. 날짜 포맷 유형 설정
+	        DECLARE @DateFormat         NVARCHAR(01)
+	    
+	        SELECT TOP 1 @DateFormat = SUBSTRING(CODE_NAME, 5, 1)
+	        FROM   BSA100T WITH (NOLOCK)
+	        WHERE  COMP_CODE  = #{S_COMP_CODE}
+	        AND    MAIN_CODE  = 'B044'
+	        AND    REF_CODE1  = 'Y'
+	    
+	        SET    @DateFormat = ISNULL(@DateFormat, '.')
+	    
+	        ----- 3. 임시테이블 선언(전표거래내역 및 소계,누계 계산용)
+	        IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects  WHERE id=object_id('tempdb..#AGB210Skr_120904'))
+	            DROP TABLE #AGB210Skr_120904
+	    
+	        CREATE TABLE #AGB210Skr_120904 ( GUBUN           NVARCHAR(01)    -- 구분(0:이월/거래합계, 1:전표, 3:소계, 4:누계)
+	                                       , IWALL_GUBUN     NVARCHAR(01)    -- 이월구분(1:이월금액, 2:거래합계)
+	                                       , ACCNT           NVARCHAR(25)
+	                                       , ACCNT_NAME      NVARCHAR(100)
+	                                       , CUSTOM_CODE     NVARCHAR(08)
+	                                       , CUSTOM_NAME     NVARCHAR(100)
+	                                       , SORT_DATE       NVARCHAR(20)
+	                                       , AC_DATE         NVARCHAR(10)
+	                                       , SLIP_NUM        NUMERIC(07, 0)
+	                                       , SLIP_SEQ        NUMERIC(05, 0)
+	                                       , REMARK          NVARCHAR(100)
+	                                       , DR_AMT_I        NUMERIC(30, 6)
+	                                       , CR_AMT_I        NUMERIC(30, 6)
+	                                       , JAN_AMT_I       NUMERIC(30, 6)
+	                                       , MONEY_UNIT      NVARCHAR(03)
+	                                       , EXCHG_RATE      NUMERIC(30, 6)
+	                                       , DR_FOR_AMT_I    NUMERIC(30, 6)
+	                                       , CR_FOR_AMT_I    NUMERIC(30, 6)
+	                                       , JAN_FOR_AMT_I   NUMERIC(30, 6)
+	                                       , INPUT_PATH      NVARCHAR(02)
+	                                       , INPUT_DIVI      NVARCHAR(02)
+	                                       , CHR_SLIP_NUM    NVARCHAR(07)
+	                                       , CHR_SLIP_SEQ    NVARCHAR(05)
+	                                       , JAN_DIVI        NVARCHAR(01)
+	                                       , DIV_CODE        NVARCHAR(08)
+	                                       , KEY_STRING      AS RTRIM(ACCNT) + RTRIM(CUSTOM_CODE) + RTRIM(SORT_DATE) + RTRIM(GUBUN) + RTRIM(IWALL_GUBUN) + RTRIM(CHR_SLIP_NUM) + RTRIM(CHR_SLIP_SEQ)
+	                                       )
+	        CREATE INDEX AGB210Skr_IDX01 ON #AGB210Skr_120904(KEY_STRING)
+	    
+	        ----- 4. 데이터 조회
+	        ----- 4.1. 이월금액
+	        INSERT INTO #AGB210Skr_120904( GUBUN       , IWALL_GUBUN , ACCNT        , ACCNT_NAME   , CUSTOM_CODE  , CUSTOM_NAME  , SORT_DATE , AC_DATE      , REMARK
+	                                     , DR_AMT_I    , CR_AMT_I    , JAN_AMT_I    , MONEY_UNIT   , EXCHG_RATE
+	                                     , DR_FOR_AMT_I, CR_FOR_AMT_I, JAN_FOR_AMT_I, JAN_DIVI     , CHR_SLIP_NUM , CHR_SLIP_SEQ)
+	        SELECT  
+	                N'0'                                           AS GUBUN
+	             ,  N'1'                                           AS IWALL_GUBUN
+	             ,  CASE WHEN @ACCNT_LEVEL = '1' THEN C.ACCNT_CD
+	                     ELSE A.ACCNT
+	                END                                            AS ACCNT
+	             ,  CASE WHEN @REF_ITEM = '0' THEN C2.ACCNT_NAME
+	                     WHEN @REF_ITEM = '1' THEN C2.ACCNT_NAME2
+	                     WHEN @REF_ITEM = '2' THEN C2.ACCNT_NAME3
+	                END                                            AS ACCNT_NAME
+	             ,  CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                     WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                END                                            AS CUSTOM_CODE
+	             --,  CASE WHEN @REF_ITEM = '0' THEN D.CUSTOM_NAME
+	             --        WHEN @REF_ITEM = '1' THEN D.CUSTOM_NAME1
+	             --        WHEN @REF_ITEM = '2' THEN D.CUSTOM_NAME2
+	             --   END                                            AS CUSTOM_NAME
+	             , D.CUSTOM_NAME
+	             ,  '1900.01.01'                                   AS SORT_DATE
+	             ,  SUBSTRING(#{FR_DATE}, 1, 4) + @DateFormat +
+	                SUBSTRING(#{FR_DATE}, 5, 2) + @DateFormat + 
+	                SUBSTRING(#{FR_DATE}, 7, 2)              	   AS AC_DATE
+	             ,  '이월금액'				                           AS REMARK
+	             ,  SUM(ISNULL(A.DR_AMT_I,0.0))                    AS DR_AMT_I
+	             ,  SUM(ISNULL(A.CR_AMT_I,0.0))                    AS CR_AMT_I
+	             ,  CASE WHEN C.JAN_DIVI= '1'
+	                    THEN SUM(ISNULL(A.DR_AMT_I,0.0)) - SUM(ISNULL(A.CR_AMT_I,0.0))
+	                    ELSE SUM(ISNULL(A.CR_AMT_I,0.0)) - SUM(ISNULL(A.DR_AMT_I,0.0))
+	                END                                            AS JAN_AMT_I
+	             ,  @MONEY_UNIT                                    AS MONEY_UNIT
+	             ,  0                                              AS EXCHG_RATE
+	             ,  CASE WHEN @MONEY_UNIT = '' THEN 0
+	                     ELSE SUM(ISNULL(A.DR_FOR_AMT_I,0.0))
+	                END                                            AS DR_FOR_AMT_I
+	             ,  CASE WHEN @MONEY_UNIT = '' THEN 0
+	                     ELSE SUM(ISNULL(A.CR_FOR_AMT_I,0.0))
+	                END                                            AS CR_FOR_AMT_I
+	             ,  CASE WHEN @MONEY_UNIT = '' THEN 0
+	                     ELSE (CASE C.JAN_DIVI WHEN '1' THEN SUM(ISNULL(A.DR_FOR_AMT_I,0.0)) - SUM(ISNULL(A.CR_FOR_AMT_I,0.0))
+	                                           WHEN '2' THEN SUM(ISNULL(A.CR_FOR_AMT_I,0.0)) - SUM(ISNULL(A.DR_FOR_AMT_I,0.0))
+	                            END)
+	                END                                            AS JAN_FOR_AMT_I
+	             ,  C.JAN_DIVI                                     AS JAN_DIVI
+	             ,  REPLICATE('0', 7 - LEN(CONVERT(NVARCHAR(7), 0))) + (CONVERT(NVARCHAR(7), 0)) AS CHR_SLIP_NUM
+	             ,  REPLICATE('0', 5 - LEN(CONVERT(NVARCHAR(5), 0))) + (CONVERT(NVARCHAR(5), 0)) AS CHR_SLIP_SEQ
+	        FROM           AGB200T  AS A  WITH (NOLOCK)
+	            INNER JOIN BOR120T  AS B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+	                                                    AND B.DIV_CODE    = A.DIV_CODE
+	            LEFT  JOIN ABA400T  AS C  WITH (NOLOCK) ON  C.COMP_CODE   = A.COMP_CODE
+	                                                    AND C.ACCNT       = A.ACCNT
+	            LEFT  JOIN ABA400T  AS C2 WITH (NOLOCK) ON  C2.COMP_CODE  = A.COMP_CODE
+	                                                    AND C2.ACCNT      = CASE WHEN @ACCNT_LEVEL = '1' THEN C.ACCNT_CD
+	                                                                             ELSE C.ACCNT
+	                                                                        END
+	            INNER JOIN BCM100T  AS D WITH (NOLOCK)  ON  D.COMP_CODE   = A.COMP_CODE
+	                                                    AND D.CUSTOM_CODE = CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                                                                             WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                                                                        END
+	            INNER JOIN BSA100T  AS E  WITH (NOLOCK) ON  E.COMP_CODE   = A.COMP_CODE
+	            										AND E.MAIN_CODE   = 'AX01'
+	                                                    AND E.SUB_CODE    = A.ACCNT
+	        WHERE   A.COMP_CODE           = #{S_COMP_CODE}
+	        AND     A.AC_DATE         &gt;= #{START_DATE}
+	        AND     A.AC_DATE         &lt;  #{FR_DATE}
+	       <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+	        AND     A.DIV_CODE IN
+				<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+				 #{item}
+				</foreach>									
+		   </if> 
+	       <if test="@foren.Ognl@isNotEmpty(ACCNT_CODE_FR)">
+	        AND     CASE WHEN @ACCNT_LEVEL = '1' THEN C.ACCNT_CD
+	                     ELSE A.ACCNT
+	                END               &gt;= #{ACCNT_CODE_FR}
+	       </if>
+	       <if test="@foren.Ognl@isNotEmpty(ACCNT_CODE_TO)">
+	        AND     CASE WHEN @ACCNT_LEVEL = '1' THEN C.ACCNT_CD
+	                     ELSE A.ACCNT
+	                END               &lt;= #{ACCNT_CODE_TO}
+	       </if>
+	       <if test="@foren.Ognl@isNotEmpty(CUST_CODE_FR)">
+	        AND     CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                     WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                END               &gt;= #{CUST_CODE_FR}
+	       </if>
+	       <if test="@foren.Ognl@isNotEmpty(CUST_CODE_TO)">
+	        AND     CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                     WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                END               &lt;= #{CUST_CODE_TO}
+	       </if>
+	       <if test="@foren.Ognl@isNotEmpty(MONEY_UNIT)">
+		    AND     A.MONEY_UNIT   = #{MONEY_UNIT} 
+	       </if>
+	        GROUP BY CASE WHEN @ACCNT_LEVEL = '1' THEN C.ACCNT_CD
+	                      ELSE A.ACCNT
+	                 END
+	               , CASE WHEN @REF_ITEM = '0' THEN C2.ACCNT_NAME
+	                      WHEN @REF_ITEM = '1' THEN C2.ACCNT_NAME2
+	                      WHEN @REF_ITEM = '2' THEN C2.ACCNT_NAME3
+	                 END
+	               , CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                      WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                 END
+	               --, CASE WHEN @REF_ITEM = '0' THEN D.CUSTOM_NAME
+	               --       WHEN @REF_ITEM = '1' THEN D.CUSTOM_NAME1
+	               --       WHEN @REF_ITEM = '2' THEN D.CUSTOM_NAME2
+	               --  END
+	               ,D.CUSTOM_NAME
+	               , C.JAN_DIVI
+	    
+	    
+	        ----- 4.2. 거래합계
+	        INSERT INTO #AGB210Skr_120904( GUBUN       , IWALL_GUBUN , ACCNT        , ACCNT_NAME   , CUSTOM_CODE  , CUSTOM_NAME  , SORT_DATE , AC_DATE      , REMARK
+	                                     , DR_AMT_I    , CR_AMT_I    , JAN_AMT_I    , MONEY_UNIT   , EXCHG_RATE
+	                                     , DR_FOR_AMT_I, CR_FOR_AMT_I, JAN_FOR_AMT_I, JAN_DIVI     , CHR_SLIP_NUM , CHR_SLIP_SEQ)
+	        SELECT   
+	                N'0'                                           AS GUBUN
+	             ,  N'2'                                           AS IWALL_GUBUN
+	             ,  CASE WHEN @ACCNT_LEVEL = '1' THEN C.ACCNT_CD
+	                     ELSE A.ACCNT
+	                END                                            AS ACCNT
+	             ,  CASE WHEN @REF_ITEM = '0' THEN C2.ACCNT_NAME
+	                     WHEN @REF_ITEM = '1' THEN C2.ACCNT_NAME2
+	                     WHEN @REF_ITEM = '2' THEN C2.ACCNT_NAME3
+	                END                                            AS ACCNT_NAME
+	             ,  CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                     WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                END                                            AS CUSTOM_CODE
+	             --,  CASE WHEN @REF_ITEM = '0' THEN D.CUSTOM_NAME
+	             --        WHEN @REF_ITEM = '1' THEN D.CUSTOM_NAME1
+	             --        WHEN @REF_ITEM = '2' THEN D.CUSTOM_NAME2
+	             --   END                                            AS CUSTOM_NAME
+	             ,D.CUSTOM_NAME
+	             ,  '1900.01.02'                                   AS SORT_DATE
+	             ,  SUBSTRING(#{FR_DATE}, 1, 4) + @DateFormat +
+	                SUBSTRING(#{FR_DATE}, 5, 2) + @DateFormat + 
+	                SUBSTRING(#{FR_DATE}, 7, 2)              	   AS AC_DATE
+	             ,  '거래합계'                     					   AS REMARK
+	             ,  SUM(ISNULL(A.DR_AMT_I,0.0))                    AS DR_AMT_I
+	             ,  SUM(ISNULL(A.CR_AMT_I,0.0))                    AS CR_AMT_I
+	             ,  CASE WHEN C.JAN_DIVI= '1'
+	                    THEN SUM(ISNULL(A.DR_AMT_I,0.0)) - SUM(ISNULL(A.CR_AMT_I,0.0))
+	                    ELSE SUM(ISNULL(A.CR_AMT_I,0.0)) - SUM(ISNULL(A.DR_AMT_I,0.0))
+	                END                                            AS JAN_AMT_I
+	             ,  @MONEY_UNIT                                    AS MONEY_UNIT
+	             ,  0                                              AS EXCHG_RATE
+	             ,  CASE WHEN @MONEY_UNIT = '' THEN 0
+	                     ELSE SUM(ISNULL(A.DR_FOR_AMT_I,0.0))
+	                END                                            AS DR_FOR_AMT_I
+	             ,  CASE WHEN @MONEY_UNIT = '' THEN 0
+	                     ELSE SUM(ISNULL(A.CR_FOR_AMT_I,0.0))
+	                END                                            AS CR_FOR_AMT_I
+	             ,  CASE WHEN @MONEY_UNIT = '' THEN 0
+	                     ELSE (CASE C.JAN_DIVI WHEN '1' THEN SUM(ISNULL(A.DR_FOR_AMT_I,0.0)) - SUM(ISNULL(A.CR_FOR_AMT_I,0.0))
+	                                           WHEN '2' THEN SUM(ISNULL(A.CR_FOR_AMT_I,0.0)) - SUM(ISNULL(A.DR_FOR_AMT_I,0.0))
+	                            END)
+	                END                                            AS JAN_FOR_AMT_I
+	             ,  C.JAN_DIVI                                     AS JAN_DIVI
+	             ,  REPLICATE('0', 7 - LEN(CONVERT(NVARCHAR(7), 0))) + (CONVERT(NVARCHAR(7), 0)) AS CHR_SLIP_NUM
+	             ,  REPLICATE('0', 5 - LEN(CONVERT(NVARCHAR(5), 0))) + (CONVERT(NVARCHAR(5), 0)) AS CHR_SLIP_SEQ
+	        FROM           AGB200T  AS A  WITH (NOLOCK)
+	            INNER JOIN BOR120T  AS B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+	                                                    AND B.DIV_CODE    = A.DIV_CODE
+	            LEFT  JOIN ABA400T  AS C  WITH (NOLOCK) ON  C.COMP_CODE   = A.COMP_CODE
+	                                                    AND C.ACCNT       = A.ACCNT
+	            LEFT  JOIN ABA400T  AS C2 WITH (NOLOCK) ON  C2.COMP_CODE  = A.COMP_CODE
+	                                                    AND C2.ACCNT      = CASE WHEN @ACCNT_LEVEL = '1' THEN C.ACCNT_CD
+	                                                                             ELSE C.ACCNT
+	                                                                        END
+	            INNER JOIN BCM100T  AS D WITH (NOLOCK)  ON  D.COMP_CODE   = A.COMP_CODE
+	                                                    AND D.CUSTOM_CODE = CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                                                                             WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                                                                        END
+	            INNER JOIN BSA100T  AS E  WITH (NOLOCK) ON  E.COMP_CODE   = A.COMP_CODE
+	            										AND E.MAIN_CODE   = 'AX01'
+	                                                    AND E.SUB_CODE    = A.ACCNT
+	        WHERE   A.COMP_CODE           = #{S_COMP_CODE}
+	        AND     A.AC_DATE         &gt;= #{FR_DATE}
+	        AND     A.AC_DATE         &lt;  #{TO_DATE}
+	        AND     LEN(A.AC_DATE)     = 6
+	        AND     A.INPUT_PATH       = 'A1'
+	       <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+	        AND     A.DIV_CODE IN
+				<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+				 #{item}
+				</foreach>									
+			 </if>
+	       <if test="@foren.Ognl@isNotEmpty(ACCNT_CODE_FR)">
+	        AND     CASE WHEN @ACCNT_LEVEL = '1' THEN C.ACCNT_CD
+	                     ELSE A.ACCNT
+	                END               &gt;= #{ACCNT_CODE_FR}
+	       </if>
+	       <if test="@foren.Ognl@isNotEmpty(ACCNT_CODE_TO)">
+	        AND     CASE WHEN @ACCNT_LEVEL = '1' THEN C.ACCNT_CD
+	                     ELSE A.ACCNT
+	                END               &lt;= #{ACCNT_CODE_TO}
+	       </if>
+	       <if test="@foren.Ognl@isNotEmpty(CUST_CODE_FR)">
+	        AND     CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                     WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                END               &gt;= #{CUST_CODE_FR}
+	       </if>
+	       <if test="@foren.Ognl@isNotEmpty(CUST_CODE_TO)">
+	        AND     CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                     WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                END               &lt;= #{CUST_CODE_TO}
+	       </if>
+	       <if test="@foren.Ognl@isNotEmpty(MONEY_UNIT)">
+		    AND     A.MONEY_UNIT   = #{MONEY_UNIT} 
+	       </if>
+	    
+	        GROUP BY CASE WHEN @ACCNT_LEVEL = '1' THEN C.ACCNT_CD
+	                      ELSE A.ACCNT
+	                 END
+	               , CASE WHEN @REF_ITEM = '0' THEN C2.ACCNT_NAME
+	                      WHEN @REF_ITEM = '1' THEN C2.ACCNT_NAME2
+	                      WHEN @REF_ITEM = '2' THEN C2.ACCNT_NAME3
+	                 END
+	               , CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                      WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                 END
+	           --    , CASE WHEN @REF_ITEM = '0' THEN D.CUSTOM_NAME
+	           --           WHEN @REF_ITEM = '1' THEN D.CUSTOM_NAME1
+	           --           WHEN @REF_ITEM = '2' THEN D.CUSTOM_NAME2
+	           --      END
+	           		,D.CUSTOM_NAME
+	               , C.JAN_DIVI
+	        HAVING SUM(ISNULL(A.DR_AMT_I,0.0)) != 0 OR SUM(ISNULL(A.CR_AMT_I,0.0)) !=  0
+	    
+	        ----- 4.3. 전표거래내역
+	        INSERT INTO #AGB210Skr_120904( GUBUN       , IWALL_GUBUN , ACCNT        , ACCNT_NAME   , CUSTOM_CODE  , CUSTOM_NAME  , SORT_DATE , AC_DATE , SLIP_NUM , SLIP_SEQ, REMARK
+	                                     , DR_AMT_I    , CR_AMT_I    , JAN_AMT_I    , MONEY_UNIT   , EXCHG_RATE
+	                                     , DR_FOR_AMT_I, CR_FOR_AMT_I, JAN_FOR_AMT_I, INPUT_PATH   , INPUT_DIVI   , JAN_DIVI, CHR_SLIP_NUM , CHR_SLIP_SEQ, DIV_CODE)
+	        SELECT   
+	                N'1'                                            AS GUBUN
+	             ,  N''                                             AS IWALL_GUBUN
+	             ,  CASE WHEN @ACCNT_LEVEL = '1' THEN C.ACCNT_CD
+	                     ELSE A.ACCNT
+	                END                                             AS ACCNT
+	             ,  CASE WHEN @REF_ITEM = '0' THEN C2.ACCNT_NAME
+	                     WHEN @REF_ITEM = '1' THEN C2.ACCNT_NAME2
+	                     WHEN @REF_ITEM = '2' THEN C2.ACCNT_NAME3
+	                END                                             AS ACCNT_NAME
+	             ,  CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                     WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                END                                             AS CUSTOM_CODE
+	            -- ,  CASE WHEN @REF_ITEM = '0' THEN D.CUSTOM_NAME
+	            --         WHEN @REF_ITEM = '1' THEN D.CUSTOM_NAME1
+	            --         WHEN @REF_ITEM = '2' THEN D.CUSTOM_NAME2
+	            --    END                                             AS CUSTOM_NAME
+	            , D.CUSTOM_NAME
+	             ,  SUBSTRING(A.AC_DATE, 1, 4) + @DateFormat +
+	                SUBSTRING(A.AC_DATE, 5, 2) + @DateFormat + 
+	                SUBSTRING(A.AC_DATE, 7, 2)                      AS SORT_DATE
+	             ,  SUBSTRING(A.AC_DATE, 1, 4) + @DateFormat +
+	                SUBSTRING(A.AC_DATE, 5, 2) + @DateFormat + 
+	                SUBSTRING(A.AC_DATE, 7, 2)                      AS AC_DATE
+	             ,  A.SLIP_NUM                                      AS SLIP_NUM
+	             ,  A.SLIP_SEQ                                      AS SLIP_SEQ
+	             ,  A.REMARK                                        AS REMARK
+	             ,  CASE WHEN A.DR_CR = '1' THEN A.AMT_I
+	                     ELSE 0.0
+	                END                                             AS DR_AMT_I
+	             ,  CASE WHEN A.DR_CR = '1' THEN 0.0
+	                     ELSE A.AMT_I
+	                END                                             AS CR_AMT_I
+	             ,  CASE WHEN C.JAN_DIVI = A.DR_CR THEN A.AMT_I
+	                     ELSE A.AMT_I * (-1)
+	                END                                             AS JAN_AMT_I
+	             ,  CASE WHEN @MONEY_UNIT = '' THEN ''
+	                     ELSE A.MONEY_UNIT
+	                END                                             AS MONEY_UNIT
+	             ,  CASE WHEN @MONEY_UNIT = '' THEN NULL
+	                     ELSE A.EXCHG_RATE_O
+	                END                                             AS EXCHG_RATE
+	             ,  CASE WHEN A.DR_CR = '1' THEN A.FOR_AMT_I
+	                     ELSE 0.0
+	                END                                             AS DR_FOR_AMT_I
+	             ,  CASE WHEN A.DR_CR = '1' THEN 0.0
+	                     ELSE A.FOR_AMT_I
+	                END                                             AS CR_FOR_AMT_I
+	             ,  CASE WHEN C2.JAN_DIVI = A.DR_CR THEN A.FOR_AMT_I
+	                     ELSE A.FOR_AMT_I * (-1)
+	                END                                             AS JAN_FOR_AMT_I
+	             ,  A.INPUT_PATH                                    AS INPUT_PATH
+	             ,  A.INPUT_DIVI                                    AS INPUT_DIVI
+	             ,  C.JAN_DIVI                                      AS JAN_DIVI
+	             ,  REPLICATE('0', 7 - LEN(CONVERT(NVARCHAR(7), A.SLIP_NUM))) + (CONVERT(NVARCHAR(7), A.SLIP_NUM)) AS CHR_SLIP_NUM
+	             ,  REPLICATE('0', 5 - LEN(CONVERT(NVARCHAR(5), A.SLIP_SEQ))) + (CONVERT(NVARCHAR(5), A.SLIP_SEQ)) AS CHR_SLIP_SEQ
+	             ,  A.DIV_CODE
+	        FROM           AGJ210T  AS A  WITH (NOLOCK)
+	            INNER JOIN BOR120T  AS B  WITH (NOLOCK) ON  B.COMP_CODE    = A.COMP_CODE
+	                                                    AND B.DIV_CODE     = A.DIV_CODE
+	            LEFT  JOIN ABA400T  AS C  WITH (NOLOCK) ON  C.COMP_CODE    = A.COMP_CODE
+	                                                    AND C.ACCNT        = A.ACCNT
+	            LEFT  JOIN ABA400T  AS C2 WITH (NOLOCK) ON  C2.COMP_CODE   = A.COMP_CODE
+	                                                    AND C2.ACCNT       = CASE WHEN @ACCNT_LEVEL = '1' THEN C.ACCNT_CD
+	                                                                              ELSE C.ACCNT
+	                                                                         END
+	            INNER JOIN BCM100T  AS D WITH (NOLOCK)  ON  D.COMP_CODE    = A.COMP_CODE
+	                                                    AND D.CUSTOM_CODE  = CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                                                                              WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                                                                         END
+	            INNER JOIN BSA100T  AS E  WITH (NOLOCK) ON  E.COMP_CODE   = A.COMP_CODE
+	            										AND E.MAIN_CODE   = 'AX01'
+	                                                    AND E.SUB_CODE    = A.ACCNT
+	        WHERE   A.COMP_CODE           = #{S_COMP_CODE}
+	        AND     A.AC_DATE         &gt;= #{FR_DATE}
+	        AND     A.AC_DATE         &lt;=  #{TO_DATE}
+	        AND    (A.BOOK_CODE1       = 'A4'
+	         OR     A.BOOK_CODE2       = 'A4')
+	        AND    (A.MOD_DIVI         = ''  OR A.MOD_DIVI IS NULL)
+	       <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+	        AND     A.DIV_CODE IN
+				<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+				 #{item}
+				</foreach>									
+		</if>
+	       <if test="@foren.Ognl@isNotEmpty(ACCNT_CODE_FR)">
+	        AND     CASE WHEN @ACCNT_LEVEL = '1' THEN C.ACCNT_CD
+	                     ELSE A.ACCNT
+	                END               &gt;= #{ACCNT_CODE_FR}
+	       </if>
+	       <if test="@foren.Ognl@isNotEmpty(ACCNT_CODE_TO)">
+	        AND     CASE WHEN @ACCNT_LEVEL = '1' THEN C.ACCNT_CD
+	                     ELSE A.ACCNT
+	                END               &lt;= #{ACCNT_CODE_TO}
+	       </if>
+	       <if test="@foren.Ognl@isNotEmpty(CUST_CODE_FR)">
+	        AND     CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                     WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                END               &gt;= #{CUST_CODE_FR}
+	       </if>
+	       <if test="@foren.Ognl@isNotEmpty(CUST_CODE_TO)">
+	        AND     CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+	                     WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+	                END               &lt;= #{CUST_CODE_TO}
+	       </if>
+	       <if test="@foren.Ognl@isNotEmpty(MONEY_UNIT)">
+		    AND     A.MONEY_UNIT   = #{MONEY_UNIT} 
+	       </if>
+	
+	    
+	    
+	        ------- 4.3.1 잔액 계산하여 UPDATE
+	        DECLARE         @AccrueI            NUMERIC(30,6)               -- 잔액
+	                      , @AccrueForI         NUMERIC(30,6)               -- 잔액(외화)
+	                      , @AccntCustom        NVARCHAR(50)                -- 계정코드 + 거래처코드
+	    
+	        SET @AccrueI         = 0
+	        SET @AccrueForI      = 0
+	        SET @AccntCustom     = ''
+	    
+	        UPDATE  A
+	        SET     @AccrueI        = CASE WHEN ISNULL(@AccntCustom, '') != A.ACCNT + A.CUSTOM_CODE
+	                                            THEN CASE WHEN A.JAN_DIVI = '1' THEN A.DR_AMT_I - A.CR_AMT_I
+	                                                      ELSE A.CR_AMT_I - A.DR_AMT_I
+	                                                 END
+	                                            ELSE CASE WHEN A.JAN_DIVI = '1' THEN ISNULL(@AccrueI, 0) + A.DR_AMT_I - A.CR_AMT_I
+	                                                      ELSE ISNULL(@AccrueI, 0) + A.CR_AMT_I - A.DR_AMT_I
+	                                                 END
+	                                  END
+	             ,  @AccrueForI     = CASE WHEN ISNULL(@AccntCustom, '') != A.ACCNT + A.CUSTOM_CODE
+	                                            THEN CASE WHEN A.JAN_DIVI = '1' THEN A.DR_FOR_AMT_I - A.CR_FOR_AMT_I
+	                                                      ELSE A.CR_FOR_AMT_I - A.DR_FOR_AMT_I
+	                                                 END
+	                                            ELSE CASE WHEN A.JAN_DIVI = '1' THEN ISNULL(@AccrueForI, 0) + A.DR_FOR_AMT_I - A.CR_FOR_AMT_I
+	                                                      ELSE ISNULL(@AccrueForI, 0) + A.CR_FOR_AMT_I - A.DR_FOR_AMT_I
+	                                                 END
+	                                  END
+	             ,  A.JAN_AMT_I     = @AccrueI
+	             ,  A.JAN_FOR_AMT_I = @AccrueForI
+	             ,  @AccntCustom    = (A.ACCNT + A.CUSTOM_CODE)
+	        FROM    #AGB210Skr_120904 A WITH (NOLOCK, INDEX(AGB210Skr_IDX01))
+	        WHERE   (A.GUBUN = '0' OR A.GUBUN = '1')
+	    
+	        ------- 4.4. 소계(월)
+	        INSERT INTO #AGB210Skr_120904 (GUBUN       , IWALL_GUBUN , ACCNT        , ACCNT_NAME   , CUSTOM_CODE  , CUSTOM_NAME  , SORT_DATE , AC_DATE, REMARK
+	                                     , DR_AMT_I    , CR_AMT_I    , DR_FOR_AMT_I , CR_FOR_AMT_I)
+	        SELECT  
+	                N'3'                                AS GUBUN
+	             ,  N''                                 AS IWALL_GUBUN
+	             ,  A.ACCNT
+	             ,  A.ACCNT_NAME
+	             ,  A.CUSTOM_CODE
+	             ,  A.CUSTOM_NAME
+	             ,  MAX(ISNULL(A.AC_DATE, ''))          AS SORT_DATE
+	             ,  N''                                 AS AC_DATE
+	             ,  '소계(월)'					            AS REMARK
+	             ,  SUM(ISNULL(A.DR_AMT_I     , 0 ))    AS DR_AMT_I
+	             ,  SUM(ISNULL(A.CR_AMT_I     , 0 ))    AS CR_AMT_I
+	             ,  SUM(ISNULL(A.DR_FOR_AMT_I , 0 ))    AS DR_FOR_AMT_I
+	             ,  SUM(ISNULL(A.CR_FOR_AMT_I , 0 ))    AS CR_FOR_AMT_I
+	        FROM    #AGB210Skr_120904 A WITH (NOLOCK)
+	        WHERE   A.GUBUN    = '1'
+	        GROUP BY A.ACCNT, A.ACCNT_NAME, A.CUSTOM_CODE, A.CUSTOM_NAME, SUBSTRING(A.AC_DATE, 1, 7)
+	    
+	        ------- 4.4. 누계
+	        INSERT INTO #AGB210Skr_120904 (GUBUN       , IWALL_GUBUN , ACCNT        , ACCNT_NAME   , CUSTOM_CODE  , CUSTOM_NAME     , SORT_DATE     , AC_DATE, REMARK
+	                                     , DR_AMT_I    , CR_AMT_I    , JAN_AMT_I    , MONEY_UNIT   , DR_FOR_AMT_I , CR_FOR_AMT_I    , JAN_FOR_AMT_I
+	                                     , CHR_SLIP_NUM , CHR_SLIP_SEQ , JAN_DIVI)
+	        SELECT   
+	                N'4'                                AS GUBUN
+	             ,  N''                                 AS IWALL_GUBUN
+	             ,  A.ACCNT
+	             ,  A.ACCNT_NAME
+	             ,  A.CUSTOM_CODE
+	             ,  A.CUSTOM_NAME
+	             ,  MAX(ISNULL(A.AC_DATE, ''))          AS SORT_DATE
+	             ,  N''                                 AS AC_DATE
+	             ,  '누계'          						AS REMARK
+	             ,  SUM(ISNULL(A.DR_AMT_I     , 0 ))    AS DR_AMT_I
+	             ,  SUM(ISNULL(A.CR_AMT_I     , 0 ))    AS CR_AMT_I
+	             ,  CASE WHEN A.JAN_DIVI = '1' THEN SUM(ISNULL(A.DR_AMT_I, 0 ) - ISNULL(A.CR_AMT_I, 0 ))
+	                     ELSE SUM(ISNULL(A.CR_AMT_I, 0 ) - ISNULL(A.DR_AMT_I, 0 ))
+	                END                                 AS JAN_AMT_I
+	             ,  @MONEY_UNIT                         AS MONEY_UNIT
+	             ,  SUM(ISNULL(A.DR_FOR_AMT_I  , 0 ))   AS DR_FOR_AMT_I
+	             ,  SUM(ISNULL(A.CR_FOR_AMT_I  , 0 ))   AS CR_FOR_AMT_I
+	             ,  CASE WHEN A.JAN_DIVI = '1' THEN SUM(ISNULL(A.DR_FOR_AMT_I, 0 ) - ISNULL(A.CR_FOR_AMT_I, 0 ))
+	                     ELSE SUM(ISNULL(A.CR_FOR_AMT_I, 0 ) - ISNULL(A.DR_FOR_AMT_I, 0 ))
+	                END                                 AS JAN_FOR_AMT_I
+	             ,  REPLICATE('0', 7 - LEN(CONVERT(NVARCHAR(7), 9999999))) + (CONVERT(NVARCHAR(7), 9999999)) AS CHR_SLIP_NUM
+	             ,  REPLICATE('0', 5 - LEN(CONVERT(NVARCHAR(5), 99999)))   + (CONVERT(NVARCHAR(5), 99999))   AS CHR_SLIP_SEQ
+	             ,  A.JAN_DIVI
+	        FROM    #AGB210Skr_120904 A WITH (NOLOCK)
+	        WHERE   (A.GUBUN = '0' OR A.GUBUN = '1')
+	        GROUP BY SUBSTRING(A.AC_DATE, 1, 7), A.ACCNT, A.ACCNT_NAME, A.CUSTOM_CODE, A.CUSTOM_NAME, A.JAN_DIVI
+	    
+	        ------- 4.4.1 누계차변계, 대변계, 잔액 계산하여 UPDATE
+	        DECLARE         @4_AccrueI            NUMERIC(30,6)               -- 잔액
+	                      , @4_AccrueForI         NUMERIC(30,6)               -- 잔액(외화)
+	                      , @4_DrAmtI             NUMERIC(30,6)               -- 누계차변의 누적금액
+	                      , @4_CrAmtI             NUMERIC(30,6)               -- 누계대변의 누적금액
+	                      , @4_DrForAmtI          NUMERIC(30,6)               -- 누계차변(외화)의 누적금액
+	                      , @4_CrForAmtI          NUMERIC(30,6)               -- 누계대변(외화)의 누적금액
+	                      , @4_AccntCustom        NVARCHAR(50)                -- 계정코드 + 거래처코드
+	    
+	        SET @4_AccrueI         = 0
+	        SET @4_AccrueForI      = 0
+	        SET @4_DrAmtI          = 0
+	        SET @4_CrAmtI          = 0
+	        SET @4_DrForAmtI       = 0
+	        SET @4_CrForAmtI       = 0
+	        SET @4_AccntCustom     = ''
+	    
+	        UPDATE  A
+	        SET     @4_AccrueI      = CASE WHEN ISNULL(@4_AccntCustom, '') != A.ACCNT + A.CUSTOM_CODE
+	                                            THEN CASE WHEN A.JAN_DIVI = '1' THEN A.DR_AMT_I - A.CR_AMT_I
+	                                                      ELSE                       A.CR_AMT_I - A.DR_AMT_I
+	                                                 END
+	                                            ELSE CASE WHEN A.JAN_DIVI = '1' THEN ISNULL(@4_AccrueI, 0) + A.DR_AMT_I - A.CR_AMT_I
+	                                                      ELSE                       ISNULL(@4_AccrueI, 0) + A.CR_AMT_I - A.DR_AMT_I
+	                                                 END
+	                                  END
+	             ,  @4_AccrueForI   = CASE WHEN ISNULL(@4_AccntCustom, '') != A.ACCNT + A.CUSTOM_CODE
+	                                            THEN CASE WHEN A.JAN_DIVI = '1' THEN A.DR_FOR_AMT_I - A.CR_FOR_AMT_I
+	                                                      ELSE                       A.CR_FOR_AMT_I - A.DR_FOR_AMT_I
+	                                                 END
+	                                            ELSE CASE WHEN A.JAN_DIVI = '1' THEN ISNULL(@4_AccrueForI, 0) + A.DR_FOR_AMT_I - A.CR_FOR_AMT_I
+	                                                      ELSE                       ISNULL(@4_AccrueForI, 0) + A.CR_FOR_AMT_I - A.DR_FOR_AMT_I
+	                                                 END
+	                                  END
+	             ,  A.JAN_AMT_I     = @4_AccrueI
+	             ,  A.JAN_FOR_AMT_I = @4_AccrueForI
+	    
+	             ,  @4_DrAmtI       = CASE WHEN ISNULL(@4_AccntCustom, '') != A.ACCNT + A.CUSTOM_CODE THEN A.DR_AMT_I
+	                                       ELSE ISNULL(@4_DrAmtI, 0)  + A.DR_AMT_I
+	                                  END
+	             ,  @4_CrAmtI       = CASE WHEN ISNULL(@4_AccntCustom, '') != A.ACCNT + A.CUSTOM_CODE THEN A.CR_AMT_I
+	                                       ELSE ISNULL(@4_CrAmtI, 0)  + A.CR_AMT_I
+	                                  END
+	             ,  @4_DrForAmtI    = CASE WHEN ISNULL(@4_AccntCustom, '') != A.ACCNT + A.CUSTOM_CODE THEN A.DR_FOR_AMT_I
+	                                       ELSE ISNULL(@4_DrForAmtI, 0)  + A.DR_FOR_AMT_I
+	                                  END
+	             ,  @4_CrForAmtI    = CASE WHEN ISNULL(@4_AccntCustom, '') != A.ACCNT + A.CUSTOM_CODE THEN A.CR_FOR_AMT_I
+	                                       ELSE ISNULL(@4_CrForAmtI, 0)  + A.CR_FOR_AMT_I
+	                                  END
+	            
+	             ,  A.DR_AMT_I      = @4_DrAmtI
+	             ,  A.CR_AMT_I      = @4_CrAmtI
+	             ,  A.DR_FOR_AMT_I  = @4_DrForAmtI
+	             ,  A.CR_FOR_AMT_I  = @4_CrForAmtI
+	             ,  @4_AccntCustom  = (A.ACCNT + A.CUSTOM_CODE)
+	        FROM    #AGB210Skr_120904 A WITH (NOLOCK, INDEX(AGB210Skr_IDX01))
+	        WHERE   A.GUBUN = '4'
+	    
+	        ------- 5. 리턴 데이터
+	        SELECT 
+	                A.ACCNT
+	             ,  A.ACCNT_NAME
+	             ,  A.CUSTOM_CODE
+	             ,  A.CUSTOM_NAME
+	             ,  CASE WHEN A.GUBUN = '0' THEN '' ELSE A.AC_DATE END AS AC_DATE
+	             ,  A.SLIP_NUM
+	             ,  A.SLIP_SEQ
+	             ,  ISNULL(A.REMARK       , '')                    AS REMARK
+	             ,  ISNULL(A.DR_AMT_I     , 0)                     AS DR_AMT_I
+	             ,  ISNULL(A.CR_AMT_I     , 0)                     AS CR_AMT_I
+	             ,  ISNULL(A.JAN_AMT_I    , 0)                     AS JAN_AMT_I
+	             ,  A.MONEY_UNIT                                   AS MONEY_UNIT
+	             ,  ISNULL(CASE WHEN A.GUBUN = '1'                        THEN ISNULL(A.EXCHG_RATE, 0)
+	                     WHEN (A.GUBUN = '0' OR A.GUBUN = '4')     AND
+	                          ISNULL(A.JAN_FOR_AMT_I, 0) != 0 THEN ISNULL(A.JAN_AMT_I, 0) / ISNULL(A.JAN_FOR_AMT_I, 0)
+	                END, 0)                                            AS EXCHG_RATE
+	             ,  ISNULL(A.DR_FOR_AMT_I , 0)                     AS DR_FOR_AMT_I
+	             ,  ISNULL(A.CR_FOR_AMT_I , 0)                     AS CR_FOR_AMT_I 
+	             ,  ISNULL(A.JAN_FOR_AMT_I, 0)                     AS JAN_FOR_AMT_I
+	             ,  A.GUBUN                                        AS GUBUN
+	             ,  A.IWALL_GUBUN                                  AS IWALL_GUBUN
+	             ,  ISNULL(A.INPUT_PATH   , '')                    AS INPUT_PATH
+	             ,  ISNULL(A.INPUT_DIVI   , '')                    AS INPUT_DIVI
+	             ,  ISNULL(A.DIV_CODE     , '')                    AS DIV_CODE
+	        FROM           #AGB210Skr_120904 AS A WITH (NOLOCK)
+	        WHERE   (ISNULL(A.DR_AMT_I     , 0) != 0
+	           OR    ISNULL(A.CR_AMT_I     , 0) != 0
+	           OR    ISNULL(A.JAN_AMT_I    , 0) != 0
+	           OR    ISNULL(A.DR_FOR_AMT_I , 0) != 0
+	           OR    ISNULL(A.CR_FOR_AMT_I , 0) != 0
+	           OR    ISNULL(A.JAN_FOR_AMT_I, 0) != 0)
+	        ORDER BY A.ACCNT, A.CUSTOM_CODE, A.SORT_DATE, A.GUBUN, A.IWALL_GUBUN, A.SLIP_NUM, A.SLIP_SEQ
+	    
+	        DROP TABLE #AGB210Skr_120904
+	    
+	        SET NOCOUNT OFF
+	        SET ARITHABORT OFF
+	    END
+	</select>
+	
+</mapper>

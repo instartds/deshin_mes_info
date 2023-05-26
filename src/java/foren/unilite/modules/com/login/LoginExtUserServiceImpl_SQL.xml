@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="loginExtUserServiceImpl">
+	<resultMap id="login" type="foren.framework.model.LoginVO">
+		<result property="userID" column="USER_ID"/>
+		<result property="usn" column="USER_ID"/>
+		<result property="userName" column="USER_NAME"/>
+		<result property="personNumb" column="PERSON_NUMB"/>
+		<result property="compCode" column="COMP_CODE"/>
+		<result property="compName" column="COMP_NAME"/>
+		<result property="divCode" column="DIV_CODE"/>
+		<result property="divName" column="DIV_NAME"/>
+		<result property="customCode" column="CUSTOM_CODE"/>
+		<result property="customName" column="CUSTOM_NAME"/>
+		<result property="authorityLevel" column="AUTHORITY_LEVEL"/>
+<!-- 20210427 추가: 로그인 유효기간 체크위해 추가(refItem(내/외부 사용자 구분을 위해 추가), pwChgDay, pwChgLogoutYn) -->
+		<result property="refItem" column="REF_ITEM"/>
+		<result property="pwChgDay" column="PW_CHG_DAY"/>
+		<result property="pwChgLogoutYn" column="PW_CHG_LOGOUT_YN"/>
+		<result property="firstLoginYn" column="FIRST_LOGIN_YN"/>
+
+		<result property="fDate" column="FDATE"/>
+		<result property="fYM" column="FYM"/>
+		<!--
+		<result property="localeString" 			column="LOCALE" />
+		-->
+	</resultMap>
+
+	
+	<select id="loginExtUserServiceImpl.passwordCheck" parameterType="Map" resultType="String">
+		/* loginExtUserServiceImpl.passwordCheck */ 
+		SELECT user_id
+		  FROM BSA350T u WITH(NOLOCK)
+		 WHERE u.user_id = #{userid}
+		   AND  use_yn = 'Y'
+		   AND (u.PASSWORD  = #{userpw} OR pwdcompare(#{userpw}, u.password) = 1)
+	</select>
+	
+	
+	<select id="loginExtUserServiceImpl.getUserInfoByUserID" parameterType="String" resultMap="login">
+		/* loginExtUserServiceImpl.getUserInfoByUserID */ 
+		SELECT TOP 1 
+			u.user_id USER_ID
+			,u.user_name USER_NAME
+			,u.person_numb PERSON_NUMB
+			,u.div_code DIV_CODE
+			,u.comp_code COMP_CODE
+			,c1.comp_name COMP_NAME
+			,c.DIV_NAME DIV_NAME
+			,isnull(u.USER_LEVEL, 10) AUTHORITY_LEVEL
+			,u.CUSTOM_CODE
+			,d.CUSTOM_NAME
+			,'E' AS REF_ITEM                                       --20210427 수정: 0 -> 'E'
+			,(
+				SELECT ISNULL(MAX(SUB_CODE), 'KR')
+				FROM BSA100T WITH (NOLOCK)
+				WHERE MAIN_CODE = 'B012'
+					AND REF_CODE1 = 'Y'
+					AND COMP_CODE = u.COMP_CODE
+				) AS LANGCODE
+			,(
+				SELECT ISNULL(MAX(CODE_NAME), 'YYYY-MM-DD')
+				FROM BSA100T WITH (NOLOCK)
+				WHERE MAIN_CODE = 'B044'
+					AND REF_CODE1 = 'Y'
+					AND COMP_CODE = u.COMP_CODE
+				) AS FDATE
+			,(
+				SELECT ISNULL(MAX(REF_CODE2), 'YYYY-MM')
+				FROM BSA100T WITH (NOLOCK)
+				WHERE MAIN_CODE = 'B044'
+					AND REF_CODE1 = 'Y'
+					AND COMP_CODE = u.COMP_CODE
+				) AS FYM
+			,(
+				SELECT ISNULL(MAX(SUB_CODE), 'KR')
+				FROM BSA100T WITH (NOLOCK)
+				WHERE MAIN_CODE = 'B076'
+					AND REF_CODE1 = 'Y'
+					AND COMP_CODE = u.COMP_CODE
+				) AS LOCALE
+<!-- 20210427 추가: 로그인 유효기간 체크위해 추가(pwChgDay, pwChgLogoutYn, firstLoginYn) -->
+			, CASE WHEN ISNULL(PW.REF_CODE5, '') = ''  THEN  1 ELSE DATEDIFF(DAY, GETDATE(),ISNULL(U.PWD_UPDATE_DB_TIME, U.INSERT_DB_TIME)) + PW.REF_CODE5 END AS PW_CHG_DAY
+			--, 0 as PW_CHG_DAY -- 테스트용
+			, PW1.REF_CODE6                                                                                                                                 AS PW_CHG_LOGOUT_YN
+<!-- 20210427 추가: 최초 로그인시 비밀변경 페이지만 접근되도록   -->			
+			, CASE WHEN ISNULL(PW2.REF_CODE5,'N') = 'Y' THEN CONVERT(NVARCHAR(8), U.LAST_LOGIN_DATE, 112) ELSE CONVERT(NVARCHAR(8), GETDATE(), 112) END AS LAST_LOGIN_DATE
+			, CASE WHEN ISNULL(PW2.REF_CODE5,'N') = 'Y' AND  ISNULL(CONVERT(NVARCHAR(8), U.LAST_LOGIN_DATE, 112),'') = '' THEN 'Y' ELSE 'N' END AS FIRST_LOGIN_YN
+
+		FROM BSA350T u WITH (NOLOCK)
+		INNER JOIN BOR100T c1 WITH (NOLOCK) ON u.COMP_CODE   = c1.COMP_CODE
+		INNER JOIN bor120T c  WITH (NOLOCK) ON u.COMP_CODE   = c.COMP_CODE 
+							               AND u.div_code    = c.div_code
+		INNER JOIN BCM100T d  WITH (NOLOCK) ON u.COMP_CODE   = d.COMP_CODE 
+							               AND u.CUSTOM_CODE = d.CUSTOM_CODE
+<!-- 20210427 추가: 로그인 유효기간 체크위해 추가(pwChgDay, pwChgLogoutYn, firstLoginYn) -->
+		LEFT JOIN (
+			SELECT COMP_CODE, CASE WHEN REF_CODE5 = '0' OR REF_CODE5 = '' THEN NULL ELSE CONVERT(INT, REF_CODE5) END REF_CODE5
+			  FROM BSA100T WITH (NOLOCK)
+			 WHERE MAIN_CODE='B110'
+			   AND SUB_CODE='10') PW 		ON U.COMP_CODE = PW.COMP_CODE
+		LEFT JOIN (
+			SELECT COMP_CODE, CASE WHEN REF_CODE6 = 'N' OR REF_CODE5 = '' THEN NULL ELSE REF_CODE6 END REF_CODE6
+			  FROM BSA100T WITH (NOLOCK)
+			 WHERE MAIN_CODE='B110'
+			   AND SUB_CODE='10') PW1 		ON U.COMP_CODE = PW.COMP_CODE
+		LEFT JOIN (
+		 	SELECT COMP_CODE, REF_CODE5
+		 	  FROM BSA100T WITH (NOLOCK)
+		 	 WHERE MAIN_CODE='B110'
+		 	   AND SUB_CODE='50') PW2 		ON U.COMP_CODE = PW2.COMP_CODE	   
+		WHERE user_id = #{userid}
+	</select>
+	<select id="loginExtUserServiceImpl.selectUserList" parameterType="Map" resultType="rMap">
+		/* loginExtUserServiceImpl.selectUserList */
+	    SELECT u1.COMP_CODE,
+		       u1.USER_ID
+		  FROM BSA350T u1 INNER JOIN BSA350T u2 ON u1.COMP_CODE = u2.COMP_CODE
+		 WHERE u1.USE_YN = 'Y'
+		   AND u2.USER_ID = #{userid}
+	</select>
+<!-- 20210426 추가: 외부사용자 암호화 사용으로 추가 -->
+	<select id="loginExtUserServiceImpl.selectfailCount" parameterType="Map" resultType="rMap">
+		/* loginExtUserServiceImpl.failCount */
+		SELECT CASE WHEN ISNULL(#{maxCnt},0) = 0 THEN 'true'
+		            WHEN FAIL_CNT >= ISNULL(#{maxCnt},0) THEN 'false'
+		            ELSE 'true'
+		       END                    AS 'CHECK'
+		     , FAIL_CNT + 1           AS FAIL_CNT
+		  FROM BSA350T u WITH (NOLOCK)
+		 WHERE u.user_id = #{userid}
+	</select>
+<!-- 20210426 추가: 외부사용자 암호화 사용으로 추가 -->
+	<update id="loginExtUserServiceImpl.updateFailLogin" parameterType="Map">
+		/* loginExtUserServiceImpl.updateFailLogin */
+		UPDATE BSA350T
+		   SET FAIL_CNT = ISNULL(FAIL_CNT,0)+1
+		 WHERE USER_ID = #{inputUserId}
+	</update>
+	<update id="loginExtUserServiceImpl.setLastLoginTime" parameterType="Map" >
+		UPDATE BSA350T
+		   SET LAST_LOGIN_DATE =  GETDATE()
+		 WHERE COMP_CODE 	   = #{COMP_CODE}
+		   AND USER_ID         = #{USER_ID}
+	</update>
+		<update id="loginExtUserServiceImpl.updateFirstLogin" parameterType="Map">
+		UPDATE BSA350T
+		  SET  LAST_LOGIN_DATE = GETDATE()
+		WHERE USER_ID = #{USER_ID}
+		  AND COMP_CODE = #{COMP_CODE}
+	</update>
+</mapper>

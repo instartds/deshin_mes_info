@@ -1,0 +1,474 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="had210ukrServiceImpl">
+	<select id="had210ukrServiceImpl.doBatch" parameterType="Map" resultType="int">
+	--had210ukr.Chad210ukr[fnHad210Proc] QUERY01
+	BEGIN
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+	
+	    DECLARE @COMP_CODE        NVARCHAR(08)
+	          , @PAY_YYYY         NVARCHAR(04)
+	          , @USER_ID          NVARCHAR(10)
+	          , @PERSON_NUMB      NVARCHAR(10)
+	    
+	    SET     @COMP_CODE        = #{S_COMP_CODE}
+	    SET     @PAY_YYYY         = #{PAY_YYYY}
+	    SET     @USER_ID          = #{S_USER_ID}
+	    SET     @PERSON_NUMB      = #{PERSON_NUMB}	
+		
+		
+		    DECLARE @PAY_YYYYMM       NVARCHAR(06)
+			
+			<foreach collection="MONTHS" item="item" index="index">
+		    -- 1월 ~ 12월 반복
+		    
+            SET @PAY_YYYYMM = CONVERT(NVARCHAR(06), DATEADD(MM, ${index}, @PAY_YYYY + '0101'), 112)
+            
+                --  1. 월급상여내역 UPDATE -----------------------------------------------------------------------------------------
+                BEGIN
+                    UPDATE A
+                       --연장수당 비과세
+                       SET A.TAX_EXEMPTION1_I = CASE WHEN A.TAX_CODE = '1'                                                          THEN 0
+                                                     WHEN B.COM_PAY_AMT1      + ISNULL(G.COM_PAY_AMT2, 0) &gt;  C.TAX_EXEMPTION_STD THEN 0
+                                                     WHEN E.INCOME_SUPP_TOTAL_I &gt; C.TAX_EXEMPTION_STD2                           THEN 0
+                                                     WHEN C.TAX_EXEMPTION_LMT - B.TAX1_SUM     &gt;  B.EXTAMT                       THEN B.EXTAMT
+                                                     ELSE CASE WHEN C.TAX_EXEMPTION_LMT - B.TAX1_SUM &lt; 0                         THEN 0
+                                                               ELSE C.TAX_EXEMPTION_LMT - B.TAX1_SUM 
+                                                           END
+                                                 END
+                         --식대 비과세
+                         , A.TAX_EXEMPTION2_I = B.FOODAMT - B.FOODLMTAMT
+                         --기타 비과세
+                         , A.TAX_EXEMPTION3_I = B.ETCAMT  - B.ETCLMTAMT
+                         --외국 근로 비과세
+                         , A.TAX_EXEMPTION4_I = B.FOREAMT - B.FORELMTAMT
+                         --보육수당비과세
+                         , A.TAX_EXEMPTION5_I = CASE WHEN A.TAX_CODE2 = '1' THEN 0
+                                                     ELSE B.FAMILYAMT - B.FAMILYLMAMT
+                                                 END
+                         --연구활동비과세                        
+                         , A.TAX_EXEMPTION6_I = B.RNDAMT  - B.RNDLMAMT
+                         --과세제외
+                         , A.NON_TAX_I        = ISNULL(B.NONTAXAMT, 0)
+                         --직무발명보상금비과세
+                         , A.TAX_EXEMPTION7_I = CASE WHEN C.TAX_EXEMPTION_LMT - B.TAX2_SUM     &gt;  B.INVENTIONAMT  THEN B.INVENTIONAMT
+                                                     ELSE CASE WHEN C.TAX_EXEMP_INVENTION_LMT - B.TAX2_SUM &lt; 0 THEN 0
+                                                               ELSE C.TAX_EXEMP_INVENTION_LMT - B.TAX2_SUM
+                                                           END
+                                                 END
+                         --과세금액             과세 + 식대/기타/외국인/연구비 과세분
+                         , A.TAX_AMOUNT_I     =   B.TAX_AMT + B.FOODLMTAMT + B.ETCLMTAMT + B.FORELMTAMT + B.RNDLMAMT
+                                               --연장수당과세
+                                               + (CASE WHEN A.TAX_CODE = '1' THEN B.EXTAMT   --연장수당과세대상자면
+                                                       WHEN B.COM_PAY_AMT1 + G.COM_PAY_AMT2 &gt; C.TAX_EXEMPTION_STD THEN B.EXTAMT  --월정급여 한도 초과하면
+                                                       WHEN E.INCOME_SUPP_TOTAL_I &gt; C.TAX_EXEMPTION_STD2 THEN B.EXTAMT           --전년도총급여 한도 초과하면
+                                                       WHEN (C.TAX_EXEMPTION_LMT - B.TAX1_SUM &gt; 0 AND C.TAX_EXEMPTION_LMT - B.TAX1_SUM &gt; B.EXTAMT) THEN 0
+                                                       WHEN (C.TAX_EXEMPTION_LMT - B.TAX1_SUM &gt; 0 AND C.TAX_EXEMPTION_LMT - B.TAX1_SUM &lt;= B.EXTAMT) THEN B.EXTAMT - (C.TAX_EXEMPTION_LMT - B.TAX1_SUM)
+                                                       ELSE B.EXTAMT 
+                                                 END )
+                                                --보육수당과세 
+                                                + (CASE WHEN A.TAX_CODE2 = '1' THEN FAMILYAMT ELSE FAMILYLMAMT END)
+                                                --직무발명보상금과세
+                                                + (CASE WHEN C.TAX_EXEMP_INVENTION_LMT - B.TAX2_SUM &gt; 0  AND C.TAX_EXEMP_INVENTION_LMT - B.TAX2_SUM  &gt; B.INVENTIONAMT THEN 0
+                                                        WHEN C.TAX_EXEMP_INVENTION_LMT - B.TAX2_SUM &gt; 0  AND C.TAX_EXEMP_INVENTION_LMT - B.TAX2_SUM &lt;= B.INVENTIONAMT THEN B.INVENTIONAMT - (C.TAX_EXEMP_INVENTION_LMT - B.TAX2_SUM)
+                                                        ELSE B.INVENTIONAMT
+                                                    END)
+                         , A.SUPP_TOTAL_I     = ISNULL(D.AMOUNT_I, 0)
+                         , A.PAY_TOTAL_I      = ISNULL(D.AMOUNT_I, 0)
+                      FROM            HPA600T AS A
+                   INNER JOIN HUM100T AS V WITH (NOLOCK) ON V.COMP_CODE   = A.COMP_CODE
+                                                        AND V.PERSON_NUMB = A.PERSON_NUMB
+                   INNER JOIN (SELECT DISTINCT T0.COMP_CODE
+                                    , T0.PAY_YYYYMM
+                                    , T0.PERSON_NUMB
+                                    , T0.SUPP_TYPE
+                                    , SUM(CASE WHEN T1.TAX_CODE     = '1'                                                             THEN ISNULL(T1.AMOUNT_I, 0)                                  ELSE 0 END) AS TAX_AMT      --과세
+                                    , SUM(CASE WHEN T1.TAX_CODE     = '2'                                                             THEN ISNULL(T1.AMOUNT_I, 0)                                  ELSE 0 END) AS EXTAMT       --연장비과세
+                                    , SUM(CASE WHEN T1.TAX_CODE     = '3'                                                             THEN ISNULL(T1.AMOUNT_I, 0)                                  ELSE 0 END) AS FOODAMT      --식대비과세
+                                    , SUM(CASE WHEN T1.TAX_CODE     = '3' AND ISNULL(T1.TAX_AMOUNT_LMT_I, 0) &lt; ISNULL(T1.AMOUNT_I, 0) THEN ISNULL(T1.AMOUNT_I, 0) - ISNULL(T1.TAX_AMOUNT_LMT_I, 0) ELSE 0 END) AS FOODLMTAMT   --식대비과세 과세분
+                                    , SUM(CASE WHEN T1.TAX_CODE     = '4'                                                             THEN ISNULL(T1.AMOUNT_I, 0)                                  ELSE 0 END) AS ETCAMT       --기타비과세
+                                    , SUM(CASE WHEN T1.TAX_AMOUNT_LMT_I = 0 THEN 0
+                                               ELSE CASE WHEN T1.TAX_CODE = '4' AND ISNULL(T1.TAX_AMOUNT_LMT_I, 0) &lt; ISNULL(T1.AMOUNT_I, 0) THEN ISNULL(T1.AMOUNT_I, 0) - ISNULL(T1.TAX_AMOUNT_LMT_I, 0) 
+                                                         ELSE 0 
+                                                     END
+                                           END ) AS ETCLMTAMT                                                                --기타비과세 과세분
+                                    , SUM(CASE WHEN T1.TAX_CODE     = '5' THEN ISNULL(T1.AMOUNT_I, 0) ELSE 0 END) AS FOREAMT --국외근로비과세
+                                    , SUM(CASE WHEN T1.TAX_AMOUNT_LMT_I = 0 THEN 0
+                                               ELSE CASE WHEN T1.TAX_CODE = '5' AND ISNULL(T1.TAX_AMOUNT_LMT_I, 0) &lt; ISNULL(T1.AMOUNT_I, 0) THEN ISNULL(T1.AMOUNT_I, 0) - ISNULL(T1.TAX_AMOUNT_LMT_I, 0) 
+                                                         ELSE 0 
+                                                     END
+                                           END) AS FORELMTAMT                                                                  --국외근로 과세분
+                                    , SUM(CASE WHEN T1.TAX_CODE     = '6' THEN ISNULL(T1.AMOUNT_I, 0) ELSE 0 END) AS FAMILYAMT --보육수당비과세
+                                    , SUM(CASE WHEN T1.TAX_AMOUNT_LMT_I = 0 THEN 0
+                                               ELSE CASE WHEN T1.TAX_CODE     = '6' AND ISNULL(T1.TAX_AMOUNT_LMT_I, 0) &lt; ISNULL(T1.AMOUNT_I, 0) THEN ISNULL(T1.AMOUNT_I, 0) - ISNULL(T1.TAX_AMOUNT_LMT_I, 0)
+                                                         ELSE 0 
+                                                     END
+                                           END) AS FAMILYLMAMT                                                                 --보육수당 과세분
+                                    , SUM(CASE WHEN T1.TAX_CODE     = '7' THEN ISNULL(T1.AMOUNT_I, 0) ELSE 0 END) AS NONTAXAMT --과세제외
+                                    , SUM(CASE WHEN T1.TAX_CODE     = '8' THEN ISNULL(T1.AMOUNT_I, 0) ELSE 0 END) AS RNDAMT    --연구활동비비과세
+                                    , SUM(CASE WHEN T1.TAX_AMOUNT_LMT_I = 0 THEN 0
+                                               ELSE CASE WHEN T1.TAX_CODE     = '8' AND ISNULL(T1.TAX_AMOUNT_LMT_I, 0) &lt; ISNULL(T1.AMOUNT_I, 0) THEN ISNULL(T1.AMOUNT_I, 0) - ISNULL(T1.TAX_AMOUNT_LMT_I, 0)
+                                                         ELSE 0 
+                                                     END
+                                           END) AS RNDLMAMT                                                                       --연구활동비 과세분
+                                    , SUM(CASE WHEN T1.TAX_CODE     = '9' THEN ISNULL(T1.AMOUNT_I, 0) ELSE 0 END) AS INVENTIONAMT --직무발명보상금비과세 
+                                    , SUM(CASE WHEN T1.COM_PAY_TYPE = 'Y' THEN ISNULL(T1.AMOUNT_I, 0) ELSE 0 END) AS COM_PAY_AMT1 --월정급여 수당 합계
+                                    , MAX(CASE WHEN T1.TAX_CODE= '2' THEN ISNULL(T2.TAX1_SUM, 0) ELSE 0 END )  AS TAX1_SUM        --연장근무수당합계(연간비과세한도체크)
+                                    , MAX(CASE WHEN T1.TAX_CODE= '9' THEN ISNULL(T2.TAX2_SUM, 0) ELSE 0 END )  AS TAX2_SUM        --직무발명보상금수당합계(연간비과세한도체크)
+                                 FROM          HPA600T T0 WITH (NOLOCK)
+                                     LEFT  JOIN (SELECT B.COMP_CODE
+                                                      , B.PERSON_NUMB
+                                                      , B.PAY_YYYYMM
+                                                      , B.SUPP_TYPE
+                                                      , SUM(B.AMOUNT_I)         AS AMOUNT_I
+                                                      , MAX(A.TAX_AMOUNT_LMT_I) AS TAX_AMOUNT_LMT_I
+                                                      , A.TAX_CODE
+                                                      , A.COM_PAY_TYPE
+                                                   FROM           HBS300T AS A WITH (NOLOCK)
+                                                        LEFT JOIN HPA300T AS B WITH (NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+                                                                                            AND A.WAGES_CODE = B.WAGES_CODE 
+                                                                                            AND A.CODE_TYPE  = '1'     
+                                                                                            AND B.AMOUNT_I  != 0                                                                              
+                                                   GROUP BY B.COMP_CODE, B.PERSON_NUMB, PAY_YYYYMM, SUPP_TYPE, A.TAX_CODE, A.COM_PAY_TYPE
+                                                 )      T1 ON T0.COMP_CODE   = T1.COMP_CODE
+                                                          AND T0.PERSON_NUMB = T1.PERSON_NUMB
+                                                          AND T0.PAY_YYYYMM  = T1.PAY_YYYYMM
+                                                          AND T0.SUPP_TYPE   = T1.SUPP_TYPE
+                                      LEFT  JOIN (
+                                                   SELECT S1.COMP_CODE
+                                                        , @PAY_YYYYMM AS PAY_YYYYMM
+                                                        , S1.SUPP_TYPE                                                       
+                                                        , S1.PERSON_NUMB
+                                                        , SUM(CASE WHEN (S1.SUPP_TYPE  = '1'  OR S3.REF_CODE1  = '1') THEN ISNULL(S1.TAX_EXEMPTION1_I, 0) ELSE 0 END)  AS TAX1_SUM --급여의 연장비과세 합
+                                                        , SUM(CASE WHEN (S1.SUPP_TYPE  = '1'  OR S3.REF_CODE1  = '1') THEN ISNULL(S1.TAX_EXEMPTION7_I, 0) ELSE 0 END)  AS TAX2_SUM --급여의 직무발명보상금비과세 합
+                                                     FROM            HPA600T AS S1 WITH (NOLOCK)                                                           
+                                                           LEFT JOIN BSA100T AS S3 WITH (NOLOCK) ON S3.COMP_CODE     = S1.COMP_CODE
+                                                                                                AND S3.MAIN_CODE     = 'H032'
+                                                                                                AND S3.SUB_CODE      = S1.SUPP_TYPE                                           
+                                                      WHERE S1.COMP_CODE       =  @COMP_CODE
+                                                        AND S1.PAY_YYYYMM LIKE @PAY_YYYY + '%' 
+                                                        AND S1.PAY_YYYYMM    &lt; @PAY_YYYYMM
+                                                    GROUP BY S1.COMP_CODE, S1.SUPP_TYPE  , S1.PERSON_NUMB                                              
+                                                 )       T2               ON T2.COMP_CODE   = T0.COMP_CODE
+                                                                         AND T2.PAY_YYYYMM  = T0.PAY_YYYYMM
+                                                                         AND T2.PERSON_NUMB = T0.PERSON_NUMB 
+                                                                         AND T2.SUPP_TYPE   = T0.SUPP_TYPE                                                                    
+                                WHERE T0.COMP_CODE   = @COMP_CODE
+                                  AND T0.PAY_YYYYMM  = @PAY_YYYYMM
+                                GROUP BY T0.COMP_CODE, T0.PAY_YYYYMM, T0.PERSON_NUMB, T0.SUPP_TYPE
+                              )       AS B               ON B.COMP_CODE   = A.COMP_CODE
+                                                        AND B.PERSON_NUMB = A.PERSON_NUMB
+                                                        AND B.PAY_YYYYMM  = A.PAY_YYYYMM
+                                                        AND B.SUPP_TYPE   = A.SUPP_TYPE
+                   INNER JOIN (SELECT COMP_CODE
+                                    , ISNULL(TAX_EXEMPTION_STD, 0)       AS TAX_EXEMPTION_STD       --연장비과세 월정급여 한도
+                                    , ISNULL(TAX_EXEMPTION_LMT, 0)       AS TAX_EXEMPTION_LMT       --연간 연장비과세 한도
+                                    , ISNULL(TAX_EXEMPTION_STD2, 0)      AS TAX_EXEMPTION_STD2      --연장비과세 전년도 총급여한도
+                                    , ISNULL(TAX_EXEMP_INVENTION_LMT, 0) AS TAX_EXEMP_INVENTION_LMT --연간 직무발명보상금비과세한도
+                                 FROM HAD200T WITH (NOLOCK)
+                                WHERE COMP_CODE     = @COMP_CODE
+                                  AND TAX_YEAR      = @PAY_YYYY
+                                  AND COMPANY_CODE  = '1'
+                              )       AS C               ON C.COMP_CODE   = A.COMP_CODE
+                   LEFT  JOIN (SELECT COMP_CODE
+                                    , PAY_YYYYMM
+                                    , SUPP_TYPE
+                                    , PERSON_NUMB
+                                    , SUM(ISNULL(AMOUNT_I, 0)) AS AMOUNT_I
+                                 FROM HPA300T WITH (NOLOCK)
+                                WHERE COMP_CODE     = @COMP_CODE
+                                  AND PAY_YYYYMM    = @PAY_YYYYMM
+                                GROUP BY COMP_CODE, PAY_YYYYMM, SUPP_TYPE, PERSON_NUMB
+                              )       AS D               ON D.COMP_CODE   = A.COMP_CODE
+                                                        AND D.PAY_YYYYMM  = A.PAY_YYYYMM
+                                                        AND D.SUPP_TYPE   = A.SUPP_TYPE
+                                                        AND D.PERSON_NUMB = A.PERSON_NUMB
+                    LEFT JOIN (SELECT ISNULL(INCOME_SUPP_TOTAL_I,0) AS INCOME_SUPP_TOTAL_I
+                                    , COMP_CODE
+                                    , PERSON_NUMB
+                                    , YEAR_YYYY
+                                 FROM HAD600T 
+                                WHERE COMP_CODE    = @COMP_CODE
+                                  AND YEAR_YYYY    = @PAY_YYYY -1
+                                  AND HALFWAY_TYPE = 'N'
+                               )        AS E              ON E.COMP_CODE   = A.COMP_CODE
+                                                         AND E.PERSON_NUMB = A.PERSON_NUMB
+                                                         AND E.YEAR_YYYY   = LEFT(A.PAY_YYYYMM,4) -1 
+                    LEFT JOIN BSA100T   AS F              ON F.COMP_CODE   = A.COMP_CODE
+                                                         AND F.MAIN_CODE   = 'H032'
+                                                         AND F.SUB_CODE    = A.SUPP_TYPE
+                    --월정급여에 해당하는 상여 합계
+                    LEFT JOIN (SELECT S1.COMP_CODE
+                                    , S1.PERSON_NUMB
+                                    , SUM(ISNULL(S1.BONUS_TOTAL_I, 0)) AS COM_PAY_AMT2
+                                 FROM           HPA600T AS S1
+                                      LEFT JOIN BSA100T AS S3 WITH (NOLOCK) ON S3.COMP_CODE = S1.COMP_CODE
+                                                                           AND S3.MAIN_CODE = 'H032'
+                                                                           AND S3.SUB_CODE  = S1.SUPP_TYPE
+                                WHERE S1.COMP_CODE     =  @COMP_CODE
+                                  AND S1.PAY_YYYYMM    =  @PAY_YYYYMM
+                                  AND S1.SUPP_TYPE    != '1' 
+                                  AND S3.REF_CODE1    != '1' --급여 아님
+                                  AND S1.COM_PAY_FLAG  = 'Y' --월정급여포함
+                                  AND S1.TAX_CODE      = '2' --연장수당비과세대상자
+                                GROUP BY S1.COMP_CODE, S1.PERSON_NUMB
+                               )        AS G  ON G.COMP_CODE   = A.COMP_CODE
+                                             AND G.PERSON_NUMB = A.PERSON_NUMB
+             WHERE A.COMP_CODE                    = @COMP_CODE
+               AND A.PAY_YYYYMM                   = @PAY_YYYYMM
+               AND (A.SUPP_TYPE                   = '1'   OR F.REF_CODE1 = '1')
+               AND ISNULL(V.PAY_PROV_YN     ,'N') = 'Y'
+               AND ISNULL(V.PAY_PROV_STOP_YN,'Y') = 'N'
+               AND ((@PERSON_NUMB = '') OR (@PERSON_NUMB != '' AND A.PERSON_NUMB LIKE @PERSON_NUMB + '%'))
+            END
+            
+            --  2. 월비과세수당지급내역 생성 -----------------------------------------------------------------------------------
+            BEGIN
+            DELETE A 
+              FROM            HPA800T AS A 
+                   INNER JOIN HUM100T AS B ON B.COMP_CODE   = A.COMP_CODE
+                                          AND B.PERSON_NUMB = A.PERSON_NUMB   
+             WHERE A.COMP_CODE  = @COMP_CODE
+               AND A.PAY_YYYYMM = @PAY_YYYYMM
+               AND ISNULL(B.PAY_PROV_YN     , 'N') = 'Y'
+               AND ISNULL(B.PAY_PROV_STOP_YN, 'Y') = 'N'
+               AND ((@PERSON_NUMB = '') OR (@PERSON_NUMB != '' AND B.PERSON_NUMB LIKE @PERSON_NUMB + '%'))
+        
+                INSERT INTO HPA800T ( COMP_CODE
+                                    , PAY_YYYYMM
+                                    , SUPP_TYPE
+                                    , PERSON_NUMB
+                                    , NONTAX_CODE
+                                    , PRINT_LOCATION 
+                                    , LIMIT_PAY_SUPP_I
+                                    , UPDATE_DB_USER
+                                    , UPDATE_DB_TIME
+                                    , INSERT_DB_USER
+                                    , INSERT_DB_TIME )
+                SELECT A.COMP_CODE
+                     , B.PAY_YYYYMM
+                     , B.SUPP_TYPE
+                     , A.PERSON_NUMB
+                     , C.NON_TAX_CODE
+                     , D.PRINT_LOCATION
+        
+                           --연장수당비과세
+                     , CASE WHEN D.NONTAX_CODE = 'O01' THEN (CASE WHEN F.TAX_CODE = '1' THEN 0
+                                                                  ELSE (CASE WHEN ISNULL(F.SUPP_TOTAL_I,0) + ISNULL(J.BONUS_TOTAL_I,0) - ISNULL(H.AMOUNT_I,0) &gt; G.TAX_EXEMPTION_STD THEN 0
+                                                                             WHEN ISNULL(I.INCOME_SUPP_TOTAL_I, I2.INCOME_SUPP_TOTAL_I) &gt; G.TAX_EXEMPTION_STD2 THEN 0
+                                                                             ELSE (CASE WHEN ISNULL(B.AMOUNT_I, 0) &gt; ISNULL(G.TAX_EXEMPTION_LMT, 0) - ISNULL(E.LIMIT_PAY_SUPP_I, 0) THEN ISNULL(G.TAX_EXEMPTION_LMT, 0) - ISNULL(E.LIMIT_PAY_SUPP_I, 0)
+                                                                                        ELSE ISNULL(B.AMOUNT_I, 0)
+                                                                                    END)
+                                                                         END)
+                                                              END)
+                            --보육수당비과세
+                            WHEN D.NONTAX_CODE = 'Q01' THEN (CASE WHEN F.TAX_CODE2 = '1' THEN 0 
+                                                                  ELSE (CASE WHEN C.TAX_AMOUNT_LMT_I = 0 THEN ISNULL(B.AMOUNT_I, 0)
+                                                                             ELSE CASE WHEN ISNULL(B.AMOUNT_I, 0) &gt; ISNULL(C.TAX_AMOUNT_LMT_I, 0) THEN ISNULL(C.TAX_AMOUNT_LMT_I, 0)
+                                                                                       ELSE ISNULL(B.AMOUNT_I, 0)
+                                                                                   END
+                                                                         END)
+                                                               END)
+                            --직무발명보상금비과세
+                            WHEN D.NONTAX_CODE = 'R11' THEN (CASE WHEN ISNULL(B.AMOUNT_I, 0) &gt; ISNULL(G.TAX_EXEMP_INVENTION_LMT, 0) - ISNULL(E.LIMIT_PAY_SUPP_I, 0) THEN ISNULL(G.TAX_EXEMP_INVENTION_LMT, 0) - ISNULL(E.LIMIT_PAY_SUPP_I, 0)
+                                                                  ELSE ISNULL(B.AMOUNT_I, 0)
+                                                              END)
+                            ELSE (CASE WHEN C.TAX_AMOUNT_LMT_I = 0 THEN ISNULL(B.AMOUNT_I, 0)
+                                       ELSE CASE WHEN ISNULL(B.AMOUNT_I, 0) &gt; ISNULL(C.TAX_AMOUNT_LMT_I, 0) THEN ISNULL(C.TAX_AMOUNT_LMT_I, 0)
+                                                 WHEN ISNULL(B.AMOUNT_I, 0) &lt; 0 THEN 0
+                                                 ELSE ISNULL(B.AMOUNT_I, 0)
+                                             END
+                                  END)
+                        END                 AS LIMIT_PAY_SUPP_I
+                     , @USER_ID             AS UPDATE_DB_USER
+                     , GETDATE()            AS UPDATE_DB_TIME
+                     , @USER_ID             AS INSERT_DB_USER
+                     , GETDATE()            AS INSERT_DB_TIME
+                  FROM            HUM100T   AS A WITH (NOLOCK)
+        
+                        -- 지급/공제코드정보의 비과세코드와 비과세한도액 참조
+                       INNER JOIN (SELECT DISTINCT 
+                                          COMP_CODE
+                                        , ISNULL(NON_TAX_CODE    , '')  AS NON_TAX_CODE
+                                        , ISNULL(TAX_AMOUNT_LMT_I, 0 )  AS TAX_AMOUNT_LMT_I
+                                        , WAGES_CODE
+                                     FROM HBS300T WITH(NOLOCK)
+                                    WHERE CODE_TYPE                     = '1'
+                                      AND ISNULL(TAX_CODE    , '') NOT IN ('1', '7')
+                                      AND ISNULL(NON_TAX_CODE, '')     != ''
+                                  )         AS C              ON C.COMP_CODE           = A.COMP_CODE
+        
+                        -- 당월 비과세수당합계
+                       INNER JOIN (SELECT B1.COMP_CODE
+                                        , B1.PAY_YYYYMM
+                                        , B1.SUPP_TYPE
+                                        , B1.PERSON_NUMB
+                                        , ISNULL(B2.NON_TAX_CODE, '') AS NON_TAX_CODE
+                                        , SUM(ISNULL(B1.AMOUNT_I, 0)) AS AMOUNT_I
+                                        , MAX(B1.WAGES_CODE)          AS WAGES_CODE
+                                     FROM           HPA300T AS B1 WITH (NOLOCK)
+                                         INNER JOIN HBS300T AS B2 WITH (NOLOCK) ON B2.COMP_CODE                     = B1.COMP_CODE
+                                                                               AND B2.WAGES_CODE                    = B1.WAGES_CODE
+                                                                               AND B2.CODE_TYPE                     = '1'
+                                                                               AND ISNULL(B2.TAX_CODE    , '') NOT IN ('1', '7')
+                                                                               AND ISNULL(B2.NON_TAX_CODE, '')     != ''
+                                    WHERE B1.COMP_CODE    = @COMP_CODE
+                                      AND B1.PAY_YYYYMM   = @PAY_YYYYMM
+                                      AND B1.AMOUNT_I    != 0
+                                    GROUP BY B1.COMP_CODE, B1.PAY_YYYYMM, B1.SUPP_TYPE, B1.PERSON_NUMB, B2.NON_TAX_CODE
+                                  )         AS B              ON B.COMP_CODE           = A.COMP_CODE
+                                                             AND B.PERSON_NUMB         = A.PERSON_NUMB
+                                                             AND B.NON_TAX_CODE        = C.NON_TAX_CODE
+                                                             AND B.WAGES_CODE          = C.WAGES_CODE
+                        -- 비과세코드정보
+                       INNER JOIN HBS120T   AS D WITH(NOLOCK) ON D.COMP_CODE           = B.COMP_CODE
+                                                             AND D.TAX_YYYY            = LEFT(B.PAY_YYYYMM, 4)
+                                                             AND D.NONTAX_CODE         = B.NON_TAX_CODE
+        
+                        -- 전월까지의 비과세총액(누적)
+                       LEFT  JOIN (SELECT COMP_CODE
+                                        , PERSON_NUMB
+                                        , NONTAX_CODE
+                                        , SUM(ISNULL(LIMIT_PAY_SUPP_I, 0)) AS LIMIT_PAY_SUPP_I
+                                        , SUPP_TYPE
+                                     FROM HPA800T WITH (NOLOCK)
+                                    WHERE COMP_CODE   = @COMP_CODE
+                                      AND PAY_YYYYMM &gt;= @PAY_YYYY
+                                      AND PAY_YYYYMM &lt;  @PAY_YYYYMM
+                                    GROUP BY COMP_CODE, PERSON_NUMB, NONTAX_CODE, SUPP_TYPE
+                                  )         AS E              ON E.COMP_CODE           = A.COMP_CODE
+                                                             AND E.PERSON_NUMB         = A.PERSON_NUMB
+                                                             AND E.NONTAX_CODE         = C.NON_TAX_CODE
+                                                             AND E.SUPP_TYPE           = B.SUPP_TYPE 
+        
+                        -- 당월 급여총액 참조
+                       INNER JOIN (SELECT COMP_CODE
+                                        , SUPP_TYPE
+                                        , PERSON_NUMB
+                                        , PAY_YYYYMM
+                                        , TAX_CODE
+                                        , TAX_CODE2
+                                        , ISNULL(SUPP_TOTAL_I,0) AS SUPP_TOTAL_I
+                                    FROM HPA600T WITH (NOLOCK)
+                                   WHERE COMP_CODE  = @COMP_CODE
+                                     AND PAY_YYYYMM = @PAY_YYYYMM
+                                 )          AS F              ON F.COMP_CODE           = B.COMP_CODE
+                                                             AND F.PERSON_NUMB         = B.PERSON_NUMB
+                                                             AND F.PAY_YYYYMM          = B.PAY_YYYYMM
+                                                             AND F.SUPP_TYPE           = B.SUPP_TYPE
+        
+                        -- 당월 상여총액 참조
+                        LEFT JOIN (SELECT T1.COMP_CODE
+                                        , T1.PERSON_NUMB
+                                        , T1.PAY_YYYYMM
+                                        , ISNULL(SUM(T1.BONUS_TOTAL_I),0) AS BONUS_TOTAL_I                                     
+                                     FROM           HPA600T AS T1
+                                          LEFT JOIN BSA100T AS T2 ON T2.COMP_CODE = T1.COMP_CODE
+                                                                 AND T2.MAIN_CODE = 'H032'
+                                                                 AND T2.SUB_CODE  = T1.SUPP_TYPE
+                                    WHERE T1.COMP_CODE                = @COMP_CODE
+                                      AND T1.PAY_YYYYMM               = @PAY_YYYYMM
+                                      AND T1.SUPP_TYPE               != '1' 
+                                      AND ISNULL(T2.REF_CODE1, '')   != '1'
+                                      AND ISNULL(T1.COM_PAY_FLAG, '') = 'Y'
+                                      AND T1.TAX_CODE                 = '2'
+                                    GROUP BY T1.COMP_CODE, T1.PERSON_NUMB, T1.PAY_YYYYMM
+                                   )        AS J              ON J.COMP_CODE           = A.COMP_CODE
+                                                             AND J.PERSON_NUMB         = A.PERSON_NUMB
+                                                             AND J.PAY_YYYYMM          = @PAY_YYYYMM 
+        
+                        -- 연말정산기준자료의 월정급여와 전년도총급여한도액 참조
+                        LEFT JOIN (SELECT COMP_CODE
+                                        , TAX_YEAR
+                                        , TAX_EXEMPTION_STD       --월정급여한도
+                                        , TAX_EXEMPTION_STD2      --전년도총급여
+                                        , TAX_EXEMPTION_LMT       --연간연장비과세한도
+                                        , TAX_EXEMP_INVENTION_LMT --연간직무발명보상금비과세한도                            
+                                     FROM HAD200T WITH (NOLOCK) 
+                                    WHERE COMP_CODE    = @COMP_CODE
+                                      AND COMPANY_CODE = '2'
+                                  )         AS G              ON G.COMP_CODE           = B.COMP_CODE
+                                                             AND G.TAX_YEAR            = LEFT (B.PAY_YYYYMM,4)
+        
+                        -- 당월 비과세수당 합계(월정급여포함여부가 '아니오') 값 참조 --> 연장수당 계산시 참조
+                        LEFT JOIN (SELECT B1.COMP_CODE
+                                        , B1.PAY_YYYYMM
+                                        , B1.SUPP_TYPE
+                                        , B1.PERSON_NUMB
+                                        , SUM(ISNULL(B1.AMOUNT_I, 0 )) AS AMOUNT_I
+                                     FROM            HPA300T AS B1 WITH (NOLOCK)
+                                          INNER JOIN HBS300T AS B2 WITH (NOLOCK) ON B2.COMP_CODE  = B1.COMP_CODE
+                                                                                AND B2.WAGES_CODE = B1.WAGES_CODE
+                                                                                AND B2.CODE_TYPE  = '1'
+                                                                                
+                                    WHERE B1.COMP_CODE    = @COMP_CODE
+                                      AND B1.PAY_YYYYMM   = @PAY_YYYYMM
+                                      AND B2.COM_PAY_TYPE = 'N'
+                                    GROUP BY B1.COMP_CODE, B1.PAY_YYYYMM, B1.SUPP_TYPE, B1.PERSON_NUMB
+                                  )         AS H              ON H.COMP_CODE    = A.COMP_CODE
+                                                             AND H.PERSON_NUMB  = A.PERSON_NUMB
+                                                             AND H.PAY_YYYYMM   = F.PAY_YYYYMM
+                                                             AND H.SUPP_TYPE    = B.SUPP_TYPE
+        
+                        -- 전년도 연말정산 근로소득(연말정산한 경우만 참조가 되고 안하면 아래 쿼리의 값 참조함)
+                        LEFT JOIN (SELECT ISNULL(INCOME_SUPP_TOTAL_I,0) AS INCOME_SUPP_TOTAL_I
+                                        , COMP_CODE
+                                        , PERSON_NUMB
+                                        , YEAR_YYYY
+                                     FROM HAD600T 
+                                    WHERE COMP_CODE    = @COMP_CODE
+                                      AND YEAR_YYYY    = CONVERT(VARCHAR(4), DATEADD(YEAR, -1, @PAY_YYYYMM + '01'), 112)
+                                      AND HALFWAY_TYPE = 'N'
+                                   )        AS I              ON I.COMP_CODE   = A.COMP_CODE
+                                                             AND I.PERSON_NUMB = A.PERSON_NUMB
+                                                             AND I.YEAR_YYYY   = CONVERT(VARCHAR(4), DATEADD(YEAR, -1, F.PAY_YYYYMM + '01'), 112) 
+        
+                        -- 전년도 연말정산계산 전에 참조(급여총액 - 비과세총액)
+                        LEFT JOIN (SELECT A.COMP_CODE
+                                        , A.PERSON_NUMB
+                                        , A.YEAR_YYYY
+                                        , ISNULL(A.SUPP_TOTAL_I, 0) - ISNULL(B.LIMIT_PAY_SUPP_I, 0) AS INCOME_SUPP_TOTAL_I
+                                     FROM           (SELECT COMP_CODE
+                                                          , LEFT(PAY_YYYYMM, 4) AS YEAR_YYYY
+                                                          , PERSON_NUMB
+                                                          , SUM(SUPP_TOTAL_I)   AS SUPP_TOTAL_I
+                                                       FROM HPA600T WITH (NOLOCK)
+                                                      WHERE COMP_CODE     = @COMP_CODE
+                                                        AND ((PAY_GUBUN != '2') OR (PAY_GUBUN = '2' AND  PAY_GUBUN2  != '1'))
+                                                        AND PAY_YYYYMM LIKE CONVERT(VARCHAR(4), DATEADD(YEAR, -1, @PAY_YYYYMM + '01'), 112) + '%'
+                                                      GROUP BY COMP_CODE, LEFT(PAY_YYYYMM, 4), PERSON_NUMB
+                                                    ) A
+                                          LEFT JOIN (SELECT COMP_CODE
+                                                          , LEFT(PAY_YYYYMM, 4)   AS YEAR_YYYY
+                                                          , PERSON_NUMB
+                                                          , SUM(LIMIT_PAY_SUPP_I) AS LIMIT_PAY_SUPP_I
+                                                       FROM HPA800T WITH (NOLOCK)
+                                                      WHERE COMP_CODE     = @COMP_CODE
+                                                        AND PAY_YYYYMM LIKE CONVERT(VARCHAR(4), DATEADD(YEAR, -1, @PAY_YYYYMM + '01'), 112) + '%'
+                                                      GROUP BY COMP_CODE, LEFT(PAY_YYYYMM,4), PERSON_NUMB
+                                                    ) B ON B.COMP_CODE   = A.COMP_CODE
+                                                       AND B.YEAR_YYYY   = A.YEAR_YYYY
+                                                       AND B.PERSON_NUMB = A.PERSON_NUMB
+                                     WHERE A.COMP_CODE = @COMP_CODE
+                                   )        AS I2             ON I2.COMP_CODE          = A.COMP_CODE
+                                                             AND I2.PERSON_NUMB        = A.PERSON_NUMB
+                                                             AND I2.YEAR_YYYY          = CONVERT(VARCHAR(4), DATEADD(YEAR, -1, F.PAY_YYYYMM + '01'), 112) 
+        
+                        -- 공통코드 H032의 지급구분 참조(급여가 REF_CODE1에 따라 추가될 수도 있어서)
+                        LEFT JOIN BSA100T   AS K              ON K.COMP_CODE   = A.COMP_CODE
+                                                             AND K.MAIN_CODE   = 'H032'
+                                                             AND K.SUB_CODE    = B.SUPP_TYPE
+                 WHERE A.COMP_CODE                     = @COMP_CODE
+                   AND ISNULL(A.PAY_PROV_YN     , 'N') = 'Y'
+                   AND ISNULL(A.PAY_PROV_STOP_YN, 'Y') = 'N'
+                   AND (B.SUPP_TYPE = '1'  OR  K.REF_CODE1 = '1')
+                   AND ((@PERSON_NUMB = '') OR (@PERSON_NUMB != '' AND A.PERSON_NUMB LIKE @PERSON_NUMB + '%'))
+            END
+			</foreach>
+        SET NOCOUNT OFF
+        SET ARITHABORT OFF
+    END
+	</select>	
+	
+</mapper>

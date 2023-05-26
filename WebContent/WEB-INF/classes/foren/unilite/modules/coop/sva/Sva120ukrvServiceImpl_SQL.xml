@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sva120ukrvServiceImpl">
+					
+	<select id="sva120ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+SELECT
+   A.COMP_CODE,
+   A.POS_NO,
+   A.POS_NAME,
+   A.LOCATION,
+   MAX(B.COLLECT_NUM) AS COLLECT_NUM,
+   MAX(B.COLLECT_SEQ) AS COLLECT_SEQ,
+   SUM(ISNULL(D.SALE_Q,0)) AS SALE_Q,
+   SUM(ISNULL(D.SALE_O,0)) AS SALE_O,
+   MAX(ISNULL(C.COLLECT_AMT,0)) AS COLLECT_AMT,
+   SUM(ISNULL(C.COLLECT_AMT,0)) - SUM(ISNULL(D.SALE_O,0)) AS LESS_O,
+   D.BILL_NUM
+ 
+   FROM BSA240T A WITH(NOLOCK) 
+     LEFT JOIN (
+     SELECT COMP_CODE, DIV_CODE, SUM(SALE_Q) AS SALE_Q, SUM(SALE_O) AS SALE_O, POS_NO, INOUT_DATE, COLLECT_NUM, COLLECT_SEQ
+     FROM SVA200T
+     GROUP BY COMP_CODE, DIV_CODE, POS_NO, INOUT_DATE, COLLECT_NUM, COLLECT_SEQ
+
+    ) 
+  B  ON A.COMP_CODE = B.COMP_CODE
+             AND A.POS_NO = B.POS_NO
+           AND A.DIV_CODE = B.DIV_CODE
+             AND B.INOUT_DATE = #{FR_DATE}
+    LEFT JOIN SCO100T C WITH(NOLOCK) ON B.COMP_CODE = C.COMP_CODE
+             AND B.DIV_CODE = C.DIV_CODE
+           
+             AND (ISNULL(B.COLLECT_NUM,'') != '' AND B.COLLECT_NUM = C.COLLECT_NUM)
+             AND (ISNULL(B.COLLECT_SEQ,0) != 0  AND B.COLLECT_SEQ = C.COLLECT_SEQ)
+             AND C.DEPT_CODE = A.DEPT_CODE
+             AND B.INOUT_DATE = C.COLLECT_DATE
+             AND B.POS_NO = C.POS_NO
+	LEFT JOIN ( SELECT SUM(B.SALE_Q) SALE_Q,SUM(B.SALE_AMT_O+B.TAX_AMT_O) AS SALE_O,B.POS_NO, A.SALE_DATE, B.BILL_NUM, B.COMP_CODE, B.DIV_CODE
+				FROM SSA100T A WITH (NOLOCK)
+				INNER JOIN SSA110T B ON A.COMP_CODE = B.COMP_CODE
+									AND A.DIV_CODE  = B.DIV_CODE
+									AND A.BILL_NUM  = B.BILL_NUM
+				GROUP BY B.POS_NO, A.SALE_DATE, B.BILL_NUM, B.DIV_CODE, B.COMP_CODE
+			  )	D  ON A.COMP_CODE	= D.COMP_CODE
+		          AND A.POS_NO		= D.POS_NO
+		          AND A.DIV_CODE	= D.DIV_CODE
+		          AND D.SALE_DATE	= #{FR_DATE}
+    
+     WHERE A.COMP_CODE = #{S_COMP_CODE}
+      AND A.POS_TYPE = '4'
+      AND A.DIV_CODE = #{DIV_CODE}
+   GROUP BY A.COMP_CODE, A.POS_NO, A.POS_NAME, A.LOCATION, D.BILL_NUM
+ORDER BY A.POS_NO
+
+
+
+    SET NOCOUNT OFF
+    SET ARITHABORT OFF
+END
+    </select>
+    
+    
+<insert id="sva120ukrvServiceImpl.insertDetail" parameterType="Map">    	
+INSERT INTO SCO100T
+     ( 
+     COMP_CODE,
+     DIV_CODE,
+     COLLECT_NUM,
+     COLLECT_SEQ,
+     COLLECT_DATE,
+     DEPT_CODE,
+     CUSTOM_CODE,
+     COLLECT_TYPE,
+     MONEY_UNIT,
+     COLLECT_AMT,
+     EXCHANGE_RATE,
+     COLET_CUST_CD,
+     COLLECT_PRSN,
+     TREE_NAME,
+     COLLECT_DIV,
+     INSERT_DB_USER,
+     INSERT_DB_TIME,
+     POS_NO,
+     BILL_NUM
+     )
+SELECT 
+     #{COMP_CODE},
+     #{DIV_CODE},
+     #{COLLECT_NUM}, 
+     '1', 
+     #{COLLECT_DATE},
+     #{DEPT_CODE},
+     (SELECT TOP 1 CODE_NAME FROM BSA100T WHERE MAIN_CODE = 'T000' AND SUB_CODE != '$' AND COMP_CODE = #{S_COMP_CODE}), 
+     '10',
+     'KRW',
+     CASE WHEN #{COLLECT_AMT} &lt;=10 THEN 0 ELSE #{COLLECT_AMT} END, 
+     '1',
+     #{COLET_CUST_CD}, 
+     #{COLLECT_PRSN}, 
+     #{TREE_NAME},
+     #{COLLECT_DIV}, 
+     #{S_USER_ID},   
+     GETDATE(),
+     #{POS_NO},
+     BILL_NUM     
+FROM SSA100T
+WHERE   COMP_CODE   = #{COMP_CODE}
+ AND DIV_CODE   = #{DIV_CODE}
+ AND SALE_CUSTOM_CODE = (SELECT TOP 1 CODE_NAME FROM BSA100T WHERE MAIN_CODE = 'T000' AND SUB_CODE != '$' AND COMP_CODE = #{S_COMP_CODE})
+ AND POS_NO    = #{POS_NO}
+ AND SALE_DATE   = #{COLLECT_DATE}
+</insert>
+
+<update id="sva120ukrvServiceImpl.spAutoNum" parameterType="Map" statementType="CALLABLE">
+		{call SP_GetAutoNumComp (
+			#{COMP_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DIV_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{TABLE_ID, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PREFIX, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{BASIS_DATE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{AUTO_TYPE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{sAUTO_NUM, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+</update>	
+
+
+<update id="sva120ukrvServiceImpl.updateDetail2" parameterType="Map">		
+UPDATE SVA200T
+	SET
+     
+     COLLECT_NUM = #{COLLECT_NUM},
+     COLLECT_SEQ = '1'
+     	
+     WHERE		COMP_CODE = #{COMP_CODE}
+     	AND		DIV_CODE = #{DIV_CODE}
+     	AND		INOUT_DATE = #{COLLECT_DATE}
+     	AND		POS_NO = #{POS_NO}
+</update>
+
+
+<update id="sva120ukrvServiceImpl.updateDetail" parameterType="Map">		
+UPDATE SCO100T
+	SET
+     
+     COLLECT_AMT = CASE WHEN #{COLLECT_AMT} &lt;=10 THEN 0 ELSE #{COLLECT_AMT} END
+     	
+     WHERE		COMP_CODE = #{COMP_CODE}
+     	AND		DIV_CODE = #{DIV_CODE}
+     	AND 	COLLECT_NUM = #{COLLECT_NUM}
+     	AND 	COLLECT_SEQ = #{COLLECT_SEQ}
+     	AND		COLLECT_DATE = #{COLLECT_DATE}
+</update>
+
+<update id="sva120ukrvServiceImpl.updateDetail3" parameterType="Map">		
+UPDATE SVA200T
+	SET
+     
+     	COLLECT_NUM = #{COLLECT_NUM},
+     	COLLECT_SEQ = #{COLLECT_SEQ}
+     	
+     WHERE		COMP_CODE = #{COMP_CODE}
+     	AND		DIV_CODE = #{DIV_CODE}
+     	AND		INOUT_DATE = #{COLLECT_DATE}
+     	AND		POS_NO = #{CUSTOM_CODE}
+</update>
+
+<select id="sva120ukrvServiceImpl.billDateCheck" parameterType="Map" resultType="rMap">
+	SELECT TOP 1 1 
+	  FROM SSA300T
+	 WHERE DIV_CODE  = #{DIV_CODE}
+	 AND   BILL_DATE = #{FR_DATE}
+	</select>
+
+
+<select id="sva120ukrvServiceImpl.checkCompCode" parameterType="Map" resultType="rMap">
+		    SELECT A.COMP_CODE, A.COMP_NAME
+		    FROM              BOR100T   A  WITH (NOLOCK)
+		           LEFT  JOIN BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE    = #{S_COMP_CODE}    
+		                                                AND M1.MAIN_CODE    = 'B107'
+		                                                AND M1.SUB_CODE     = '20'         
+		    WHERE (A.COMP_CODE      &gt; ''        AND ISNULL(M1.REF_CODE1, 'N') = 'Y')
+		       OR (A.COMP_CODE      = #{S_COMP_CODE}  AND ISNULL(M1.REF_CODE1, 'N') = 'N')
+	</select>
+</mapper>

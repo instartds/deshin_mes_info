@@ -1,0 +1,636 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_mre090ukrv_kdServiceImpl">
+    <select id="s_mre090ukrv_kdServiceImpl.selectPersonDept" parameterType="Map" resultType="rMap">
+        SELECT  H.DEPT_CODE
+              , H.DEPT_NAME
+        FROM                HUM100T   H  WITH (NOLOCK)
+            WHERE   H.COMP_CODE        = #{S_COMP_CODE}
+              AND   H.PERSON_NUMB      = #{PERSON_NUMB}
+    </select>
+
+    <select id="s_mre090ukrv_kdServiceImpl.fnStockQ" parameterType="Map" resultType="rMap">
+        -- s_mre090ukrv_kdServiceImpl.fnStockQ
+        --가용재고
+        SELECT A.COMP_CODE
+             , A.DIV_CODE
+             , A.ITEM_CODE
+             , SUM(A.GOOD_STOCK_Q) STOCK_Q
+          FROM BIV100T A WITH(NOLOCK)
+			   INNER JOIN BSA220T B WITH (NOLOCK) ON A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE=B.TYPE_LEVEL AND A.WH_CODE=B.TREE_CODE AND B.PABSTOCK_YN='Y'
+         WHERE A.COMP_CODE = #{S_COMP_CODE}
+           AND A.ITEM_CODE = #{ITEM_CODE}
+         GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE
+
+    </select>
+
+    <select id="s_mre090ukrv_kdServiceImpl.fnNointQ" parameterType="Map" resultType="rMap">
+
+        DECLARE @COMP_CODE NVARCHAR(10), @DIV_CODE NVARCHAR(10), @ITEM_CODE NVARCHAR(20), @ORDER_PLAN_YM NVARCHAR(6), @PURCH_LD_TIME INT
+        SET @COMP_CODE = #{S_COMP_CODE}
+        SET @DIV_CODE=#{DIV_CODE}
+        SET @ITEM_CODE =#{ITEM_CODE}
+        SET @ORDER_PLAN_YM = #{PRDT_REQ_DATE}
+        SET @PURCH_LD_TIME = #{PURCH_LDTIME}
+
+        --기간소요량
+        SELECT UNILITE.FNMRE090_KD_NOINQ_All(@COMP_CODE, @DIV_CODE, @ITEM_CODE) AS NOIN_Q
+        , UNILITE.FNMRE090_KD_TERMPLANQ(@COMP_CODE, @DIV_CODE, @ITEM_CODE, @ORDER_PLAN_YM , LEFT(CONVERT(CHAR(8), DATEADD(M, (CEILING(@PURCH_LD_TIME/30.0)), @ORDER_PLAN_YM+'01'), 112),6)) AS TERMPLAN_Q
+        , UNILITE.FNMRE090_KD_TERMPLANQ(@COMP_CODE, @DIV_CODE, @ITEM_CODE, @ORDER_PLAN_YM , LEFT(CONVERT(CHAR(8), DATEADD(M, (CEILING(@PURCH_LD_TIME/30.0)), @ORDER_PLAN_YM+'01'), 112),6))
+        / (CASE WHEN (CEILING(@PURCH_LD_TIME/30.0)) = 0 THEN 1 ELSE (CEILING(@PURCH_LD_TIME/30.0))+1 END) AS SAFE_STOCK_Q
+
+
+    </select>
+
+    <select id="s_mre090ukrv_kdServiceImpl.selectGwData" parameterType="Map" resultType="rMap">
+        SELECT  GW_FLAG
+          FROM  S_MRE090T_KD    A WITH (NOLOCK)
+         WHERE  A.COMP_CODE      = #{S_COMP_CODE}
+           AND  A.DIV_CODE       = #{DIV_CODE}
+           AND  A.PRDT_REQ_NUM   = #{PRDT_REQ_NUM}
+    </select>
+
+    <select id="s_mre090ukrv_kdServiceImpl.makeDraftNum" parameterType="Map" resultType="rMap">
+       UPDATE S_MRE090T_KD
+          SET DRAFT_NO        = #{DRAFT_NO},
+              UPDATE_DB_USER  = #{S_USER_ID},
+              UPDATE_DB_TIME  = GETDATE()
+        WHERE COMP_CODE       = #{S_COMP_CODE}
+          AND DIV_CODE        = #{DIV_CODE}
+          AND PRDT_REQ_NUM    = #{PRDT_REQ_NUM}
+    </select>
+
+    <select id="s_mre090ukrv_kdServiceImpl.selectDraftNo" parameterType="Map" resultType="rMap">
+        SELECT  DRAFT_NO
+          FROM  S_MRE090T_KD    A WITH (NOLOCK)
+         WHERE  A.COMP_CODE      = #{S_COMP_CODE}
+           AND  A.DIV_CODE       = #{DIV_CODE}
+           AND  A.PRDT_REQ_NUM   = #{PRDT_REQ_NUM}
+    </select>
+
+
+
+
+
+
+    <select id="s_mre090ukrv_kdServiceImpl.selectOrderNumMasterList" parameterType="Map" resultType="rMap">
+    	BEGIN
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+
+            DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+                  , @UserId      NVARCHAR(100) /* 사용자ID    */
+                  , @LangType    NVARCHAR(2)  /* 언어구분    */
+                  , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+                  , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+
+            SET @CompCode = #{S_COMP_CODE}
+            SET @UserId   = #{S_USER_ID}
+            SET @LangType = #{S_LANG_CODE}
+
+            /* 명칭 참조 유형 */
+            SELECT TOP 1 @RefItem = REF_ITEM
+              FROM BSA300T WITH (NOLOCK)
+             WHERE USER_ID = @UserId
+
+            SET @RefItem = ISNULL(@RefItem, N'0')
+
+            /* 날짜 포맷 유형 설정 */
+            SELECT TOP 1 @DateFormat = CODE_NAME
+              FROM BSA100T WITH (NOLOCK)
+             WHERE COMP_CODE = @CompCode
+               AND MAIN_CODE = N'B044'
+               AND REF_CODE1 = N'Y'
+
+            SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+            /* 데이터 조회 */
+            SELECT  A.COMP_CODE
+                  , A.DIV_CODE
+                  , A.PRDT_REQ_NUM
+                  , A.REQ_DATE
+                  , A.SUPPLY_TYPE
+                  , A.PLAN_YYYYMM
+                  , A.DOM_FORIGN
+                  , A.TREE_CODE         AS DEPT_CODE
+                  , C.TREE_NAME         AS DEPT_NAME
+                  , A.PERSON_NUMB
+                  , B.NAME              AS PERSON_NAME
+                  , A.GW_FLAG
+                  , A.GW_DOC
+                  , A.DRAFT_NO
+        				  , LEFT(A.PLAN_YYYYMM,4) +'년 ' + SUBSTRING(A.PLAN_YYYYMM,5,2) +'월 ' +  '생산 구매 요청서'
+        					  + '('+ CASE WHEN D.ITEM_ACCOUNT = '00' THEN '외주상품'
+        							WHEN D.ITEM_ACCOUNT = '40' THEN (CASE WHEN ISNULL(A.DOM_FORIGN,'1') = '1' THEN '내수' ELSE '수입' END) + ' 원자재'
+        					   END + ')' AS GW_TITLE
+				  , A.PLAN_ORDER
+            FROM                S_MRE090T_KD A WITH  (NOLOCK)
+                    INNER JOIN  S_MRE091T_KD A2 WITH (NOLOCK) ON A2.COMP_CODE = A.COMP_CODE AND A2.DIV_CODE=A2.DIV_CODE AND A2.PRDT_REQ_NUM=A.PRDT_REQ_NUM
+                    LEFT  JOIN  HUM100T      B WITH  (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                             AND B.PERSON_NUMB = A.PERSON_NUMB
+                    LEFT  JOIN  BSA210T      C WITH  (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                             AND C.TYPE_LEVEL  = A.DIV_CODE
+                                                             AND C.TREE_CODE   = A.TREE_CODE
+                    LEFT  JOIN BPR200T		   D WITH  (NOLOCK) ON D.COMP_CODE   = A2.COMP_CODE AND D.ITEM_CODE=A2.ITEM_CODE
+            WHERE   A.COMP_CODE      = @CompCode
+        <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+              AND   A.DIV_CODE       = #{DIV_CODE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(SUPPLY_TYPE)">
+              AND   A.SUPPLY_TYPE     = #{SUPPLY_TYPE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(REQ_DATE_FR)">
+              AND   A.REQ_DATE        &gt;= #{REQ_DATE_FR}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(REQ_DATE_TO)">
+              AND   A.REQ_DATE        &lt;= #{REQ_DATE_TO}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+              AND   A.PERSON_NUMB     = #{PERSON_NUMB}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+              AND   A.TREE_CODE       = #{DEPT_CODE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(PRDT_REQ_NUM)">
+              AND   A.PRDT_REQ_NUM    LIKE #{PRDT_REQ_NUM} + '%'
+        </if>
+
+        GROUP BY  A.REQ_DATE, A.PLAN_YYYYMM, A.SUPPLY_TYPE, A.PRDT_REQ_NUM
+                , A.TREE_CODE, C.TREE_NAME,  A.PERSON_NUMB
+                , B.NAME, A.DIV_CODE,  A.COMP_CODE, A.GW_FLAG
+                , A.GW_DOC, A.DRAFT_NO, A.SUPPLY_TYPE, A.DOM_FORIGN, D.ITEM_ACCOUNT, A.PLAN_ORDER
+            ORDER BY A.REQ_DATE, A.SUPPLY_TYPE, A.PRDT_REQ_NUM
+
+            SET ARITHABORT OFF
+            SET NOCOUNT OFF
+        END
+    </select>
+
+    <select id="s_mre090ukrv_kdServiceImpl.selectList" parameterType="Map" resultType="rMap">
+    	/* mre100ukrv.Cmre100ukrv[fnMre200QStd] Query01 */
+        BEGIN
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+
+            DECLARE @CompCode       NVARCHAR(08) /* 법인코드                */
+                  , @UserId         NVARCHAR(100) /* 사용자ID                */
+                  , @LangType       NVARCHAR(2)  /* 언어구분                */
+                  , @RefItem        NVARCHAR(01) /* 명칭 참조 유형            */
+                  , @DateFormat     NVARCHAR(10) /* 날짜 포맷 유형 설정     */
+
+            SET @CompCode = #{S_COMP_CODE}
+            SET @UserId   = #{S_USER_ID}
+            SET @LangType = #{S_LANG_CODE}
+
+            /* 명칭 참조 유형 */
+            SELECT TOP 1 @RefItem = REF_ITEM
+              FROM BSA300T WITH (NOLOCK)
+             WHERE USER_ID = @UserId
+
+            SET @RefItem = ISNULL(@RefItem, N'0')
+
+            /* 날짜 포맷 유형 설정 */
+            SELECT TOP 1 @DateFormat = CODE_NAME
+              FROM BSA100T WITH (NOLOCK)
+             WHERE COMP_CODE = @CompCode
+               AND MAIN_CODE = N'B044'
+               AND REF_CODE1 = N'Y'
+
+            SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+            /* 데이터 조회 */
+            SELECT  A.COMP_CODE
+                  , A.DIV_CODE
+                  , A.PRDT_REQ_NUM
+                  , A.PRDT_REQ_SEQ
+                  , A.ITEM_CODE
+                  , B.ITEM_NAME
+                  , B.SPEC
+                  , B.STOCK_UNIT
+                  , A.PURCH_LD_TIME
+                  , A.TERMPLAN_Q
+                  , A.SAFE_STOCK_Q
+                  , A.STOCK_Q
+--                  , A.NOIN_Q
+                  , unilite.fnMre090_KD_NoInQ_ALL(A.COMP_CODE,  A.DIV_CODE, A.ITEM_CODE) AS NOIN_Q
+                  , A.ORDER_PLAN_Q - ISNULL(F.PO_QTY,0) AS NOT_PO_QTY    --구매요청후 미발주수량
+                  , A.ORDER_PLAN_Q
+                  , A.DELIVERY_REQ_DATE
+                  , A.DELIVERY_REQ_ORI_DATE
+                  , A.PLAN_Q_M0
+                  , A.PLAN_Q_M1
+                  , A.PLAN_Q_M2
+                  , A.PLAN_Q_M3
+                  , A.PLAN_Q_M4
+                  , A.PLAN_Q_M5
+                  , A.PLAN_Q_M6
+                  , A.ORDER_Q_M0
+                  , A.ORDER_Q_M1
+                  , A.ORDER_Q_M2
+                  , A.ORDER_Q_M3
+                  , A.ORDER_Q_M4
+                  , A.ORDER_Q_M5
+                  , A.ORDER_Q_M6
+                  , A.STOCK_Q_M0
+                  , A.STOCK_Q_M1
+                  , A.STOCK_Q_M2
+                  , A.STOCK_Q_M3
+                  , A.STOCK_Q_M4
+                  , A.STOCK_Q_M5
+                  , A.STOCK_Q_M6
+                  , A.ORDER_PLAN_MM1
+                  , A.ORDER_PLAN_MM2
+                  , A.DOM_FORIGN
+                  , A.TRNS_RATE
+                  , A.SUPPLY_TYPE
+                  , A.ITEM_ACCOUNT
+                  , A.ORDER_PLAN_YYMM
+                  , A.REMARK
+                  , E.REQ_DATE
+                  , E.TREE_CODE             AS DEPT_CODE
+                  , E.PERSON_NUMB
+                  , E.GW_FLAG
+                  , E.GW_DOC
+                  , E.DRAFT_NO
+            FROM               S_MRE091T_KD      A WITH (NOLOCK)
+                    LEFT JOIN  BPR100T           B WITH (NOLOCK)  ON B.COMP_CODE       = A.COMP_CODE
+                                                                 AND B.ITEM_CODE       = A.ITEM_CODE
+                    LEFT JOIN  BPR200T           C WITH  (NOLOCK) ON C.COMP_CODE       = A.COMP_CODE
+                                                                 AND C.ITEM_CODE       = A.ITEM_CODE
+                                                                 AND C.DIV_CODE        = A.DIV_CODE
+                    INNER JOIN S_MRE090T_KD      E WITH  (NOLOCK) ON E.COMP_CODE       = A.COMP_CODE
+                                                                 AND E.DIV_CODE        = A.DIV_CODE
+                                                                 AND E.PRDT_REQ_NUM    = A.PRDT_REQ_NUM
+
+          					LEFT  JOIN (
+          									SELECT S1.COMP_CODE, S1.DIV_CODE, S1.PRDT_REQ_NUM, S1.PRDT_REQ_SEQ, SUM(ORDER_UNIT_Q) AS ORDER_UNIT_Q,  SUM(ISNULL(S2.ORDER_Q,0)) AS PO_QTY
+          									FROM	MRE110T S1 WITH (NOLOCK)
+          											LEFT JOIN (
+          													SELECT COMP_CODE, DIV_CODE, PO_REQ_NUM, PO_REQ_SEQ, SUM(ORDER_Q) AS ORDER_Q
+          													FROM MPO200T WITH (NOLOCK)
+          													WHERE COMP_CODE = @CompCode
+          													AND DIV_CODE    = #{DIV_CODE}
+          													AND ISNULL(PO_REQ_NUM,'') &lt;&gt; ''
+          													GROUP BY COMP_CODE, DIV_CODE, PO_REQ_NUM, PO_REQ_SEQ
+          											) S2  ON S1.COMP_CODE=S2.COMP_CODE AND S1.DIV_CODE=S2.DIV_CODE AND S1.PO_REQ_NUM=S2.PO_REQ_NUM AND S1.PO_SER_NO=S2.PO_REQ_SEQ
+          									WHERE S1.COMP_CODE = @CompCode
+          									AND S1.DIV_CODE    = #{DIV_CODE}
+          									AND ISNULL(S1.PRDT_REQ_NUM,'') &lt;&gt; ''
+          									GROUP BY  S1.COMP_CODE, S1.DIV_CODE, S1.PRDT_REQ_NUM, S1.PRDT_REQ_SEQ
+          									HAVING SUM(ISNULL(S2.ORDER_Q,0)) &lt;&gt; 0
+          								) F ON A.COMP_CODE=F.COMP_CODE AND A.DIV_CODE=F.DIV_CODE AND A.PRDT_REQ_NUM=F.PRDT_REQ_NUM AND A.PRDT_REQ_SEQ=F.PRDT_REQ_SEQ
+            WHERE   A.COMP_CODE     = @CompCode
+            AND A.DIV_CODE = #{DIV_CODE}
+        <if test="@foren.Ognl@isNotEmpty(PRDT_REQ_NUM)">
+            AND     A.PRDT_REQ_NUM  = #{PRDT_REQ_NUM}
+        </if>
+
+            ORDER BY A.PRDT_REQ_SEQ
+
+            SET ARITHABORT OFF
+            SET NOCOUNT OFF
+        END
+    </select>
+
+    <select id="s_mre090ukrv_kdServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+        BEGIN
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+
+            DECLARE  @COMP_CODE         NVARCHAR(08) --필수:법인
+                   , @DIV_CODE          NVARCHAR(08) --필수:사업장
+                   , @Order_Plan_YYMM   NVARCHAR(6)  --필수:기준년월
+                   , @ITEM_CODE         NVARCHAR(20) --필수:품목코드
+
+            SET @COMP_CODE          = #{S_COMP_CODE}
+            SET @DIV_CODE           = #{DIV_CODE}
+            SET @Order_Plan_YYMM    = #{ORDER_PLAN_YYMM}
+            SET @ITEM_CODE          = #{ITEM_CODE}
+
+            EXEC UNILITE.USP_S_MRE090UKRV_KD_DETAIL @COMP_CODE, @DIV_CODE, @Order_Plan_YYMM, @ITEM_CODE
+
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END
+    </select>
+
+    <select id="s_mre090ukrv_kdServiceImpl.selectMrpList" parameterType="Map" resultType="rMap">
+    	BEGIN
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+
+            DECLARE  @COMP_CODE       NVARCHAR(08) --필수:법인
+                   , @DIV_CODE        NVARCHAR(08) --필수:사업장
+                   , @Order_Plan_YYMM NVARCHAR(6)  --필수:기준년월
+                   , @SUPPLY_TYPE     NVARCHAR(1)  --필수:조달구분 1.구매, 2.사내, 3.외주
+                   , @ITEM_ACCOUNT    NVARCHAR(2)  --옵션:품목계정 00.상품, 10.제품, 20.반제품, 40.원자재
+                   , @DOM_FORIGN      nvarchar(1)  --국내외 : 내수/수입
+                   , @ITEM_CODE       NVARCHAR(20) --옵션:품목코드
+
+            SET @COMP_CODE         = #{S_COMP_CODE}
+            SET @DIV_CODE          = #{DIV_CODE}
+            SET @Order_Plan_YYMM   = #{ORDER_PLAN_YYMM}
+            SET @SUPPLY_TYPE       = #{SUPPLY_TYPE}
+            SET @ITEM_ACCOUNT      = #{ITEM_ACCOUNT}
+            SET @DOM_FORIGN        = #{DOM_FORIGN}
+            SET @ITEM_CODE         = #{ITEM_CODE}
+
+            EXEC UNILITE.USP_S_MRE090UKRV_KD_POP1_M @COMP_CODE, @DIV_CODE, @Order_Plan_YYMM, @SUPPLY_TYPE, @ITEM_ACCOUNT, @DOM_FORIGN, @ITEM_CODE
+
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END
+    </select>
+
+    <select id="s_mre090ukrv_kdServiceImpl.selectMrpList2" parameterType="Map" resultType="rMap">
+        BEGIN
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+
+            DECLARE  @COMP_CODE         NVARCHAR(08) --필수:법인
+                   , @DIV_CODE          NVARCHAR(08) --필수:사업장
+                   , @Order_Plan_YYMM   NVARCHAR(6)  --필수:기준년월
+                   , @ITEM_CODE         NVARCHAR(20) --필수:품목코드
+                   ,@ORDER_PLAN_Q	 NUMERIC(30,6) -- 추가: 구매계획량
+
+            SET @COMP_CODE          = #{S_COMP_CODE}
+            SET @DIV_CODE           = #{S_DIV_CODE}
+            SET @Order_Plan_YYMM    = #{ORDER_PLAN_YYMM}
+            SET @ITEM_CODE          = #{ITEM_CODE}
+            SET @ORDER_PLAN_Q = CAST( #{ORDER_PLAN_Q} AS NUMERIC(30,6))
+
+            EXEC UNILITE.USP_S_MRE090UKRV_KD_POP1_D @COMP_CODE, @DIV_CODE, @Order_Plan_YYMM, @ITEM_CODE, @ORDER_PLAN_Q
+
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END
+    </select>
+
+
+
+
+
+
+
+
+
+    <update id="s_mre090ukrv_kdServiceImpl.spAutoNum" parameterType="Map" statementType="CALLABLE">
+    	{call SP_GetAutoNumComp (
+    		#{COMP_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+    		#{DIV_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+    		#{TABLE_ID, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+    		#{PREFIX, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+    		#{BASIS_DATE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+    		#{AUTO_TYPE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+    		#{sAUTO_NUM, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+    	)}
+    </update>
+
+    <select id="s_mre090ukrv_kdServiceImpl.selectCheckCnt" parameterType="Map" resultType="rMap">
+    	SELECT COUNT(A.COMP_CODE)  AS CNT
+          FROM S_MRE091T_KD A WITH (NOLOCK)
+          INNER JOIN MPO200T B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+                                           AND A.DIV_CODE   = B.DIV_CODE
+                                           AND A.PRDT_REQ_NUM = B.PO_REQ_NUM
+                                           AND A.PRDT_REQ_SEQ  = B.PO_REQ_SEQ
+         WHERE A.COMP_CODE = #{S_COMP_CODE}
+           AND A.PRDT_REQ_NUM = #{PRDT_REQ_NUM}
+           AND A.PRDT_REQ_SEQ = #{PRDT_REQ_SEQ}
+    </select>
+
+    <select id="s_mre090ukrv_kdServiceImpl.selectMPO200T" parameterType="Map" resultType="rMap">
+        SELECT COUNT(*)         AS COUNT
+          FROM MPO200T WITH(NOLOCK)
+         WHERE PO_REQ_NUM = #{PRDT_REQ_NUM}
+           AND PO_REQ_SEQ = #{PRDT_REQ_SEQ}
+    </select>
+
+
+
+
+
+
+
+
+
+
+    <insert id="s_mre090ukrv_kdServiceImpl.insertMaster" parameterType="Map">
+        INSERT INTO S_MRE090T_KD
+         (    COMP_CODE
+            , DIV_CODE
+            , PRDT_REQ_NUM
+            , REQ_DATE
+            , PLAN_YYYYMM
+            , SUPPLY_TYPE
+            , DOM_FORIGN
+            , TREE_CODE
+            , PERSON_NUMB
+            , GW_FLAG
+            , GW_DOC
+            , DRAFT_NO
+            , PLAN_ORDER
+            , INSERT_DB_USER
+            , INSERT_DB_TIME
+         )
+        VALUES
+        (     #{S_COMP_CODE}
+            , #{DIV_CODE}
+            , #{PRDT_REQ_NUM}
+            , #{PRDT_REQ_DATE}
+            , #{PLAN_YYYYMM}
+            , #{SUPPLY_TYPE}
+            , #{DOM_FORIGN}
+            , #{DEPT_CODE}
+            , #{PERSON_NUMB}
+            , #{GW_FLAG}
+            , #{GW_DOC}
+            , #{DRAFT_NO}
+            , #{PLAN_ORDER}
+            , #{S_USER_ID}
+            , GETDATE()
+        )
+    </insert>
+
+    <insert id="s_mre090ukrv_kdServiceImpl.insertDetail" parameterType="Map">
+        INSERT INTO S_MRE091T_KD
+         (  COMP_CODE
+          , DIV_CODE
+          , PRDT_REQ_NUM
+          , PRDT_REQ_SEQ
+          , ITEM_CODE
+          , STOCK_UNIT
+          , PURCH_LD_TIME
+          , TERMPLAN_Q
+          , SAFE_STOCK_Q
+          , STOCK_Q
+          , NOIN_Q
+          , ORDER_PLAN_Q
+          , DELIVERY_REQ_DATE
+          , DELIVERY_REQ_ORI_DATE
+          , PLAN_Q_M0
+          , PLAN_Q_M1
+          , PLAN_Q_M2
+          , PLAN_Q_M3
+          , PLAN_Q_M4
+          , PLAN_Q_M5
+          , PLAN_Q_M6
+          , ORDER_Q_M0
+          , ORDER_Q_M1
+          , ORDER_Q_M2
+          , ORDER_Q_M3
+          , ORDER_Q_M4
+          , ORDER_Q_M5
+          , ORDER_Q_M6
+          , STOCK_Q_M0
+          , STOCK_Q_M1
+          , STOCK_Q_M2
+          , STOCK_Q_M3
+          , STOCK_Q_M4
+          , STOCK_Q_M5
+          , STOCK_Q_M6
+          , ORDER_PLAN_MM1
+          , ORDER_PLAN_MM2
+          , DOM_FORIGN
+          , TRNS_RATE
+          , SUPPLY_TYPE
+          , ITEM_ACCOUNT
+          , ORDER_PLAN_YYMM
+          , REMARK
+          , INSERT_DB_USER
+          , INSERT_DB_TIME
+         )
+        VALUES
+         (  #{S_COMP_CODE}
+          , #{DIV_CODE}
+          , #{PRDT_REQ_NUM}
+          , #{PRDT_REQ_SEQ}
+          , #{ITEM_CODE}
+          , #{STOCK_UNIT}
+          , #{PURCH_LD_TIME}
+          , #{TERMPLAN_Q}
+          , #{SAFE_STOCK_Q}
+          , #{STOCK_Q}
+          , #{NOIN_Q}
+          , #{ORDER_PLAN_Q}
+          , #{DELIVERY_REQ_DATE}
+          , #{DELIVERY_REQ_ORI_DATE}
+          , #{PLAN_Q_M0}
+          , #{PLAN_Q_M1}
+          , #{PLAN_Q_M2}
+          , #{PLAN_Q_M3}
+          , #{PLAN_Q_M4}
+          , #{PLAN_Q_M5}
+          , #{PLAN_Q_M6}
+          , #{ORDER_Q_M0}
+          , #{ORDER_Q_M1}
+          , #{ORDER_Q_M2}
+          , #{ORDER_Q_M3}
+          , #{ORDER_Q_M4}
+          , #{ORDER_Q_M5}
+          , #{ORDER_Q_M6}
+          , #{STOCK_Q_M0}
+          , #{STOCK_Q_M1}
+          , #{STOCK_Q_M2}
+          , #{STOCK_Q_M3}
+          , #{STOCK_Q_M4}
+          , #{STOCK_Q_M5}
+          , #{STOCK_Q_M6}
+          , #{ORDER_PLAN_MM1}
+          , #{ORDER_PLAN_MM2}
+          , #{DOM_FORIGN}
+          , #{TRNS_RATE}
+          , #{SUPPLY_TYPE}
+          , #{ITEM_ACCOUNT}
+          , #{ORDER_PLAN_YYMM}
+          , #{REMARK}
+          , #{S_USER_ID}
+          , GETDATE()
+         )
+    </insert>
+
+
+    <update id="s_mre090ukrv_kdServiceImpl.updateDetail" parameterType="Map">
+        UPDATE S_MRE091T_KD
+        SET    COMP_CODE                = #{S_COMP_CODE}
+             , DIV_CODE                 = #{DIV_CODE}
+             , PRDT_REQ_NUM             = #{PRDT_REQ_NUM}
+             , PRDT_REQ_SEQ             = #{PRDT_REQ_SEQ}
+             , ITEM_CODE                = #{ITEM_CODE}
+             , STOCK_UNIT               = #{STOCK_UNIT}
+             , PURCH_LD_TIME            = #{PURCH_LD_TIME}
+             , TERMPLAN_Q               = #{TERMPLAN_Q}
+             , SAFE_STOCK_Q             = #{SAFE_STOCK_Q}
+             , STOCK_Q                  = #{STOCK_Q}
+             , NOIN_Q                   = #{NOIN_Q}
+             , ORDER_PLAN_Q             = #{ORDER_PLAN_Q}
+             , DELIVERY_REQ_DATE        = #{DELIVERY_REQ_DATE}
+             , DELIVERY_REQ_ORI_DATE    = #{DELIVERY_REQ_ORI_DATE}
+             , PLAN_Q_M0                = #{PLAN_Q_M0}
+             , PLAN_Q_M1                = #{PLAN_Q_M1}
+             , PLAN_Q_M2                = #{PLAN_Q_M2}
+             , PLAN_Q_M3                = #{PLAN_Q_M3}
+             , PLAN_Q_M4                = #{PLAN_Q_M4}
+             , PLAN_Q_M5                = #{PLAN_Q_M5}
+             , PLAN_Q_M6                = #{PLAN_Q_M6}
+             , ORDER_Q_M0               = #{ORDER_Q_M0}
+             , ORDER_Q_M1               = #{ORDER_Q_M1}
+             , ORDER_Q_M2               = #{ORDER_Q_M2}
+             , ORDER_Q_M3               = #{ORDER_Q_M3}
+             , ORDER_Q_M4               = #{ORDER_Q_M4}
+             , ORDER_Q_M5               = #{ORDER_Q_M5}
+             , ORDER_Q_M6               = #{ORDER_Q_M6}
+             , STOCK_Q_M0               = #{STOCK_Q_M0}
+             , STOCK_Q_M1               = #{STOCK_Q_M1}
+             , STOCK_Q_M2               = #{STOCK_Q_M2}
+             , STOCK_Q_M3               = #{STOCK_Q_M3}
+             , STOCK_Q_M4               = #{STOCK_Q_M4}
+             , STOCK_Q_M5               = #{STOCK_Q_M5}
+             , STOCK_Q_M6               = #{STOCK_Q_M6}
+             , ORDER_PLAN_MM1           = #{ORDER_PLAN_MM1}
+             , ORDER_PLAN_MM2           = #{ORDER_PLAN_MM2}
+             , DOM_FORIGN               = #{DOM_FORIGN}
+             , TRNS_RATE                = #{TRNS_RATE}
+             , SUPPLY_TYPE              = #{SUPPLY_TYPE}
+             , ITEM_ACCOUNT             = #{ITEM_ACCOUNT}
+             , ORDER_PLAN_YYMM          = #{ORDER_PLAN_YYMM}
+             , REMARK                   = #{REMARK}
+             , UPDATE_DB_USER           = #{S_USER_ID}
+             , UPDATE_DB_TIME           = GETDATE()
+         WHERE COMP_CODE                = #{S_COMP_CODE}
+           AND DIV_CODE                 = #{DIV_CODE}
+           AND PRDT_REQ_NUM             = #{PRDT_REQ_NUM}
+           AND PRDT_REQ_SEQ             = #{PRDT_REQ_SEQ}
+    </update>
+
+    <select id="s_mre090ukrv_kdServiceImpl.beforeDeleteCheck" parameterType="Map" resultType="String">
+        SELECT TOP 1 PRDT_REQ_NUM
+          FROM S_MRE091T_KD  A WITH (NOLOCK)
+         WHERE A.COMP_CODE      = #{S_COMP_CODE}
+           AND A.PRDT_REQ_NUM   = #{PRDT_REQ_NUM}
+    </select>
+
+    <delete id="s_mre090ukrv_kdServiceImpl.deleteMaster" parameterType="Map">
+        DELETE S_MRE090T_KD
+         WHERE COMP_CODE    = #{S_COMP_CODE}
+           AND DIV_CODE     = #{DIV_CODE}
+           AND PRDT_REQ_NUM = #{PRDT_REQ_NUM}
+    </delete>
+
+    <delete id="s_mre090ukrv_kdServiceImpl.deleteDetail" parameterType="Map">
+        DELETE S_MRE091T_KD
+         WHERE COMP_CODE     = #{S_COMP_CODE}
+           AND DIV_CODE      = #{DIV_CODE}
+           AND PRDT_REQ_NUM  = #{PRDT_REQ_NUM}
+           AND PRDT_REQ_SEQ  = #{PRDT_REQ_SEQ}
+    </delete>
+
+    <select id="s_mre090ukrv_kdServiceImpl.beforePlanOrderChk" parameterType="Map" resultType="Int">
+        SELECT COUNT(1)
+          FROM S_MRE090T_KD  A WITH (NOLOCK)
+         WHERE A.COMP_CODE      = #{S_COMP_CODE}
+           AND A.DIV_CODE       = #{DIV_CODE}
+           AND A.PRDT_REQ_NUM   = #{PRDT_REQ_NUM}
+           AND A.PLAN_ORDER		= #{PLAN_ORDER} --계획차수
+    </select>
+
+</mapper>

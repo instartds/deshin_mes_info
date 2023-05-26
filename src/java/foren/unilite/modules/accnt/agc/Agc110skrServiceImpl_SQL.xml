@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="agc110skrServiceImpl">
+	<select id="agc110skrServiceImpl.selectMsg" parameterType="Map" resultType="rMap">
+	--UBdi01Krv.CBDicKr[fnMsgDic] Query01
+	SELECT MSG_NO                         
+	     , MSG_DESC AS MSG_DESC
+	  FROM BSA010T  WITH (NOLOCK)                        
+	 WHERE MSG_TYPE = '1'                 
+	   AND MSG_NO IN ('A0149')
+	</select>
+	
+	<select id="agc110skrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	--agc110skr.Cagc110skr[fnagc110QStd]Query01
+	BEGIN
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+	
+	    --- 1. 변수 선언 및 설정
+	    DECLARE @QUERY_TYPE        NVARCHAR(01)     -- 1:판관비, 2:제조경비, 3:용역비, 4:용역비2
+			  , @MSG_DESC		   NVARCHAR(100)		--합계
+	    SET     @QUERY_TYPE        = #{QUERY_TYPE}
+		SET		@MSG_DESC		   = #{MSG_DESC}
+	
+	    --- 2. 집계항목설정 차수 가져오기
+	    DECLARE @GUBUN             NVARCHAR(02)  -- 집계항목설정 차수
+	
+	    SELECT TOP 1 @GUBUN = SUB_CODE
+	    FROM   BSA100T WITH (NOLOCK)
+	    WHERE  COMP_CODE  = #{S_COMP_CODE}
+	    AND    MAIN_CODE  = 'A093'
+	    AND    ISNULL(REF_CODE1,'') = 'Y'
+	
+	    --- 3. 월별경비 임시테이블(#AGC110T_tmp) INSERT
+	    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects  WHERE id=object_id('tempdb..#AGC110T_tmp'))
+	        DROP TABLE #AGC110T_tmp
+	
+	    SELECT A.COMP_CODE
+	         , A.AC_DATE
+	         , A.ACCNT
+	         , A.AMT_I
+	    INTO   #AGC110T_tmp
+	    FROM    (
+	             SELECT 
+	                    A.COMP_CODE
+	                  , LEFT(A.AC_DATE, 6) AS AC_DATE
+	                  , A.ACCNT
+	                  , A.JAN_DIVI
+	                  , SUM(CASE WHEN A.JAN_DIVI = '1' THEN DR_AMT_I - CR_AMT_I
+	                             WHEN A.JAN_DIVI = '2' THEN CR_AMT_I - DR_AMT_I
+	                             ELSE 0
+	                        END)    AS AMT_I
+	             <if test="@foren.Ognl@isNotEmpty(PJT_CODE)">
+	             FROM              AGB200TV A WITH (NOLOCK)
+	             </if>
+	             FROM              AGB100TV A WITH (NOLOCK)
+	                    INNER JOIN ABA121T  B WITH (NOLOCK) ON  B.COMP_CODE = A.COMP_CODE
+	                                                        AND B.ACCNT     = A.ACCNT
+	                                                        AND B.DIVI      = '50'
+	                                                        AND B.GUBUN     = @GUBUN
+	                                                        AND B.OPT_DIVI  = '4'
+	                                                        AND B.ACCNT_CD  IN (SELECT ACCNT_CD
+	                                                                            FROM (
+	                                                                                    SELECT '1' AS CODE , '4300' AS ACCNT_CD UNION ALL
+	                                                                                    SELECT '2' AS CODE , '5200' AS ACCNT_CD UNION ALL
+	                                                                                    SELECT '2' AS CODE , '5300' AS ACCNT_CD UNION ALL
+	                                                                                    SELECT '3' AS CODE , '6200' AS ACCNT_CD UNION ALL
+	                                                                                    SELECT '3' AS CODE , '6300' AS ACCNT_CD UNION ALL
+	                                                                                    SELECT '4' AS CODE , '7200' AS ACCNT_CD UNION ALL
+	                                                                                    SELECT '4' AS CODE , '7300' AS ACCNT_CD 
+	                                                                                  ) A
+	                                                                            WHERE A.CODE = @QUERY_TYPE)
+	                    LEFT  JOIN BOR120T  C WITH (NOLOCK) ON  C.COMP_CODE = A.COMP_CODE
+	                                                        AND C.DIV_CODE  = A.DIV_CODE
+	                    LEFT  JOIN BSA100T  D WITH (NOLOCK) ON  D.COMP_CODE = A.COMP_CODE
+	                                                        AND D.MAIN_CODE = 'A011'
+	                                                        AND D.SUB_CODE  = A.INPUT_PATH
+	                                                        AND D.REF_CODE7 = 'Y'  -- 경비명세서 제외 입력경로(원가대체자동기표)
+	             WHERE  A.COMP_CODE    = #{S_COMP_CODE}
+	             AND    A.AC_DATE     &gt;= #{START_DATE} + '0101'
+	             AND    A.AC_DATE     &lt;= #{START_DATE} + '1231'
+	             AND    D.COMP_CODE   IS NULL
+	             <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+			     AND 	A.DIV_CODE IN
+					<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+					 #{item}
+					</foreach>									
+				 </if>
+				 <if test="@foren.Ognl@isNotEmpty(DEPT_CODE_FR)">		
+	             AND    A.DEPT_CODE   &gt;= #{DEPT_CODE_FR}
+				 </if>
+				 <if test="@foren.Ognl@isNotEmpty(DEPT_CODE_TO)">	
+	             AND    A.DEPT_CODE   &lt;= #{DEPT_CODE_TO}
+				 </if>
+				 <if test="@foren.Ognl@isNotEmpty(PJT_CODE)">	
+	             AND  ((A.BOOK_CODE1   = N'E1' AND A.BOOK_DATA1 = #{PJT_CODE})
+	              OR   (A.BOOK_CODE2   = N'E1' AND A.BOOK_DATA2 = #{PJT_CODE}))
+				 </if>
+	             GROUP  BY A.COMP_CODE, LEFT(A.AC_DATE, 6), A.ACCNT, A.JAN_DIVI
+	             ) A
+	
+	    --- 0. 변수 선언 및 설정
+	    DECLARE @ACCNT_DIVI        NVARCHAR(01)     -- 1:과목, 2:세목
+	          , @REF_ITEM          NVARCHAR(01)     -- 과목명
+	
+	    SET     @ACCNT_DIVI        = #{ACCOUNT_DIVI}
+	    SET     @REF_ITEM          = #{REF_ITEM}
+	
+	    --- 1. 임시테이블 선언
+	    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#AGC110SKR_121226'))
+	        DROP TABLE #AGC110SKR_121226
+	
+	    CREATE TABLE #AGC110SKR_121226 ( DIVI            NVARCHAR(01)
+	                                   , ACCNT           NVARCHAR(25)
+	                                   , ACCNT_NAME      NVARCHAR(100)
+	                                   , AMT_01    NUMERIC(30, 6)
+	                                   , AMT_02    NUMERIC(30, 6)
+	                                   , AMT_03    NUMERIC(30, 6)
+	                                   , AMT_04    NUMERIC(30, 6)
+	                                   , AMT_05    NUMERIC(30, 6)
+	                                   , AMT_06    NUMERIC(30, 6)
+	                                   , AMT_07    NUMERIC(30, 6)
+	                                   , AMT_08    NUMERIC(30, 6)
+	                                   , AMT_09    NUMERIC(30, 6)
+	                                   , AMT_10    NUMERIC(30, 6)
+	                                   , AMT_11    NUMERIC(30, 6)
+	                                   , AMT_12    NUMERIC(30, 6)
+	                                   , AMT_TOT         NUMERIC(30, 6)
+	                                   )
+		
+	    --- 2. 부서별 금액 INSERT(과목)
+	    INSERT INTO #AGC110SKR_121226
+	    SELECT  '1'          AS DIVI
+	         ,  B.ACCNT_CD   AS ACCNT
+	         ,  CASE WHEN @REF_ITEM = '0' THEN C.ACCNT_NAME
+	                 WHEN @REF_ITEM = '1' THEN C.ACCNT_NAME2
+	                 WHEN @REF_ITEM = '2' THEN C.ACCNT_NAME3
+	            END          AS ACCNT_NAME
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '01' THEN A.AMT_I ELSE 0 END) AS AMT_01
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '02' THEN A.AMT_I ELSE 0 END) AS AMT_02
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '03' THEN A.AMT_I ELSE 0 END) AS AMT_03
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '04' THEN A.AMT_I ELSE 0 END) AS AMT_04
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '05' THEN A.AMT_I ELSE 0 END) AS AMT_05
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '06' THEN A.AMT_I ELSE 0 END) AS AMT_06
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '07' THEN A.AMT_I ELSE 0 END) AS AMT_07
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '08' THEN A.AMT_I ELSE 0 END) AS AMT_08
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '09' THEN A.AMT_I ELSE 0 END) AS AMT_09
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '10' THEN A.AMT_I ELSE 0 END) AS AMT_10
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '11' THEN A.AMT_I ELSE 0 END) AS AMT_11
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '12' THEN A.AMT_I ELSE 0 END) AS AMT_12
+	         ,  SUM(A.AMT_I) AS AMT_TOT
+	    FROM              #AGC110T_tmp A WITH (NOLOCK)
+	            LEFT JOIN ABA400T      B WITH (NOLOCK) ON  B.COMP_CODE = A.COMP_CODE
+	                                                   AND B.ACCNT     = A.ACCNT
+	            LEFT JOIN ABA400T      C WITH (NOLOCK) ON  C.COMP_CODE = B.COMP_CODE
+	                                                   AND C.ACCNT     = B.ACCNT_CD
+	    WHERE   A.COMP_CODE = #{S_COMP_CODE}
+	    GROUP BY B.ACCNT_CD
+	          ,  CASE WHEN @REF_ITEM = '0' THEN C.ACCNT_NAME
+	                  WHEN @REF_ITEM = '1' THEN C.ACCNT_NAME2
+	                  WHEN @REF_ITEM = '2' THEN C.ACCNT_NAME3
+	             END
+		
+		IF @ACCNT_DIVI = '2'
+	       BEGIN
+	          --- 3. 부서별 금액 INSERT(세목)
+	          INSERT INTO #AGC110SKR_121226
+	          SELECT  '2'      AS DIVI
+	               ,  A.ACCNT
+	               ,  CASE WHEN @REF_ITEM = '0' THEN B.ACCNT_NAME
+	                       WHEN @REF_ITEM = '1' THEN B.ACCNT_NAME2
+	                       WHEN @REF_ITEM = '2' THEN B.ACCNT_NAME3
+	                  END      AS ACCNT_NAME
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '01' THEN A.AMT_I ELSE 0 END) AS AMT_01
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '02' THEN A.AMT_I ELSE 0 END) AS AMT_02
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '03' THEN A.AMT_I ELSE 0 END) AS AMT_03
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '04' THEN A.AMT_I ELSE 0 END) AS AMT_04
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '05' THEN A.AMT_I ELSE 0 END) AS AMT_05
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '06' THEN A.AMT_I ELSE 0 END) AS AMT_06
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '07' THEN A.AMT_I ELSE 0 END) AS AMT_07
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '08' THEN A.AMT_I ELSE 0 END) AS AMT_08
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '09' THEN A.AMT_I ELSE 0 END) AS AMT_09
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '10' THEN A.AMT_I ELSE 0 END) AS AMT_10
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '11' THEN A.AMT_I ELSE 0 END) AS AMT_11
+	         ,  SUM(CASE WHEN RIGHT(A.AC_DATE, 2) = '12' THEN A.AMT_I ELSE 0 END) AS AMT_12
+	               ,  SUM(A.AMT_I) AS AMT_TOT
+	          FROM              #AGC110T_tmp A WITH (NOLOCK)
+	                  LEFT JOIN ABA400T      B WITH (NOLOCK) ON  B.COMP_CODE = A.COMP_CODE
+	                                                         AND B.ACCNT     = A.ACCNT
+	          WHERE   A.COMP_CODE = #{S_COMP_CODE}
+	          AND     B.SUBJECT_DIVI = '2'
+	          GROUP BY A.ACCNT
+	                ,  CASE WHEN @REF_ITEM = '0' THEN B.ACCNT_NAME
+	                        WHEN @REF_ITEM = '1' THEN B.ACCNT_NAME2
+	                        WHEN @REF_ITEM = '2' THEN B.ACCNT_NAME3
+	                   END
+	       END
+		
+	    --- 4. 합계 INSERT
+	    INSERT INTO #AGC110SKR_121226
+	    SELECT  '3'         AS DIVI
+	         ,  @MSG_DESC   AS ACCNT
+	         ,  ''          AS ACCNT_NAME
+	         ,  SUM(AMT_01) AS AMT_01
+	         ,  SUM(AMT_02) AS AMT_02
+	         ,  SUM(AMT_03) AS AMT_03
+	         ,  SUM(AMT_04) AS AMT_04
+	         ,  SUM(AMT_05) AS AMT_05
+	         ,  SUM(AMT_06) AS AMT_06
+	         ,  SUM(AMT_07) AS AMT_07
+	         ,  SUM(AMT_08) AS AMT_08
+	         ,  SUM(AMT_09) AS AMT_09
+	         ,  SUM(AMT_10) AS AMT_10
+	         ,  SUM(AMT_11) AS AMT_11
+	         ,  SUM(AMT_12) AS AMT_12
+	         ,  SUM(A.AMT_TOT) AS AMT_TOT
+	    FROM         #AGC110SKR_121226 A WITH (NOLOCK)
+	    WHERE   A.DIVI = '1'
+	
+	    --- 4.1 ROW수가 없는 경우 합계 삭제
+	    DECLARE @COUNT   NVARCHAR(5)
+	
+	    SELECT @COUNT = COUNT(*)
+	    FROM   #AGC110SKR_121226 WITH (NOLOCK)
+	    WHERE  DIVI IN ('1', '2')
+	
+	    IF (@COUNT = 0)
+	       DELETE FROM #AGC110SKR_121226 WHERE DIVI = '3'
+	
+	    --- 5. 최종 쿼리
+	    SELECT  
+	            DIVI
+	         ,  ACCNT
+	         ,  ACCNT_NAME
+	         ,  AMT_01
+	         ,  AMT_02
+	         ,  AMT_03
+	         ,  AMT_04
+	         ,  AMT_05
+	         ,  AMT_06
+	         ,  AMT_07
+	         ,  AMT_08
+	         ,  AMT_09
+	         ,  AMT_10
+	         ,  AMT_11
+	         ,  AMT_12
+	         ,  AMT_TOT
+	         ,  '' AS REMARK
+	    FROM   #AGC110SKR_121226  WITH (NOLOCK)
+	    ORDER BY ACCNT, DIVI
+	
+	    SET NOCOUNT OFF
+	    SET ARITHABORT OFF
+	
+	    DROP TABLE #AGC110T_tmp
+	    DROP TABLE #AGC110SKR_121226
+	
+	END
+	</select>
+</mapper>

@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_spp100skrv_ypServiceImpl">
+
+	<select id="s_spp100skrv_ypServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	/* s_spp100skrv_ypServiceImpl.selectList */
+		BEGIN
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+
+		DECLARE @CompCode	NVARCHAR(08)	/* 법인코드	*/
+			  , @UserId		NVARCHAR(100)	/* 사용자ID	*/
+			  , @LangType	NVARCHAR(2)		/* 언어구분	*/
+			  , @RefItem	NVARCHAR(01)	/* 명칭 참조 유형  */
+			  , @DateFormat	NVARCHAR(10)	/* 날짜 포맷 유형 설정 */
+
+		SET @CompCode = #{S_COMP_CODE}
+		SET @UserId   = #{S_USER_ID}
+		SET @LangType = #{S_LANG_CODE}
+
+		/* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+		  FROM BSA300T WITH (NOLOCK)
+		 WHERE USER_ID = @UserId
+
+		SET @RefItem = ISNULL(@RefItem, N'0')
+
+		/* 날짜 포맷 유형 설정 */
+		SELECT TOP 1 @DateFormat = CODE_NAME
+		  FROM BSA100T WITH (NOLOCK)
+		 WHERE COMP_CODE = @CompCode
+		   AND MAIN_CODE = N'B044'
+		   AND REF_CODE1 = N'Y'
+
+		SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+		SELECT
+			   (CASE WHEN A.CUSTOM_CODE = '*'
+						  THEN A.CUSTOM_NAME
+						  ELSE uniLITE.fnCustNameComp(A.COMP_CODE, #{S_USER_ID}, A.CUSTOM_CODE)
+				 END)																		AS TAB_BASE
+			 , (CASE WHEN A.CUSTOM_CODE = '*'
+						  THEN ''
+						  ELSE A.CUSTOM_CODE
+				 END)																		AS CUSTOM_CODE
+			 , (CASE WHEN A.CUSTOM_CODE = '*'
+						  THEN A.CUSTOM_NAME
+						  ELSE uniLITE.fnCustNameComp(A.COMP_CODE, #{S_USER_ID}, A.CUSTOM_CODE)
+				 END)																		AS CUSTOM_NAME
+			 , unilite.fnGetUserdate(#{S_COMP_CODE},A.ESTI_DATE)							AS ESTI_DATE
+			 , A.ESTI_NUM
+			 , B.ESTI_SEQ
+			 , B.ESTI_QTY
+			 , B.ESTI_CFM_PRICE
+			 , B.ESTI_CFM_AMT
+			 , B.PROFIT_RATE
+			 , (CASE WHEN B.ITEM_CODE = '*'
+						  THEN ''
+						  ELSE B.ITEM_CODE
+				 END)																		AS ITEM_CODE
+			 , (CASE WHEN B.ITEM_CODE = '*'
+						  THEN B.ITEM_NAME
+						  ELSE uniLITE.fnItemNameComp(B.COMP_CODE, #{S_USER_ID}, B.ITEM_CODE)
+				 END)																		AS ITEM_NAME
+			 , B.ITEM_SPEC
+			 , B.CUSTOM_ITEM_CODE
+			 , B.CUSTOM_ITEM_NAME
+			 , B.CUSTOM_ITEM_SPEC
+			 , B.ESTI_UNIT
+			 , B.TRANS_RATE
+			 , B.ESTI_PRICE
+			 , B.ESTI_AMT
+			 , unilite.fnGetUserdate(#{S_COMP_CODE},A.CONFIRM_DATE)							AS CONFIRM_DATE
+			 , (SELECT CODE_NAME
+				  FROM BSA100T
+				 WHERE MAIN_CODE = 'S018'
+				   AND COMP_CODE = #{S_COMP_CODE}
+				   AND SUB_CODE  = A.CONFIRM_FLAG)											AS CONFIRM_FLAG
+			 , (SELECT CODE_NAME
+				  FROM BSA100T
+				 WHERE MAIN_CODE = 'S010'
+				   AND COMP_CODE = #{S_COMP_CODE}
+				   AND SUB_CODE  = A.ESTI_PRSN)												AS ESTI_PRSN
+			 , B.ESTI_NUM + CAST(B.ESTI_SEQ AS VARCHAR(8))									AS SORT
+
+			 , B.TAX_TYPE
+			 , B.ESTI_TAX_AMT
+			 , SUBSTRING(A.ESTI_VALIDTERM, 1, 8)			AS FR_ESTI_VALIDTERM
+			 , SUBSTRING(A.ESTI_VALIDTERM, 9, 16)			AS TO_ESTI_VALIDTERM
+		  FROM		SES100T A	WITH(NOLOCK)
+		  LEFT JOIN BCM100T C	WITH(NOLOCK)	ON A.CUSTOM_CODE = C.CUSTOM_CODE
+											   AND A.COMP_CODE   = C.COMP_CODE
+			 , SES110T B	WITH(NOLOCK)
+		  LEFT JOIN BPR100T D	WITH(NOLOCK)	ON B.ITEM_CODE = D.ITEM_CODE
+											   AND B.COMP_CODE = D.COMP_CODE
+		  LEFT JOIN BPR100T E	WITH(NOLOCK)	ON D.ITEM_GROUP = E.ITEM_CODE			/* ITEM_GROUP명 리턴 */
+											   AND D.COMP_CODE  = E.COMP_CODE
+		 WHERE A.ESTI_NUM	= B.ESTI_NUM
+		   AND A.COMP_CODE	= #{S_COMP_CODE}
+		   AND A.DIV_CODE	= #{DIV_CODE}						/* 신고사업장 */
+		<if test="@foren.Ognl@isNotEmpty(ESTI_PRSN)">
+		   AND A.ESTI_PRSN	  = #{ESTI_PRSN}					/* 영업담당자 */
+		</if>
+
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+		   AND A.CUSTOM_CODE = #{CUSTOM_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+		   AND (A.CUSTOM_CODE LIKE #{CUSTOM_CODE} + '%'
+			   OR A.CUSTOM_NAME LIKE #{CUSTOM_CODE} + '%')
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+		   AND (A.CUSTOM_CODE LIKE #{CUSTOM_NAME} + '%'
+			   OR A.CUSTOM_NAME LIKE #{CUSTOM_NAME} + '%')
+		</if>
+
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+		   AND B.ITEM_CODE	= #{ITEM_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+		   AND (B.ITEM_CODE	LIKE #{ITEM_CODE} + '%'
+			   OR B.ITEM_NAME LIKE #{ITEM_CODE} + '%')
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_NAME) and @foren.Ognl@isEmpty(ITEM_CODE)">
+		   AND (B.ITEM_CODE	LIKE #{ITEM_NAME} + '%'
+			   OR B.ITEM_NAME LIKE #{ITEM_NAME} + '%')
+		</if>
+
+		<if test="@foren.Ognl@isNotEmpty(FR_DATE)">
+		   AND A.ESTI_DATE  &gt;= #{FR_DATE}					/* 견적일FR */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(TO_DATE)">
+		   AND A.ESTI_DATE  &lt;= #{TO_DATE}					/* 견적일TO */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(RDO)">
+		   	<if test = "RDO != &quot;0&quot;">
+		   		AND A.CONFIRM_FLAG   = #{RDO}					/* 구분	*/
+		   	</if>
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+		   AND C.AGENT_TYPE	 = #{AGENT_TYPE}					/* 고객분류  */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+		   AND C.AREA_TYPE	  = #{AREA_TYPE}					/* 지역	*/
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUST_PRSN)">
+		   AND A.CUST_PRSN   LIKE #{CUST_PRSN} + '%'			/* 견적요청자 */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ESTI_TITLE)">
+		   AND A.ESTI_TITLE  LIKE #{ESTI_TITLE} + '%'			/* 견적건명  */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(TXTLV_L1)">
+		   AND D.ITEM_LEVEL1	= #{TXTLV_L1}					/* 대분류   */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(TXTLV_L2)">
+		   AND D.ITEM_LEVEL2	= #{TXTLV_L2}					/* 중분류   */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(TXTLV_L3)">
+		   AND D.ITEM_LEVEL3	= #{TXTLV_L3}					/* 소분류   */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_GROUP_CODE)">
+		   AND D.ITEM_GROUP   LIKE #{ITEM_GROUP_CODE} + '%'		/* 대표모델  */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ESTI_CFM_AMT_FR)">
+		   AND B.ESTI_CFM_AMT &gt;= #{ESTI_CFM_AMT_FR}			/* 견적금액FR*/
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ESTI_CFM_AMT_TO)">
+		   AND B.ESTI_CFM_AMT &lt;= #{ESTI_CFM_AMT_TO}			/* 견적금액TO*/
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ESTI_NUM_FR)">
+		   AND A.ESTI_NUM	 &gt;= #{ESTI_NUM_FR}				/* 견적번호FR*/
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ESTI_NUM_TO)">
+		   AND A.ESTI_NUM	 &lt;= #{ESTI_NUM_TO}				/* 견적번호TO*/
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(FR_TO_ESTI_VALIDTERM)">
+		    AND A.ESTI_VALIDTERM = #{FR_TO_ESTI_VALIDTERM}				/* 단가적용기간FR~TO*/
+		</if>
+		  /*
+		   AND A.ESTI_NUM IS NULL
+		  */
+		 ORDER BY CUSTOM_CODE, B.ESTI_NUM,B.ESTI_SEQ
+
+		SET NOCOUNT OFF
+		SET ARITHABORT OFF
+	END
+	</select>
+
+
+</mapper>

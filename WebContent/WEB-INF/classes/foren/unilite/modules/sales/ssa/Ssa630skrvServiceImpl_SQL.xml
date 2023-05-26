@@ -1,0 +1,481 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ssa630skrvServiceImpl">
+	<select id="ssa630skrvServiceImpl.selectList1" parameterType="Map" resultType="rMap">
+		/* ssa630skrvServiceImpl.selectList1 */
+		DECLARE @CompCode       NVARCHAR(10)
+		      , @DivCode        NVARCHAR(10)
+		      , @CustomCode     NVARCHAR(10)
+		      , @CustomName     NVARCHAR(100)
+		      , @FrDate         NVARCHAR(08)
+		      , @ToDate         NVARCHAR(08)
+		      , @AgentType      NVARCHAR(08)
+		      , @PrevYM         NVARCHAR(06)
+		      , @STDT           NVARCHAR(06)
+		      , @TO_STDT        NVARCHAR(08)
+		
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+		
+		SET @CompCode       = #{S_COMP_CODE}
+		SET @DivCode        = #{DIV_CODE}
+		SET @FrDate         = #{FrDate}
+		SET @ToDate         = #{ToDate}
+		SET @CustomCode     = #{CUSTOM_CODE}
+		SET @CustomName     = #{CUSTOM_NAME}
+		SET @AgentType      = #{AGENT_TYPE}
+		SET @PrevYM         = CONVERT(VARCHAR(6), DATEADD(month, -1, @FrDate), 112)
+
+		SELECT @STDT = SUBSTRING(FN_DATE, 1, 6)
+		  FROM BOR100T WITH(NOLOCK)
+		 WHERE COMP_CODE = @CompCode
+
+		IF @STDT &gt; CONVERT(NVARCHAR(08), DATEADD(D, -1, @FrDate), 112) 
+		    SET @TO_STDT = @STDT
+		ELSE
+		    SET @TO_STDT = CONVERT(NVARCHAR(08), DATEADD(D, -1, @FrDate), 112)
+
+
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE ID=OBJECT_ID('tempdb..#TMP_SSA630'))
+		    DROP TABLE #TMP_SSA630
+
+		SELECT COMP_CODE
+		     , DIV_CODE
+		     , MONEY_UNIT
+		     , LEFT(BASE_DATE,6)  AS SALE_MONTH
+		     , BASE_DATE
+		     , BASE_AMT
+		     , SUM(REMAIN_AMT)    AS CARRIED_OVER_AMT
+		     , SALE_AMT
+		     , SUM(COLLECT_AMT)   AS COLLECT_AMT
+		     , PURCH_AMT
+		     , PAY_AMT
+		     , SUM(REMAIN_AMT)    AS REMAIN_AMT
+		     , GUBUN
+		     , ROW_NUMBER() OVER(ORDER BY MONEY_UNIT, GUBUN, BASE_DATE) AS SEQ
+		     , CARD_SALE
+		     , BAL_TYPE
+		     , BASIS_NUM
+		     , PRE_PAY
+		     , CUSTOM_CODE
+		     , CUSTOM_NAME
+		     , AGENT_TYPE
+		  INTO #TMP_SSA630
+		  FROM (
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , LEFT(@FrDate,6)      AS BASE_DATE
+		              , A.MONEY_UNIT
+		              , SUM(A.UNCOLLECT_AMT) AS BASE_AMT
+		              , 0                    AS SALE_AMT
+		              , 0                    AS COLLECT_AMT
+		              , 0                    AS PURCH_AMT
+		              , 0                    AS PAY_AMT
+		              , 0                    AS REMAIN_AMT
+		              , '1'                  AS GUBUN   --기초(매출)
+		              , 0                    AS CARD_SALE
+		              , '매출기초'           AS BAL_TYPE
+		              , ''                   AS BASIS_NUM
+		              , 0                    AS PRE_PAY
+		              , A.CUSTOM_CODE
+		              , C.CUSTOM_NAME
+		              , C.AGENT_TYPE
+		           FROM unilite.fnGetBalance4AllCustom(@CompCode, @DivCode, @FrDate, '', '3') A
+		           INNER JOIN BCM100T C WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+		                                            AND C.CUSTOM_CODE = A.CUSTOM_CODE
+		          WHERE A.COMP_CODE   = @CompCode
+		            AND A.CUSTOM_CODE LIKE @CustomCode + '%'
+		            AND C.CUSTOM_NAME LIKE @CustomName + '%'
+		<if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+		            AND C.AGENT_TYPE  = @AgentType
+		</if>
+		          GROUP BY A.COMP_CODE, A.DIV_CODE, A.MONEY_UNIT, A.CUSTOM_CODE, C.CUSTOM_NAME, C.AGENT_TYPE
+		          HAVING SUM(UNCOLLECT_AMT) != 0
+
+		         UNION ALL
+
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , LEFT(@FrDate, 6)                                                                 AS BASE_DATE
+		              , A.MONEY_UNIT 
+		              , ( SUM(CASE WHEN B.JAN_DIVI = '2' THEN A.CR_AMT_I - A.DR_AMT_I ELSE 0 END)
+		              - SUM(CASE WHEN B.JAN_DIVI = '1' THEN A.DR_AMT_I - A.CR_AMT_I ELSE 0 END) ) * -1    AS BASE_AME
+		              , 0                                                                                 AS SALE_AMT
+		              , 0                                                                                 AS COLLECT_AMT
+		              , 0                                                                                 AS PURCH_AMT
+		              , 0                                                                                 AS PAY_AMT
+		              , 0                                                                                 AS REMAIN_AMT
+		              , '1'                                                                               AS GUBUN --기초(매입)
+		              , 0                                                                                 AS CARD_SALE
+		              , '매입기초'                                                                        AS BAL_TYPE
+		              , ''                                                                                AS BASIS_NUM 
+		              , 0                                                                                 AS PRE_PAY
+		              , CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+		                     WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+		                END                                                                               AS CUSTOM_CODE
+		              , C.CUSTOM_NAME
+		              , C.AGENT_TYPE
+		           FROM       AGB200T A WITH(NOLOCK)
+		           INNER JOIN ABA400T B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		                                            AND B.ACCNT       = A.ACCNT
+		           INNER JOIN BCM100T C WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+		                                            AND C.CUSTOM_CODE = CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+		                                                                     WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+		                                                                END
+		          WHERE A.COMP_CODE   = @CompCode
+		            AND A.DIV_CODE    = @DivCode
+		            AND A.AC_DATE     BETWEEN @STDT AND CONVERT(NVARCHAR(08), DATEADD(D, -1, @FrDate), 112) ----회계기초년월 ~ FRDATE 전날
+		            AND A.AC_DATE     BETWEEN @STDT AND @TO_STDT                                           ----회계기초년월 ~ FRDATE 전날
+		            AND B.SPEC_DIVI   IN ('J1', 'J2')
+		            AND (A.BOOK_CODE1 = 'A4' OR A.BOOK_CODE2 = 'A4')
+		            AND CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+		                     WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+		                END           LIKE @CustomCode + '%'
+		            AND C.CUSTOM_NAME LIKE @CustomName + '%'
+		<if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+		            AND C.AGENT_TYPE  = @AgentType
+		</if>
+		          GROUP BY A.COMP_CODE, A.DIV_CODE, A.MONEY_UNIT 
+		                 , CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+		                        WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+		                   END
+		                 , C.CUSTOM_NAME, C.AGENT_TYPE
+
+		        UNION ALL
+
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , LEFT(@FrDate, 6)                         AS BASE_DATE
+		              , A.MONEY_UNIT
+		              , (SUM(A.AMOUNT_I + A.VAT_AMOUNT_O)) * -1  AS BASE_AMT
+		              , 0                                        AS SALE_AMT
+		              , 0                                        AS COLLECT_AMT
+		              , 0                                        AS PURCH_AMT
+		              , 0                                        AS PAY_AMT
+		              , 0                                        AS REMAIN_AMT
+		              , '1'                                      AS GUBUN --기초(매입)
+		              , 0                                        AS CARD_SALE
+		              , '매입기초'                               AS BAL_TYPE
+		              , '매입(회계미반영)'                       AS BASIS_NUM --매입(회계미반영)
+		              , 0                                        AS PRE_PAY
+		              , A.CUSTOM_CODE
+		              , C.CUSTOM_NAME
+		              , C.AGENT_TYPE
+		           FROM MAP100T A WITH(NOLOCK)
+		           INNER JOIN BCM100T C WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+		                                            AND C.CUSTOM_CODE = A.CUSTOM_CODE
+		          WHERE A.COMP_CODE           = @CompCode
+		            AND A.DIV_CODE            = @DivCode
+		            AND A.CHANGE_BASIS_DATE  &lt; @FrDate
+		            AND ISNULL(A.AC_DATE, '') = ''    
+		            AND A.CUSTOM_CODE         LIKE @CustomCode + '%'
+		            AND C.CUSTOM_NAME         LIKE @CustomName + '%'
+		<if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+		            AND C.AGENT_TYPE          = @AgentType
+		</if>
+		          GROUP BY A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE, A.MONEY_UNIT, C.CUSTOM_NAME, C.AGENT_TYPE
+
+		         UNION ALL
+
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , A.SALE_DATE                            AS BASE_DATE
+		              , A.MONEY_UNIT
+		              , 0                                      AS BASE_AMT
+		              , SUM(A.SALE_LOC_AMT_I + A.TAX_AMT_O)    AS SALE_AMT
+		              , CASE WHEN A.BILL_TYPE = '40' THEN SUM(A.SALE_LOC_AMT_I + A.TAX_AMT_O)
+		                     ELSE 0
+		                END                                    AS COLLECT_AMT
+		              , 0                                      AS PURCH_AMT
+		              , 0                                      AS PAY_AMT
+		              , 0                                      AS REMAIN_AMT
+		              , '5'                                    AS GUBUN    --매출
+		              , CASE WHEN A.BILL_TYPE = '40' THEN SUM(A.SALE_LOC_AMT_I + A.TAX_AMT_O)
+		                     ELSE 0
+		                END                                    AS CARD_SALE
+		              , '매출'                                   AS BAL_TYPE
+		              , A.BILL_NUM                             AS BASIS_NUM
+		              , 0                                      AS PRE_PAY
+		              , A.SALE_CUSTOM_CODE                     AS CUSTOM_CODE
+		              , C.CUSTOM_NAME
+		              , C.AGENT_TYPE
+		           FROM SALES_V A
+		           INNER JOIN BCM100T C WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+		                                            AND C.CUSTOM_CODE = A.SALE_CUSTOM_CODE
+		          WHERE A.COMP_CODE        = @CompCode
+		            AND A.SALE_CUSTOM_CODE LIKE @CustomCode + '%'
+		            AND C.CUSTOM_NAME      LIKE @CustomName + '%'
+		<if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+		            AND C.AGENT_TYPE       = @AgentType
+		</if>
+		            AND A.SALE_DATE       &gt;= @FrDate
+		            AND A.SALE_DATE       &lt;= @ToDate
+		          GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_DATE, A.MONEY_UNIT, A.BILL_TYPE, A.BILL_NUM, A.SALE_CUSTOM_CODE, C.CUSTOM_NAME, C.AGENT_TYPE
+
+		         UNION ALL
+
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , A.COLLECT_DATE
+		              , A.MONEY_UNIT
+		              , 0                    AS BASE_AMT
+		              , 0                    AS SALE_AMT
+		              , CASE WHEN A.COLLECT_TYPE = '80' THEN 0
+		                     ELSE SUM(A.COLLECT_FOR_AMT)
+		                END                  AS COLLECT_AMT
+		              , 0                    AS PURCH_AMT
+		              , 0                    AS PAY_AMT
+		              , 0                    AS REMAIN_AMT
+		              , '5'                  AS GUBUN    --수금
+		              , 0                    AS CARD_SALE
+		              , '수금'               AS BAL_TYPE
+		              , A.COLLECT_NUM        AS BASIS_NUM
+		              , CASE WHEN A.COLLECT_TYPE = '80' THEN SUM(COLLECT_FOR_AMT)
+		                     ELSE 0
+		                END                  AS PRE_PAY
+		              , A.CUSTOM_CODE
+		              , C.CUSTOM_NAME
+		              , C.AGENT_TYPE
+		           FROM       SCO100T A WITH(NOLOCK)
+		           INNER JOIN BCM100T C WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+		                                            AND C.CUSTOM_CODE = A.CUSTOM_CODE
+		          WHERE A.COMP_CODE     = @CompCode
+		            AND A.CUSTOM_CODE   LIKE @CustomCode + '%'
+		            AND C.CUSTOM_NAME   LIKE @CustomName + '%'
+		<if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+		            AND C.AGENT_TYPE    = @AgentType
+		</if>
+		            AND A.COLLECT_DATE &gt;= @FrDate
+		            AND A.COLLECT_DATE &lt;= @ToDate
+		         GROUP BY A.COMP_CODE, A.DIV_CODE, A.COLLECT_DATE, A.MONEY_UNIT, A.COLLECT_NUM, A.COLLECT_TYPE, A.CUSTOM_CODE, C.CUSTOM_NAME, C.AGENT_TYPE
+
+		         UNION ALL
+
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , B.CHANGE_BASIS_DATE       AS BASE_DATE
+		              , B.MONEY_UNIT
+		              , 0                         AS BASE_AMT  
+		              , 0                         AS SALE_AMT        -- 매출
+		              , 0                         AS COLLECT_AMT    -- 수금
+		              , SUM(A.AMOUNT_I + A.TAX_I) AS PURCH_AMT        -- 매입
+		              , 0                         AS PAY_AMT        -- 지급
+		              , 0                         AS REMAIN_AMT
+		              , '5'                       AS GUBUN  --지급결의
+		              , 0                         AS CARD_SALE
+		              , '매입'                    AS BAL_TYPE
+		              , A.CHANGE_BASIS_NUM        AS BASIS_NUM
+		              , 0 AS PRE_PAY
+		              , B.CUSTOM_CODE
+		              , C.CUSTOM_NAME
+		              , C.AGENT_TYPE
+		           FROM       MAP200T A WITH(NOLOCK)--A.CHANGE_BASIS_NUM,
+		           INNER JOIN MAP100T B WITH(NOLOCK) ON B.COMP_CODE        = A.COMP_CODE
+		                                            AND B.DIV_CODE         = A.DIV_CODE
+		                                            AND B.CHANGE_BASIS_NUM = A.CHANGE_BASIS_NUM
+		           INNER JOIN BCM100T C WITH(NOLOCK) ON C.COMP_CODE        = A.COMP_CODE
+		                                            AND C.CUSTOM_CODE      = B.CUSTOM_CODE
+		          WHERE A.COMP_CODE     = @CompCode
+		            AND B.CUSTOM_CODE   LIKE @CustomCode + '%'
+		            AND C.CUSTOM_NAME   LIKE @CustomName + '%'
+		<if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+		            AND C.AGENT_TYPE    = @AgentType
+		</if>
+		            AND B.CHANGE_BASIS_DATE &gt;= @FrDate
+		            AND B.CHANGE_BASIS_DATE &lt;= @ToDate
+		          GROUP BY A.COMP_CODE, A.DIV_CODE, B.CHANGE_BASIS_DATE  , B.MONEY_UNIT , A.CHANGE_BASIS_NUM, B.CUSTOM_CODE, C.CUSTOM_NAME, C.AGENT_TYPE
+
+		         UNION ALL
+
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , A.AC_DATE           AS BASE_DATE
+		              , A.MONEY_UNIT
+		              , 0                   AS BASE_AMT
+		              , 0                   AS SALE_AMT --@@
+		              , 0                   AS COLLECT_AMT 
+		              , 0                   AS PURCH_AMT        -- 매입
+		              , CASE WHEN SUM(A.AMT_I) &lt; ISNULL(C.AMT_I, 0) THEN 0
+		                     ELSE SUM(A.AMT_I) - ISNULL(C.AMT_I, 0)
+		                END                 AS PAY_AMT        -- 지급
+		              , 0                   AS REMAIN_AMT 
+		              , '5'                 AS GUBUN
+		              , 0                   AS CARD_SALE 
+		              , '지급'              AS BAL_TYPE 
+		              , A.AC_DATE           AS BASIS_NUM
+		              , ISNULL(C.AMT_I, 0)  AS PRE_PAY
+		              , A.CUSTOM_CODE
+		              , C1.CUSTOM_NAME
+		              , C1.AGENT_TYPE
+		           FROM       AGJ210T A  WITH(NOLOCK)
+		           INNER JOIN ABA400T B  WITH(NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+		                                             AND B.ACCNT        = A.ACCNT
+		           INNER JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE
+		                                             AND C1.CUSTOM_CODE = A.CUSTOM_CODE
+		           LEFT OUTER JOIN (
+		                             SELECT C.COMP_CODE
+		                                  , C.DIV_CODE
+		                                  , C.AC_DATE
+		                                  , C.SLIP_NUM
+		                                  --, C.SLIP_SEQ
+		                                  , C.ACCNT
+		                                  , C.DR_CR
+		                                  , SUM(C.AMT_I)    AS AMT_I
+		                                  , C.CUSTOM_CODE
+		                                  , C1.CUSTOM_NAME
+		                               FROM       AGJ210T C  WITH(NOLOCK)
+		                               INNER JOIN ABA400T D  WITH(NOLOCK) ON C.COMP_CODE    = D.COMP_CODE
+		                                                                 AND C.ACCNT        = D.ACCNT
+		                               INNER JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE   = C.COMP_CODE
+		                                                                 AND C1.CUSTOM_CODE = C.CUSTOM_CODE
+		                              WHERE C.COMP_CODE    = @CompCode
+		                                AND C.DIV_CODE     = @DivCode
+		                                AND D.SPEC_DIVI    = 'J2'
+		                                AND C.CUSTOM_CODE  LIKE @CustomCode + '%'
+		                                AND C1.CUSTOM_NAME LIKE @CustomName + '%'
+		                    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+		                                AND C1.AGENT_TYPE  = @AgentType
+		                    </if>
+		                                AND ISNULL(C.MOD_DIVI, '') != 'D'
+		                                AND C.AC_DATE &gt;= @FrDate
+		                                AND C.AC_DATE &lt;= @ToDate
+		                              GROUP BY C.COMP_CODE, C.DIV_CODE, C.AC_DATE, C.SLIP_NUM
+		                                     , C.ACCNT, C.DR_CR, C.CUSTOM_CODE, C1.CUSTOM_NAME
+		                            ) C
+		                         ON A.COMP_CODE    = C.COMP_CODE
+		                        AND A.DIV_CODE     = C.DIV_CODE
+		                        AND A.AC_DATE      = C.AC_DATE
+		                        AND A.SLIP_NUM     = C.SLIP_NUM
+		                        --AND A.SLIP_SEQ    != C.SLIP_SEQ
+		                        AND A.DR_CR       != C.DR_CR
+		                        AND A.CUSTOM_CODE  = C.CUSTOM_CODE
+		          WHERE A.COMP_CODE           = @CompCode
+		            AND A.DIV_CODE            = @DivCode
+		            AND B.SPEC_DIVI           = 'J1'
+		            AND A.DR_CR              != B.JAN_DIVI
+		            AND A.CUSTOM_CODE         LIKE @CustomCode + '%'
+		            AND C1.CUSTOM_NAME        LIKE @CustomName + '%'
+		<if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+		            AND C1.AGENT_TYPE         = @AgentType
+		</if>
+		            AND ISNULL(MOD_DIVI, '') != 'D'
+		            AND A.AC_DATE            &gt;= @FrDate
+		            AND A.AC_DATE            &lt;= @ToDate
+		            AND A.AMT_I              &gt;= 0
+		          GROUP BY A.COMP_CODE, A.DIV_CODE, A.AC_DATE, A.MONEY_UNIT, C.AMT_I, A.CUSTOM_CODE, C1.CUSTOM_NAME, C1.AGENT_TYPE
+
+		         UNION ALL
+
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , A.AC_DATE        AS BASE_DATE
+		              , A.MONEY_UNIT
+		              , 0                AS BASE_AMT
+		              , 0                AS SALE_AMT --@@
+		              , 0                AS COLLECT_AMT 
+		              , 0                AS PURCH_AMT    -- 매입
+		              , SUM(A.AMT_I)     AS PAY_AMT      -- 지급
+		              , 0                AS REMAIN_AMT 
+		              , '5'              AS GUBUN
+		              , 0                AS CARD_SALE 
+		              , '지급'           AS BAL_TYPE 
+		              , A.AC_DATE        AS BASIS_NUM
+		              , 0                AS PRE_PAY
+		              , A.CUSTOM_CODE
+		              , C.CUSTOM_NAME
+		              , C.AGENT_TYPE
+		           FROM       AGJ210T A WITH(NOLOCK)
+		           INNER JOIN ABA400T B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		                                            AND B.ACCNT       = A.ACCNT
+		           INNER JOIN BCM100T C WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+		                                            AND C.CUSTOM_CODE = A.CUSTOM_CODE
+		          WHERE A.COMP_CODE           = @CompCode
+		            AND A.DIV_CODE            = @DivCode
+		            AND B.SPEC_DIVI           = 'J1'
+		            AND A.DR_CR              != B.JAN_DIVI
+		            AND A.CUSTOM_CODE         LIKE @CustomCode + '%'
+		            AND C.CUSTOM_NAME         LIKE @CustomName + '%'
+		<if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+		            AND C.AGENT_TYPE          = @AgentType
+		</if>
+		            AND ISNULL(MOD_DIVI, '') != 'D'
+		            AND A.AC_DATE            &gt;= @FrDate
+		            AND A.AC_DATE            &lt;= @ToDate
+		            AND A.AMT_I                 &lt; 0
+		          GROUP BY A.COMP_CODE, A.DIV_CODE, A.AC_DATE, A.MONEY_UNIT, A.CUSTOM_CODE, C.CUSTOM_NAME, C.AGENT_TYPE
+
+		         UNION ALL
+
+		         SELECT A.COMP_CODE
+		              , A.DIV_CODE
+		              , A.AC_DATE            AS BASE_DATE
+		              , A.MONEY_UNIT
+		              , 0                    AS BASE_AMT
+		              , 0                    AS SALE_AMT
+		              , 0                    AS COLLECT_AMT 
+		              , 0                    AS PURCH_AMT    -- 매입
+		              , A.AMT_I              AS PAY_AMT        -- 지급
+		              , 0                    AS REMAIN_AMT 
+		              , '5'                  AS GUBUN
+		              , 0                    AS CARD_SALE 
+		              , '선급'               AS BAL_TYPE 
+		              , A.AC_DATE            AS BASIS_NUM
+		              , 0                    AS PRE_PAY
+		              , A.CUSTOM_CODE
+		              , C.CUSTOM_NAME
+		              , C.AGENT_TYPE
+		           FROM       AGJ210T A WITH(NOLOCK)
+		           INNER JOIN ABA400T B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		                                            AND B.ACCNT       = A.ACCNT
+		           INNER JOIN BCM100T C WITH(NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+		                                            AND C.CUSTOM_CODE = A.CUSTOM_CODE
+		          WHERE A.COMP_CODE           = @CompCode
+		            AND A.DIV_CODE            = @DivCode
+		            AND B.SPEC_DIVI           = 'J2'
+		            AND A.DR_CR               = B.JAN_DIVI
+		            AND A.CUSTOM_CODE         LIKE @CustomCode + '%'
+		            AND C.CUSTOM_NAME         LIKE @CustomName + '%'
+		<if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+		            AND C.AGENT_TYPE          = @AgentType
+		</if>
+		            AND ISNULL(MOD_DIVI, '') != 'D'
+		            AND A.AC_DATE            &gt;= @FrDate
+		            AND A.AC_DATE            &lt;= @ToDate
+		  ) X
+		 --GROUP BY COMP_CODE, DIV_CODE, MONEY_UNIT, BASE_DATE, GUBUN, BAL_TYPE, BASIS_NUM, SALE_AMT;
+		 GROUP BY COMP_CODE, DIV_CODE, MONEY_UNIT, BASE_DATE, GUBUN, BAL_TYPE, BASIS_NUM, PRE_PAY, CARD_SALE, SALE_AMT
+		        , CUSTOM_CODE, CUSTOM_NAME, AGENT_TYPE, BASE_AMT, PURCH_AMT, PAY_AMT ;
+
+
+		SELECT A.DIV_CODE
+		     , A.AGENT_TYPE                                             --고객분류코드
+		     , C.CODE_NAME                     AS AGENT_NAME            --고객분류명
+		     , A.CUSTOM_CODE                                            --거래처코드
+		     , A.CUSTOM_NAME                                            --거래처명
+		     , SUM(A.BASE_AMT)                 AS BASE_AMT              --이월잔액
+		     , SUM(A.SALE_AMT)                 AS SALE_AMT              --영업-매출금액
+		     , SUM(A.COLLECT_AMT)              AS COLLECT_AMT           --영업-수금금액
+		     , SUM(PURCH_AMT)                  AS PURCH_AMT             --구매-매입금액
+		     , SUM(PAY_AMT)                    AS PAY_AMT               --구매-지급금액
+		     , SUM(A.BASE_AMT) + SUM(A.SALE_AMT) - SUM(A.COLLECT_AMT)
+		       - SUM(PURCH_AMT) + SUM(PAY_AMT) AS BAL_AMT               --잔액
+		     , CASE WHEN SUM(A.BASE_AMT) + SUM(A.SALE_AMT) - SUM(A.COLLECT_AMT) - SUM(PURCH_AMT) + SUM(PAY_AMT) &gt; 0 THEN SUM(A.BASE_AMT) + SUM(A.SALE_AMT) - SUM(A.COLLECT_AMT) - SUM(PURCH_AMT) + SUM(PAY_AMT) 
+		            ELSE 0
+		       END                             AS RE_AMT                --받을돈
+		     , CASE WHEN SUM(A.BASE_AMT) + SUM(A.SALE_AMT) - SUM(A.COLLECT_AMT) - SUM(PURCH_AMT) + SUM(PAY_AMT) &lt; 0 THEN (SUM(A.BASE_AMT) + SUM(A.SALE_AMT) - SUM(A.COLLECT_AMT) - SUM(PURCH_AMT) + SUM(PAY_AMT)) * -1 
+		            ELSE 0
+		       END                             AS DEBT_AMT              --줄돈
+		  FROM       #TMP_SSA630 A
+		  LEFT  JOIN BSA100T     C ON C.COMP_CODE = A.COMP_CODE
+		                          AND C.MAIN_CODE = 'B055'              --고객분류
+		                          AND C.SUB_CODE  = A.AGENT_TYPE
+		 WHERE A.COMP_CODE = @CompCode
+		   AND A.DIV_CODE  = @DivCode
+		 GROUP BY A.DIV_CODE, A.AGENT_TYPE, C.CODE_NAME, A.CUSTOM_CODE, A.CUSTOM_NAME
+		 HAVING SUM(A.BASE_AMT)    != 0
+		     OR SUM(A.SALE_AMT)    != 0
+		     OR SUM(A.COLLECT_AMT) != 0
+		     OR SUM(PURCH_AMT)     != 0
+		 ORDER BY A.AGENT_TYPE
+	</select>
+</mapper>

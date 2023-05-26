@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="man120skrvServiceImpl">
+	<select id="man120skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* man120skrvServiceImpl.selectList */
+		DECLARE @CompCode       NVARCHAR(08)   /* 법인코드                 */
+		      , @DivCode        NVARCHAR(02)   /* 사업장                   */
+		      , @BasisYYYYmm    NVARCHAR(06)   /* 기준년월(20200323 수정: 기준년 -> 기준년월   */
+		      , @AmtUnit        NVARCHAR(01)   /* 금액단위(B042)           */
+		      , @AmtUnitN       NUMERIC        /* 금액단위(B042.REF_CODE1) */
+		      , @UserId         NVARCHAR(100)  /* 사용자ID                 */
+		      , @MoneyUnit      NVARCHAR(03)   /* 화폐단위                 */
+		      , @LangType       NVARCHAR(02)   /* 언어구분                 */
+		      , @RefItem        NVARCHAR(01)   /* 명칭 참조 유형           */
+
+		    SET @CompCode    = #{S_COMP_CODE}
+		    SET @DivCode     = #{DIV_CODE}
+		    SET @BasisYYYYmm = #{BASIS_YYYYMM}
+		    SET @AmtUnit     = #{AMOUNT_UNIT}
+		    SET @MoneyUnit   = #{MONEY_UNIT}
+		    SET @UserId      = #{S_USER_ID}
+		    SET @LangType    = #{S_LANG_CODE}
+
+		/* -- 테스트 변수
+		    SET @CompCode  = 'MASTER'
+		    SET @DivCode   = '01'
+		    SET @BasisYYYY = '2020'
+		    SET @AmtUnit   = '1'
+		    SET @UserId    = 'OMEGA+'
+		    SET @LangType  = 'KR'
+		*/
+
+		/* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+		  FROM BSA300T WITH(NOLOCK)
+		 WHERE USER_ID = @UserId
+
+		   SET @RefItem = ISNULL(@RefItem, N'0')
+
+		/* 표시화폐 단위 */
+		SELECT @AmtUnitN = REF_CODE1
+		  FROM BSA100T WITH(NOLOCK)
+		 WHERE COMP_CODE = @CompCode
+		   AND MAIN_CODE = 'B042'
+		   AND SUB_CODE  = @AmtUnit
+
+		   SET @AmtUnitN = ISNULL(@AmtUnitN, 1000)
+
+
+		<if test="ORDER_FLAG == &quot;1&quot;">
+		/* 구분 - 내자일 경우 */
+		SELECT '입고완료'                                AS IN_STATUS
+		     , A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.CHANGE_BASIS_DATE                        AS OCCUR_DATE
+		     , A.CUSTOM_CODE
+		     , C1.CUSTOM_NAME
+		     , ''                                         AS CHARGE_NAME
+		     , A.MONEY_UNIT                               AS AMT_UNIT
+		     , A.AMOUNT_I / @AmtUnitN                     AS FOR_AMT          --20200323 수정: 내자일 경우 외화금액은 공급가액과 동일하게 표시
+		     , 1                                          AS EXCHANGE_RATE
+		     , A.AMOUNT_I / @AmtUnitN                     AS SUPP_AMT
+		     , A.VAT_AMOUNT_O / @AmtUnitN                 AS TAX_AMT
+		     , (A.AMOUNT_I + A.VAT_AMOUNT_O) / @AmtUnitN  AS TOT_AMT
+		     , A.BILL_DATE                                AS INVOICE_DATE
+		     , ''                                         AS BL_NO
+		     , ''                                         AS BL_SER_NO
+		     , ''                                         AS SO_SER_NO
+		  FROM       MAP100T A  WITH(NOLOCK)
+		  --INNER JOIN MAP200T B  WITH(NOLOCK) ON B.COMP_CODE         = A.COMP_CODE
+		  --                                  AND B.DIV_CODE          = A.DIV_CODE
+		  --                                  AND B.CUSTOM_CODE       = A.CUSTOM_CODE
+		  --                                  AND B.CHANGE_BASIS_NUM  = A.CHANGE_BASIS_NUM
+		  INNER JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE        = A.COMP_CODE
+		                                    AND C1.CUSTOM_CODE      = A.CUSTOM_CODE
+		 WHERE A.COMP_CODE  = @CompCode
+		   AND A.DIV_CODE   = @DivCode
+		   AND A.CHANGE_BASIS_DATE LIKE @BasisYYYYmm + '%'
+		   AND A.MONEY_UNIT = @MoneyUnit
+		</if>
+
+		<if test="ORDER_FLAG == &quot;2&quot;">
+		/* 구분 - 외자일 경우 */
+		SELECT XX.IN_STATUS
+		     , XX.GUBUN
+		     , XX.COMP_CODE
+		     , XX.DIV_CODE
+		     , XX.OCCUR_DATE
+		     , XX.CUSTOM_CODE
+		     , CASE WHEN @RefItem = '1' THEN Z1.CUSTOM_NAME1
+		            WHEN @RefItem = '2' THEN Z1.CUSTOM_NAME2
+		            ELSE Z1.CUSTOM_NAME
+		       END                       AS CUSTOM_NAME
+		     , XX.CHARGE_NAME
+		     , XX.AMT_UNIT
+		     , XX.FOR_AMT / @AmtUnitN    AS FOR_AMT
+		     , XX.EXCHANGE_RATE
+		     , XX.SUPP_AMT / @AmtUnitN   AS SUPP_AMT
+		     , XX.TAX_AMT / @AmtUnitN    AS TAX_AMT
+		     , XX.TOT_AMT / @AmtUnitN    AS TOT_AMT
+		     , XX.INVOICE_DATE
+		     , XX.BL_NO
+		     , XX.BL_SER_NO
+		     , XX.SO_SER_NO
+		  FROM (
+		        SELECT CASE WHEN X.INOUT_TYPE_DETAIL='90' THEN '입고반품' ELSE '입고완료' END AS IN_STATUS
+		             , Y.COMP_CODE, Y.DIV_CODE
+					 , CASE WHEN X.INOUT_TYPE_DETAIL='90' THEN X.RETURN_DATE ELSE Y.OCCUR_DATE END AS OCCUR_DATE
+					 , Y.CUSTOM_CODE, Y.CHARGE_NAME, Y.AMT_UNIT
+					 , Y.FOR_AMT * CASE WHEN X.INOUT_TYPE_DETAIL = '90' THEN -1 ELSE 1 END AS FOR_AMT
+					 , Y.EXCHANGE_RATE
+					 , Y.SUPP_AMT * CASE WHEN X.INOUT_TYPE_DETAIL = '90' THEN -1 ELSE 1 END AS SUPP_AMT
+					 , Y.TAX_AMT * CASE WHEN X.INOUT_TYPE_DETAIL = '90' THEN -1 ELSE 1 END AS TAX_AMT
+					 , Y.TOT_AMT * CASE WHEN X.INOUT_TYPE_DETAIL = '90' THEN -1 ELSE 1 END AS TOT_AMT
+					 , Y.INVOICE_DATE
+					 , Y.BL_NO
+					 , Y.BL_SER_NO
+					 , Y.SO_SER_NO
+					 , Y.GUBUN
+		          FROM (
+		                SELECT COMP_CODE, DIV_CODE, BL_NUM, INOUT_TYPE_DETAIL, CASE WHEN INOUT_TYPE_DETAIL='90' THEN MAX(INOUT_DATE) ELSE '' END AS RETURN_DATE
+		                  FROM BTR100T WITH(NOLOCK)
+		                 WHERE COMP_CODE  = @CompCode
+		                   AND DIV_CODE   = @DivCode
+		                   AND INOUT_TYPE = '1'
+		                   AND CREATE_LOC = '6'	--IN ('2','6')
+		                   AND INOUT_DATE LIKE @BasisYYYYmm + '%'
+		                 GROUP BY COMP_CODE, DIV_CODE, BL_NUM, INOUT_TYPE_DETAIL
+		          ) X 
+		          INNER JOIN IMPORT_CLOSE_V Y WITH(NOLOCK) ON X.COMP_CODE = Y.COMP_CODE
+		                                                  AND X.DIV_CODE  = Y.DIV_CODE
+		                                                  AND X.BL_NUM    = Y.BL_SER_NO
+														  AND Y.GUBUN	  = CASE WHEN X.INOUT_TYPE_DETAIL = '90' THEN '10' ELSE Y.GUBUN END		--입고반품일 경우 
+		        UNION
+
+		        SELECT '미착' AS IN_STATUS
+		             , A.COMP_CODE, A.DIV_CODE, A.OCCUR_DATE, A.CUSTOM_CODE, A.CHARGE_NAME, A.AMT_UNIT
+					 , A.FOR_AMT
+					 , A.EXCHANGE_RATE
+					 , A.SUPP_AMT
+					 , A.TAX_AMT
+					 , A.TOT_AMT
+					 , A.INVOICE_DATE
+					 , A.BL_NO
+					 , A.BL_SER_NO
+					 , A.SO_SER_NO
+					 , A.GUBUN
+		          FROM      IMPORT_CLOSE_V A WITH(NOLOCK)
+		          LEFT JOIN QMS100T        B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+		                                                 AND A.DIV_CODE  = B.DIV_CODE
+		                                                 AND A.SO_SER_NO = B.ORDER_NUM
+														 AND LEFT(B.RECEIPT_DATE,6) &lt;= @BasisYYYYmm
+		         WHERE A.COMP_CODE  = @CompCode
+		           AND A.DIV_CODE   = @DivCode
+				   AND A.OCCUR_DATE &gt;= '20200101'
+		           AND A.OCCUR_DATE &lt;= @BasisYYYYmm + '31'
+		           AND B.COMP_CODE IS NULL
+		  ) XX
+		  INNER JOIN BCM100T Z1 WITH(NOLOCK) ON Z1.COMP_CODE   = XX.COMP_CODE
+		                                    AND Z1.CUSTOM_CODE = XX.CUSTOM_CODE
+		 ORDER BY XX.BL_NO, XX.GUBUN, XX.OCCUR_DATE
+		</if>
+	</select>
+
+
+
+
+
+
+
+
+	<select id="DETAIL 데이터(MAP200T) 기준 조회 - 참고 또는 백업?" parameterType="Map" resultType="rMap">
+		<if test="ORDER_FLAG == &quot;1&quot;">
+		SELECT '입고완료'                         AS IN_STATUS
+		     , A.COMP_CODE
+		     , A.DIV_CODE
+		     , B.CHANGE_BASIS_DATE                AS OCCUR_DATE
+		     , A.CUSTOM_CODE
+		     , CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+		            WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+		            ELSE C1.CUSTOM_NAME
+		       END                                AS CUSTOM_NAME
+		     , ''                                 AS CHARGE_NAME
+		     , A.MONEY_UNIT                       AS AMT_UNIT
+		     , A.FOR_AMOUNT_O / @AmtUnitN         AS FOR_AMT
+		     , A.EXCHG_RATE_O                     AS EXCHANGE_RATE
+		     , A.AMOUNT_I / @AmtUnitN             AS SUPP_AMT
+		     , A.TAX_I / @AmtUnitN                AS TAX_AMT
+		     , A.AMOUNT_I + A.TAX_I / @AmtUnitN   AS TOT_AMT
+		     , B.BILL_DATE                        AS INVOICE_DATE
+		     , A.BL_NUM                           AS BL_NO
+		     , ''                                 AS BL_SER_NO
+		     , ''                                 AS SO_SER_NO
+		  FROM       MAP200T A  WITH(NOLOCK)
+		  INNER JOIN MAP100T B  WITH(NOLOCK) ON B.COMP_CODE         = A.COMP_CODE
+		                                    AND B.DIV_CODE          = A.DIV_CODE
+		                                    AND B.CUSTOM_CODE       = A.CUSTOM_CODE
+		                                    AND B.CHANGE_BASIS_NUM  = A.CHANGE_BASIS_NUM
+		  INNER JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE        = A.COMP_CODE
+		                                    AND C1.CUSTOM_CODE      = A.CUSTOM_CODE
+		 WHERE A.COMP_CODE  = @CompCode
+		   AND A.DIV_CODE   = @DivCode
+		   AND B.CHANGE_BASIS_DATE LIKE @BasisYYYYmm + '%'
+		   AND A.MONEY_UNIT = @MoneyUnit
+		 ORDER BY A.BL_NUM, B.CHANGE_BASIS_DATE, A.CUSTOM_CODE
+		</if>
+	</select>
+</mapper>

@@ -1,0 +1,360 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ppl112skrvServiceImpl">
+
+	<select id="ppl112skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	BEGIN
+	    DECLARE         @sCOMP_CODE          NVARCHAR(08)                -- (필수) 법인코드
+	                  , @sDIV_CODE           NVARCHAR(08)                -- (필수) 사업장코드
+	                  , @sWORK_SHOP_CODE     NVARCHAR(10)                -- (선택) 작업장
+	                  , @sITEM_CODE          NVARCHAR(20)                -- (선택) 품목코드
+	                  , @sITEM_NAME          NVARCHAR(40)                -- (선택) 품명
+	                  , @sMPS_STATUS         NVARCHAR(01)                -- (필수) 생성구분 ('': 전체, '1': Open)
+	                  , @sUSER_ID            NVARCHAR(100)                -- (필수) USER ID
+
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+
+
+	/*-- 변수 값 할당   ----------------------------------------------------------------------------------------------------*/
+	    SET @sCOMP_CODE      = #{S_COMP_CODE}
+	    SET @sDIV_CODE       = #{DIV_CODE}
+	    SET @sWORK_SHOP_CODE = #{WORK_SHOP_CODE}
+	    SET @sITEM_CODE      = #{ITEM_CODE}
+	    SET @sITEM_NAME      = #{ITEM_NAME}
+	    SET @sMPS_STATUS     = #{rdoSelect}
+	    SET @sUSER_ID        = #{S_USER_ID}
+
+	/*--  MRP_CONTROL_NUM -------------------------------------------------------------------------------------------------*/
+	    DECLARE @sMRPControlNum      NVARCHAR(20)
+
+	    SELECT @sMRPControlNum = MAX(MRP_CONTROL_NUM)
+	    FROM   MRP350T WITH (NOLOCK)
+	    WHERE  COMP_CODE  = @sCOMP_CODE
+	    AND    DIV_CODE   = @sDIV_CODE
+	    AND    APPLY_TYPE = 'P'
+	    GROUP BY MRP_CONTROL_NUM
+
+	    SET @sMRPControlNum = ISNULL(@sMRPControlNum, '')
+
+	/*--  품목명 구분 -----------------------------------------------------------------------------------------------------*/
+	    DECLARE @sRefItem            NVARCHAR(01)
+
+	    SELECT TOP 1 @sRefItem = REF_ITEM
+	    FROM   BSA300T WITH (NOLOCK)
+	    WHERE  USER_ID = @sUSER_ID
+
+	    SET @sRefItem = ISNULL(@sRefItem, '')
+
+	-----------------------------------------------------------------------------------------------------------------------
+
+	    SELECT
+	           A.LOCATION
+/*	         , ISNULL((SELECT  div_name
+	                    FROM    BOR120T WITH (NOLOCK)
+	                    WHERE   comp_code = @sCOMP_CODE
+	                    AND     div_code = @sDIV_CODE), '') DIV_NAME
+*/
+   	         , C1.STOCK_UNIT
+	         , A.WORK_SHOP_CODE
+	         , D1.TREE_NAME                                              	AS WORK_SHOP_NAME
+	         , A.ITEM_CODE
+	         , CASE WHEN @sRefItem = '0' THEN C1.ITEM_NAME
+	                WHEN @sRefItem = '1' THEN C1.ITEM_NAME1
+	                WHEN @sRefItem = '2' THEN C1.ITEM_NAME2
+	                ELSE C1.ITEM_NAME
+	           END                                                       	AS ITEM_NAME
+	         , C1.SPEC
+	         , A.ITEM_ACCOUNT
+	         , M2.CODE_NAME                           						AS ITEM_ACCOUNT_NAME
+	         , uniLITE.fnGetUserDateComp(A.COMP_CODE, A.ORDER_PLAN_DATE)	AS ORDER_PLAN_DATE
+	         , uniLITE.fnGetUserDateComp(A.COMP_CODE, A.BASIS_DATE)     	AS BASIS_DATE
+	         , A.ORDER_PLAN_Q
+	         , A.ITEM_LD_TIME                                           	AS LD_TIME
+	         , A.MIN_LOT_Q
+	         , A.MAX_LOT_Q
+	         , A.STEP
+	         , A.RECORD_TYPE
+	         , M3.CODE_NAME													AS RECORD_TYPE_NAME
+	         , A.PROD_ITEM_CODE
+	         , A.PROD_Q
+	         , A.UNIT_Q
+	         , A.PROD_UNIT_Q
+	         , A.LOSS_RATE
+	         , A.WH_STOCK_Q
+	         , A.INSTOCK_PLAN_Q
+	         , A.OUTSTOCK_PLAN_Q
+	         , A.SAFE_STOCK_Q
+	         , A.TOTAL_NEED_Q
+	         ,   (ISNULL(A.WH_STOCK_Q,0)      + ISNULL(A.INSTOCK_PLAN_Q,0))
+	           - (ISNULL(A.OUTSTOCK_PLAN_Q,0) + ISNULL(A.SAFE_STOCK_Q,0))
+	           - (ISNULL(A.POH_STOCK_Q,0))                               	AS SUM_NEED_Q
+	         , A.EXCH_POH_STOCK_Q
+	         , A.POH_STOCK_Q
+	         , A.POR_STOCK_Q - A.ORDER_PLAN_Q                            	AS POR_STOCK_Q
+	         , A.PAB_STOCK_Q
+	         , A.NET_REQ_Q
+	         , A.ORDER_NUM
+	         , A.ORDER_SEQ
+	         , A.PROJECT_NO
+	    FROM              MRP350T A   WITH (NOLOCK)
+	           LEFT  JOIN BPR100T C1  WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE
+	                                               AND C1.ITEM_CODE  = A.ITEM_CODE
+	           LEFT  JOIN BSA230T D1  WITH (NOLOCK) ON D1.COMP_CODE  = A.COMP_CODE
+	                                               AND D1.TREE_CODE  = A.WORK_SHOP_CODE
+	                                               AND D1.TYPE_LEVEL = A.DIV_CODE
+	           LEFT  JOIN BSA100T M2  WITH (NOLOCK) ON M2.COMP_CODE  = A.COMP_CODE
+	                                               AND M2.MAIN_CODE  = N'B020'
+	                                               AND M2.SUB_CODE   = A.ITEM_ACCOUNT
+	           LEFT  JOIN BSA100T M3  WITH (NOLOCK) ON M3.COMP_CODE  = A.COMP_CODE
+	                                               AND M3.MAIN_CODE  = N'M401'
+	                                               AND M3.SUB_CODE   = A.RECORD_TYPE
+	    WHERE  A.COMP_CODE       = @sCOMP_CODE
+	    AND    A.DIV_CODE        = @sDIV_CODE
+	    AND    A.MRP_CONTROL_NUM = @sMRPControlNum
+	    AND  ((A.WORK_SHOP_CODE  = @sWORK_SHOP_CODE          AND @sWORK_SHOP_CODE != N'')  OR (@sWORK_SHOP_CODE = N''))
+	    AND  ((A.ORDER_PLAN_Q    &gt; 0                        AND @sMPS_STATUS     != N'')  OR (@sMPS_STATUS     = N''))
+    	<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE	  = @sITEM_CODE
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE	  LIKE '%' + @sITEM_CODE + '%'
+		</if>
+		<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND CASE WHEN @sRefItem = '0' THEN C1.ITEM_NAME
+					 WHEN @sRefItem = '1' THEN C1.ITEM_NAME1
+					 WHEN @sRefItem = '2' THEN C1.ITEM_NAME2
+				     ELSE C1.ITEM_NAME
+				END											LIKE '%' + @sITEM_NAME + '%'
+		</if>
+
+	    AND    A.STEP            = 0
+	    ORDER BY A.STEP, A.LOCATION, A.ITEM_CODE, A.ORDER_PLAN_DATE
+
+	    SET NOCOUNT OFF
+	    SET ARITHABORT OFF
+	END
+	</select>
+
+	<select id="ppl112skrvServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+		/*--Ppl112skrv.CPpl112skrv[fnPpl112nq2] Query2
+				생산계획 전개내역 조회  -  하단 GRID 상세 내역 조회
+		*/
+
+		BEGIN
+		    DECLARE         @COMP_CODE          NVARCHAR(08)                -- (필수) 법인코드
+		                  , @DIV_CODE           NVARCHAR(08)                -- (필수) 사업장코드
+		--
+		                  , @WORK_SHOP_CODE     NVARCHAR(10)                -- (선택) 작업장
+		--
+		                  , @ITEM_CODE          NVARCHAR(20)                -- (선택) 품목코드
+		                  , @ITEM_NAME          NVARCHAR(200)               -- (선택) 품명
+		--
+		                  , @MPS_STATUS         NVARCHAR(01)                -- (필수) 생성구분 ('': 전체, '1': Open, '2': 전환, '3': 확정)
+		                  , @LOCATION           NVARCHAR(3000)              -- (필수) 상단 Grid 선택 Row Location
+		--
+		                  , @USER_ID            NVARCHAR(100)                -- (필수) USER ID
+
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+
+		--  변수 값 할당 ----------------------------------------------------------------------------------------------------
+		    SET @COMP_CODE      = #{S_COMP_CODE}    -- bparam(8)
+		    SET @DIV_CODE       = #{DIV_CODE}    -- bParam(0)
+
+		    SET @WORK_SHOP_CODE = #{WORK_SHOP_CODE}    -- bParam(1)
+
+		    SET @ITEM_CODE      = #{ITEM_CODE}    -- bParam(2)
+		    SET @ITEM_NAME      = #{ITEM_NAME}    -- bParam(3)
+
+		    SET @MPS_STATUS     = #{rdoSelect}    -- bParam(4)
+		    SET @LOCATION       = #{LOCATION}    -- bParam(6)
+
+		    SET @USER_ID        = #{S_USER_ID}    -- bparam(5)
+
+		--  MRP_CONTROL_NUM -------------------------------------------------------------------------------------------------
+		    DECLARE @MRPControlNum      NVARCHAR(20)
+
+		    SELECT @MRPControlNum = MAX(MRP_CONTROL_NUM)
+		    FROM   MRP350T WITH (NOLOCK)
+		    WHERE  COMP_CODE  = @COMP_CODE
+		    AND    DIV_CODE   = @DIV_CODE
+		    AND    APPLY_TYPE = 'P'
+		    GROUP BY MRP_CONTROL_NUM
+
+		    SET @MRPControlNum = ISNULL(@MRPControlNum, '')
+
+		--  품목명 구분 -----------------------------------------------------------------------------------------------------
+		    DECLARE @RefItem            NVARCHAR(01)
+
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		    FROM   BSA300T WITH (NOLOCK)
+		    WHERE  USER_ID = @USER_ID
+
+		    SET @RefItem = ISNULL(@RefItem, '')
+
+		-----------------------------------------------------------------------------------------------------------------------
+
+		    SELECT A.LOCATION
+		         , A.ITEM_CHECK
+		         , A.WORK_SHOP_CODE
+		         , D1.TREE_NAME                                              AS WORK_SHOP_NAME
+		         , A.ITEM_CODE
+		         , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+		                WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+		                ELSE C1.ITEM_NAME
+		           END                                                       AS ITEM_NAME
+		         , C1.SPEC
+		         , A.ITEM_ACCOUNT
+		         , M2.CODE_NAME                        AS ITEM_ACCOUNT_NAME
+		         , uniLITE.fnGetUserDateComp(A.COMP_CODE, A.ORDER_PLAN_DATE) AS ORDER_PLAN_DATE
+		         , uniLITE.fnGetUserDateComp(A.COMP_CODE, A.BASIS_DATE)      AS BASIS_DATE
+		         , A.ORDER_PLAN_Q
+		         , A.ITEM_LD_TIME                                            AS LD_TIME
+		         , A.MIN_LOT_Q
+		         , A.MAX_LOT_Q
+		         , A.STEP
+		         , A.RECORD_TYPE
+		         , M3.CODE_NAME                          AS RECORD_TYPE_NAME
+		         , A.PROD_ITEM_CODE
+		         , A.PROD_Q
+		         , A.UNIT_Q
+		         , A.PROD_UNIT_Q
+		         , A.LOSS_RATE
+		         , A.WH_STOCK_Q
+		         , A.INSTOCK_PLAN_Q
+		         , A.OUTSTOCK_PLAN_Q
+		         , A.SAFE_STOCK_Q
+		         , A.TOTAL_NEED_Q
+		         ,   (ISNULL(A.WH_STOCK_Q,0)      + ISNULL(A.INSTOCK_PLAN_Q,0))
+		           - (ISNULL(A.OUTSTOCK_PLAN_Q,0) + ISNULL(A.SAFE_STOCK_Q,0))
+		           - (ISNULL(A.POH_STOCK_Q,0))                               AS SUM_NEED_Q
+		         , A.EXCH_POH_STOCK_Q
+		         , A.POH_STOCK_Q
+		         , A.POR_STOCK_Q - A.ORDER_PLAN_Q                            AS POR_STOCK_Q
+		         , A.PAB_STOCK_Q
+		         , A.NET_REQ_Q
+		         , A.ORDER_NUM
+		         , A.ORDER_SEQ
+		         , A.PROJECT_NO
+		    FROM              MRP350T A   WITH (NOLOCK)
+		           LEFT  JOIN BPR100T C1  WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE
+		                                               AND C1.ITEM_CODE  = A.ITEM_CODE
+		           LEFT  JOIN BSA230T D1  WITH (NOLOCK) ON D1.COMP_CODE  = A.COMP_CODE
+		                                               AND D1.TREE_CODE  = A.WORK_SHOP_CODE
+		                                               AND D1.TYPE_LEVEL = A.DIV_CODE
+		           LEFT  JOIN BSA100T M2  WITH (NOLOCK) ON M2.COMP_CODE  = A.COMP_CODE
+		                                               AND M2.MAIN_CODE  = N'B020'
+		                                               AND M2.SUB_CODE   = A.ITEM_ACCOUNT
+		           LEFT  JOIN BSA100T M3  WITH (NOLOCK) ON M3.COMP_CODE  = A.COMP_CODE
+		                                               AND M3.MAIN_CODE  = N'M401'
+		                                               AND M3.SUB_CODE   = A.RECORD_TYPE
+		    WHERE  A.COMP_CODE       = @COMP_CODE
+		    AND    A.DIV_CODE        = @DIV_CODE
+		    AND    A.MRP_CONTROL_NUM = @MRPControlNum
+		    AND    A.LOCATION     LIKE @LOCATION + '%'
+		    AND  ((A.WORK_SHOP_CODE  = @WORK_SHOP_CODE          AND @WORK_SHOP_CODE != N'')  OR (@WORK_SHOP_CODE = N''))
+		    AND  ((A.ORDER_PLAN_Q    &gt; 0                        AND @MPS_STATUS     != N'')  OR (@MPS_STATUS     = N''))
+		    <if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+				AND A.ITEM_CODE	  = @ITEM_CODE
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+				AND A.ITEM_CODE	  LIKE '%' + @ITEM_CODE + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+				AND CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+						 WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+						 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+					     ELSE C1.ITEM_NAME
+				END											LIKE '%' + @ITEM_NAME + '%'
+			</if>
+
+
+
+		    ORDER BY A.STEP, A.LOCATION, A.ITEM_CODE, A.ORDER_PLAN_DATE
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+    </select>
+
+   	<select id="ppl112skrvServiceImpl.selectList3" parameterType="Map" resultType="rMap">
+   		BEGIN
+	    DECLARE         @USER_ID                NVARCHAR(100),           -- 사용자 ID            (시스템 코드)
+	                    @DIV_CODE               NVARCHAR(08),           /*  사업장 코드 */
+	                    @ITEM_CODE              NVARCHAR(20),           /*  품목 코드   */
+	                    @BASE_DATE              NVARCHAR(08),           /*  기준일      */
+	                    @COMP_CODE              NVARCHAR(08)            /*  법인코드    */
+
+	    SET @USER_ID    = #{S_USER_ID}
+	    SET @DIV_CODE   = #{DIV_CODE}
+	    SET @ITEM_CODE  = #{ITEM_CODE}
+	    SET @BASE_DATE  = #{BASIS_DATE}
+	    SET @COMP_CODE  = #{S_COMP_CODE}
+
+	/*--  품목명 구분 -----------------------------------------------------------------------------------------------------*/
+	    DECLARE @RefItem            NVARCHAR(01)
+
+	    SELECT TOP 1 @RefItem = REF_ITEM
+	    FROM   BSA300T WITH (NOLOCK)
+	    WHERE  USER_ID = #{S_USER_ID}
+
+	    SET @RefItem = ISNULL(@RefItem, '')
+
+	/*--  날짜 유형 설정 --------------------------------------------------------------------------------------------------*/
+	    DECLARE       @DateFormat       NVARCHAR(10)
+
+	    SELECT TOP 1 @DateFormat = M1.CODE_NAME
+	    FROM   BSA100T M1 WITH (NOLOCK)
+	    WHERE  M1.COMP_CODE = #{S_COMP_CODE}
+	    AND    M1.MAIN_CODE = 'B044'
+	    AND    M1.REF_CODE1 = 'Y'
+
+	    SET @DateFormat = ISNULL(@DateFormat, 'YYYY/MM/DD')
+	/*-----------------------------------------------------------------------------------------------------------------------*/
+/*
+	    SELECT  ISNULL((SELECT  div_name
+	                    FROM    BOR120T WITH (NOLOCK)
+	                    WHERE   comp_code = @COMP_CODE
+	                    AND     div_code = @DIV_CODE), '') div_name
+	          , item_code
+	          , CASE WHEN @RefItem = '0' THEN ITEM_NAME
+	                 WHEN @RefItem = '1' THEN ITEM_NAME1
+	                 WHEN @RefItem = '2' THEN ITEM_NAME2
+	                 ELSE ITEM_NAME
+	            END                                                                 AS ITEM_NAME
+	          , REPLACE(
+	            REPLACE(
+	            REPLACE(@DateFormat, 'YYYY', SUBSTRING(@BASE_DATE, 1, 4))
+	                               , 'MM',   SUBSTRING(@BASE_DATE, 5, 2))
+	                               , 'DD',   SUBSTRING(@BASE_DATE, 7, 2))           AS BASE_DATE
+	          , stock_unit, ISNULL(spec, '') spec
+	    FROM    BPR100T WITH (NOLOCK)
+	    WHERE   comp_code = @COMP_CODE
+	    AND     item_code = @ITEM_CODE
+	END
+*/
+	    SELECT  A.code_name AS STATUS
+	         ,  ISNULL(M1.code_name, '') AS TYPE_NAME
+	         ,  ISNULL(B.order_num, '') AS ORDER_NUM
+	         ,  ISNULL(uniLite.fnGetUserDateComp(B.comp_code, B.order_date), '') AS ORDER_DATE
+	         ,  ISNULL(B.stock_q, 0.0) AS STOCK_Q
+	    FROM                BSA100T A   WITH (NOLOCK)
+	            LEFT JOIN   uniLITE.fnGetDelayStock(@COMP_CODE, @DIV_CODE, @BASE_DATE, @ITEM_CODE, @ITEM_CODE, '') B
+	                                                    ON  B.comp_code = A.comp_code
+	                                                    AND SUBSTRING(B.stock_type, 1, 1) = SUBSTRING(A.sub_code, 1, 1) - 2
+	            LEFT JOIN   BSA100T M1  WITH (NOLOCK)   ON  M1.comp_code = B.comp_code
+	                                                    AND M1.main_code = 'M406'
+	                                                    AND M1.sub_code = B.stock_type + 20
+	                                                    AND M1.sub_code != '$'
+	    WHERE   A.comp_code = @COMP_CODE
+	    AND     A.main_code =   N'M406'
+	    AND     A.sub_code  IN ('30', '40')
+	    ORDER BY A.sub_code, B.stock_type, B.order_date
+	END
+    </select>
+
+
+</mapper>

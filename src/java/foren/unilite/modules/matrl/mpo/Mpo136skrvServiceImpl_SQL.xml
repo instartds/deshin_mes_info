@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mpo136skrvServiceImpl">
+
+	<select id="mpo136skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+
+		/* mpo136skrv.Cmpo136skrv, SetMpo136[fnMpo136QStd] Query02   */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+			DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+			      , @UserId			NVARCHAR(100)	/* 사용자ID		*/
+			      , @LangType		NVARCHAR(2)		/* 언어구분		*/
+		          , @RefItem		NVARCHAR(01)
+		          , @DateFormat		NVARCHAR(10)
+
+		    SET @CompCode = #{S_COMP_CODE}
+		    SET @UserId   = #{S_USER_ID}
+		    SET @LangType = N'KR'
+
+			/* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		    FROM BSA300T WITH (NOLOCK)
+		    WHERE USER_ID = @UserId
+
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+
+			/* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		    FROM BSA100T WITH (NOLOCK)
+		    WHERE COMP_CODE = @CompCode
+				AND MAIN_CODE = N'B044'
+		        AND REF_CODE1 = N'Y'
+
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+			/* 데이터 조회 */
+			SELECT
+					NULL AS SEQ                                                     /* 순번		*/
+				  , BT.ITEM_CODE                                                    /* 품목코드	*/
+		          , CASE WHEN @RefItem = '1' THEN B1.ITEM_NAME1
+		                 WHEN @RefItem = '2' THEN B1.ITEM_NAME2
+		                 ELSE B1.ITEM_NAME
+		            END	AS ITEM_NAME												/* 품명		*/
+				  , B1.SPEC                                                         /* 규격		*/
+		          , CASE WHEN @RefItem = '1' THEN BC.CUSTOM_NAME1
+		                 WHEN @RefItem = '2' THEN BC.CUSTOM_NAME2
+		                 ELSE BC.CUSTOM_NAME
+		            END	AS CUSTOM_NAME												/* 공급처명	*/
+				  , S1.CODE_NAME	AS INOUT_TYPE_DETAIL							/* 입고형태	*/
+		          , CASE WHEN ISNULL(BT.INOUT_DATE, '') = '' THEN ''
+		                 ELSE REPLACE(
+		                      REPLACE(
+		                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(BT.INOUT_DATE, 1, 4))
+		                                         , 'MM',   SUBSTRING(BT.INOUT_DATE, 5, 2))
+		                                         , 'DD',   SUBSTRING(BT.INOUT_DATE, 7, 2))
+		            END				AS INOUT_DATE									/* 입고일	*/
+		          , CASE WHEN ISNULL(MP.DVRY_DATE, '') = '' THEN ''
+		                 ELSE REPLACE(
+		                      REPLACE(
+		                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(MP.DVRY_DATE, 1, 4))
+		                                         , 'MM',   SUBSTRING(MP.DVRY_DATE, 5, 2))
+		                                         , 'DD',   SUBSTRING(MP.DVRY_DATE, 7, 2))
+		            END				AS DVRY_DATE									/* 납기일	*/
+				  , BT.ORDER_UNIT_Q AS ORDER_UNIT_Q                                  /* 입고수량	*/
+				  , BT.ORDER_UNIT                                                    /* 단위		*/
+				  , BT.ORDER_UNIT_P                                                  /* 단가		*/
+				  , BT.INOUT_I      AS ORDER_UNIT_O                                  /* 금액		*/
+				  , B2.PURCHASE_BASE_P                                               /* 기준단가	*/
+				  , BT.ORDER_UNIT_Q * B2.PURCHASE_BASE_P AS BASE_AMT                 /* 환산금액	*/
+				  , WA.TREE_NAME AS WH_CODE                                          /* 창고		*/
+				  , BT.INOUT_NUM + RIGHT(('000000' + CONVERT(VARCHAR(6), BT.INOUT_SEQ)),6) AS INOUT_NUMBER  /* 입고번호	*/
+				  , MA.BILL_NUM                                                      /* 계산서번호	*/
+		          , CASE WHEN ISNULL(MP.ORDER_DATE, '') = '' THEN ''
+		                 ELSE REPLACE(
+		                      REPLACE(
+		                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(MP.ORDER_DATE, 1, 4))
+		                                         , 'MM',   SUBSTRING(MP.ORDER_DATE, 5, 2))
+		                                         , 'DD',   SUBSTRING(MP.ORDER_DATE, 7, 2))
+		            END				AS ORDER_DATE									/* 발주일자	*/
+				  , MP.ORDER_UNIT_Q AS PORDER_UNIT_Q                                /* 발주량	*/
+				  , MP.ORDER_UNIT	AS PORDER_UNIT                                  /* 발주단위	*/
+				  , S2.CODE_NAME	AS INOUT_PRSN                     /* 구매담당	*/
+				  , MP.ORDER_NUM + RIGHT(('0000' + CONVERT(VARCHAR(4), MP.ORDER_SEQ)),4) AS ORDER_NUMBER  /* 발주번호	*/
+				  , S3.CODE_NAME	AS CONTROL_STATUS								/* 진행상태	*/
+				  , S4.CODE_NAME	AS UNIT_PRICE_TYPE								/* 단가형태	*/
+				  , BT.PROJECT_NO                                                   /* 관리번호	*/
+				  , BT.REMARK                                                       /* 비고		*/
+				  , MP.REMARK AS REMARK2
+				  , BT.DIV_CODE
+				  , BT.INOUT_NUM
+				  , BT.INOUT_SEQ
+				  , B2.ITEM_ACCOUNT
+				  /* 연결 프로그램ID 불필요
+				  , S5.REF_CODE7	AS LINK_PAGE
+				  */
+				  , B2.SUPPLY_TYPE
+			FROM            BTR100T BT WITH(NOLOCK)
+				LEFT  JOIN (SELECT    A.COMP_CODE,    A.DIV_CODE,     A.ORDER_TYPE
+									, A.ORDER_DATE,   A.AGREE_STATUS, A.ORDER_PRSN
+									, B.ORDER_NUM,    B.ORDER_SEQ,    B.DVRY_DATE
+									, B.ORDER_UNIT_Q, B.CONTROL_STATUS , B.ORDER_UNIT, B.IN_DIV_CODE, B.REMARK
+							FROM            MPO100T A WITH(NOLOCK)
+								INNER JOIN MPO200T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+																 AND A.DIV_CODE  = B.DIV_CODE
+																 AND A.ORDER_NUM = B.ORDER_NUM
+							WHERE   A.COMP_CODE = @CompCode
+							<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+								AND B.IN_DIV_CODE  = #{DIV_CODE}
+								</if>
+						   ) MP  ON MP.COMP_CODE = BT.COMP_CODE
+								AND MP.IN_DIV_CODE  = BT.DIV_CODE
+								AND MP.ORDER_NUM = BT.ORDER_NUM
+								AND MP.ORDER_SEQ = BT.ORDER_SEQ
+				LEFT  JOIN (SELECT DISTINCT
+
+									  A.COMP_CODE, A.DIV_CODE,  A.BILL_NUM
+									, B.INOUT_NUM, B.INOUT_SEQ
+							FROM            MAP100T A WITH(NOLOCK)
+								INNER JOIN MAP200T B WITH(NOLOCK) ON A.COMP_CODE        = B.COMP_CODE
+																 AND A.DIV_CODE         = B.DIV_CODE
+												 				 AND A.BILL_DIV_CODE    = B.BILL_DIV_CODE
+												 				 AND A.CUSTOM_CODE      = B.CUSTOM_CODE
+																 AND A.CHANGE_BASIS_NUM = B.CHANGE_BASIS_NUM
+							WHERE A.COMP_CODE  = @CompCode
+							  <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+								AND A.DIV_CODE  = #{DIV_CODE}
+								</if>
+						  ) MA   ON MA.COMP_CODE = BT.COMP_CODE
+								AND MA.DIV_CODE  = BT.DIV_CODE
+								AND MA.INOUT_NUM = BT.INOUT_NUM
+								AND MA.INOUT_SEQ = BT.INOUT_SEQ
+				LEFT  JOIN BPR200T B2 WITH(NOLOCK) ON B2.COMP_CODE   = BT.COMP_CODE
+												  AND B2.DIV_CODE    = BT.DIV_CODE
+												  AND B2.ITEM_CODE   = BT.ITEM_CODE
+				LEFT  JOIN BPR100T B1 WITH(NOLOCK) ON B1.COMP_CODE   = BT.COMP_CODE
+												  AND B1.ITEM_CODE   = BT.ITEM_CODE
+				LEFT  JOIN BCM100T BC WITH(NOLOCK) ON BC.COMP_CODE   = BT.COMP_CODE
+												  AND BC.CUSTOM_CODE = BT.INOUT_CODE
+				LEFT  JOIN BSA220T WA WITH(NOLOCK) ON WA.COMP_CODE   = BT.COMP_CODE
+												  AND WA.TYPE_LEVEL  = BT.DIV_CODE
+												  AND WA.TREE_CODE   = BT.WH_CODE
+				LEFT  JOIN BSA100T S1 WITH(NOLOCK) ON S1.COMP_CODE   = BT.COMP_CODE
+												  AND S1.MAIN_CODE   = 'M103'
+												  AND S1.SUB_CODE    = BT.INOUT_TYPE_DETAIL
+				LEFT  JOIN BSA100T S2 WITH(NOLOCK) ON S2.COMP_CODE   = BT.COMP_CODE
+												  AND S2.MAIN_CODE   = 'B024'
+												  AND S2.SUB_CODE    = BT.INOUT_PRSN
+				LEFT  JOIN BSA100T S3 WITH(NOLOCK) ON S3.COMP_CODE   = MP.COMP_CODE
+												  AND S3.MAIN_CODE   = 'M002'
+												  AND S3.SUB_CODE    = MP.CONTROL_STATUS
+				LEFT  JOIN BSA100T S4 WITH(NOLOCK) ON S4.COMP_CODE   = BT.COMP_CODE
+												  AND S4.MAIN_CODE   = 'M301'
+												  AND S4.SUB_CODE    = BT.PRICE_YN
+				/* 연결 프로그램ID 불필요
+				LEFT  JOIN BSA100T S5 WITH(NOLOCK) ON MP.COMP_CODE   = S5.COMP_CODE
+												  AND S5.MAIN_CODE   = 'M001'
+												  AND MP.ORDER_TYPE  = S5.SUB_CODE
+				*/
+			 WHERE  BT.COMP_CODE      = @CompCode
+			 	AND BT.CREATE_LOC = '2'
+				<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+				AND BT.DIV_CODE       = #{DIV_CODE}
+				</if>
+				AND BT.INOUT_TYPE     = N'1'
+				<if test="@foren.Ognl@isNotEmpty(INOUT_DATE_FR)">
+				AND BT.INOUT_DATE    &gt;= #{INOUT_DATE_FR}
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(INOUT_DATE_TO)">
+				AND BT.INOUT_DATE    &lt;= #{INOUT_DATE_TO}
+				</if>
+				AND ISNULL(MP.CONTROL_STATUS,'') != N'8'
+				/* 납품기간	*/
+				<if test="@foren.Ognl@isNotEmpty(DVRY_DATE_FR)">
+				AND MP.DVRY_DATE     &gt;= #{DVRY_DATE_FR}
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(DVRY_DATE_TO)">
+				AND MP.DVRY_DATE     &lt;= #{DVRY_DATE_TO}
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+				/* 발주형태	*/
+				AND MP.ORDER_TYPE     = #{ORDER_TYPE}
+				</if>
+				<!--2021.08 표준화 작업 Start-->
+				/* 공급처	*/
+			    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+					AND BC.CUSTOM_CODE = #{CUSTOM_CODE}
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+					AND BC.CUSTOM_CODE LIKE #{CUSTOM_CODE} + '%'
+				</if>
+				<if test="@foren.Ognl@isEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+					AND		(@RefItem       = N'0' AND BC.CUSTOM_NAME  LIKE N'%' + #{CUSTOM_NAME} + N'%')
+						OR	(@RefItem       = N'1' AND BC.CUSTOM_NAME1 LIKE N'%' + #{CUSTOM_NAME} + N'%')
+						OR	(@RefItem       = N'2' AND BC.CUSTOM_NAME2 LIKE N'%' + #{CUSTOM_NAME} + N'%')
+				</if>
+				/* 품목		*/
+		        <if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+					AND B1.ITEM_CODE = #{ITEM_CODE}
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+					AND B1.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+				</if>
+				<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+					AND		(@RefItem       = N'0' AND B1.ITEM_NAME  LIKE N'%' + #{ITEM_NAME} + N'%')
+						OR	(@RefItem       = N'1' AND B1.ITEM_NAME1 LIKE N'%' + #{ITEM_NAME} + N'%')
+						OR	(@RefItem       = N'2' AND B1.ITEM_NAME2 LIKE N'%' + #{ITEM_NAME} + N'%')
+				</if>
+				<!--2021.08 표준화 작업 End-->
+				<if test="@foren.Ognl@isNotEmpty(CONTROL_STATUS)">
+				/* 진행상태	*/
+				AND MP.CONTROL_STATUS = #{CONTROL_STATUS}
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(ORDER_PRSN)">
+				/* 구매담당	*/
+				AND MP.ORDER_PRSN     = #{ORDER_PRSN}
+				</if>
+
+		        /* 마감여부 */
+		        /* 마감여부 - 전체 : 조건없음 */
+		        /* 마감여부 - 마감 */
+		        <if test="AGREE_STATUS == &quot;Y&quot;">
+				AND MP.AGREE_STATUS   = N'9'
+				</if>
+				/* 마감여부 - 미마감 */
+				<if test="AGREE_STATUS == &quot;N&quot;">
+				AND MP.AGREE_STATUS  != N'9'
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+				/* 계정구분 */
+				AND B2.ITEM_ACCOUNT   = #{ITEM_ACCOUNT}
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(PROJECT_NO)">
+				/* 관리번호 */
+				AND BT.PROJECT_NO     = #{PROJECT_NO}
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+				/* 입고창고 */
+				AND BT.WH_CODE        = #{WH_CODE}
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(INOUT_PRSN)">
+				/* 입고담당	*/
+				AND BT.INOUT_PRSN     = #{INOUT_PRSN}
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(BILL_NUM)">
+				/* 계산서번호	*/
+				AND MA.BILL_NUM    LIKE #{BILL_NUM} +'%'
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(PRICE_YN)">
+				/* 단가형태	*/
+				AND BT.PRICE_YN       = #{PRICE_YN}
+				</if>
+			 ORDER BY BT.INOUT_CODE
+			 	 , BT.INOUT_NUM
+			 	 , BT.INOUT_SEQ
+			 	 , BT.ITEM_CODE
+			 	 
+			 	 
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+
+
+    </select>
+
+
+</mapper>

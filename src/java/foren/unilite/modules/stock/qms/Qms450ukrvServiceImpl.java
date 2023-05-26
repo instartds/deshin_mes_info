@@ -1,0 +1,106 @@
+package foren.unilite.modules.stock.qms;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.annotation.Resource;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.BindingResult;
+
+import ch.ralscha.extdirectspring.annotation.ExtDirectMethod;
+import ch.ralscha.extdirectspring.annotation.ExtDirectMethodType;
+import ch.ralscha.extdirectspring.bean.ExtDirectFormPostResult;
+import foren.framework.extjs.UniliteExtjsUtils;
+import foren.framework.model.LoginVO;
+import foren.framework.utils.ObjUtils;
+import foren.unilite.com.service.impl.TlabAbstractServiceImpl;
+import foren.unilite.com.validator.UniDirectValidateException;
+
+
+@Service("qms450ukrvService")
+@SuppressWarnings({"rawtypes", "unchecked"})
+
+public class Qms450ukrvServiceImpl extends TlabAbstractServiceImpl {
+	private final Logger logger = LoggerFactory.getLogger(this.getClass());	
+
+	@ExtDirectMethod(group = "prodt", value = ExtDirectMethodType.STORE_READ)		// 작업지시조회
+	public List<Map<String, Object>> selectList(Map param) throws Exception {
+		return super.commonDao.list("qms450ukrvServiceImpl.selectList", param);
+	}
+
+	@ExtDirectMethod(group = "prodt", value = ExtDirectMethodType.STORE_READ)		// 공정별등록 조회1
+	public List<Map<String, Object>> selectDetailList(Map param) throws Exception {
+		return super.commonDao.list("qms450ukrvServiceImpl.selectDetailList", param);
+	}
+
+	/**저장**/
+	@ExtDirectMethod(value = ExtDirectMethodType.STORE_SYNCALL, group = "ppl")
+	@Transactional(propagation = Propagation.REQUIRED, rollbackFor={Exception.class})
+	public List<Map> saveAll(List<Map> paramList, Map paramMaster, LoginVO user) throws Exception {
+		if(paramList != null) {
+			List<Map> insertList = null;
+			List<Map> updateList = null;
+			List<Map> deleteList = null;
+			for(Map dataListMap: paramList) {
+				if(dataListMap.get("method").equals("deleteDetail")) {
+					deleteList = (List<Map>)dataListMap.get("data");
+				}else if(dataListMap.get("method").equals("insertDetail")) {
+					insertList = (List<Map>)dataListMap.get("data");
+				} else if(dataListMap.get("method").equals("updateDetail")) {
+					updateList = (List<Map>)dataListMap.get("data");	
+				}
+			}
+			if(deleteList != null) this.deleteDetail(deleteList, user);
+			if(insertList != null) this.insertDetail(insertList, paramMaster, user);
+			if(updateList != null) this.updateDetail(updateList, paramMaster, user);
+		}
+		paramList.add(0, paramMaster);
+
+		return  paramList;
+	}
+
+	@ExtDirectMethod(value = ExtDirectMethodType.STORE_MODIFY, group = "prodt")		// INSERT
+	public Integer  insertDetail(List<Map> paramList, Map paramMaster, LoginVO user) throws Exception {
+		try {
+			for(Map param : paramList ) {
+				super.commonDao.update("qms450ukrvServiceImpl.insertDetail", param);
+			}
+		}catch(Exception e){
+			throw new UniDirectValidateException(this.getMessage("2627", user));
+		}
+		return 0;
+	}
+
+	@ExtDirectMethod(value = ExtDirectMethodType.STORE_MODIFY, group = "prodt")		// UPDATE
+	public Integer updateDetail(List<Map> paramList, Map paramMaster, LoginVO user) throws Exception {
+		try {
+			for(Map param :paramList ) {
+				super.commonDao.update("qms450ukrvServiceImpl.updateDetail", param);
+			}
+		} catch(Exception e){
+				throw new UniDirectValidateException(this.getMessage("2627", user));
+		}
+		return 0;
+	}
+
+	@ExtDirectMethod(group = "z_yp", needsModificatinAuth = true)		// DELETE
+	public Integer deleteDetail(List<Map> paramList,  LoginVO user) throws Exception {
+		for(Map param :paramList ) {
+			try {
+				super.commonDao.delete("qms450ukrvServiceImpl.deleteDetail", param);
+			}catch(Exception e) {
+				throw new UniDirectValidateException(this.getMessage("547",user));
+			}
+		}
+		return 0;
+	}
+}

@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="nboxDocCommonService">
+	
+    <select id="nboxDocCommonService.selectCabinetItem" parameterType="Map" resultType="rMap">
+    	Declare 
+		 @ModuleID nvarchar(10)
+		,@CabinetParentMenuID nvarchar(15)
+		
+		SET @ModuleID = '14'
+    	SET @CabinetParentMenuID = uniLITE.nfnGetCommonCodeValue(#{S_COMP_CODE}, 'NZ05', 'XA009')
+    	
+    	select pgm_id as pgmID, pgm_name as pgmName
+		from   uniLITE.nfnGetCabinetItem(#{S_COMP_CODE}, @ModuleID, @CabinetParentMenuID, #{S_USER_ID})
+    </select>
+    
+    <select id="nboxDocCommonService.selectDivCodeItem" parameterType="Map" resultType="rMap">
+        select 
+            div_code as divCode
+            , div_name as divName
+        from   
+            bor120t
+        where 
+            comp_code = #{S_COMP_CODE}
+    </select>
+    
+    <select id="nboxDocCommonService.selectDocPath" parameterType="Map" resultType="rMap">
+        SELECT PathID as pathID, PathName as pathName
+        FROM   tbApprovalPath
+        WHERE  CompanyID = #{S_COMP_CODE}
+        AND    UserID = #{S_USER_ID}
+    </select>
+    
+    <select id="nboxDocCommonService.getMenuAuthByDivCodeCnt" parameterType="Map" resultType="int">
+        SELECT COUNT(*)
+        FROM   bsa400t
+        WHERE  COMP_CODE = #{S_COMP_CODE}
+        AND PGM_ID = #{PGM_ID}
+        AND AUTHO_TYPE = '1'
+        AND AUTHO_PGM = 'A'
+    </select>
+    
+    <select id="nboxDocCommonService.selectDeptTree" parameterType="Map" resultType="foren.framework.lib.tree.GenericTreeDataMap">
+        with deptcte ( id, parentid, COMP_CODE, DIV_CODE, TREE_CODE, text, DeptType, Dept_Code, email, Sort )
+        as (
+        SELECT id, parentid, COMP_CODE, DIV_CODE, TREE_CODE, text, 'P' as DeptType, TREE_CODE as Dept_Code, cast('' as nvarchar) as email, cast(id as nvarchar)  as Sort
+        FROM   uniLITE.nfnDeptTreeData(#{S_COMP_CODE})
+        WHERE  parentid = 'root' 
+        union all
+        SELECT a.id, a.parentId, a.COMP_CODE, a.DIV_CODE, a.TREE_CODE, a.text, a.DeptType, a.dept_code, cast(a.email as nvarchar) as email, cast(a.Sort as nvarchar) as Sort 
+        FROM (
+            select id, parentId, COMP_CODE, DIV_CODE, TREE_CODE, text, 'D' AS DeptType, TREE_CODE as dept_code, '' as email, id As Sort
+            from   uniLITE.nfnDeptTreeData(#{S_COMP_CODE})
+            union all
+            SELECT  M.USER_ID      as id, 
+                    N.id           as parentid,
+                    M.COMP_CODE    as COMP_CODE,
+                    M.DIV_CODE     as DIV_CODE,
+                    USER_ID        as TREE_CODE, 
+                    USER_NAME      as text,  
+                    'P'            as DeptType, 
+                    M.DEPT_CODE    as dept_code,
+                    M.USER_NAME + ' &lt;' + isnull(m.EMAIL_ADDR ,'') + '&gt;' AS email,
+                    N.Id  + '000' + cast(ROW_NUMBER() over( PARTITION BY M.DEPT_CODE ORDER BY M.POST_CODE, M.ABIL_CODE, M.USER_NAME) as nvarchar) AS Sort
+            FROM   BSA300T M
+            INNER JOIN uniLITE.nfnDeptTreeData(#{S_COMP_CODE}) N ON M.DEPT_CODE = N.TREE_CODE
+            WHERE  M.COMP_CODE in ( SELECT CompanyID from uniLite.nfnCompanyIDList(#{S_USER_ID}, #{S_COMP_CODE} ) )
+            <if test="AUTH_FLAG == &quot;1&quot;">
+                AND m.div_code = #{S_DIV_CODE}
+            </if>
+            AND    M.LOCK_YN = 'N' ) A
+        inner join deptcte B on (a.parentId = b.id )    )
+
+        select  id, 
+                parentId,
+                TREE_CODE, 
+                text, 
+                DeptType,
+                text          as UserName,
+                dept_code     as UserDeptID,
+                email         as ContactName,
+                case when DeptType = 'P' then uniLITE.nfnGetUserDeptName(#{S_COMP_CODE},TREE_CODE)  else text end as UserDeptName,
+                case when DeptType = 'P' then uniLITE.nfnGetUserPosName(#{S_COMP_CODE},TREE_CODE,#{S_LANG_CODE})  else '' end as UserPosName
+        from    deptcte
+        <if test="AUTH_FLAG == &quot;1&quot;">
+            where div_code in (#{S_COMP_CODE}, #{S_DIV_CODE})
+            OR UPPER(parentid) = 'ROOT'
+        </if>
+        order by sort
+    </select>  
+    
+    <select id="nboxDocCommonService.selectDocFormItem" parameterType="Map" resultType="rMap">
+        SELECT
+         f.FormID
+        ,'[' + uniLITE.nfnGetCommonCodeName(#{S_COMP_CODE}, 'NA02', f.CategoryID, #{S_LANG_CODE})  + ']' + f.Subject AS FormName
+        ,f.Contents
+        ,f.SecureGrade
+        ,f.CabinetID
+        FROM   tbApprovalForm f
+        WHERE   f.companyID IN (select CompanyID from uniLITE.nfnCompanyIDList(#{S_USER_ID}, #{S_COMP_CODE}) )  
+        AND     ((f.OrgType = 'G' ) OR (f.OrgType = 'C' AND f.CompanyID = #{S_COMP_CODE})
+        <if test="AUTH_FLAG == &quot;1&quot;">
+            OR (f.DIV_CODE = #{S_DIV_CODE})
+        </if>
+        )
+        order by f.CategoryID
+    </select> 
+    
+    <select id="nboxDocCommonService.selectMyCabinetItem" parameterType="Map" resultType="rMap">
+        Declare 
+         @ModuleID nvarchar(10)
+        ,@CabinetParentMenuID nvarchar(15)
+        
+        SET @ModuleID = '14'
+        SET @CabinetParentMenuID = uniLITE.nfnGetCommonCodeValue(#{S_COMP_CODE},'NZ05', 'XA010')
+        
+        select pgm_id as pgmID, pgm_name as pgmName
+        from   uniLITE.nfnGetCabinetItem(#{S_COMP_CODE}, @ModuleID, @CabinetParentMenuID, #{S_USER_ID})
+    </select>   
+
+    
+    
+    <select id="nboxDocCommonService.getInterfaceForm" parameterType="Map" resultType="rMap">
+        SELECT
+            A.FORMID
+            ,A.CONTENTS
+        FROM uniLITE.nfnGetInterfaceForm(#{S_COMP_CODE}, #{GUBUN}, #{INTERFACEKEY}) A
+    </select>
+</mapper>

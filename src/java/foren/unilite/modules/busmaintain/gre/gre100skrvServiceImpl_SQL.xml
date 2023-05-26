@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="gre100skrvServiceImpl">
+	<select id="gre100skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+BEGIN
+	SET NOCOUNT ON
+	SET ARITHABORT ON
+
+	DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+	      , @UserId			NVARCHAR(100)	/* 사용자ID		*/
+	      , @LangType		NVARCHAR(2)		/* 언어구분		*/
+          , @RefItem		NVARCHAR(01)
+          , @DateFormat		NVARCHAR(10)
+
+    DECLARE @DivCode        NVARCHAR(08)    /* 사업장       */        
+          , @MaintainDateFr NVARCHAR(08)    /* 정비일자FR   */        
+          , @MaintainDateTo NVARCHAR(08)    /* 정비일자TO   */
+          , @DateInterval   NUMERIC(18,0)   /* 작업일수     */        
+
+    SET @CompCode = #{S_COMP_CODE}
+    SET @UserId   = #{S_USER_ID}
+    SET @LangType = #{S_LANG_CODE}  
+
+    SET @DivCode        = #{DIV_CODE}
+    SET @MaintainDateFr = #{REQUEST_DATE_FR}
+    SET @MaintainDateTo = #{REQUEST_DATE_TO}
+    
+	/* 명칭 참조 유형 */
+    SELECT TOP 1 @RefItem = REF_ITEM
+      FROM BSA300T WITH (NOLOCK)
+     WHERE USER_ID = @UserId
+
+    SET @RefItem = ISNULL(@RefItem, N'0')
+
+	/* 날짜 포맷 유형 설정 */
+    SELECT TOP 1 @DateFormat = CODE_NAME
+      FROM BSA100T WITH (NOLOCK)
+     WHERE COMP_CODE = @CompCode
+       AND MAIN_CODE = N'B044'
+       AND REF_CODE1 = N'Y'
+
+    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+    /* 작업일수 */
+    SET @DateInterval = DATEDIFF(D, CONVERT(DATETIME,@MaintainDateFr),CONVERT(DATETIME,@MaintainDateTo)) + 1
+
+	/* 데이터 조회 */
+    SELECT A.COMP_CODE                                          /* 법인코드             */
+         , A.DIV_CODE                                           /* 사업장               */
+         , A.MECHANIC_TEAM                                      /* 정비팀               */
+         , C1.CODE_NAME             AS MECHANIC_TEAM_NAME       /* 정비팀명             */
+         , A.AM_PM                                              /* 주야간구분           */
+         , C2.CODE_NAME             AS AM_PM_NAME               /* 주야간구분명         */
+         , A.MAINTAIN_GROUND                                    /* 작업근거             */
+         , C3.CODE_NAME             AS MAINTAIN_GROUND_NAME     /* 작업근거명           */
+         , SUM(A.VEHICLE_COUNT)     AS VEHICLE_COUNT            /* 댓수                 */  
+         , (CASE WHEN @DateInterval = 0 THEN 0
+                                        ELSE SUM(A.VEHICLE_COUNT) / @DateInterval
+             END) AS VEHICLE_COUNT_PER_DAY                      /* 댓수 1일평균         */
+         , SUM(A.MECHANIC_NUMBER)   AS MECHANIC_NUMBER            /* 정비인원             */
+         , (CASE WHEN @DateInterval = 0 THEN 0
+                                        ELSE SUM(A.MECHANIC_NUMBER) / @DateInterval
+             END) AS MECHANIC_NUMBER_PER_DAY                      /* 정비인원 1일평균     */
+         , SUM(A.WORKING_TIME)      AS WORKING_TIME            /* 소요시간             */
+         , (CASE WHEN @DateInterval = 0 THEN 0
+                                        ELSE SUM(A.WORKING_TIME) / @DateInterval
+             END) AS WORKING_TIME_PER_DAY                      /* 소요시간 1일평균     */   
+         , SUM(A.WT_PER_VEHICLE)    AS WT_PER_VEHICLE            /* 대당소요             */
+         , (CASE WHEN @DateInterval = 0 THEN 0
+                                        ELSE SUM(A.WT_PER_VEHICLE) / @DateInterval
+             END) AS WT_PER_VEHICLE_PER_DAY                      /* 대당소요 1일평균     */
+         , (CASE WHEN A.MECHANIC_NUMBER = 0 THEN 0
+                                            ELSE SUM(A.VEHICLE_COUNT) / A.MECHANIC_NUMBER
+             END) AS NUMBER_PER_VEHICLE                         /* 대당투입인원원       */
+         , (CASE WHEN @DateInterval = 0 THEN 0
+                                        ELSE (CASE WHEN A.MECHANIC_NUMBER = 0 THEN 0 ELSE SUM(A.VEHICLE_COUNT) / A.MECHANIC_NUMBER END) / @DateInterval
+             END) AS NUMBER_PER_VEHICLE_PER_DAY                      /* 대당투입인원 1일평균 */    
+      FROM            GRE200T A  WITH (NOLOCK)
+           LEFT  JOIN BSA100T C1 WITH (NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+                                              AND C1.MAIN_CODE = 'GO22'
+                                              AND C1.SUB_CODE  = A.MECHANIC_TEAM
+           LEFT  JOIN BSA100T C2 WITH (NOLOCK) ON C2.COMP_CODE = A.COMP_CODE
+                                              AND C2.MAIN_CODE = 'GO25'
+                                              AND C2.SUB_CODE  = A.AM_PM
+           LEFT  JOIN BSA100T C3 WITH (NOLOCK) ON C3.COMP_CODE = A.COMP_CODE
+                                              AND C3.MAIN_CODE = 'GO24'
+                                              AND C3.SUB_CODE  = A.MAINTAIN_GROUND
+     WHERE A.COMP_CODE      = @CompCode
+       AND A.DIV_CODE       = @DivCode
+       AND A.MAINTAIN_DATE &gt;= @MaintainDateFr
+       AND A.MAINTAIN_DATE &lt;= @MaintainDateTo
+       
+<if test="@foren.Ognl@isNotEmpty(MECHANIC_TEAM)">
+       AND A.MECHANIC_TEAM	=	#{MECHANIC_TEAM}
+</if>
+<if test="@foren.Ognl@isNotEmpty(AM_PM)">
+       AND A.AM_PM	=	#{AM_PM}
+</if>
+<if test="@foren.Ognl@isNotEmpty(MAINTAIN_GROUND)">       
+       AND A.MAINTAIN_GROUND	=	#{MAINTAIN_GROUND}
+</if>      
+<if test="VEHICLE_COUNT == &quot;on&quot;">
+       AND A.VEHICLE_COUNT &gt;= 1 /*  전체작업포함(체크)*/
+</if> 
+<if test="VEHICLE_COUNT != &quot;on&quot;">    
+       AND A.VEHICLE_COUNT  = 1 /*  전체작업포함(미체크)*/
+</if>
+     GROUP BY A.COMP_CODE   , A.DIV_CODE        , A.MECHANIC_TEAM   , C1.CODE_NAME  , A.AM_PM
+            , C2.CODE_NAME  , A.MAINTAIN_GROUND , C3.CODE_NAME , A.MECHANIC_NUMBER
+
+	SET NOCOUNT OFF
+	SET ARITHABORT OFF
+END
+
+		
+	</select>
+	
+</mapper>

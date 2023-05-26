@@ -1,0 +1,860 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ssa560ukrvServiceImpl">
+	<select id="ssa560ukrvServiceImpl.selectBillDivList" parameterType="Map" resultType="rMap">
+	/*신고사업장 조회*/
+		/*UBsaExKrv.CBsaExSKr[fnRecordCombo] Query04*/
+		SELECT BILL_DIV_CODE
+             , (SELECT DIV_NAME
+                  FROM BOR120T WITH (NOLOCK)
+                 WHERE COMP_CODE = A.COMP_CODE
+                   AND DIV_CODE  = A.BILL_DIV_CODE) AS BILL_DIV_NAME
+          FROM (SELECT DISTINCT BILL_DIV_CODE
+                     , COMP_CODE
+                  FROM BOR120T WITH (NOLOCK)
+                 WHERE COMP_CODE = #{S_COMP_CODE}
+                   AND DIV_CODE  = #{SALE_DIV_CODE}) A
+         ORDER BY BILL_DIV_CODE
+	</select>
+
+
+	<select id="ssa560ukrvServiceImpl.selectBillDivInfo" parameterType="Map" resultType="rMap">
+	/*신고사업장 정보 조회*/
+		 /*USFuncKrv.CSFuncKr[fnGetOrgInfo] Query01*/
+	    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+	    SELECT ISNULL(DIV_NAME   , '')  AS DIV_NAME
+	         , ISNULL(COMPANY_NUM, '')  AS COMPANY_NUM
+	         , ISNULL(REPRE_NAME , '')  AS REPRE_NAME
+	         , ISNULL(COMP_CLASS , '')  AS COMP_CLASS
+	         , ISNULL(COMP_TYPE  , '')  AS COMP_TYPE
+	         , ISNULL(ADDR       , '')  AS ADDR
+	         , ISNULL(SUB_DIV_NUM, '')  AS SUB_DIV_NUM
+	      FROM BOR120T
+	     WHERE DIV_CODE  = #{BILL_DIV_CODE}
+	       AND COMP_CODE = #{S_COMP_CODE}
+	</select>
+
+	<select id="ssa560ukrvServiceImpl.selectBillNoMasterList" parameterType="Map" resultType="rMap">
+	/*계산서번호 검색 조회*/
+		/*ssa560ukrv.Cssa560ukrv[fnStb100QPop] Query01*/
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+
+			DECLARE   @CompCode    NVARCHAR(08) /* 법인코드    */
+				    , @UserId      NVARCHAR(100) /* 사용자ID    */
+				    , @LangType    NVARCHAR(2)  /* 언어구분    */
+				    , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+				    , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+
+			SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_ID}
+			SET @LangType = #{S_LANG_CODE}
+
+			/* 명칭 참조 유형 */
+			SELECT TOP 1 @RefItem = REF_ITEM
+				FROM BSA300T WITH (NOLOCK)
+				WHERE USER_ID = @UserId
+
+			SET @RefItem = ISNULL(@RefItem, N'0')
+
+			/* 날짜 포맷 유형 설정 */
+			SELECT TOP 1 @DateFormat = CODE_NAME
+				FROM BSA100T WITH (NOLOCK)
+				WHERE COMP_CODE = @CompCode
+				AND MAIN_CODE = N'B044'
+				AND REF_CODE1 = N'Y'
+
+			SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+			/*데이터 조회*/
+		    SELECT  B.DIV_NAME
+		         ,  CASE WHEN @RefItem = N'1' THEN C.CUSTOM_NAME1
+		                 WHEN @RefItem = N'2' THEN C.CUSTOM_NAME2
+		                 ELSE C.CUSTOM_NAME
+		            END                                                                     AS CUSTOM_NAME
+		         ,  A.PUB_NUM
+		         ,  A.BILL_FLAG
+		         , M1.CODE_NAME                                                             AS BILL_TYPE
+		         ,  CASE WHEN ISNULL(A.BILL_DATE, '') = '' THEN ''
+		                 ELSE REPLACE(
+		                      REPLACE(
+		                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.BILL_DATE, 1, 4))
+		                                         , 'MM',   SUBSTRING(A.BILL_DATE, 5, 2))
+		                                         , 'DD',   SUBSTRING(A.BILL_DATE, 7, 2))
+		            END                                                                     AS BILL_DATE
+		         ,  CASE WHEN ISNULL(A.PUB_FR_DATE, '') = '' THEN ''
+		                 ELSE REPLACE(
+		                      REPLACE(
+		                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PUB_FR_DATE, 1, 4))
+		                                         , 'MM',   SUBSTRING(A.PUB_FR_DATE, 5, 2))
+		                                         , 'DD',   SUBSTRING(A.PUB_FR_DATE, 7, 2))
+		            END + ' ~ '
+		         +  CASE WHEN ISNULL(A.PUB_TO_DATE, '') = '' THEN ''
+		                 ELSE REPLACE(
+		                      REPLACE(
+		                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PUB_TO_DATE, 1, 4))
+		                                         , 'MM',   SUBSTRING(A.PUB_TO_DATE, 5, 2))
+		                                         , 'DD',   SUBSTRING(A.PUB_TO_DATE, 7, 2))
+		            END                                                                     AS PUB_DATE
+		         ,  A.SALE_DIV_CODE
+		         ,  A.PROJECT_NO
+		         ,  CASE WHEN A.EX_DATE IS NULL THEN 'N' ELSE 'Y' END                       AS EX_YN
+		         ,  CASE WHEN @RefItem = N'1' THEN D.CUSTOM_NAME1
+		                 WHEN @RefItem = N'2' THEN D.CUSTOM_NAME2
+		                 ELSE D.CUSTOM_NAME
+		            END                                                                     AS COLET_CUST_CD
+		         ,  A.DIV_CODE
+		         ,  A.CUSTOM_CODE
+		         ,  A.SALE_PRSN
+		         ,  A.MODI_REASON
+		         ,  A.ORIGINAL_PUB_NUM
+		         ,  C.WON_CALC_BAS --원단위 미만 계산방법
+		         --20200413 추가: 공급가액(환산액), 부가세, 합계금액
+		         ,  ISNULL(A.SALE_AMT_O, 0)                                                 AS SALE_AMT_O 
+		         ,  ISNULL(A.TAX_AMT_O, 0)                                                  AS TAX_AMT_O
+		         ,  ISNULL(A.SALE_AMT_O , 0) + ISNULL(A.TAX_AMT_O, 0)                       AS SUM_AMT_O
+		    FROM                STB100T     A  WITH (NOLOCK)
+		            INNER JOIN  BOR120T     B  WITH (NOLOCK) ON  B.COMP_CODE        =  A.COMP_CODE
+		                                                    AND  B.DIV_CODE         =  A.DIV_CODE
+		            INNER JOIN  BCM100T     C  WITH (NOLOCK) ON  C.COMP_CODE        =  A.COMP_CODE
+		                                                    AND  C.CUSTOM_CODE      =  A.CUSTOM_CODE
+		            LEFT  JOIN  BCM100T     D  WITH (NOLOCK) ON  D.COMP_CODE        =  A.COMP_CODE
+		                                                    AND  D.CUSTOM_CODE      =  A.COLET_CUST_CD
+		            LEFT  JOIN  BSA100T     M1 WITH (NOLOCK) ON M1.COMP_CODE        =  A.COMP_CODE
+		                                                    AND M1.MAIN_CODE        =  N'A022'
+		                                                    AND M1.SUB_CODE         =  A.BILL_TYPE
+		    WHERE   A.COMP_CODE            =  @CompCode
+		    AND     A.DIV_CODE             =  #{BILL_DIV_CODE}
+		    --20210907 수정세금계산서 발행 시 마이너스건 매출기표를 위해  조회되도록 수정.
+		    --AND     A.PLUS_MINUS_TYPE      =  '+'
+
+			<if test="@foren.Ognl@isNotEmpty(SALE_DIV_CODE)">
+			AND     A.SALE_DIV_CODE        =  #{SALE_DIV_CODE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(FR_SALE_DATE)">
+		    AND     A.BILL_DATE        &gt;=  #{FR_SALE_DATE}
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(TO_SALE_DATE)">
+		    AND     A.BILL_DATE        &lt;=  #{TO_SALE_DATE}
+		    </if>
+		    
+		    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+		    AND A.CUSTOM_CODE 		= #{CUSTOM_CODE}					/* 거래처코드  */
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+		    AND A.CUSTOM_CODE 		LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+		    AND (CASE @RefItem WHEN '1' THEN C.CUSTOM_NAME1
+		                       WHEN '2' THEN C.CUSTOM_NAME2
+										ELSE C.CUSTOM_NAME
+		         END)		LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+		    </if>
+		    
+			<if test="@foren.Ognl@isNotEmpty(PROJECT_NO)">
+		    AND     A.PROJECT_NO  LIKE  	#{PROJECT_NO} + '%'
+		    </if>
+		    ORDER   BY
+		            B.DIV_NAME, A.PUB_NUM, C.CUSTOM_NAME
+
+		    SET ARITHABORT OFF
+		    SET NOCOUNT OFF
+		END
+	</select>
+
+	<select id="ssa560ukrvServiceImpl.selectMasterList" parameterType="Map" resultType="rMap">
+	/* ssa560ukrv.Cssa560ukrv[fnStb100QStd] Query01 */
+	/* 개별 세금계산서 등록 마스터 조회*/
+	BEGIN
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+
+		DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+			  , @UserId			NVARCHAR(100)	/* 사용자ID */
+			  , @LangType		NVARCHAR(2)		/* 언어구분 */
+			  , @RefItem		NVARCHAR(01)
+			  , @DateFormat		NVARCHAR(10)
+			  , @BillDivCode	NVARCHAR(08)    /*(필수) 신고사업장 */
+			  , @PubNum			NVARCHAR(20)    /*(필수) 세금계산서번호 */
+
+		SET @CompCode	 = #{S_COMP_CODE}
+		SET @UserId		 = #{S_USER_ID}
+		SET @LangType	 = #{S_LANG_CODE}
+		SET @BillDivCode = #{BILL_DIV_CODE}
+		SET @PubNum		 = #{PUB_NUM}
+
+		/* 명칭 참조 유형 */
+	    SELECT TOP 1 @RefItem = REF_ITEM
+	      FROM BSA300T WITH (NOLOCK)
+	     WHERE USER_ID = @UserId
+
+	    SET @RefItem = ISNULL(@RefItem, N'0')
+
+		/* 날짜 포맷 유형 설정 */
+	    SELECT TOP 1 @DateFormat = CODE_NAME
+	      FROM BSA100T WITH (NOLOCK)
+	     WHERE COMP_CODE = @CompCode
+	       AND MAIN_CODE = N'B044'
+	       AND REF_CODE1 = N'Y'
+
+	    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+	 /* 데이터 조회 */
+	    SELECT
+	            A.DIV_CODE
+	         ,  D.COMPANY_NUM                                                   AS OWN_COMNUM
+	         ,  D.REPRE_NAME                                                    AS OWN_TOPNAME
+	         ,  D.ADDR                                                          AS OWN_ADDR
+	         ,  D.COMP_CLASS                                                    AS OWN_COMCLASS
+	         ,  D.COMP_TYPE                                                     AS OWN_COMTYPE
+	         ,  ISNULL(D.SUB_DIV_NUM, '')                                       AS OWN_SERVANTNUM
+	         ,  A.PUB_NUM
+	         ,  A.BILL_DATE
+	         ,  A.PUB_FR_DATE
+	         ,  A.PUB_TO_DATE
+	         ,  A.CUSTOM_CODE
+	         ,  C.CUSTOM_NAME
+	         ,  C.COMPANY_NUM                                                   AS CUST_COMNUM
+	         ,  C.TOP_NAME                                                      AS CUST_TOPNAME
+	         ,  C.ADDR1 + ' ' + C.ADDR2                                         AS CUST_ADDR
+	         ,  C.COMP_CLASS                                                    AS CUST_COMCLASS
+	         ,  C.COMP_TYPE                                                     AS CUST_COMTYPE
+	         ,  C.SET_METH
+	         ,  ISNULL(A.SERVANT_COMPANY_NUM, '')                               AS CUST_SERVANTNUM
+	         ,  ISNULL(A.BFO_ISSU_ID, '')                                       AS BFO_ISSU_ID
+	         ,  A.SALE_AMT_O
+	         ,  A.TAX_AMT_O
+	         ,  ISNULL(A.COLET_AMT, 0)                                          AS COLET_AMT
+	         ,  A.REMARK
+	         ,  A.PROJECT_NO
+	         ,  A.BILL_TYPE
+	         ,  A.UPDATE_DB_USER
+	         ,  A.SALE_DIV_CODE
+	         ,  A.COLLECT_CARE
+	         ,  A.EX_NUM
+	         ,  A.EX_DATE
+	         ,  A.AC_DATE
+	         ,  A.RECEIPT_PLAN_DATE
+	         ,  A.TAX_CALC_TYPE
+	         ,  ISNULL(A.SALE_AMT_O, 0) + ISNULL(A.TAX_AMT_O, 0)                AS SALE_TOT_AMT
+	         ,  A.BILL_FLAG
+	         ,  ISNULL(A.MODI_REASON, '')                                       AS MODI_REASON
+	         ,  ISNULL(A.EB_NUM     , '')                                       AS EB_NUM
+	         ,  ISNULL(A.SALE_PRSN  , '')                                       AS SALE_PRSN
+	         ,  ISNULL(A.PRE_SEND_YN, 'N')                                      AS PRE_SEND_YN  --20210527 추가
+	         ,  A.PAY_TERMS
+	    FROM                STB100T     A  WITH (NOLOCK)
+	            INNER JOIN  BCM100T     C  WITH (NOLOCK) ON  C.COMP_CODE        =  A.COMP_CODE
+	                                                    AND  C.CUSTOM_CODE      =  A.CUSTOM_CODE
+	            INNER JOIN  BOR120T     D  WITH (NOLOCK) ON  D.COMP_CODE        =  A.COMP_CODE
+	                                                    AND  D.DIV_CODE         =  A.DIV_CODE
+	    WHERE   A.COMP_CODE     =  @CompCode
+	    AND     A.DIV_CODE      =  @BillDivCode
+	    AND     A.PUB_NUM       =  @PubNum
+
+	    SET ARITHABORT OFF
+	    SET NOCOUNT OFF
+	END
+	</select>
+
+	<select id="ssa560ukrvServiceImpl.selectDetailList" parameterType="Map" resultType="rMap">
+	/* ssa560ukrv.Cssa560ukrv[fnStb100QStd] Query02 */
+	/* 개별 세금계산서 등록 디테일 조회 */
+	BEGIN
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+
+		DECLARE   @CompCode		NVARCHAR(08)	/* 법인코드  */
+			    , @UserId		NVARCHAR(100)	/* 사용자ID */
+			    , @LangType		NVARCHAR(2)		/* 언어구분 */
+		        , @RefItem		NVARCHAR(01)
+		        , @DateFormat	NVARCHAR(10)
+				, @BillDivCode	NVARCHAR(08)    /*(필수) 신고사업장 */
+				, @PubNum		NVARCHAR(20)    /*(필수) 세금계산서번호 */
+
+		SET @CompCode	 = #{S_COMP_CODE}
+		SET @UserId		 = #{S_USER_ID}
+		SET @LangType	 = #{S_LANG_CODE}
+		SET @BillDivCode = #{BILL_DIV_CODE}
+		SET @PubNum		 = #{PUB_NUM}
+
+		/* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+		    FROM BSA300T WITH (NOLOCK)
+		    WHERE USER_ID = @UserId
+
+		SET @RefItem = ISNULL(@RefItem, N'0')
+
+		/* 날짜 포맷 유형 설정 */
+		SELECT TOP 1 @DateFormat = CODE_NAME
+		    FROM BSA100T WITH (NOLOCK)
+		    WHERE COMP_CODE = @CompCode
+		    AND MAIN_CODE = N'B044'
+		    AND REF_CODE1 = N'Y'
+
+		SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+		 /* 데이터 조회 */
+	    SELECT
+	            B.DIV_CODE
+	         ,  B.BILL_NUM
+	         ,  B.BILL_SEQ
+	         ,  B.ITEM_CODE
+	         ,  CASE WHEN @RefItem = N'1' THEN C.ITEM_NAME1
+	                 WHEN @RefItem = N'2' THEN C.ITEM_NAME2
+	                 ELSE C.ITEM_NAME
+	            END                                                             AS ITEM_NAME
+	         ,  C.SPEC
+	         ,  B.SALE_Q
+	         ,  B.SALE_P
+	         ,  B.SALE_AMT_O
+	         ,  B.TAX_TYPE
+	         ,  B.TAX_AMT_O
+	         ,  B.PUB_NUM
+	         ,  E.REMARK
+	         ,  E.RECEIPT_PLAN_DATE
+	         ,  E.PROJECT_NO
+	         ,  H.PJT_NAME		AS PROJECT_NAME
+	         ,  B.TO_DIV_CODE                                                   AS BILL_DIV_CODE
+	         ,  B.COMP_CODE
+	         ,  B.INOUT_NUM
+	         ,  B.INOUT_SEQ
+	         ,  B.INOUT_TYPE
+	         ,  B.INOUT_TYPE_DETAIL
+	         ,  B.SALE_UNIT
+	         ,  B.TRANS_RATE
+	         ,  B.WH_CODE
+	         ,  B.PRICE_YN
+	         ,  B.CUSTOM_CODE
+	         ,  B.ORDER_PRSN
+	         ,  B.OUT_DIV_CODE
+	         ,  B.PRICE_TYPE
+	         ,  B.UNIT_WGT
+	         ,  B.WGT_UNIT
+	         ,  B.UNIT_VOL
+	         ,  B.VOL_UNIT
+	         ,  B.SALE_WGT_Q
+	         ,  B.SALE_FOR_WGT_P
+	         ,  B.SALE_WGT_P
+	         ,  B.SALE_VOL_Q
+	         ,  B.SALE_FOR_VOL_P
+	         ,  B.SALE_VOL_P
+	    FROM                SSA100T     A  WITH (NOLOCK)
+	            INNER JOIN  SSA110T     B  WITH (NOLOCK) ON  B.COMP_CODE        = A.COMP_CODE
+	                                                    AND  B.DIV_CODE         = A.DIV_CODE
+	                                                    AND  B.BILL_NUM         = A.BILL_NUM
+	            INNER JOIN  BPR100T     C  WITH (NOLOCK) ON  C.COMP_CODE        = B.COMP_CODE
+	                                                    AND  C.ITEM_CODE        = B.ITEM_CODE
+	            INNER JOIN  BOR120T     D  WITH (NOLOCK) ON  D.COMP_CODE        = B.COMP_CODE
+	                                                    AND  D.DIV_CODE         = B.DIV_CODE
+	            INNER JOIN  STB100T     E  WITH (NOLOCK) ON  E.COMP_CODE        = B.COMP_CODE
+	                                                    AND  E.SALE_DIV_CODE    = B.DIV_CODE
+	                                                    AND  E.PUB_NUM          = B.PUB_NUM
+	            LEFT  JOIN  BCM600T     H  WITH (NOLOCK) ON  H.COMP_CODE        = E.COMP_CODE
+	                                                    AND  H.PJT_CODE         = E.PROJECT_NO
+	    WHERE   A.COMP_CODE     = @CompCode
+	    AND     E.DIV_CODE      = @BillDivCode
+	    AND     B.PUB_NUM       = @PubNum
+	    ORDER   BY
+	            A.DIV_CODE, A.BILL_NUM, B.BILL_SEQ
+
+	    SET ARITHABORT OFF
+	    SET NOCOUNT OFF
+	END
+	</select>
+
+	<select id="ssa560ukrvServiceImpl.selectReferList" parameterType="Map" resultType="rMap">
+		/* ssa560ukrv.Cssa560ukrv[fnSsa100QRef] Query01 */
+		/* 매출참조 조회 */
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+
+			DECLARE   @CompCode    NVARCHAR(08) /* 법인코드    */
+				    , @UserId      NVARCHAR(100) /* 사용자ID    */
+				    , @LangType    NVARCHAR(2)  /* 언어구분    */
+				    , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+				    , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+
+			SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_ID}
+			SET @LangType = #{S_LANG_CODE}
+
+			/* 명칭 참조 유형 */
+			SELECT TOP 1 @RefItem = REF_ITEM
+				FROM BSA300T WITH (NOLOCK)
+				WHERE USER_ID = @UserId
+
+			SET @RefItem = ISNULL(@RefItem, N'0')
+
+			/* 날짜 포맷 유형 설정 */
+			SELECT TOP 1 @DateFormat = CODE_NAME
+				FROM BSA100T WITH (NOLOCK)
+				WHERE COMP_CODE = @CompCode
+				AND MAIN_CODE = N'B044'
+				AND REF_CODE1 = N'Y'
+
+			SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+		   /* 데이터 조회 */
+		    SELECT
+		            CAST(0 AS BIT)                                                          AS CHOICE
+		         ,  B.DIV_CODE
+		         ,  B.BILL_NUM
+		         ,  B.BILL_SEQ
+		         ,  CASE WHEN ISNULL(A.SALE_DATE, '') = '' THEN ''
+		                 ELSE REPLACE(
+		                      REPLACE(
+		                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.SALE_DATE, 1, 4))
+		                                         , 'MM',   SUBSTRING(A.SALE_DATE, 5, 2))
+		                                         , 'DD',   SUBSTRING(A.SALE_DATE, 7, 2))
+		            END                                                                     AS SALE_DATE
+		            
+		            
+		            
+		         ,  B.ITEM_CODE
+		         ,  CASE WHEN @RefItem = N'1' THEN C.ITEM_NAME1
+		                 WHEN @RefItem = N'2' THEN C.ITEM_NAME2
+		                 ELSE C.ITEM_NAME
+		            END                                                                     AS ITEM_NAME
+		         ,  C.SPEC
+		         ,  B.SALE_Q
+		         ,  B.PRICE_YN
+		         ,  B.SALE_P
+		         ,  B.SALE_AMT_O
+		         ,  B.TAX_TYPE
+		         ,  B.TAX_AMT_O
+		         ,  B.INOUT_NUM
+		         ,  B.INOUT_SEQ
+		         ,  B.ORDER_NUM
+		         ,  B.PROJECT_NO
+		         --,  F.PJT_NAME		AS PROJECT_NAME                        /* 20210322 조회 속도 문제로 수정. */
+		         , (SELECT PJT_NAME
+                      FROM BCM600T F WITH(NOLOCK)
+                     WHERE F.COMP_CODE = B.COMP_CODE
+                       AND F.PJT_CODE  = B.PROJECT_NO) AS PROJECT_NAME 
+		         ,  E.REMARK
+		         ,  A.COMP_CODE
+		         ,  B.INOUT_TYPE
+		         ,  B.INOUT_TYPE_DETAIL
+		         ,  B.SALE_UNIT
+		         ,  B.TRANS_RATE
+		         ,  B.WH_CODE
+		         ,  B.CUSTOM_CODE
+				 , R1.CUSTOM_NAME
+		         ,  B.ORDER_PRSN
+		         ,  B.OUT_DIV_CODE
+		         ,  B.PRICE_TYPE
+		         ,  B.UNIT_WGT
+		         ,  B.WGT_UNIT
+		         ,  B.UNIT_VOL
+		         ,  B.VOL_UNIT
+		         ,  B.SALE_WGT_Q
+		         ,  B.SALE_FOR_WGT_P
+		         ,  B.SALE_WGT_P
+		         ,  B.SALE_VOL_Q
+		         ,  B.SALE_FOR_VOL_P
+		         ,  B.SALE_VOL_P
+		    FROM                SSA100T     A  WITH (NOLOCK)
+		            INNER JOIN  SSA110T     B  WITH (NOLOCK) ON  B.COMP_CODE        =  A.COMP_CODE
+		                                                    AND  B.DIV_CODE         =  A.DIV_CODE
+		                                                    AND  B.BILL_NUM         =  A.BILL_NUM
+		            INNER JOIN  BPR100T     C  WITH (NOLOCK) ON  C.COMP_CODE        =  B.COMP_CODE
+		                                                    AND  C.ITEM_CODE        =  B.ITEM_CODE
+		            INNER JOIN  BOR120T     D  WITH (NOLOCK) ON  D.COMP_CODE        =  B.COMP_CODE
+		                                                    AND  D.DIV_CODE         =  B.DIV_CODE
+		            LEFT  JOIN  BTR100T     E  WITH (NOLOCK) ON  E.COMP_CODE        =  B.COMP_CODE
+		                                                    AND  E.DIV_CODE         =  B.DIV_CODE
+		                                                    AND  E.INOUT_NUM        =  B.INOUT_NUM
+		                                                    AND  E.INOUT_SEQ        =  B.INOUT_SEQ
+		                                                    AND  E.INOUT_TYPE       =  B.INOUT_TYPE
+		            --LEFT  JOIN  BCM600T     F  WITH (NOLOCK) ON  F.COMP_CODE        =  B.COMP_CODE      /* 20210322 조회 속도 문제로 수정. */
+		            --                                        AND  F.PJT_CODE         =  B.PROJECT_NO
+		            LEFT  JOIN  BCM100T     G  WITH (NOLOCK) ON  G.COMP_CODE        =  A.COMP_CODE        /* 집계거래처위해 추가 */
+		                                                    AND  G.CUSTOM_CODE      =  A.SALE_CUSTOM_CODE
+                    LEFT JOIN BCM100T R1 WITH(NOLOCK) ON R1.COMP_CODE = A.COMP_CODE
+			                                         AND R1.CUSTOM_CODE = B.CUSTOM_CODE
+		    WHERE   A.COMP_CODE             =  #{S_COMP_CODE}
+		    AND     ISNULL(B.PUB_NUM, '')   =  N''
+		    --AND     ISNULL(B.SALE_AMT_O, 0) != 0
+			--S155 미매출대상 참조가능여부 옵션 체크
+			AND (ISNULL(B.SALE_AMT_O, 0) =	CASE WHEN ISNULL((	SELECT TOP 1 SUB_CODE
+													FROM BSA100T WITH (NOLOCK)
+													WHERE COMP_CODE=#{S_COMP_CODE}
+													AND MAIN_CODE='S155'
+													AND REF_CODE1 = 'Y'), 'N') = 'Y' THEN ISNULL(B.SALE_AMT_O, 0) ELSE NULL END
+				OR
+				ISNULL(B.SALE_AMT_O, 0) !=	CASE WHEN ISNULL((	SELECT TOP 1 SUB_CODE
+													FROM BSA100T WITH (NOLOCK)
+													WHERE COMP_CODE=#{S_COMP_CODE}
+													AND MAIN_CODE='S155'
+													AND REF_CODE1 = 'Y'), 'N') = 'Y' THEN 0 ELSE 0 END
+				)
+
+			<if test="@foren.Ognl@isNotEmpty(SALE_DIV_CODE)">
+		    AND     A.DIV_CODE                 =  #{SALE_DIV_CODE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(SALE_FR_DATE)">
+		    AND     A.SALE_DATE            &gt;=  #{SALE_FR_DATE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(SALE_TO_DATE)">
+		    AND     A.SALE_DATE            &lt;=  #{SALE_TO_DATE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+		    AND    (A.SALE_CUSTOM_CODE         =  #{CUSTOM_CODE} 	OR  G.BILL_CUSTOM  =  #{CUSTOM_CODE})
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(TAX_BILL)">
+				<if test="TAX_BILL == &quot;3&quot;">
+					AND   ((A.BILL_TYPE             =  N'10'    AND B.TAX_TYPE      =  #{TAX_BILL})
+		                OR (A.BILL_TYPE             =  N'50'))
+				</if>
+				<if test="TAX_BILL != &quot;3&quot;">
+					AND   ((A.BILL_TYPE             =  N'10'    AND B.TAX_TYPE      =  #{TAX_BILL}))
+				</if>
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(PROJECT_NO)">
+		    AND     B.PROJECT_NO            =  #{PROJECT_NO}
+			</if>
+			
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND B.ITEM_CODE 		= #{ITEM_CODE}						/* 품목코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+			AND B.ITEM_CODE 		LIKE #{ITEM_CODE} + '%'				/* 품목코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_NAME) and @foren.Ognl@isEmpty(ITEM_CODE)">
+			AND (CASE @RefItem WHEN '1' THEN C.ITEM_NAME1
+							   WHEN '2' THEN C.ITEM_NAME2
+										ELSE C.ITEM_NAME
+				END)		LIKE '%' + #{ITEM_NAME} + '%'		/* 품목명  */
+			</if>
+			
+			<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)">
+		    AND     C.ITEM_LEVEL1           =  #{ITEM_LEVEL1}
+			</if>
+		    <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL2)">
+		    AND     C.ITEM_LEVEL2           =  #{ITEM_LEVEL2}
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL3)">
+		    AND     C.ITEM_LEVEL3           =  #{ITEM_LEVEL3}
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(SALE_PRSN)">
+		    AND     A.SALE_PRSN             =  #{SALE_PRSN}
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+		    AND     B.WH_CODE               =  #{WH_CODE}
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(WH_CELL_CODE)">
+		    AND     B.WH_CELL_CODE          =  #{WH_CELL_CODE}
+		    </if>
+		    ORDER   BY
+		            A.DIV_CODE, A.BILL_NUM, B.BILL_SEQ
+
+		    SET ARITHABORT OFF
+		    SET NOCOUNT OFF
+		END
+    </select>
+
+	<select id="ssa560ukrvServiceImpl.getBillSendCloseChk" parameterType="Map" resultType="rMap">
+		/*국세청전송완료건 체크*/
+		BEGIN
+		    SET NOCOUNT    ON
+		    SET ARITHABORT ON
+
+		    DECLARE @BILL_GUBUN            NVARCHAR(02)
+
+		    SELECT @BILL_GUBUN = A.SUB_CODE
+		      FROM BSA100T AS A WITH(NOLOCK)
+		     WHERE A.COMP_CODE = #{S_COMP_CODE}
+		       AND A.MAIN_CODE = 'S084'
+		       AND A.REF_CODE1 = 'Y'
+
+		    IF @BILL_GUBUN = '01'
+		    BEGIN
+		        SELECT ISNULL(REPORT_STAT, 'N') AS REPORT_STAT
+		             , @BILL_GUBUN              AS BILL_GUBUN
+		          FROM BILL_DB.BILL.BILL_TRANS
+		         WHERE BILLSEQ  = #{BILL_SEQ}
+		    END
+		    ELSE IF @BILL_GUBUN = '02'
+		    BEGIN
+		        SELECT ISNULL(REQ_STAT_CODE, '') AS REPORT_STAT
+		             , @BILL_GUBUN               AS BILL_GUBUN
+		          FROM WEBCASH_DB.WEBCASH.ITIS_ISSU_MSTR
+		         WHERE ISSU_SEQNO = #{BILL_SEQ}
+		    END
+		    ELSE
+		    BEGIN
+		        SELECT '' AS REPORT_STAT
+		             , '' AS BILL_GUBUN
+		    END
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+
+    </select>
+
+	<insert id="ssa560ukrvServiceImpl.insertLogMaster" parameterType="Map">
+		/*ssa560ukrvServiceImpl.insertLogMaster*/
+		INSERT INTO L_STB100T
+		     ( KEY_VALUE,
+		       OPR_FLAG,
+		       DIV_CODE,
+		       PUB_NUM,
+		       BILL_TYPE,
+		       BILL_DATE,
+		       PUB_FR_DATE,
+		       PUB_TO_DATE,
+		       CUSTOM_CODE,
+		       SALE_AMT_O,
+		       SALE_LOC_AMT_I,
+		       TAX_AMT_O,
+		       COLET_CUST_CD,
+		       REMARK,
+		       PROJECT_NO,
+		       UPDATE_DB_USER,
+		       SALE_DIV_CODE,
+		       COLLECT_CARE,
+		       RECEIPT_PLAN_DATE,
+		       TAX_CALC_TYPE,
+		       SALE_PROFIT,
+		       COMP_CODE,
+		       BILL_FLAG,
+		       MODI_REASON,
+		       SALE_PRSN,
+		       SERVANT_COMPANY_NUM,
+		       BFO_ISSU_ID,
+		       PRE_SEND_YN,        --20210527 추가
+		       PAY_TERMS
+		     )
+		VALUES
+		     ( #{KEY_VALUE},
+		       #{OPR_FLAG},
+		       #{DIV_CODE},
+		       #{PUB_NUM},
+		       #{BILL_TYPE},
+		       #{BILL_DATE},
+		       #{PUB_FR_DATE},
+		       #{PUB_TO_DATE},
+		       #{CUSTOM_CODE},
+		       #{SALE_AMT_O},
+		       #{SALE_LOC_AMT_I},
+		       #{TAX_AMT_O},
+		       #{COLET_CUST_CD},
+		       #{REMARK},
+		       #{PROJECT_NO},
+		       #{UPDATE_DB_USER},
+		       #{SALE_DIV_CODE},
+		       #{COLLECT_CARE},
+		       #{RECEIPT_PLAN_DATE},
+		       #{TAX_CALC_TYPE},
+		       #{SALE_PROFIT},
+		       #{COMP_CODE},
+		       #{BILL_FLAG},
+		       #{MODI_REASON},
+		       #{SALE_PRSN},
+		       #{SERVANT_COMPANY_NUM},
+		       #{BFO_ISSU_ID},
+		       #{PRE_SEND_YN},        --20210527 추가
+		       #{PAY_TERMS}
+		     )
+ 	</insert>
+
+ 	<insert id="ssa560ukrvServiceImpl.insertLogMaster2" parameterType="Map">
+	   	 /*ssa560ukrvServiceImpl.insertLogMaster*/
+		INSERT INTO L_STB100T
+		     ( KEY_VALUE,
+		       OPR_FLAG,
+		       DIV_CODE,
+		       PUB_NUM,
+		       BILL_TYPE,
+		       BILL_DATE,
+		       PUB_FR_DATE,
+		       PUB_TO_DATE,
+		       CUSTOM_CODE,
+		       SALE_AMT_O,
+		       SALE_LOC_AMT_I,
+		       TAX_AMT_O,
+		       COLET_CUST_CD,
+		       REMARK,
+		       PROJECT_NO,
+		       UPDATE_DB_USER,
+		       SALE_DIV_CODE,
+		       COLLECT_CARE,
+		       RECEIPT_PLAN_DATE,
+		       TAX_CALC_TYPE,
+		       SALE_PROFIT,
+		       COMP_CODE,
+		       BILL_FLAG,
+		       MODI_REASON,
+		       SALE_PRSN,
+		       SERVANT_COMPANY_NUM,
+		       BFO_ISSU_ID,
+		       PRE_SEND_YN,        --20210527 추가
+		       PAY_TERMS
+		     )
+		VALUES
+		     ( #{M_KEY_VALUE},
+		       #{M_OPR_FLAG},
+		       #{M_DIV_CODE},
+		       #{M_PUB_NUM},
+		       #{M_BILL_TYPE},
+		       #{M_BILL_DATE},
+		       #{M_PUB_FR_DATE},
+		       #{M_PUB_TO_DATE},
+		       #{M_CUSTOM_CODE},
+		       #{M_SALE_AMT_O},
+		       #{M_SALE_LOC_AMT_I},
+		       #{M_TAX_AMT_O},
+		       #{M_COLET_CUST_CD},
+		       #{M_REMARK},
+		       #{M_PROJECT_NO},
+		       #{M_UPDATE_DB_USER},
+		       #{M_SALE_DIV_CODE},
+		       #{M_COLLECT_CARE},
+		       #{M_RECEIPT_PLAN_DATE},
+		       #{M_TAX_CALC_TYPE},
+		       #{M_SALE_PROFIT},
+		       #{M_COMP_CODE},
+		       #{M_BILL_FLAG},
+		       #{M_MODI_REASON},
+		       #{M_SALE_PRSN},
+		       #{M_SERVANT_COMPANY_NUM},
+		       #{M_BFO_ISSU_ID},
+		       #{PRE_SEND_YN},        --20210527 추가
+		       #{PAY_TERMS}
+		     )
+ 	</insert>
+
+	<insert id="ssa560ukrvServiceImpl.insertLogDetail" parameterType="Map">
+		INSERT INTO L_SSA110T
+			(      KEY_VALUE
+				 , OPR_FLAG
+				 , COMP_CODE
+			     , DIV_CODE
+			     , BILL_NUM
+			     , BILL_SEQ
+			     , ITEM_CODE
+			     , SALE_Q
+			     , SALE_P
+			     , SALE_AMT_O
+			     , SALE_LOC_AMT_I
+			     , TAX_TYPE
+			     , TAX_AMT_O
+			     , PUB_NUM
+			     , BEFORE_PUB_NUM
+			     , TO_DIV_CODE
+			     , PROJECT_NO
+			     , INOUT_TYPE
+			     , INOUT_TYPE_DETAIL
+			     , SALE_UNIT
+			     , TRANS_RATE
+			     , WH_CODE
+			     , PRICE_YN
+			     , CUSTOM_CODE
+			     , ORDER_PRSN
+			     , OUT_DIV_CODE
+			     , PRICE_TYPE
+			     , UNIT_WGT
+			     , WGT_UNIT
+			     , UNIT_VOL
+			     , VOL_UNIT
+			     , SALE_WGT_Q
+			     , SALE_FOR_WGT_P
+			     , SALE_WGT_P
+			     , SALE_VOL_Q
+			     , SALE_FOR_VOL_P
+			     , SALE_VOL_P
+			     , INSERT_DB_USER
+			     , INSERT_DB_TIME
+			     , UPDATE_DB_USER
+			     , UPDATE_DB_TIME
+			)
+			SELECT #{KEY_VALUE}
+		       	 , #{OPR_FLAG}
+				 , #{S_COMP_CODE}           AS COMP_CODE
+			     , #{DIV_CODE}              AS DIV_CODE
+			     , #{BILL_NUM}              AS BILL_NUM
+			     , #{BILL_SEQ}              AS BILL_SEQ
+			     , #{ITEM_CODE}             AS ITEM_CODE
+			     , #{SALE_Q}                AS SALE_Q
+			     , #{SALE_P}                AS SALE_P
+			     , #{SALE_AMT_O}         	AS SALE_AMT_O
+			     , #{SALE_AMT_O}            AS SALE_LOC_AMT_I
+			     , #{TAX_TYPE}           	AS TAX_TYPE
+			     , #{TAX_AMT_O}         	AS TAX_AMT_O
+			     , #{PUB_NUM}               AS PUB_NUM
+			     , #{BEFORE_PUB_NUM}        AS BEFORE_PUB_NUM
+			     , #{BILL_DIV_CODE}         AS TO_DIV_CODE
+			     , #{PROJECT_NO}         	AS PROJECT_NO
+			     , #{INOUT_TYPE}       	    AS INOUT_TYPE
+			     , #{INOUT_TYPE_DETAIL}	    AS INOUT_TYPE_DETAIL
+			     , #{SALE_UNIT}        	    AS SALE_UNIT
+			     , #{TRANS_RATE}            AS TRANS_RATE
+			     , #{WH_CODE}               AS WH_CODE
+			     , #{PRICE_YN}         	    AS PRICE_YN
+			     , #{CUSTOM_CODE}           AS CUSTOM_CODE
+			     , #{ORDER_PRSN}       	    AS ORDER_PRSN
+			     , #{OUT_DIV_CODE}     	 	AS OUT_DIV_CODE
+			     , #{PRICE_TYPE}         	AS PRICE_TYPE
+			     , #{UNIT_WGT}            	AS UNIT_WGT
+			     , #{WGT_UNIT}          	AS WGT_UNIT
+			     , #{UNIT_VOL}            	AS UNIT_VOL
+			     , #{VOL_UNIT}          	AS VOL_UNIT
+			     , #{SALE_WGT_Q}       	 	AS SALE_WGT_Q
+			     , #{SALE_FOR_WGT_P}    	AS SALE_FOR_WGT_P
+			     , #{SALE_WGT_P}        	AS SALE_WGT_P
+			     , #{SALE_VOL_Q}        	AS SALE_VOL_Q
+			     , #{SALE_FOR_VOL_P}    	AS SALE_FOR_VOL_P
+			     , #{SALE_VOL_P}        	AS SALE_VOL_P
+			     , #{INSERT_DB_USER}        AS INSERT_DB_USER
+			     , GETDATE()                AS INSERT_DB_TIME
+			     , #{UPDATE_DB_USER}        AS UPDATE_DB_USER
+			     , GETDATE()                AS UPDATE_DB_TIME
+ 	</insert>
+
+	<update id="ssa560ukrvServiceImpl.pubModifyIssue" parameterType="Map" statementType="CALLABLE">
+		{call USP_SALES_Ssa560ukr_PubModifyIssue(
+			#{Flag,         mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CompCode,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DivCode,      mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PubNum,       mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{OriginPubNum, mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{SalePrsn,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{Remark,       mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{UserId,       mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{BfoIssuId,    mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{AutoNum,      mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ErrorDesc,    mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update>
+
+	<update id="ssa560ukrvServiceImpl.pubContractCancel" parameterType="Map" statementType="CALLABLE">
+		{call USP_SALES_Ssa560ukr_PubContractCancel(
+			#{Flag,         mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CompCode,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DivCode,      mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PubNum,       mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{OriginPubNum, mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{SalePrsn,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{Remark,       mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{UserId,       mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{MakeDate,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{BfoIssuId,    mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ModiReason,   mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{AutoNum,      mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ErrorDesc,    mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update>
+
+	<update id="ssa560ukrvServiceImpl.pubIssue" parameterType="Map" statementType="CALLABLE">
+		{call USP_SALES_Ssa560ukr (
+			#{KeyValue,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{BeforePumNum, mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{OrgPubNum,    mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ReturnPumNum, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ErrorDesc,    mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update>
+</mapper>

@@ -1,0 +1,1002 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="hep930ukrServiceImpl">
+
+<select id="hep930ukrServiceImpl.getAbilCodeList" parameterType="Map" resultType="comboItem">
+    /*hep930ukrServiceImpl.getAbilCodeList */
+    
+    
+SELECT 
+    T1.ABIL_CODE    AS 'value'
+  , T1.ABIL_NAME    AS 'text'
+
+FROM (
+    SELECT A.ABIL_CODE, B.CODE_NAME AS ABIL_NAME
+    FROM HUM100T A WITH(NOLOCK)
+        LEFT JOIN BSA100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                        AND B.MAIN_CODE = 'H006'
+                                        AND B.SUB_CODE = A.ABIL_CODE
+    WHERE A.COMP_CODE = #{S_COMP_CODE}
+    AND A.RETR_DATE = '00000000'
+    AND A.ABIL_CODE NOT IN ('40', '50')
+    AND B.REF_CODE5 = 'Y'
+    
+    UNION
+    
+    SELECT B.REF_CODE1 AS ABIL_CODE, B.REF_CODE2 AS ABIL_NAME
+    FROM HUM100T A WITH(NOLOCK)
+        LEFT JOIN BSA100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                        AND B.MAIN_CODE = 'H006'
+                                        AND B.SUB_CODE = A.ABIL_CODE
+    WHERE A.COMP_CODE = #{S_COMP_CODE}
+    AND A.RETR_DATE = '00000000'
+    AND A.ABIL_CODE IN ('40', '50')
+    AND B.REF_CODE5 = 'Y'
+) T1
+
+</select> 
+    
+<select id="hep930ukrServiceImpl.calcRatingSelectList" parameterType="Map" resultType="rMap">
+/* hep930ukrServiceImpl.calcRatingSelectList 등급별인원수 계산 관련 배분기준조회 */
+SELECT 
+    T.COMP_CODE
+  , T.MERITS_YEARS
+  , T.ABIL_CODE
+  , CASE WHEN T.ABIL_CODE = '40' THEN M1.REF_CODE2
+         ELSE M1.CODE_NAME
+     END AS ABIL_NAME
+  , T.GRADE_GUBUN  
+  , CASE WHEN T.GRADE_GUBUN = 1 THEN '인원'
+         WHEN T.GRADE_GUBUN = 2 THEN '적용'
+     END AS GRADE
+
+  , T.S_GRADE + T.A_GRADE + T.B_GRADE + T.C_GRADE + T.D_GRADE AS TOTAL_PERSONNEL
+  , T.S_GRADE 
+  , T.A_GRADE 
+  , T.B_GRADE 
+  , T.C_GRADE 
+  , T.D_GRADE 
+FROM (
+    SELECT 
+        COMP_CODE
+      , MERITS_YEARS
+      , ABIL_CODE
+      , SUM(CASE WHEN MERITS_CLASS = 'S' THEN MERITS_NUM 
+                 ELSE NULL END) AS S_GRADE
+      , SUM(CASE WHEN MERITS_CLASS = 'A' THEN MERITS_NUM 
+                 ELSE NULL END) AS A_GRADE
+      , SUM(CASE WHEN MERITS_CLASS = 'B' THEN MERITS_NUM 
+                 ELSE NULL END) AS B_GRADE
+      , SUM(CASE WHEN MERITS_CLASS = 'C' THEN MERITS_NUM 
+                 ELSE NULL END) AS C_GRADE
+      , SUM(CASE WHEN MERITS_CLASS = 'D' THEN MERITS_NUM 
+                 ELSE NULL END) AS D_GRADE
+      , '1' AS GRADE_GUBUN
+
+          FROM HEP935T 
+         WHERE COMP_CODE = #{S_COMP_CODE}
+           AND MERITS_YEARS = #{MERITS_YEARS}
+        <if test="@foren.Ognl@isNotEmpty(ABIL_CODE)">
+           AND ABIL_CODE = #{ABIL_CODE}
+        </if>
+         GROUP BY COMP_CODE,MERITS_YEARS, ABIL_CODE
+
+    UNION ALL
+
+    SELECT 
+        COMP_CODE
+      , MERITS_YEARS
+      , ABIL_CODE
+      , SUM(CASE WHEN MERITS_CLASS = 'S' THEN APLC_NUM 
+                 ELSE NULL END) AS S_GRADE
+      , SUM(CASE WHEN MERITS_CLASS = 'A' THEN APLC_NUM
+                 ELSE NULL END) AS A_GRADE
+      , SUM(CASE WHEN MERITS_CLASS = 'B' THEN APLC_NUM
+                 ELSE NULL END) AS B_GRADE
+      , SUM(CASE WHEN MERITS_CLASS = 'C' THEN APLC_NUM
+                 ELSE NULL END) AS C_GRADE
+      , SUM(CASE WHEN MERITS_CLASS = 'D' THEN APLC_NUM
+                 ELSE NULL END) AS D_GRADE
+      , '2' AS GRADE_GUBUN
+
+          FROM HEP935T 
+         WHERE COMP_CODE = #{S_COMP_CODE}
+           AND MERITS_YEARS = #{MERITS_YEARS}
+        <if test="@foren.Ognl@isNotEmpty(ABIL_CODE)">
+           AND ABIL_CODE = #{ABIL_CODE}
+        </if>
+         GROUP BY COMP_CODE,MERITS_YEARS, ABIL_CODE
+) T
+
+LEFT JOIN BSA100T M1 WITH(NOLOCK) ON M1.COMP_CODE = T.COMP_CODE
+                                 AND M1.MAIN_CODE = 'H006'
+                                 AND M1.SUB_CODE = T.ABIL_CODE
+ORDER BY T.ABIL_CODE, T.GRADE_GUBUN
+
+</select>
+
+
+<select id="hep930ukrServiceImpl.calcRatingCreate" parameterType="Map" resultType="String">
+/* hep930ukrServiceImpl.calcRatingCreate 등급별인원수 계산 관련 배분기준생성 */
+BEGIN
+    DECLARE  @MERITS_YEARS          NVARCHAR(4)
+            ,@USER_ID               NVARCHAR(100)
+            ,@COMP_CODE             NVARCHAR(50)
+    
+            ,@RATIO_S               NUMERIC(5,2)
+            ,@RATIO_A               NUMERIC(5,2)
+            ,@RATIO_B               NUMERIC(5,2)
+            ,@RATIO_C               NUMERIC(5,2)
+            ,@RATIO_D               NUMERIC(5,2)
+
+    SET @MERITS_YEARS = #{MERITS_YEARS}
+    SET @USER_ID = #{S_USER_ID}
+    SET @COMP_CODE = #{S_COMP_CODE}
+
+    DELETE HEP935T WHERE COMP_CODE = @COMP_CODE 
+                     AND MERITS_YEARS = @MERITS_YEARS
+
+    SET @RATIO_S = (SELECT ISNULL(REF_CODE4,0) FROM BSA100T WHERE COMP_CODE = @COMP_CODE AND MAIN_CODE = 'HE44' AND SUB_CODE = 'S')
+    SET @RATIO_A = (SELECT ISNULL(REF_CODE4,0) FROM BSA100T WHERE COMP_CODE = @COMP_CODE AND MAIN_CODE = 'HE44' AND SUB_CODE = 'A')
+    SET @RATIO_B = (SELECT ISNULL(REF_CODE4,0) FROM BSA100T WHERE COMP_CODE = @COMP_CODE AND MAIN_CODE = 'HE44' AND SUB_CODE = 'B')
+    SET @RATIO_C = (SELECT ISNULL(REF_CODE4,0) FROM BSA100T WHERE COMP_CODE = @COMP_CODE AND MAIN_CODE = 'HE44' AND SUB_CODE = 'C')
+    SET @RATIO_D = (SELECT ISNULL(REF_CODE4,0) FROM BSA100T WHERE COMP_CODE = @COMP_CODE AND MAIN_CODE = 'HE44' AND SUB_CODE = 'D')
+
+    DECLARE @TMP_T TABLE ( 
+        COMP_CODE    NVARCHAR(20) 
+      , ABIL_CODE    NVARCHAR(20) 
+      , ABIL_NAME    NVARCHAR(20) 
+      , GRADE        NVARCHAR(20) 
+      , CNT          NVARCHAR(20) 
+
+      , S_GRADE      NVARCHAR(20) 
+      , A_GRADE      NVARCHAR(20) 
+      , B_GRADE      NVARCHAR(20) 
+      , C_GRADE      NVARCHAR(20) 
+      , D_GRADE      NVARCHAR(20) 
+      , RN INT 
+    ) 
+
+    INSERT INTO @TMP_T
+
+    SELECT 
+        TT.* 
+      , ROW_NUMBER() OVER(PARTITION BY ABIL_CODE ORDER BY ABIL_CODE) AS RN 
+    FROM
+    (
+        SELECT 
+            T1.COMP_CODE
+          , T1.ABIL_CODE
+          , T1.ABIL_NAME
+          , '인원' AS '등급'
+          , T1.CNT 
+          , CONVERT(NUMERIC(5,1), (T1.CNT * (@RATIO_S) / 100.00))    AS S
+          , CONVERT(NUMERIC(5,1) ,(T1.CNT * (@RATIO_A) / 100.00))    AS A
+          , CONVERT(NUMERIC(5,1) ,(T1.CNT * (@RATIO_B) / 100.00))    AS B
+          , CONVERT(NUMERIC(5,1) ,(T1.CNT * (@RATIO_C) / 100.00))    AS C
+          , CONVERT(NUMERIC(5,1) ,(T1.CNT * (@RATIO_D) / 100.00))    AS D
+
+        FROM (
+            SELECT 
+                A.COMP_CODE
+               ,A.ABIL_CODE
+               ,B.CODE_NAME AS ABIL_NAME
+               ,COUNT(A.COMP_CODE) AS CNT
+            FROM      HUM100T A WITH(NOLOCK)
+            LEFT JOIN BSA100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                            AND B.MAIN_CODE = 'H006'
+                                            AND B.SUB_CODE = A.ABIL_CODE
+            WHERE A.COMP_CODE = @COMP_CODE
+              AND A.RETR_DATE = '00000000'
+              AND A.ABIL_CODE NOT IN ('40', '50')
+              AND B.REF_CODE5 = 'Y'
+
+            GROUP BY A.COMP_CODE,A.ABIL_CODE,B.CODE_NAME
+
+        UNION
+
+        SELECT 
+            A.COMP_CODE
+           ,B.REF_CODE1 AS ABIL_CODE
+           ,B.REF_CODE2 AS ABIL_NAME
+           ,COUNT(A.COMP_CODE) AS CNT
+        FROM      HUM100T A WITH(NOLOCK)
+        LEFT JOIN BSA100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                        AND B.MAIN_CODE = 'H006'
+                                        AND B.SUB_CODE = A.ABIL_CODE
+        WHERE A.COMP_CODE = @COMP_CODE
+          AND A.RETR_DATE = '00000000'
+          AND A.ABIL_CODE IN ('40', '50')
+          AND B.REF_CODE5 = 'Y'
+
+        GROUP BY A.COMP_CODE,B.REF_CODE1, B.REF_CODE2
+
+        ) T1
+    
+        UNION
+    
+        SELECT 
+            T2.COMP_CODE
+          , T2.ABIL_CODE
+          , T2.ABIL_NAME
+          , '적용' AS '등급'
+          , T2.CNT 
+    
+          , ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_S) / 100.00)),0)    AS S
+          , ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_A) / 100.00)),0)    AS A
+          , ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_B) / 100.00)),0)    AS B
+          , ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_C) / 100.00)),0)    AS C
+                                            
+    
+          ,CASE WHEN (
+                        ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_S) / 100.00)),0)  
+                      + ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_A) / 100.00)),0)  
+                      + ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_B) / 100.00)),0)  
+                      + ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_C) / 100.00)),0)  
+                      + ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_D) / 100.00)),0) 
+                ) != T2.CNT THEN 
+                                ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_D) / 100.00)),0) +
+                                T2.CNT - (
+                                      ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_S) / 100.00)),0)  
+                                    + ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_A) / 100.00)),0)  
+                                    + ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_B) / 100.00)),0)  
+                                    + ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_C) / 100.00)),0)  
+                                    + ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_D) / 100.00)),0) 
+                                )
+                ELSE 
+                    ROUND(CONVERT(NUMERIC(5,1) ,(T2.CNT * (@RATIO_D) / 100.00)),0)
+            END AS D
+        FROM (
+            SELECT 
+                A.COMP_CODE
+               ,A.ABIL_CODE
+               ,B.CODE_NAME AS ABIL_NAME
+               ,COUNT(A.COMP_CODE) AS CNT
+            FROM      HUM100T A WITH(NOLOCK)
+            LEFT JOIN BSA100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                            AND B.MAIN_CODE = 'H006'
+                                            AND B.SUB_CODE = A.ABIL_CODE
+            WHERE A.COMP_CODE = @COMP_CODE
+              AND A.RETR_DATE = '00000000'
+              AND A.ABIL_CODE NOT IN ('40', '50')
+              AND B.REF_CODE5 = 'Y'
+            GROUP BY A.COMP_CODE,A.ABIL_CODE,B.CODE_NAME
+    
+            UNION
+    
+            SELECT 
+                A.COMP_CODE
+               ,B.REF_CODE1 AS ABIL_CODE
+               ,B.REF_CODE2 AS ABIL_NAME
+               ,COUNT(A.COMP_CODE) AS CNT
+            FROM      HUM100T A WITH(NOLOCK)
+            LEFT JOIN BSA100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                            AND B.MAIN_CODE = 'H006'
+                                            AND B.SUB_CODE = A.ABIL_CODE
+            WHERE A.COMP_CODE = @COMP_CODE
+              AND A.RETR_DATE = '00000000'
+              AND A.ABIL_CODE IN ('40', '50')
+              AND B.REF_CODE5 = 'Y'
+            GROUP BY A.COMP_CODE,B.REF_CODE1, B.REF_CODE2
+        ) T2
+    ) TT
+
+    DECLARE @TMP_T2 TABLE (
+        COMP_CODE       NVARCHAR(20) 
+      , MERITS_YEARS    NVARCHAR(4)
+      , ABIL_CODE       NVARCHAR(20) 
+
+      , S_MERITS_NUM    NUMERIC(5,2)
+      , S_APLC_NUM      NUMERIC(5,2)
+      , A_MERITS_NUM    NUMERIC(5,2)
+      , A_APLC_NUM      NUMERIC(5,2)
+      , B_MERITS_NUM    NUMERIC(5,2)
+      , B_APLC_NUM      NUMERIC(5,2)
+      , C_MERITS_NUM    NUMERIC(5,2)
+      , C_APLC_NUM      NUMERIC(5,2)
+      , D_MERITS_NUM    NUMERIC(5,2)
+      , D_APLC_NUM      NUMERIC(5,2)
+
+    )
+
+    INSERT INTO @TMP_T2
+    SELECT 
+        AA.COMP_CODE
+
+      , @MERITS_YEARS AS MERITS_YEARS
+      , AA.ABIL_CODE
+      , AA.S_GRADE AS S_MERITS_NUM
+      , BB.S_GRADE AS S_APLC_NUM
+      , AA.A_GRADE AS A_MERITS_NUM
+      , BB.A_GRADE AS A_APLC_NUM
+      , AA.B_GRADE AS B_MERITS_NUM
+      , BB.B_GRADE AS B_APLC_NUM
+      , AA.C_GRADE AS C_MERITS_NUM
+      , BB.C_GRADE AS C_APLC_NUM
+      , AA.D_GRADE AS D_MERITS_NUM
+      , BB.D_GRADE AS D_APLC_NUM
+    FROM      @TMP_T AA
+    LEFT JOIN @TMP_T BB ON AA.ABIL_CODE = BB.ABIL_CODE
+                       AND AA.RN = BB.RN-1
+    WHERE BB.COMP_CODE IS NOT NULL
+
+    DECLARE @TMP_T3 TABLE ( 
+        MERITS_CLASS NVARCHAR(20) 
+    ) 
+    INSERT INTO @TMP_T3 VALUES ('S')
+    INSERT INTO @TMP_T3 VALUES ('A')
+    INSERT INTO @TMP_T3 VALUES ('B')
+    INSERT INTO @TMP_T3 VALUES ('C')
+    INSERT INTO @TMP_T3 VALUES ('D')
+
+    INSERT INTO HEP935T (
+        COMP_CODE
+       ,MERITS_YEARS
+       ,ABIL_CODE 
+       ,MERITS_CLASS
+       ,MERITS_NUM
+       ,APLC_NUM
+       ,INSERT_DB_USER
+       ,INSERT_DB_TIME
+       ,UPDATE_DB_USER
+       ,UPDATE_DB_TIME
+    )
+    SELECT 
+        T.COMP_CODE
+       ,T.MERITS_YEARS
+       ,T.ABIL_CODE 
+       ,T.MERITS_CLASS
+       ,T.MERITS_NUM
+       ,T.APLC_NUM
+       ,@USER_ID
+       ,GETDATE()
+       ,@USER_ID
+       ,GETDATE()
+    FROM(
+        SELECT 
+            A.COMP_CODE
+           ,A.MERITS_YEARS
+           ,A.ABIL_CODE 
+           ,B.MERITS_CLASS
+           ,SUM(CASE WHEN B.MERITS_CLASS = 'S' THEN A.S_MERITS_NUM 
+                     WHEN B.MERITS_CLASS = 'A' THEN A.A_MERITS_NUM 
+                     WHEN B.MERITS_CLASS = 'B' THEN A.B_MERITS_NUM 
+                     WHEN B.MERITS_CLASS = 'C' THEN A.C_MERITS_NUM 
+                     WHEN B.MERITS_CLASS = 'D' THEN A.D_MERITS_NUM 
+                     ELSE NULL 
+                END) AS MERITS_NUM
+           ,SUM(CASE WHEN B.MERITS_CLASS = 'S' THEN A.S_APLC_NUM 
+                     WHEN B.MERITS_CLASS = 'A' THEN A.A_APLC_NUM 
+                     WHEN B.MERITS_CLASS = 'B' THEN A.B_APLC_NUM 
+                     WHEN B.MERITS_CLASS = 'C' THEN A.C_APLC_NUM 
+                     WHEN B.MERITS_CLASS = 'D' THEN A.D_APLC_NUM 
+                     ELSE NULL 
+                END) AS APLC_NUM
+        FROM      @TMP_T2 A
+        LEFT JOIN @TMP_T3 B ON 1=1
+        GROUP BY A.COMP_CODE, A.MERITS_YEARS, A.ABIL_CODE, B.MERITS_CLASS
+    ) T
+/*
+    SELECT 
+        T.COMP_CODE
+      , T.MERITS_YEARS
+      , T.ABIL_CODE
+      , CASE WHEN T.ABIL_CODE = '40' THEN M1.REF_CODE2
+             ELSE M1.CODE_NAME
+        END AS ABIL_NAME
+      , T.GRADE_GUBUN  
+      , CASE WHEN T.GRADE_GUBUN = 1 THEN '인원'
+             WHEN T.GRADE_GUBUN = 2 THEN '적용'
+        END AS GRADE
+      , T.S_GRADE + T.A_GRADE + T.B_GRADE + T.C_GRADE + T.D_GRADE AS TOTAL_PERSONNEL
+      , T.S_GRADE 
+      , T.A_GRADE 
+      , T.B_GRADE 
+      , T.C_GRADE 
+      , T.D_GRADE 
+    FROM (
+        SELECT 
+            COMP_CODE
+          , MERITS_YEARS
+          , ABIL_CODE
+          , SUM(CASE WHEN MERITS_CLASS = 'S' THEN MERITS_NUM 
+                     ELSE NULL 
+                END) AS S_GRADE
+          , SUM(CASE WHEN MERITS_CLASS = 'A' THEN MERITS_NUM 
+                     ELSE NULL 
+                END) AS A_GRADE
+          , SUM(CASE WHEN MERITS_CLASS = 'B' THEN MERITS_NUM 
+                     ELSE NULL 
+                END) AS B_GRADE
+          , SUM(CASE WHEN MERITS_CLASS = 'C' THEN MERITS_NUM 
+                     ELSE NULL 
+                END) AS C_GRADE
+          , SUM(CASE WHEN MERITS_CLASS = 'D' THEN MERITS_NUM 
+                     ELSE NULL 
+                END) AS D_GRADE
+          , '1' AS GRADE_GUBUN
+        FROM HEP935T 
+        WHERE COMP_CODE = @COMP_CODE
+          AND MERITS_YEARS = @MERITS_YEARS
+        GROUP BY COMP_CODE,MERITS_YEARS, ABIL_CODE
+
+        UNION ALL
+
+        SELECT 
+            COMP_CODE
+          , MERITS_YEARS
+          , ABIL_CODE
+          , SUM(CASE WHEN MERITS_CLASS = 'S' THEN APLC_NUM 
+                     ELSE NULL 
+                END) AS S_GRADE
+          , SUM(CASE WHEN MERITS_CLASS = 'A' THEN APLC_NUM
+                     ELSE NULL 
+                END) AS A_GRADE
+          , SUM(CASE WHEN MERITS_CLASS = 'B' THEN APLC_NUM
+                     ELSE NULL 
+                END) AS B_GRADE
+          , SUM(CASE WHEN MERITS_CLASS = 'C' THEN APLC_NUM
+                     ELSE NULL 
+                END) AS C_GRADE
+          , SUM(CASE WHEN MERITS_CLASS = 'D' THEN APLC_NUM
+                     ELSE NULL 
+                END) AS D_GRADE
+          , '2' AS GRADE_GUBUN
+
+        FROM HEP935T 
+        WHERE COMP_CODE = @COMP_CODE
+          AND MERITS_YEARS = @MERITS_YEARS
+        GROUP BY COMP_CODE, MERITS_YEARS, ABIL_CODE
+    ) T
+    LEFT JOIN BSA100T M1 WITH(NOLOCK) ON M1.COMP_CODE = T.COMP_CODE
+                                     AND M1.MAIN_CODE = 'H006'
+                                     AND M1.SUB_CODE = T.ABIL_CODE
+    ORDER BY T.ABIL_CODE, T.GRADE_GUBUN
+    
+    */
+END
+</select>
+
+
+
+
+<update id="hep930ukrServiceImpl.calcRatingUpdate" parameterType="Map">   
+/* hep930ukrServiceImpl.calcRatingUpdate 등급별인원수 계산 관련 수정 */
+    UPDATE HEP935T 
+       SET APLC_NUM = #{APLC_NUM}
+          ,UPDATE_DB_USER = #{S_USER_ID}
+          ,UPDATE_DB_TIME = GETDATE()
+     WHERE COMP_CODE = #{S_COMP_CODE}
+       AND MERITS_YEARS = #{MERITS_YEARS}
+       AND ABIL_CODE = #{ABIL_CODE}
+       AND MERITS_CLASS = #{MERITS_CLASS}
+    
+</update>
+
+
+<select id="hep930ukrServiceImpl.personCheck" parameterType="Map" resultType="String">
+/* hep930ukrServiceImpl.personCheck 평가대상자생성전 인원수 체크 */
+DECLARE @PERSONC1  NUMERIC(10),
+        @PERSONC2  NUMERIC(10),
+        @FLAG  NVARCHAR(1)
+        
+SET @FLAG = 'Y'  -- 정상
+
+SET @PERSONC1 = (SELECT 
+                    SUM(APLC_NUM)  
+                 FROM HEP935T 
+                 WHERE COMP_CODE = #{S_COMP_CODE}
+                   AND MERITS_YEARS = #{MERITS_YEARS})
+SET @PERSONC2 = (SELECT 
+                    COUNT(A.COMP_CODE) AS CNT
+                 FROM HUM100T A WITH(NOLOCK)
+            LEFT JOIN BSA100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                            AND B.MAIN_CODE = 'H006'
+                                            AND B.SUB_CODE = A.ABIL_CODE
+                WHERE A.COMP_CODE = #{S_COMP_CODE}
+                AND A.RETR_DATE = '00000000'
+                AND B.REF_CODE5 = 'Y')
+
+IF(@PERSONC1 != @PERSONC2)
+BEGIN 
+    SET @FLAG = 'N'     -- 비정상
+END
+
+SELECT @FLAG
+
+</select>
+  
+<select id="hep930ukrServiceImpl.personCreate" parameterType="Map" resultType="String">
+/* hep930ukrServiceImpl.personCreate 평가대상자생성 */
+
+DECLARE 
+     @baseCodeHE76_B_R1 NUMERIC(5)
+    ,@baseCodeHE76_B_R4 NUMERIC(5)
+        
+    SET @baseCodeHE76_B_R1 = ISNULL((SELECT REF_CODE1 FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'HE76' AND SUB_CODE = 'B'),0)
+    SET @baseCodeHE76_B_R4 = ISNULL((SELECT REF_CODE4 FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'HE76' AND SUB_CODE = 'B'),0)
+  
+DELETE HEP930T WHERE COMP_CODE = #{S_COMP_CODE} AND MERITS_YEARS = #{MERITS_YEARS} AND MERITS_GUBUN = #{MERITS_GUBUN}
+
+INSERT INTO HEP930T
+(
+    COMP_CODE
+    ,PERSON_NUMB
+    ,MERITS_YEARS
+    ,MERITS_GUBUN
+    ,DEPT_CODE
+    ,AFFIL_CODE
+    ,JOIN_DATE
+    ,BSC_POINT
+    
+    ,BSC_WEGH_POINT
+    ,LAST_EVAL_POINT
+)
+SELECT 
+     A.COMP_CODE 
+    ,A.PERSON_NUMB                  --사번
+    ,#{MERITS_YEARS} AS MERITS_YEARS         --기준년도
+    ,#{MERITS_GUBUN} AS MERITS_GUBUN           --종합평가
+    ,A.DEPT_CODE                    --부서코드
+    ,A.AFFIL_CODE                   --직렬코드
+    ,A.JOIN_DATE                    --입사일
+
+    ,B.LAST_POINT AS BSC_POINT      --BSC평가점수     
+    
+    ,CASE WHEN @baseCodeHE76_B_R1 = 0 THEN 0
+                             WHEN @baseCodeHE76_B_R4 = 0 THEN 0
+                             ELSE B.LAST_POINT * ((100/@baseCodeHE76_B_R4)*(@baseCodeHE76_B_R1/100))
+                        END  --가중치점수           점수*등급배분율  (BSC) B 
+    ,CASE WHEN @baseCodeHE76_B_R1 = 0 THEN 0
+                             WHEN @baseCodeHE76_B_R4 = 0 THEN 0
+                             ELSE B.LAST_POINT * ((100/@baseCodeHE76_B_R4)*(@baseCodeHE76_B_R1/100))
+                        END  --가중치점수           점수*등급배분율  (BSC) B
+    
+FROM HUM100T A WITH(NOLOCK)
+
+LEFT JOIN HEP920T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                AND B.PERSON_NUMB = A.PERSON_NUMB
+                                AND B.EVAL_YEARS = #{MERITS_YEARS}           --기준년도 파라미터
+
+LEFT JOIN BSA100T C WITH(NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+                                AND C.MAIN_CODE = 'H006'
+                                AND C.SUB_CODE = A.ABIL_CODE
+
+WHERE A.COMP_CODE = #{S_COMP_CODE}
+  AND A.RETR_DATE = '00000000'
+  AND C.REF_CODE5 = 'Y'
+</select>
+    
+
+
+<update id="hep930ukrServiceImpl.updateDetail1" parameterType="Map">   
+/* hep930ukrServiceImpl.updateDetail1  평가점수계산버튼 누를시 HEP930T에 각점수 항목 계산해서 UPDATE */ 
+
+DECLARE  @baseCodeHE76_A_R1 NUMERIC(5)
+        ,@baseCodeHE76_A_R4 NUMERIC(5)
+        ,@baseCodeHE76_B_R1 NUMERIC(5)
+        ,@baseCodeHE76_B_R4 NUMERIC(5)
+        ,@baseCodeHE76_C_R1 NUMERIC(5)
+        ,@baseCodeHE76_C_R4 NUMERIC(5)
+        
+        
+        ,@workWeghPoint NUMERIC(5,3)
+        ,@bscWeghPoint NUMERIC(5,3)
+        ,@multiWeghPoint NUMERIC(5,3)
+                
+        SET @baseCodeHE76_A_R1 = ISNULL((SELECT REF_CODE1 FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'HE76' AND SUB_CODE = 'A'),0)
+        SET @baseCodeHE76_A_R4 = ISNULL((SELECT REF_CODE4 FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'HE76' AND SUB_CODE = 'A'),0)
+        SET @baseCodeHE76_B_R1 = ISNULL((SELECT REF_CODE1 FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'HE76' AND SUB_CODE = 'B'),0)
+        SET @baseCodeHE76_B_R4 = ISNULL((SELECT REF_CODE4 FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'HE76' AND SUB_CODE = 'B'),0)
+        SET @baseCodeHE76_C_R1 = ISNULL((SELECT REF_CODE1 FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'HE76' AND SUB_CODE = 'C'),0)
+        SET @baseCodeHE76_C_R4 = ISNULL((SELECT REF_CODE4 FROM BSA100T WHERE COMP_CODE = #{S_COMP_CODE} AND MAIN_CODE = 'HE76' AND SUB_CODE = 'C'),0)
+
+
+        SET @workWeghPoint = CASE WHEN @baseCodeHE76_C_R1 = 0 THEN 0
+                                  WHEN @baseCodeHE76_C_R4 = 0 THEN 0
+                                  ELSE #{WORK_POINT} * ((100/@baseCodeHE76_C_R4)*(@baseCodeHE76_C_R1/100))
+                             END  --가중치점수          점수*(환산점수*등급배분율) (근무평정) C
+                             
+        SET @bscWeghPoint = CASE WHEN @baseCodeHE76_B_R1 = 0 THEN 0
+                                 WHEN @baseCodeHE76_B_R4 = 0 THEN 0
+                                 ELSE #{BSC_POINT} * ((100/@baseCodeHE76_B_R4)*(@baseCodeHE76_B_R1/100))
+                            END  --가중치점수           점수*등급배분율  (BSC) B
+                            
+        SET @multiWeghPoint = CASE WHEN @baseCodeHE76_A_R1 = 0 THEN 0
+                                   WHEN @baseCodeHE76_A_R4 = 0 THEN 0
+                                   ELSE #{MULTI_POINT} * ((100/@baseCodeHE76_A_R4)*(@baseCodeHE76_A_R1/100))
+                              END  --가중치점수     점수*(환산점수*등급배분율) (다면평가)  A
+                              
+UPDATE HEP930T SET 
+    UPDATE_DB_USER = #{S_USER_ID}
+    ,UPDATE_DB_TIME = GETDATE()
+            
+    ,WORK_POINT = #{WORK_POINT}               --점수   (근무평정) C
+    
+    ,WORK_WEGH_POINT = @workWeghPoint  --가중치점수          점수*(환산점수*등급배분율) (근무평정) C
+    
+    ,BSC_POINT = #{BSC_POINT}                --점수    (BSC)  B
+    
+    ,BSC_WEGH_POINT = @bscWeghPoint  --가중치점수           점수*등급배분율  (BSC) B
+                       
+    ,MULTI_POINT = #{MULTI_POINT}              --점수    (다면평가)   A
+    
+    ,MULTI_WEGH_POINT = @multiWeghPoint  --가중치점수     점수*(환산점수*등급배분율) (다면평가)  A
+
+
+    ,LAST_EVAL_POINT = @workWeghPoint + @bscWeghPoint + @multiWeghPoint         --최종점수  
+            
+            
+         WHERE COMP_CODE = #{S_COMP_CODE}
+           AND PERSON_NUMB = #{PERSON_NUMB}
+           AND MERITS_YEARS = #{MERITS_YEARS}
+           AND MERITS_GUBUN = #{MERITS_GUBUN}
+</update> 
+
+
+
+
+
+<update id="hep930ukrServiceImpl.mainCalcRating" parameterType="Map">  
+/* hep930ukrServiceImpl.mainCalcRating 평가점수계산버튼 누를시 hep930t 에 저장 후 그 데이터를 토대로 순위와 등급 생성 시키는 프로세스*/
+     UPDATE HEP930T 
+        SET UPDATE_DB_USER = #{S_USER_ID}
+           ,UPDATE_DB_TIME = GETDATE()
+           ,MERITS_CLASS = B.GRADE
+           ,TEMPN_01 = B.RANKING
+  FROM HEP930T A
+        INNER JOIN (
+            
+                SELECT 
+                     DDD.ABIL_CODE
+                    ,DDD.LAST_EVAL_POINT
+                    ,DDD.RANKING
+                    ,CASE WHEN DDD.RANKING &lt;= EEE.SSSSS THEN 'S' 
+                          WHEN DDD.RANKING  &gt; EEE.SSSSS  AND  DDD.RANKING &lt;= EEE.SSSSS + EEE.AAAAA THEN 'A'
+                          WHEN DDD.RANKING  &gt; EEE.SSSSS + EEE.AAAAA  AND  DDD.RANKING &lt;= EEE.SSSSS + EEE.AAAAA + EEE.BBBBB THEN 'B'
+                          WHEN DDD.RANKING  &gt; EEE.SSSSS + EEE.AAAAA + EEE.BBBBB AND  DDD.RANKING &lt;= EEE.SSSSS + EEE.AAAAA + EEE.BBBBB + EEE.CCCCC THEN 'C'
+                          WHEN DDD.RANKING  &gt; EEE.SSSSS + EEE.AAAAA + EEE.BBBBB + EEE.CCCCC AND DDD.RANKING &lt;=  EEE.SSSSS + EEE.AAAAA + EEE.BBBBB + EEE.CCCCC + EEE.DDDDD THEN 'D'
+       
+                     END    AS GRADE
+                    ,DDD.PERSON_NUMB
+                    ,DDD.COMP_CODE
+                    ,DDD.MERITS_YEARS
+                    ,DDD.MERITS_GUBUN
+
+                FROM
+                (  SELECT 
+                    ROW_NUMBER() OVER(PARTITION BY CASE WHEN B.ABIL_CODE = '40' THEN '40'
+                                                        WHEN B.ABIL_CODE = '50' THEN '40'
+                                                        ELSE B.ABIL_CODE END ORDER BY A.LAST_EVAL_POINT DESC) AS RANKING
+
+                    ,CASE WHEN B.ABIL_CODE = '40' THEN '40'
+                          WHEN B.ABIL_CODE = '50' THEN '40'
+                          ELSE B.ABIL_CODE END AS ABIL_CODE
+                    ,A.LAST_EVAL_POINT
+
+                    ,A.PERSON_NUMB
+                    ,A.COMP_CODE
+                    ,A.MERITS_YEARS
+                    ,A.MERITS_GUBUN
+                    FROM      HEP930T A WITH(NOLOCK)
+                    LEFT JOIN HUM100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                                    AND B.PERSON_NUMB = A.PERSON_NUMB
+                    WHERE A.COMP_CODE = #{S_COMP_CODE}
+                      AND A.MERITS_YEARS = #{MERITS_YEARS}
+                      AND A.MERITS_GUBUN = #{MERITS_GUBUN}                               
+                ) DDD LEFT JOIN ( SELECT 
+                                     ABIL_CODE
+                                    ,SUM(CASE WHEN MERITS_CLASS = 'S' THEN APLC_NUM ELSE 0 END) AS SSSSS
+                                    ,SUM(CASE WHEN MERITS_CLASS = 'A' THEN APLC_NUM ELSE 0 END) AS AAAAA
+                                    ,SUM(CASE WHEN MERITS_CLASS = 'B' THEN APLC_NUM ELSE 0 END) AS BBBBB
+                                    ,SUM(CASE WHEN MERITS_CLASS = 'C' THEN APLC_NUM ELSE 0 END) AS CCCCC
+                                    ,SUM(CASE WHEN MERITS_CLASS = 'D' THEN APLC_NUM ELSE 0 END) AS DDDDD
+
+                                    FROM HEP935T
+                                   WHERE MERITS_YEARS = #{MERITS_YEARS}
+                                GROUP BY ABIL_CODE
+                                ) EEE ON EEE.ABIL_CODE = DDD.ABIL_CODE
+
+                  ) B ON B.COMP_CODE = A.COMP_CODE
+                     AND B.MERITS_YEARS = A.MERITS_YEARS
+                     AND B.MERITS_GUBUN = A.MERITS_GUBUN
+                     AND B.PERSON_NUMB = A.PERSON_NUMB
+ 
+</update>
+
+
+<update id="hep930ukrServiceImpl.updateDetail2" parameterType="Map">  
+/* hep930ukrServiceImpl.updateDetail2  등급조정 버튼 누를시 조정등급, 조정사유, 최종등급 update */ 
+    UPDATE HEP930T 
+       SET UPDATE_DB_USER = #{S_USER_ID}
+          ,UPDATE_DB_TIME = GETDATE()
+          ,MERITS_CLASS = #{ADJU_MERITS_CLASS}
+          ,ADJU_MERITS_CLASS = #{ADJU_MERITS_CLASS}
+          ,ADJU_RESN = #{ADJU_RESN}
+    
+    WHERE COMP_CODE = #{S_COMP_CODE}
+      AND PERSON_NUMB = #{PERSON_NUMB}
+      AND MERITS_YEARS = #{MERITS_YEARS}
+      AND MERITS_GUBUN = #{MERITS_GUBUN}
+
+</update>
+
+
+
+<select id="hep930ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+/* hep930ukrServiceImpl.selectList 평가관리 조회 */
+	
+SELECT 
+         A.COMP_CODE
+        ,A.MERITS_YEARS
+        ,A.MERITS_GUBUN
+        ,A.TEMPN_01 AS RANK
+        ,A.AFFIL_CODE   -- 직렬코드
+        ,M2.CODE_NAME AS AFFIL_NAME  -- 직렬명
+        ,A.DEPT_CODE    -- 부서코드
+        ,M3.TREE_NAME AS DEPT_NAME    -- 부서명
+       
+        -- ,B.ABIL_CODE    -- 직급코드 
+        ,CASE WHEN B.ABIL_CODE = '40' THEN M1.REF_CODE1
+              WHEN B.ABIL_CODE = '50' THEN M1.REF_CODE1
+              ELSE B.ABIL_CODE
+         END 
+         AS ABIL_CODE     -- 직급코드 
+        ,CASE WHEN B.ABIL_CODE = '40' THEN M1.REF_CODE2
+              WHEN B.ABIL_CODE = '50' THEN M1.REF_CODE2
+              ELSE M1.CODE_NAME
+         END
+         AS ABIL_NAME   --직급명
+        ,A.PERSON_NUMB  --사번
+        ,B.NAME         --성명
+        ,A.JOIN_DATE    --입사일
+  
+        ,A.WORK_POINT           --근무평정점수             
+        ,A.WORK_WEGH_POINT      --근무평정_가중치점수        
+        ,A.BSC_POINT            --BSC평가점수         
+        ,A.BSC_WEGH_POINT       --BSC평가_가중치점수   
+        ,A.MULTI_POINT          --다면평가점수         
+        ,A.MULTI_WEGH_POINT     --다면평가_가중치점수    
+        ,A.LAST_EVAL_POINT      --최종평가점수         
+        ,A.MERITS_CLASS         --고과등급            
+        ,A.ADJU_MERITS_CLASS    --조정등급            
+        ,A.ADJU_RESN            --조정사유            
+
+    FROM      HEP930T A WITH(NOLOCK)
+    LEFT JOIN HUM100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                    AND B.PERSON_NUMB = A.PERSON_NUMB
+                                    
+    LEFT JOIN BSA100T M1 WITH(NOLOCK) ON M1.COMP_CODE = A.COMP_CODE
+                                     AND M1.MAIN_CODE = 'H006'
+                                     AND M1.SUB_CODE = B.ABIL_CODE
+
+    LEFT JOIN BSA100T M2 WITH(NOLOCK) ON M2.COMP_CODE = A.COMP_CODE
+                                     AND M2.MAIN_CODE = 'H173'
+                                     AND M2.SUB_CODE = A.AFFIL_CODE
+
+    LEFT JOIN BSA210T M3 WITH(NOLOCK) ON M3.COMP_CODE = A.COMP_CODE
+                                     AND M3.TREE_CODE = A.DEPT_CODE                                   
+                                     
+    WHERE A.COMP_CODE = #{S_COMP_CODE}
+      AND A.MERITS_YEARS = #{MERITS_YEARS}
+      AND A.MERITS_GUBUN = #{MERITS_GUBUN}
+      
+      
+<if test="@foren.Ognl@isNotEmpty(AFFIL_CODE)">
+      AND A.AFFIL_CODE = #{AFFIL_CODE}
+</if>
+<if test="@foren.Ognl@isNotEmpty(DEPTS)">
+  AND A.DEPT_CODE    IN
+    <foreach collection="DEPTS" item="item" separator="," close=")" open="(">
+        #{item}
+    </foreach>
+</if>
+<if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+      AND A.PERSON_NUMB = #{PERSON_NUMB}
+</if>
+<if test="@foren.Ognl@isNotEmpty(ABIL_CODE)">
+    <if test="ABIL_CODE == &quot;40&quot;">
+        AND M1.REF_CODE1 = #{ABIL_CODE}
+    </if>
+    <if test="ABIL_CODE != &quot;40&quot;">
+        AND B.ABIL_CODE = #{ABIL_CODE}
+    </if>
+</if>
+
+ORDER BY A.COMP_CODE
+        ,CASE WHEN B.ABIL_CODE = '40' THEN M1.REF_CODE1
+              WHEN B.ABIL_CODE = '50' THEN M1.REF_CODE1
+              ELSE B.ABIL_CODE
+         END 
+        ,A.TEMPN_01
+
+</select>                                     
+                                     
+           
+
+
+<insert id="hep930ukrServiceImpl.insertExcelHep930t_xls" parameterType="Map">       /* 엑셀insert */
+    INSERT INTO HEP930T_XLS
+         ( _EXCEL_JOBID
+         , _EXCEL_ROWNUM
+         , _EXCEL_HAS_ERROR
+         , _EXCEL_ERROR_MSG
+         
+         , COMP_CODE   
+         , PERSON_NUMB       
+         , NAME       
+        <if test="@foren.Ognl@isNotEmpty(WORK_POINT)">
+         , WORK_POINT  
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(MULTI_POINT)">
+         , MULTI_POINT
+        </if>
+      
+           
+         , INSERT_DB_USER
+         , INSERT_DB_TIME   
+         , UPDATE_DB_USER
+         , UPDATE_DB_TIME
+         ) 
+    VALUES
+         ( #{_EXCEL_JOBID}
+         , #{_EXCEL_ROWNUM}
+         , #{_EXCEL_HAS_ERROR,jdbcType=VARCHAR}
+         , #{_EXCEL_ERROR,jdbcType=VARCHAR}
+         
+         , #{S_COMP_CODE}
+         , #{PERSON_NUMB}
+         , #{NAME}
+         <if test="@foren.Ognl@isNotEmpty(WORK_POINT)">
+         , ${WORK_POINT}   
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(MULTI_POINT)">
+         , ${MULTI_POINT} 
+        </if>
+       
+         , #{S_USER_ID}
+         , GETDATE()
+         , #{S_USER_ID}
+         , GETDATE()
+         )
+</insert>
+
+<select id="hep930ukrServiceImpl.selectExcelUploadSheet1" parameterType="Map" resultType="rMap">    /* 엑셀업로드 버튼 / 조회 */
+     BEGIN
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+    
+        DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+              , @UserId      NVARCHAR(100) /* 사용자ID    */
+              , @LangType    NVARCHAR(2)  /* 언어구분    */
+              , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+              , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+    
+        SET @CompCode = #{S_COMP_CODE}
+        SET @UserId   = #{S_USER_ID}
+        SET @LangType = #{S_LANG_CODE}  
+    
+        /* 명칭 참조 유형 */
+        SELECT TOP 1 @RefItem = REF_ITEM
+          FROM BSA300T WITH (NOLOCK)
+         WHERE USER_ID = @UserId
+    
+        SET @RefItem = ISNULL(@RefItem, N'0')
+    
+        /* 날짜 포맷 유형 설정 */
+        SELECT TOP 1 @DateFormat = CODE_NAME
+          FROM BSA100T WITH (NOLOCK)
+         WHERE COMP_CODE = @CompCode
+           AND MAIN_CODE = N'B044'
+           AND REF_CODE1 = N'Y'
+    
+        SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+    
+        /* 데이터 조회 */    
+            SELECT 
+               A._EXCEL_JOBID
+              ,A._EXCEL_ROWNUM
+              ,A._EXCEL_HAS_ERROR
+              ,A._EXCEL_ERROR_MSG
+              ,A.COMP_CODE
+              ,A.PERSON_NUMB
+              ,B.NAME
+              ,A.WORK_POINT
+              ,A.MULTI_POINT
+              
+              FROM HEP930T_XLS A WITH(NOLOCK)
+         LEFT JOIN HUM100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                         AND B.PERSON_NUMB = A.PERSON_NUMB
+             WHERE _EXCEL_JOBID = #{_EXCEL_JOBID}
+            ORDER BY _EXCEL_JOBID, _EXCEL_ROWNUM
+    END
+</select>
+
+<update id="excelValidate" >    /* 엑셀validation */
+    
+UPDATE   A
+SET 
+        A._EXCEL_HAS_ERROR = (CASE WHEN 
+                                    A.PERSON_NUMB     IS NULL THEN 'Y'     -- 발령코드
+                                    
+                               ELSE A._EXCEL_HAS_ERROR                      -- 필수값 체크
+                             END),
+        
+        
+
+                         
+        A._EXCEL_ERROR_MSG = (CASE WHEN  A.PERSON_NUMB      IS NULL THEN '필수입력 값을 확인 해주세요.'
+                                   ELSE  A._EXCEL_ERROR_MSG 
+                             END)
+                             
+FROM HEP930T_XLS A  
+
+UPDATE   A
+SET 
+        A._EXCEL_HAS_ERROR = (CASE WHEN 
+                                    B.PERSON_NUMB   IS NULL THEN 'Y'       -- HUM100 사번 체크
+                               ELSE A._EXCEL_HAS_ERROR              -- 필수값 체크
+                             END),
+                             
+        A._EXCEL_ERROR_MSG = (CASE WHEN  
+                                    B.PERSON_NUMB   IS NULL  THEN '인사정보에 없는 사번이 존재합니다.'
+                               ELSE A._EXCEL_ERROR_MSG 
+                             END)
+                             
+FROM HEP930T_XLS A 
+
+LEFT JOIN HEP930T B  ON B.COMP_CODE = #{S_COMP_CODE}
+                    AND B.PERSON_NUMB  = A.PERSON_NUMB
+
+</update>
+
+<select id="hep930ukrServiceImpl.selectExcelUploadApply" parameterType="Map" resultType="rMap"> /* 엑셀업로드 버튼 / 조회 */
+    BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+    DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+          , @UserId      NVARCHAR(100) /* 사용자ID    */
+          , @LangType    NVARCHAR(2)  /* 언어구분    */
+          , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+          , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+
+    SET @CompCode = #{S_COMP_CODE}
+    SET @UserId   = #{S_USER_ID}
+    SET @LangType = #{S_LANG_CODE}  
+
+    /* 명칭 참조 유형 */
+    SELECT TOP 1 @RefItem = REF_ITEM
+      FROM BSA300T WITH (NOLOCK)
+     WHERE USER_ID = @UserId
+
+    SET @RefItem = ISNULL(@RefItem, N'0')
+
+    /* 날짜 포맷 유형 설정 */
+    SELECT TOP 1 @DateFormat = CODE_NAME
+      FROM BSA100T WITH (NOLOCK)
+     WHERE COMP_CODE = @CompCode
+       AND MAIN_CODE = N'B044'
+       AND REF_CODE1 = N'Y'
+
+    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+    /* 데이터 조회 */    
+        SELECT _EXCEL_JOBID
+             ,_EXCEL_ROWNUM
+             , _EXCEL_HAS_ERROR
+             , _EXCEL_ERROR_MSG
+             
+            ,COMP_CODE
+            ,PERSON_NUMB
+            ,NAME
+            ,WORK_POINT
+            ,MULTI_POINT
+          FROM HEP930T_XLS WITH(NOLOCK)                                 
+         WHERE _EXCEL_JOBID = #{_EXCEL_JOBID}
+        ORDER BY _EXCEL_JOBID, _EXCEL_ROWNUM
+END
+</select>
+
+
+</mapper>

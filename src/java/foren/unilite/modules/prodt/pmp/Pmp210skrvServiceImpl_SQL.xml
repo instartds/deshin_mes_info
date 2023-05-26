@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="pmp210skrvServiceImpl">
+	<select id="pmp210skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* pmp210skrvServiceImpl.selectList */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		        
+		    DECLARE @COMP_CODE      NVARCHAR(08)    /* 법인코드  */
+		          , @USER_ID        NVARCHAR(100)    /* 사용자ID */
+		          , @RefItem        NVARCHAR(01)
+		        
+		    SET @COMP_CODE  = #{S_COMP_CODE}
+		    SET @USER_ID    = #{S_USER_ID}
+		        
+		    /* 명칭 참조 유형 */
+		    SELECT  TOP 1 @RefItem = REF_ITEM
+		    FROM    BSA300T WITH (NOLOCK)
+		    WHERE   COMP_CODE = @COMP_CODE
+		    AND     USER_ID = @USER_ID
+		        
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+		
+		    /*  조회  */
+		    SELECT C.DIV_CODE
+		         , C.WORK_SHOP_CODE
+		         , '' AS SEQ
+		         , C.OUTSTOCK_NUM
+		         , C.REF_WKORD_NUM
+		         , A.ITEM_CODE
+		         , CASE WHEN @RefItem = '1'
+		                THEN ISNULL(A.ITEM_NAME1, '')
+		                WHEN @RefItem = '2'
+		                THEN ISNULL(A.ITEM_NAME2, '')
+		                ELSE ISNULL(A.ITEM_NAME, '')
+		           END                                                   AS ITEM_NAME
+		         , A.ITEM_NAME1
+		         , A.SPEC
+		         , A.STOCK_UNIT
+		         , '' ALLOCK_Q
+		         , C.OUTSTOCK_REQ_Q
+		         , C.OUTSTOCK_Q
+		         , ISNULL(C.OUTSTOCK_REQ_Q, 0) - ISNULL(C.OUTSTOCK_Q, 0) AS ISSUE_QTY
+		         , CAST(C.OUTSTOCK_REQ_DATE AS DATETIME)                 AS OUTSTOCK_REQ_DATE
+		         , C.LOT_NO
+		         , C.REMARK
+		         , C.PROJECT_NO
+		         , C.PJT_CODE
+		         , ISNULL(C.GW_FLAG,'N')                                 AS GW_FLAG
+		         , ISNULL(D.PROD_ITEM_CODE,'')                           AS WKORD_ITEM_CODE --작지품목
+		         , ISNULL(D.PROD_ITEM_SPEC,'')                           AS WKORD_ITEM_SPEC --작지품목 스펙
+		         --20200116 추가: 현재고량
+		         , Z1.CURRENT_STOCK
+		      FROM       BPR100T AS A  WITH (NOLOCK)
+		      INNER JOIN PMP300T AS C  WITH (NOLOCK) ON A.COMP_CODE       = C.COMP_CODE
+		                                            AND A.ITEM_CODE       = C.ITEM_CODE
+		                                            AND C.CONTROL_STATUS != '8'
+		      LEFT  JOIN (
+		                      SELECT S1.COMP_CODE, S1.DIV_CODE, S1.WKORD_NUM, S1.ITEM_CODE AS PROD_ITEM_CODE, S2.ITEM_CODE AS CHILD_ITEM_CODE, S3.SPEC AS PROD_ITEM_SPEC
+		                      FROM PMP100T S1 WITH (NOLOCK)
+		                           INNER JOIN PMP200T S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.DIV_CODE=S2.DIV_CODE AND S1.WKORD_NUM=S2.WKORD_NUM AND S1.WORK_SHOP_CODE=S2.WORK_SHOP_CODE
+		                           INNER JOIN BPR100T S3 WITH (NOLOCK) ON S1.COMP_CODE=S3.COMP_CODE AND S1.ITEM_CODE=S3.ITEM_CODE
+		                      GROUP BY S1.COMP_CODE, S1.DIV_CODE, S1.WKORD_NUM, S1.ITEM_CODE, S2.ITEM_CODE, S3.SPEC
+		      ) D ON C.COMP_CODE = D.COMP_CODE AND C.DIV_CODE=D.DIV_CODE AND C.REF_WKORD_NUM=D.WKORD_NUM AND C.ITEM_CODE=D.CHILD_ITEM_CODE
+		      --20200116 추가: 현재고량
+		      LEFT  JOIN (SELECT COMP_CODE, DIV_CODE, ITEM_CODE, SUM(GOOD_STOCK_Q) AS CURRENT_STOCK
+		                    FROM BIV100T AS Z1 WITH(NOLOCK) 
+		                   WHERE COMP_CODE     = @COMP_CODE
+		                     AND DIV_CODE      = #{DIV_CODE}
+		                   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE) Z1 ON Z1.COMP_CODE = A.COMP_CODE
+		                                                              AND Z1.DIV_CODE  = C.DIV_CODE
+		                                                              AND Z1.ITEM_CODE     = C.ITEM_CODE
+		                                                            --AND Z1.WH_CODE       = A.WH_CODE
+		    WHERE   A.COMP_CODE          = @COMP_CODE
+		    /* 조회조건 */
+		    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		    AND     C.DIV_CODE           = #{DIV_CODE}                   /*사업장*/
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(WORK_SHOP_CODE)">
+		    AND     C.WORK_SHOP_CODE     = #{WORK_SHOP_CODE}             /*작업장*/
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(OUTSTOCK_NUM)">
+		    AND     C.OUTSTOCK_NUM    LIKE #{OUTSTOCK_NUM} +'%'       /*출고요청번호*/
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(OUTSTOCK_REQ_DATE_FR)">
+		    AND     C.OUTSTOCK_REQ_DATE &gt;= #{OUTSTOCK_REQ_DATE_FR}   /*요청일 FR*/
+		    </if>
+		    <if test="@foren.Ognl@isNotEmpty(OUTSTOCK_REQ_DATE_TO)">
+		    AND     C.OUTSTOCK_REQ_DATE &lt;= #{OUTSTOCK_REQ_DATE_TO}   /*요청일 TO*/
+		    </if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)"> <!-- 20210826 수정: 품목 팝업창 정규화 -->
+				   AND A.ITEM_CODE = #{ITEM_CODE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)"> <!-- 20210826 수정: 품목 팝업창 정규화 -->
+				   AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)"> <!-- 20210826 수정: 품목 팝업창 정규화 -->
+				   AND CASE WHEN @RefItem = '0' THEN A.ITEM_NAME
+		                    WHEN @RefItem = '1' THEN A.ITEM_NAME1
+		                    WHEN @RefItem = '2' THEN A.ITEM_NAME2
+		                    ELSE A.ITEM_NAME
+		               END LIKE '%' + #{ITEM_NAME} + '%'
+			</if>
+		    <if test="@foren.Ognl@isNotEmpty(REF_WKORD_NUM)">
+		    AND     C.REF_WKORD_NUM   LIKE #{REF_WKORD_NUM} +'%'          /*작업지시번호*/
+		    </if>
+		    <if test="IS_ISSUE == &quot;on&quot;">
+		    AND     ISNULL(C.OUTSTOCK_REQ_Q, 0) - ISNULL(C.OUTSTOCK_Q, 0) > 0   /*미출고*/
+		    </if>
+		    
+		    ORDER   BY OUTSTOCK_NUM
+		
+		    SET ARITHABORT OFF
+		    SET NOCOUNT OFF
+		END 
+	</select>
+</mapper>

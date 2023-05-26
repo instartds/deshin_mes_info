@@ -1,0 +1,666 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="hrt507ukrServiceImpl">
+
+	<select id="hrt507ukrServiceImpl.selectMaster" parameterType="Map" resultType="rMap">
+		--Hrt507UKr.CHrt507UKr[fnHrt507QStd] Query01
+		BEGIN
+		    DECLARE @COMP_CODE         NVARCHAR(08)                -- (필수) 법인코드
+		          , @RETR_TYPE         NVARCHAR(01)                -- (필수) 퇴직유형
+		          , @RETR_DATE         NVARCHAR(08)                -- (필수) 정산일
+		          , @PERSON_NUMB       NVARCHAR(10)                -- (필수) 사번
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+		--  1. 변수 값 할당 -------------------------------------------------------------------------------------------------
+		    SET @COMP_CODE    = #{S_COMP_CODE}
+		    SET @RETR_TYPE    = #{RETR_TYPE}
+		    SET @RETR_DATE    = #{RETR_DATE}
+		    SET @PERSON_NUMB  = #{PERSON_NUMB}
+
+		--  2. 데이터 조회 --------------------------------------------------------------------------------------------------
+
+		    SELECT
+          -- [소득자]
+                       A.REPRE_NUM                                                                                  AS REPRE_NUM                -- 주민등록번호
+                     , A.REPRE_NUM                                                                                  AS REPRE_NUM_EXPOS          -- 주민등록번호(암호화)
+                     , A.KOR_ADDR                                                                                   AS ADDR_NAME                -- 주소
+                     --, LEFT(B.RETR_DATE,4) + '0101'                                                                 AS RETR_DATE_FR             -- 귀속연도fr
+                     --, B.RETR_DATE                                                                                  AS RETR_DATE_TO             -- 귀속연도to
+                     , CASE WHEN RETR_TYPE = 'M' 
+                            THEN LEFT(B.SUPP_DATE,4) + '0101' 
+                            ELSE LEFT(B.RETR_DATE,4) + '0101' 
+                        END    																						AS RETR_DATE_FR             -- 귀속연도fr
+                     , CASE WHEN RETR_TYPE = 'M' 
+                            THEN B.SUPP_DATE 
+                            ELSE B.RETR_DATE 
+                        END                                      													AS RETR_DATE_TO             -- 귀속연도to
+                
+                     , uniLITE.fnGetUserDateComp(A.COMP_CODE, ISNULL(B.RETR_ANN_JOIN_DATE,''))                      AS RETR_ANN_JOIN_DATE       -- (10)확정급여형 퇴직연금 제도 가입일
+                     , ISNULL(B.RETR_ANNU_I_20111231,0)                                                             AS RETR_ANNU_I_20111231     -- (11)2011.12.31퇴직금 
+                     , B.RETR_RESN                                                                                  AS RETR_RESN                -- (12)퇴직사유
+                
+                     --[퇴직급여현황 - 중간지급]
+                     , ISNULL(B.M_DIV_NAME        ,'')                                                              AS M_DIV_NAME               -- (13)근무처명_중간
+                     , (CASE WHEN ISNULL(B.M_COMPANY_NUM,'') = ''
+                             THEN ''
+                             ELSE (SUBSTRING(B.M_COMPANY_NUM,1,3) + '-' + SUBSTRING(B.M_COMPANY_NUM,4,2) + '-' + SUBSTRING(B.M_COMPANY_NUM,6,5))
+                         END)                                                                                       AS M_COMPANY_NUM            -- (14)사업자등록번호_중간
+                     , ISNULL(B.M_ANNU_TOTAL_I     , 0)                                                             AS M_ANNU_TOTAL_I           -- (15)퇴직급여_중간
+                     , ISNULL(B.M_OUT_INCOME_I     , 0)                                                             AS M_OUT_INCOME_I           -- (16)비과세 퇴직급여_중간
+                     , ISNULL(B.M_TAX_TOTAL_I      , 0)                                                             AS M_TAX_TOTAL_I            -- (17)과세대상 퇴직급여_중간
+                
+                     --[퇴직급여현황 - 최종분]
+                     , ISNULL(E.DIV_FULL_NAME      ,'')                                                             AS R_DIV_NAME               -- (13)근무처명_최종
+                     , (CASE WHEN ISNULL(E.COMPANY_NUM,'') = ''
+                             THEN ''
+                             ELSE (SUBSTRING(E.COMPANY_NUM,1,3) + '-' + SUBSTRING(E.COMPANY_NUM,4,2) + '-' + SUBSTRING(E.COMPANY_NUM,6,5))
+                         END)                                                                                       AS R_COMPANY_NUM            -- (14)사업자등록번호_최종
+                     , ISNULL(B.R_ANNU_TOTAL_I     , 0)                                                             AS R_ANNU_TOTAL_I           -- (15)퇴직급여_최종
+                     , ISNULL(B.OUT_INCOME_I       , 0)                                                             AS R_OUT_INCOME_I           -- (16)비과세 퇴직급여_최종
+                     , ISNULL(B.R_TAX_TOTAL_I      , 0)                                                             AS R_TAX_TOTAL_I            -- (17)과세대상 퇴직급여_최종
+                
+                     --[퇴직급여현황 - 정산]
+                     , ISNULL(B.M_ANNU_TOTAL_I     , 0) + ISNULL(B.R_ANNU_TOTAL_I    , 0)                           AS S_ANNU_TOTAL_I           -- (15)퇴직급여_정산
+                     , ISNULL(B.M_OUT_INCOME_I     , 0) + ISNULL(B.OUT_INCOME_I      , 0)                           AS S_OUT_INCOME_I           -- (16)비과세퇴직급여_정산
+                     , ISNULL(B.M_TAX_TOTAL_I      , 0) + ISNULL(B.R_TAX_TOTAL_I     , 0)                           AS S_TAX_TOTAL_I            -- (17)과세대상퇴직급여_정산
+                
+                     --[근속연수 - 중간지급]
+                     , ISNULL(B.M_JOIN_DATE        ,'')                                                             AS M_JOIN_DATE              -- (18)입사일_중간
+                     , ISNULL(B.M_CALCU_END_DATE   ,'')                                                             AS M_CALCU_END_DATE         -- (19)기산일_중간
+                     , ISNULL(B.M_RETR_DATE        ,'')                                                             AS M_RETR_DATE              -- (20)퇴사일_중간
+                     , ISNULL(B.M_SUPP_DATE        ,'')                                                             AS M_SUPP_DATE              -- (21)지급일_중간
+                     , ISNULL(B.M_LONG_MONTHS      , 0)                                                             AS M_LONG_MONTHS            -- (22)근속월수_중간
+                     , ISNULL(B.M_EXEP_MONTHS_BE13 , 0)                                                             AS M_EXEP_MONTHS_BE13       -- (23)제외월수_중간(2013이전)
+                     , ISNULL(B.M_EXEP_MONTHS_AF13 , 0)                                                             AS M_EXEP_MONTHS_AF13       -- (23)제외월수_중간(2013이후)
+                     , ISNULL(B.M_EXEP_MONTHS      , 0)                                                             AS M_EXEP_MONTHS            -- (23)제외월수_중간
+                     , ISNULL(B.M_ADD_MONTHS_BE13  , 0)                                                             AS M_ADD_MONTHS_BE13        -- (24)가산월수_중간(2013이전)
+                     , ISNULL(B.M_ADD_MONTHS_AF13  , 0)                                                             AS M_ADD_MONTHS_AF13        -- (24)가산월수_중간(2013이후)
+                     , ISNULL(B.M_ADD_MONTHS       , 0)                                                             AS M_ADD_MONTHS             -- (24)가산월수_중간
+                     , ISNULL(B.M_LONG_YEARS       , 0)                                                             AS M_LONG_YEARS             -- (26)근속연수_중간
+                
+                     --[근속연수 - 최종분]
+                     , ISNULL(B.R_JOIN_DATE        ,'')                                                             AS R_JOIN_DATE              -- (18)입사일_최종
+                     , ISNULL(B.R_CALCU_END_DATE   ,'')                                                             AS R_CALCU_END_DATE         -- (19)기산일_최종
+                     , ISNULL(B.R_RETR_DATE        ,'')                                                             AS R_RETR_DATE              -- (20)퇴사일_최종
+                     , ISNULL(B.R_SUPP_DATE        ,'')                                                             AS R_SUPP_DATE              -- (21)지급일_최종
+                     , ISNULL(B.R_LONG_MONTHS      , 0)                                                             AS R_LONG_MONTHS            -- (22)근속월수_최종
+                     , ISNULL(B.R_EXEP_MONTHS_BE13 , 0)                                                             AS R_EXEP_MONTHS_BE13       -- (23)제외월수_최종(2013이전)
+                     , ISNULL(B.R_EXEP_MONTHS_AF13 , 0)                                                             AS R_EXEP_MONTHS_AF13       -- (23)제외월수_최종(2013이후)
+                     , ISNULL(B.R_EXEP_MONTHS      , 0)                                                             AS R_EXEP_MONTHS            -- (23)제외월수_최종
+                     , ISNULL(B.R_ADD_MONTHS_BE13  , 0)                                                             AS R_ADD_MONTHS_BE13        -- (24)가산월수_최종(2013이전)
+                     , ISNULL(B.R_ADD_MONTHS_AF13  , 0)                                                             AS R_ADD_MONTHS_AF13        -- (24)가산월수_최종(2013이후)
+                     , ISNULL(B.R_ADD_MONTHS       , 0)                                                             AS R_ADD_MONTHS             -- (24)가산월수_최종
+                     , ISNULL(B.R_LONG_YEARS       , 0)                                                             AS R_LONG_YEARS             -- (26)근속연수_최종
+                
+                     --[근속연수 - 정산]
+                     , ISNULL(B.S_JOIN_DATE        ,'')                                                             AS S_JOIN_DATE              -- (18)입사일_정산
+                     , ISNULL(B.S_CALCU_END_DATE   ,'')                                                             AS S_CALCU_END_DATE         -- (19)기산일_정산
+                     , ISNULL(B.S_RETR_DATE        ,'')                                                             AS S_RETR_DATE              -- (20)퇴사일_정산
+                     , ISNULL(B.S_LONG_MONTHS      , 0)                                                             AS S_LONG_MONTHS            -- (22)근속월수_정산
+                     , ISNULL(B.S_EXEP_MONTHS      , 0)                                                             AS S_EXEP_MONTHS            -- (23)제외월수_정산
+                     , ISNULL(B.S_ADD_MONTHS       , 0)                                                             AS S_ADD_MONTHS             -- (24)가산월수_정산
+                     , ISNULL(B.S_DUPLI_MONTHS     , 0)                                                             AS S_DUPLI_MONTHS           -- (25)중복월수_정산
+                     , ISNULL(B.S_LONG_YEARS       , 0)                                                             AS S_LONG_YEARS             -- (26)근속연수_정산
+                
+                     --[근속연수 - 안분_2012.12.31이전]
+                     , ISNULL(B.CALCU_END_DATE_BE13, 0)                                                             AS CALCU_END_DATE_BE13      -- (19)기산일_이전
+                     , ISNULL(B.RETR_DATE_BE13     , 0)                                                             AS RETR_DATE_BE13           -- (20)퇴사일_이전
+                     , ISNULL(B.LONG_MONTHS_BE13   , 0)                                                             AS LONG_MONTHS_BE13         -- (22)근속월수_이전
+                     , ISNULL(B.EXEP_MONTHS_BE13   , 0)                                                             AS EXEP_MONTHS_BE13         -- (23)제외월수_이전
+                     , ISNULL(B.ADD_MONTHS_BE13    , 0)                                                             AS ADD_MONTHS_BE13          -- (24)가산월수_이전
+                     , ISNULL(B.LONG_YEARS_BE13    , 0)                                                             AS LONG_YEARS_BE13          -- (26)근속연수_이전
+                
+                     --[근속연수 - 안분_2013.01.01이후]
+                     , ISNULL(B.CALCU_END_DATE_AF13, 0)                                                             AS CALCU_END_DATE_AF13      -- (19)기산일_이후
+                     , ISNULL(B.RETR_DATE_AF13     , 0)                                                             AS RETR_DATE_AF13           -- (20)퇴사일_이후
+                     , ISNULL(B.LONG_MONTHS_AF13   , 0)                                                             AS LONG_MONTHS_AF13         -- (22)근속월수_이후
+                     , ISNULL(B.EXEP_MONTHS_AF13   , 0)                                                             AS EXEP_MONTHS_AF13         -- (23)제외월수_이후
+                     , ISNULL(B.ADD_MONTHS_AF13    , 0)                                                             AS ADD_MONTHS_AF13          -- (24)가산월수_이후
+                     , ISNULL(B.LONG_YEARS_AF13    , 0)                                                             AS LONG_YEARS_AF13          -- (26)근속연수_이후
+                
+                     --개정 규정에 따른 계산 방법
+                     --[과세표준계산]
+                     , ISNULL(B.M_TAX_TOTAL_I      , 0) + ISNULL(B.R_TAX_TOTAL_I      , 0)                          AS S_TAX_TOTAL_I2           -- (27)정산퇴직소득
+                     , ISNULL(B.M_TAX_TOTAL_I      , 0) + ISNULL(B.R_TAX_TOTAL_I      , 0)                          AS S_TAX_TOTAL_I3           -- (34)퇴직소득_정산
+                     , ISNULL(B.INCOME_DED_I       , 0)                                                             AS INCOME_DED_I             -- (28)근속연수공제
+                     , ISNULL(B.INCOME_DED_I       , 0)                                                             AS INCOME_DED_I2            -- (36)근속연수공제_정산
+                     , ISNULL(B.PAY_TOTAL_I_16         , 0)                                                         AS PAY_TOTAL_I_16           -- (29)환산급여
+                     , ISNULL(B.PAY_TOTAL_DED_I_16     , 0)                                                         AS PAY_TOTAL_DED_I_16       -- (30)환산급여별공제
+                     , ISNULL(B.TAX_STD_I_16           , 0)                                                         AS TAX_STD_I_16             -- (31)퇴직소득과세표준
+                     --[세액계산]
+                     , ISNULL(B.CHANGE_COMP_TAX_I_16   , 0)                                                         AS CHANGE_COMP_TAX_I_16     -- (32)환산산출세액
+                     , ISNULL(B.COMP_TAX_I_16          , 0)                                                         AS COMP_TAX_I_16            -- (33)산출세액
+            
+                     --종전 규정에 따른 계산 방법
+                     --[과세표준계산]
+                     , ISNULL(B.M_TAX_TOTAL_I      , 0)                                                             AS M_TAX_TOTAL_I2           -- (34)퇴직소득_중간
+                     , ISNULL(B.R_TAX_TOTAL_I      , 0)                                                             AS R_TAX_TOTAL_I2           -- (34)퇴직소득_최종
+                     , ISNULL(B.SPEC_DED_I         , 0)                                                             AS SPEC_DED_I               -- (35)퇴직소득정률공제_정산
+                     , ISNULL(B.TAX_STD_I          , 0)                                                             AS TAX_STD_I                -- (37)퇴직소득과세표준_정산
+                     --[세액계산]
+                     , ISNULL(B.DIVI_TAX_STD_BE13  , 0)                                                             AS DIVI_TAX_STD_BE13        -- (38)과세표준안분_이전
+                     , ISNULL(B.DIVI_TAX_STD_AF13  , 0)                                                             AS DIVI_TAX_STD_AF13        -- (38)과세표준안분_이후
+                     , ISNULL(B.DIVI_TAX_STD_BE13  , 0) + ISNULL(DIVI_TAX_STD_AF13  , 0)                            AS DIVI_TAX_STD             -- (38)과세표준안분_합계    
+                     , ISNULL(B.AVG_TAX_STD_BE13   , 0)                                                             AS AVG_TAX_STD_BE13         -- (39)연평균과세표준_이전
+                     , ISNULL(B.AVG_TAX_STD_AF13   , 0)                                                             AS AVG_TAX_STD_AF13         -- (39)연평균과세표준_이후
+                     , ISNULL(B.AVG_TAX_STD_I      , 0)                                                             AS AVG_TAX_STD              -- (39)연평균과세표준_합계  AVG_TAX_STD_BE13,AVG_TAX_STD_AF13,AVG_TAX_STD_I 동일함    
+                     , ISNULL(B.EX_TAX_STD_AF13    , 0)                                                             AS EX_TAX_STD_AF13          -- (40)환산과세표준_이후
+                     , ISNULL(B.EX_TAX_STD_AF13    , 0)                                                             AS EX_TAX_STD               -- (40)환산과세표준_합계    
+                     , ISNULL(B.EX_COMP_TAX_AF13   , 0)                                                             AS EX_COMP_TAX_AF13         -- (41)환산산출세액_이후
+                     , ISNULL(B.EX_COMP_TAX_AF13   , 0)                                                             AS EX_COMP_TAX              -- (41)환산산출세액_합계    
+                     , ISNULL(B.AVR_COMP_TAX_BE13  , 0)                                                             AS AVR_COMP_TAX_BE13        -- (42)연평균산출세액_이전
+                     , ISNULL(B.AVR_COMP_TAX_AF13  , 0)                                                             AS AVR_COMP_TAX_AF13        -- (42)연평균산출세액_이후
+                     , ISNULL(B.AVR_COMP_TAX_I     , 0)                                                             AS AVR_COMP_TAX             -- (42)연평균산출세액_합계    
+                     , ISNULL(B.COMP_TAX_BE13      , 0)                                                             AS COMP_TAX_BE13            -- (43)산출세액_이전
+                     , ISNULL(B.COMP_TAX_AF13      , 0)                                                             AS COMP_TAX_AF13            -- (43)산출세액_이후
+                     , ISNULL(B.COMP_TAX_I         , 0)                                                             AS COMP_TAX                 -- (43)산출세액_합계
+                     
+                     --[퇴직소득세액계산]
+                     , ISNULL(B.CHANGE_TAX_YEAR_16     ,'')                                                         AS CHANGE_TAX_YEAR_16       -- (44)퇴직일이 속하는 과세연도
+                     , ISNULL(B.EXEMPTION_COMP_TAX_I_16, 0)                                                         AS EXEMPTION_COMP_TAX_I_16  -- (45)퇴직소득세 산출세액
+                     , ISNULL(B.PAY_END_TAX        , 0)                                                             AS PAY_END_TAX              -- (46)기납부세액
+                     , ISNULL(B.LOCAL_END_TAX      , 0)                                                             AS LOCAL_END_TAX            -- (HIDDEN)기납부세액(주민세)
+                     , ISNULL(B.CHANGE_TARGET_TAX_I_16 , 0)                                                         AS CHANGE_TARGET_TAX_I_16   -- (47)신고대상액
+                     
+                     --[이연퇴직소득세액계산]
+                     , CASE WHEN A.RETR_PENSION_KIND = 'DB' THEN ISNULL(B.DEF_TAX_I, 0)
+                            ELSE 0
+                        END                                                                                         AS DEF_TAX_I2               -- (48)신고대상세액
+                     , ISNULL(B.DEF_TAX_I          , 0)                                                             AS DEF_TAX_I                -- (48)신고대상세액
+                     , ISNULL(F.COMP_NAME          ,'')                                                             AS COMP_NAME                -- 연금계좌취급자
+                     , (CASE WHEN ISNULL(F.COMP_NUM,'') = ''
+                             THEN ''
+                             ELSE (SUBSTRING(F.COMP_NUM,1,3) + '-' + SUBSTRING(F.COMP_NUM,4,2) + '-' + SUBSTRING(F.COMP_NUM,6,5))
+                         END)                                                                                       AS COMP_NUM                 -- 사업자등록번호
+                     , F.BANK_ACCOUNT                                                                               AS BANK_ACCOUNT             -- 계좌번호
+                     , F.BANK_ACCOUNT                                                                               AS BANK_ACCOUNT_EXPOS       -- 계좌번호(암호화)
+                     , ISNULL(F.DEPOSIT_DATE       ,'')                                                             AS DEPOSIT_DATE             -- 입금일
+                     , ISNULL(F.TRANS_RETR_PAY     , 0)                                                             AS TRANS_RETR_PAY           -- (49)계좌입금금액
+                     , CASE WHEN A.RETR_PENSION_KIND = 'DB' THEN ISNULL(B.R_TAX_TOTAL_I, 0) 
+                            ELSE 0
+                        END                                                                                         AS DEFER_TAX_TOTAL_I        -- (50)퇴직급여
+                     , FLOOR(ISNULL(F.DEFER_TAX_I  , 0))                                                       AS DEFER_TAX_I              -- (51)이연퇴직소득세
+                     
+                     --[납부명세] 
+                    , ISNULL(B.IN_TAX_I           , 0)                                                              AS IN_TAX_I1                -- (53)신고대상세액_소득세
+                    , ISNULL(B.LOCAL_TAX_I        , 0)                                                              AS LOCAL_TAX_I1             -- (53)신고대상세액_지방소득
+                    , ISNULL(B.SP_TAX_I           , 0)                                                              AS SP_TAX_I1                -- (53)신고대상세액_농어촌
+                    , ISNULL(B.IN_TAX_I, 0) + ISNULL(B.LOCAL_TAX_I, 0) + ISNULL(B.SP_TAX_I, 0)                      AS SUM_TAX_I1               -- (53)신고대상세액_계
+               
+                    --[납부명세_이연퇴직소득세]   
+                    , ISNULL(F.DEFER_TAX_I, 0)                                                                      AS IN_TAX_I2                -- (54)이연퇴직소득세_소득세
+                    , ISNULL(F.DEFER_TAX_I,0)/10                                                                    AS LOCAL_TAX_I2             -- (54)이연퇴직소득세_지방소득
+                    , ISNULL(F.DEFER_SP_TAX_I, 0)                                                                   AS SP_TAX_I2                -- (54)이연퇴직소득세_농어촌
+                    , ISNULL(F.DEFER_TAX_I, 0) + FLOOR(ISNULL(F.DEFER_TAX_I,0)/10) + ISNULL(F.DEFER_SP_TAX_I, 0)/10 AS SUM_TAX_I2               -- (54)이연퇴직소득세_계
+               
+               
+                    --[납부명세_차감원천징수세액] 
+                    , ISNULL(B.BAL_IN_TAX_I           , 0)                                                          AS BAL_IN_TAX_I                -- (55)차감원천징수세액_소득세
+                    , ISNULL(B.BAL_LOCAL_TAX_I        , 0)                                                          AS BAL_LOCAL_TAX_I             -- (55)차감원천징수세액_지방소득
+                    , ISNULL(B.BAL_SP_TAX_I           , 0)                                                          AS BAL_SP_TAX_I                -- (55)차감원천징수세액_농어촌
+                    , ISNULL(B.BAL_IN_TAX_I, 0) + ISNULL(B.BAL_LOCAL_TAX_I, 0) + ISNULL(B.BAL_SP_TAX_I, 0)          AS SUM_TAX_I3               -- (55)차감원천징수세액_계   
+                
+                     --[HRT500T에서 같이 수정되어야할 항목]
+                     , B.COMP_CODE                                                                                                              --법인코드
+                     , B.RETR_DATE                                                                                                              --정산퇴직일
+                     , B.RETR_TYPE                                                                                                              --정산구분
+                     , B.PERSON_NUMB                                                                                                            --사번
+                     , B.JOIN_DATE                                                                                                              --정산시작일
+                     , B.DUTY_YYYY                                                                                                              --근속년
+                     , B.LONG_MONTH                                                                                                             --근속월
+                     , B.LONG_DAY                                                                                                               --근속일
+                     , B.LONG_TOT_DAY                                                                                                           --근속일수
+                     , B.ADD_MONTH                                                                                                              --누진개월
+                     , B.LONG_TOT_MONTH                                                                                                         --근속월수
+                     , B.LONG_YEARS                                                                                                             --근속년수
+                     , B.AVG_DAY                                                                                                                --3개월총일수
+                     , B.RETR_SUM_I                                                                                                             --지급총액
+                     , B.SUPP_TOTAL_I                                                                                                           --퇴직급여액/정산퇴직금
+                     , B.EARN_INCOME_I                                                                                                          --퇴직소득공제
+                     , B.IN_TAX_I                                                                                                               --소득세
+                     , B.LOCAL_TAX_I                                                                                                            --지방소득세
+                     , B.SP_TAX_I                                                                                                               --농어촌특별세
+                     , B.DED_IN_TAX_ADD_I                                                                                                       --소득세환급액
+                     , B.DED_IN_LOCAL_ADD_I                                                                                                     --주민세환급액
+                     , B.DED_ETC_I                                                                                                              --기타공제
+                     , B.DED_TOTAL_I                                                                                                            --공제총액
+                     , B.REAL_AMOUNT_I                                                                                                          --실지급액
+                     , ISNULL(A.RETR_PENSION_KIND,'') AS RETR_PENSION_KIND                                                                      --확정급여형퇴직연금
+                
+                 FROM            HUM100T AS A
+                      INNER JOIN HRT500T AS B ON B.COMP_CODE         = A.COMP_CODE
+                                             AND B.PERSON_NUMB       = A.PERSON_NUMB
+                      INNER JOIN BOR100T AS D ON D.COMP_CODE         = A.COMP_CODE
+                      INNER JOIN BOR120T AS E ON E.COMP_CODE         = A.COMP_CODE
+                                             AND E.DIV_CODE          = A.SECT_CODE
+                      LEFT  JOIN HRT610T AS F ON F.COMP_CODE         = A.COMP_CODE
+                                             AND F.PERSON_NUMB       = A.PERSON_NUMB
+                                             AND A.RETR_PENSION_KIND = 'DB'
+                WHERE B.COMP_CODE   = @COMP_CODE
+                  AND B.PERSON_NUMB = @PERSON_NUMB
+                  AND B.RETR_TYPE   = @RETR_TYPE
+                  AND B.RETR_DATE   = @RETR_DATE
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+
+    </select>
+    <insert id="hrt507ukrServiceImpl.insert" parameterType="foren.unilite.modules.human.hrt.Hrt507ukrModel">
+		IF EXISTS (SELECT *
+		             FROM HRT500T WITH(NOLOCK)
+		            WHERE COMP_CODE = #{S_COMP_CODE}
+				      AND RETR_DATE = #{RETR_DATE}
+				      AND RETR_TYPE = #{RETR_TYPE}
+				      AND PERSON_NUMB = #{PERSON_NUMB}
+		           )
+		UPDATE HRT500T
+		   SET  RETR_RESN				= #{RETR_RESN}
+	           ,RETR_ANN_JOIN_DATE		= #{RETR_ANN_JOIN_DATE}
+	           ,RETR_ANNU_I_20111231	= #{RETR_ANNU_I_20111231}
+	           ,M_JOIN_DATE				= #{M_JOIN_DATE}
+	           ,M_CALCU_END_DATE		= #{M_CALCU_END_DATE}
+	           ,M_RETR_DATE				= #{M_RETR_DATE}
+	           ,M_SUPP_DATE				= #{M_SUPP_DATE}
+	           ,M_LONG_MONTHS			= #{M_LONG_MONTHS}
+	           ,M_EXEP_MONTHS_BE13		= #{M_EXEP_MONTHS_BE13}
+	           ,M_EXEP_MONTHS_AF13		= #{M_EXEP_MONTHS_AF13}
+	           ,M_EXEP_MONTHS			= #{M_EXEP_MONTHS}
+	           ,M_ADD_MONTHS_BE13		= #{M_ADD_MONTHS_BE13}
+	           ,M_ADD_MONTHS_AF13		= #{M_ADD_MONTHS_AF13}
+	           ,M_ADD_MONTHS			= #{M_ADD_MONTHS}
+	           ,M_LONG_YEARS			= #{M_LONG_YEARS}
+	           ,JOIN_DATE				= #{JOIN_DATE}
+	           ,DUTY_YYYY				= #{DUTY_YYYY}
+	           ,LONG_MONTH				= #{LONG_MONTH}
+	           ,LONG_DAY				= #{LONG_DAY}
+	           ,LONG_YEARS				= #{LONG_YEARS}
+	           ,LONG_TOT_MONTH			= #{LONG_TOT_MONTH}
+	           ,LONG_TOT_DAY			= #{LONG_TOT_DAY}
+	           ,AVG_DAY					= #{AVG_DAY}
+	           ,ADD_MONTH				= #{ADD_MONTH}
+	           ,R_JOIN_DATE				= #{R_JOIN_DATE}
+	           ,R_CALCU_END_DATE		= #{R_CALCU_END_DATE}
+	           ,R_RETR_DATE				= #{R_RETR_DATE}
+	           ,R_SUPP_DATE				= #{R_SUPP_DATE}
+	           ,R_LONG_MONTHS			= #{R_LONG_MONTHS}
+	           ,R_EXEP_MONTHS_BE13		= #{R_EXEP_MONTHS_BE13}
+	           ,R_EXEP_MONTHS_AF13		= #{R_EXEP_MONTHS_AF13}
+	           ,R_EXEP_MONTHS			= #{R_EXEP_MONTHS}
+	           ,R_ADD_MONTHS_BE13		= #{R_ADD_MONTHS_BE13}
+	           ,R_ADD_MONTHS_AF13		= #{R_ADD_MONTHS_AF13}
+	           ,R_ADD_MONTHS			= #{R_ADD_MONTHS}
+	           ,R_LONG_YEARS			= #{R_LONG_YEARS}
+	           ,S_JOIN_DATE				= #{S_JOIN_DATE}
+	           ,S_CALCU_END_DATE		= #{S_CALCU_END_DATE}
+	           ,S_RETR_DATE				= #{S_RETR_DATE}
+	           ,S_LONG_MONTHS			= #{S_LONG_MONTHS}
+	           ,S_EXEP_MONTHS			= #{S_EXEP_MONTHS}
+	           ,S_ADD_MONTHS			= #{S_ADD_MONTHS}
+	           ,S_DUPLI_MONTHS			= #{S_DUPLI_MONTHS}
+	           ,S_LONG_YEARS			= #{S_LONG_YEARS}
+	           ,CALCU_END_DATE_BE13		= #{CALCU_END_DATE_BE13}
+	           ,RETR_DATE_BE13			= #{RETR_DATE_BE13}
+	           ,LONG_MONTHS_BE13		= #{LONG_MONTHS_BE13}
+	           ,EXEP_MONTHS_BE13		= #{EXEP_MONTHS_BE13}
+	           ,ADD_MONTHS_BE13			= #{ADD_MONTHS_BE13}
+	           ,LONG_YEARS_BE13			= #{LONG_YEARS_BE13}
+	           ,CALCU_END_DATE_AF13		= #{CALCU_END_DATE_AF13}
+	           ,RETR_DATE_AF13			= #{RETR_DATE_AF13}
+	           ,LONG_MONTHS_AF13		= #{LONG_MONTHS_AF13}
+	           ,EXEP_MONTHS_AF13		= #{EXEP_MONTHS_AF13}
+	           ,ADD_MONTHS_AF13			= #{ADD_MONTHS_AF13}
+	           ,LONG_YEARS_AF13			= #{LONG_YEARS_AF13}
+	           ,M_DIV_NAME				= #{M_DIV_NAME}
+	           ,M_COMPANY_NUM			= #{M_COMPANY_NUM}
+	           ,M_ANNU_TOTAL_I			= #{M_ANNU_TOTAL_I}
+	           ,M_OUT_INCOME_I			= #{M_OUT_INCOME_I}
+	           ,M_TAX_TOTAL_I			= #{M_TAX_TOTAL_I}
+	           ,RETR_SUM_I				= #{RETR_SUM_I}
+	           ,R_ANNU_TOTAL_I			= #{R_ANNU_TOTAL_I}
+	           ,R_TAX_TOTAL_I			= #{R_TAX_TOTAL_I}
+	           ,SUPP_TOTAL_I			= #{SUPP_TOTAL_I}
+	           ,SPEC_DED_I				= #{SPEC_DED_I}
+	           ,EARN_INCOME_I			= #{EARN_INCOME_I}
+	           ,DIVI_TAX_STD_BE13		= #{DIVI_TAX_STD_BE13}
+	           ,DIVI_TAX_STD_AF13		= #{DIVI_TAX_STD_AF13}
+	           ,TAX_STD_I				= #{TAX_STD_I}
+	           ,AVG_TAX_STD_BE13		= #{AVG_TAX_STD_BE13}
+	           ,AVG_TAX_STD_AF13		= #{AVG_TAX_STD_AF13}
+	           ,AVG_TAX_STD_I			= #{AVG_TAX_STD}
+	           ,EX_TAX_STD_AF13			= #{EX_TAX_STD_AF13}
+	           ,EX_COMP_TAX_AF13		= #{EX_COMP_TAX_AF13}
+	           ,AVR_COMP_TAX_BE13		= #{AVR_COMP_TAX_BE13}
+	           ,AVR_COMP_TAX_AF13		= #{AVR_COMP_TAX_AF13}
+	           ,AVR_COMP_TAX_I			= #{AVR_COMP_TAX}
+	           ,COMP_TAX_BE13			= #{COMP_TAX_BE13}
+	           ,COMP_TAX_I				= #{COMP_TAX}
+	           ,COMP_TAX_AF13			= #{COMP_TAX_AF13}
+	           ,PAY_END_TAX				= #{PAY_END_TAX}
+	           ,DEF_TAX_I				= #{DEF_TAX_I}
+	           ,IN_TAX_I				= #{IN_TAX_I}
+	           ,LOCAL_TAX_I				= #{LOCAL_TAX_I}
+	           ,SP_TAX_I				= #{SP_TAX_I}
+	           ,BAL_IN_TAX_I            = #{BAL_IN_TAX_I}
+	           ,BAL_LOCAL_TAX_I         = #{BAL_LOCAL_TAX_I}
+	           ,BAL_SP_TAX_I            = #{BAL_SP_TAX_I}
+	           ,DED_IN_TAX_ADD_I		= #{DED_IN_TAX_ADD_I}
+	           ,DED_IN_LOCAL_ADD_I		= #{DED_IN_LOCAL_ADD_I}
+	           ,DED_ETC_I				= #{DED_ETC_I}
+	           ,DED_TOTAL_I				= #{DED_TOTAL_I}
+	           ,REAL_AMOUNT_I			= #{REAL_AMOUNT_I}
+
+	           ,UPDATE_DB_USER			= #{S_USER_ID}
+	           ,UPDATE_DB_TIME			= GETDATE()
+	           ,PAY_TOTAL_I_16			= #{PAY_TOTAL_I_16}
+	           ,PAY_TOTAL_DED_I_16		= #{PAY_TOTAL_DED_I_16}
+	           ,TAX_STD_I_16			= #{TAX_STD_I_16}
+	           ,CHANGE_COMP_TAX_I_16	= #{CHANGE_COMP_TAX_I_16}
+	           ,COMP_TAX_I_16			= #{COMP_TAX_I_16}
+	           ,CHANGE_TAX_YEAR_16		= #{CHANGE_TAX_YEAR_16}
+	           ,EXEMPTION_COMP_TAX_I_16	= #{EXEMPTION_COMP_TAX_I_16}
+	           ,CHANGE_TARGET_TAX_I_16	= #{CHANGE_TARGET_TAX_I_16}
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND RETR_DATE = #{RETR_DATE}
+		   AND RETR_TYPE = #{RETR_TYPE}
+		   AND PERSON_NUMB = #{PERSON_NUMB}
+
+		ELSE
+		INSERT INTO HRT500T
+		           (COMP_CODE
+		           ,RETR_DATE
+		           ,RETR_TYPE
+		           ,PERSON_NUMB
+		           ,RETR_RESN
+		           ,RETR_ANN_JOIN_DATE
+		           ,RETR_ANNU_I_20111231
+		           ,M_JOIN_DATE
+		           ,M_CALCU_END_DATE
+		           ,M_RETR_DATE
+		           ,M_SUPP_DATE
+		           ,M_LONG_MONTHS
+		           ,M_EXEP_MONTHS_BE13
+		           ,M_EXEP_MONTHS_AF13
+		           ,M_EXEP_MONTHS
+		           ,M_ADD_MONTHS_BE13
+		           ,M_ADD_MONTHS_AF13
+		           ,M_ADD_MONTHS
+		           ,M_LONG_YEARS
+		           ,JOIN_DATE
+		           ,DUTY_YYYY
+		           ,LONG_MONTH
+		           ,LONG_DAY
+		           ,LONG_YEARS
+		           ,LONG_TOT_MONTH
+		           ,LONG_TOT_DAY
+		           ,AVG_DAY
+		           ,ADD_MONTH
+		           ,R_JOIN_DATE
+		           ,R_CALCU_END_DATE
+		           ,R_RETR_DATE
+		           ,R_SUPP_DATE
+		           ,R_LONG_MONTHS
+		           ,R_EXEP_MONTHS_BE13
+		           ,R_EXEP_MONTHS_AF13
+		           ,R_EXEP_MONTHS
+		           ,R_ADD_MONTHS_BE13
+		           ,R_ADD_MONTHS_AF13
+		           ,R_ADD_MONTHS
+		           ,R_LONG_YEARS
+		           ,S_JOIN_DATE
+		           ,S_CALCU_END_DATE
+		           ,S_RETR_DATE
+		           ,S_LONG_MONTHS
+		           ,S_EXEP_MONTHS
+		           ,S_ADD_MONTHS
+		           ,S_DUPLI_MONTHS
+		           ,S_LONG_YEARS
+		           ,CALCU_END_DATE_BE13
+		           ,RETR_DATE_BE13
+		           ,LONG_MONTHS_BE13
+		           ,EXEP_MONTHS_BE13
+		           ,ADD_MONTHS_BE13
+		           ,LONG_YEARS_BE13
+		           ,CALCU_END_DATE_AF13
+		           ,RETR_DATE_AF13
+		           ,LONG_MONTHS_AF13
+		           ,EXEP_MONTHS_AF13
+		           ,ADD_MONTHS_AF13
+		           ,LONG_YEARS_AF13
+		           ,M_DIV_NAME
+		           ,M_COMPANY_NUM
+		           ,M_ANNU_TOTAL_I
+		           ,M_OUT_INCOME_I
+		           ,M_TAX_TOTAL_I
+		           ,RETR_SUM_I
+		           ,R_ANNU_TOTAL_I
+		           ,R_TAX_TOTAL_I
+		           ,SUPP_TOTAL_I
+		           ,SPEC_DED_I
+		           ,EARN_INCOME_I
+		           ,DIVI_TAX_STD_BE13
+		           ,DIVI_TAX_STD_AF13
+		           ,TAX_STD_I
+		           ,AVG_TAX_STD_BE13
+		           ,AVG_TAX_STD_AF13
+		           ,AVG_TAX_STD_I
+		           ,EX_TAX_STD_AF13
+		           ,EX_COMP_TAX_AF13
+		           ,AVR_COMP_TAX_BE13
+		           ,AVR_COMP_TAX_AF13
+		           ,AVR_COMP_TAX_I
+		           ,COMP_TAX_BE13
+		           ,COMP_TAX_I
+		           ,COMP_TAX_AF13
+		           ,PAY_END_TAX
+		           ,DEF_TAX_I
+		           ,IN_TAX_I
+		           ,LOCAL_TAX_I
+		           ,SP_TAX_I
+		           ,BAL_IN_TAX_I
+		           ,BAL_LOCAL_TAX_I
+		           ,BAL_SP_TAX_I
+		           ,DED_IN_TAX_ADD_I
+		           ,DED_IN_LOCAL_ADD_I
+		           ,DED_ETC_I
+		           ,DED_TOTAL_I
+		           ,REAL_AMOUNT_I
+
+		           ,INSERT_DB_USER
+		           ,INSERT_DB_TIME
+		           ,UPDATE_DB_USER
+		           ,UPDATE_DB_TIME
+		           ,PAY_TOTAL_I_16
+		           ,PAY_TOTAL_DED_I_16
+		           ,TAX_STD_I_16
+		           ,CHANGE_COMP_TAX_I_16
+		           ,COMP_TAX_I_16
+		           ,CHANGE_TAX_YEAR_16
+		           ,EXEMPTION_COMP_TAX_I_16
+		           ,CHANGE_TARGET_TAX_I_16
+		           )
+		     VALUES
+		           (#{S_COMP_CODE}
+		           ,#{RETR_DATE}
+		           ,#{RETR_TYPE}
+		           ,#{PERSON_NUMB}
+		           ,#{RETR_RESN}
+		           ,#{RETR_ANN_JOIN_DATE}
+		           ,#{RETR_ANNU_I_20111231}
+		           ,#{M_JOIN_DATE}
+		           ,#{M_CALCU_END_DATE}
+		           ,#{M_RETR_DATE}
+		           ,#{M_SUPP_DATE}
+		           ,#{M_LONG_MONTHS}
+		           ,#{M_EXEP_MONTHS_BE13}
+		           ,#{M_EXEP_MONTHS_AF13}
+		           ,#{M_EXEP_MONTHS}
+		           ,#{M_ADD_MONTHS_BE13}
+		           ,#{M_ADD_MONTHS_AF13}
+		           ,#{M_ADD_MONTHS}
+		           ,#{M_LONG_YEARS}
+		           ,#{JOIN_DATE}
+		           ,#{DUTY_YYYY}
+		           ,#{LONG_MONTH}
+		           ,#{LONG_DAY}
+		           ,#{LONG_YEARS}
+		           ,#{LONG_TOT_MONTH}
+		           ,#{LONG_TOT_DAY}
+		           ,#{AVG_DAY}
+		           ,#{ADD_MONTH}
+		           ,#{R_JOIN_DATE}
+		           ,#{R_CALCU_END_DATE}
+		           ,#{R_RETR_DATE}
+		           ,#{R_SUPP_DATE}
+		           ,#{R_LONG_MONTHS}
+		           ,#{R_EXEP_MONTHS_BE13}
+		           ,#{R_EXEP_MONTHS_AF13}
+		           ,#{R_EXEP_MONTHS}
+		           ,#{R_ADD_MONTHS_BE13}
+		           ,#{R_ADD_MONTHS_AF13}
+		           ,#{R_ADD_MONTHS}
+		           ,#{R_LONG_YEARS}
+		           ,#{S_JOIN_DATE}
+		           ,#{S_CALCU_END_DATE}
+		           ,#{S_RETR_DATE}
+		           ,#{S_LONG_MONTHS}
+		           ,#{S_EXEP_MONTHS}
+		           ,#{S_ADD_MONTHS}
+		           ,#{S_DUPLI_MONTHS}
+		           ,#{S_LONG_YEARS}
+		           ,#{CALCU_END_DATE_BE13}
+		           ,#{RETR_DATE_BE13}
+		           ,#{LONG_MONTHS_BE13}
+		           ,#{EXEP_MONTHS_BE13}
+		           ,#{ADD_MONTHS_BE13}
+		           ,#{LONG_YEARS_BE13}
+		           ,#{CALCU_END_DATE_AF13}
+		           ,#{RETR_DATE_AF13}
+		           ,#{LONG_MONTHS_AF13}
+		           ,#{EXEP_MONTHS_AF13}
+		           ,#{ADD_MONTHS_AF13}
+		           ,#{LONG_YEARS_AF13}
+		           ,#{M_DIV_NAME}
+		           ,#{M_COMPANY_NUM}
+		           ,#{M_ANNU_TOTAL_I}
+		           ,#{M_OUT_INCOME_I}
+		           ,#{M_TAX_TOTAL_I}
+		           ,#{RETR_SUM_I}
+		           ,#{R_ANNU_TOTAL_I}
+		           ,#{R_TAX_TOTAL_I}
+		           ,#{SUPP_TOTAL_I}
+		           ,#{SPEC_DED_I}
+		           ,#{EARN_INCOME_I}
+		           ,#{DIVI_TAX_STD_BE13}
+		           ,#{DIVI_TAX_STD_AF13}
+		           ,#{TAX_STD_I}
+		           ,#{AVG_TAX_STD_BE13}
+		           ,#{AVG_TAX_STD_AF13}
+		           ,#{AVG_TAX_STD}
+		           ,#{EX_TAX_STD_AF13}
+		           ,#{EX_COMP_TAX_AF13}
+		           ,#{AVR_COMP_TAX_BE13}
+		           ,#{AVR_COMP_TAX_AF13}
+		           ,#{AVR_COMP_TAX}
+		           ,#{COMP_TAX_BE13}
+		           ,#{COMP_TAX}
+		           ,#{COMP_TAX_AF13}
+		           ,#{PAY_END_TAX}
+		           ,#{DEF_TAX_I}
+		           ,#{IN_TAX_I}
+		           ,#{LOCAL_TAX_I}
+		           ,#{SP_TAX_I}
+		           ,#{BAL_IN_TAX_I}
+                   ,#{BAL_LOCAL_TAX_I}
+                   ,#{BAL_SP_TAX_I}
+		           ,#{DED_IN_TAX_ADD_I}
+		           ,#{DED_IN_LOCAL_ADD_I}
+		           ,#{DED_ETC_I}
+		           ,#{DED_TOTAL_I}
+		           ,#{REAL_AMOUNT_I}
+
+		           ,#{S_USER_ID}
+		           ,GETDATE()
+		           ,#{S_USER_ID}
+		           ,GETDATE()
+		           ,#{PAY_TOTAL_I_16}
+		           ,#{PAY_TOTAL_DED_I_16}
+		           ,#{TAX_STD_I_16}
+		           ,#{CHANGE_COMP_TAX_I_16}
+		           ,#{COMP_TAX_I_16}
+		           ,#{CHANGE_TAX_YEAR_16}
+		           ,#{EXEMPTION_COMP_TAX_I_16}
+		           ,#{CHANGE_TARGET_TAX_I_16}
+
+		 )
+    </insert>
+    <insert id="hrt507ukrServiceImpl.insertRetrPension" parameterType="foren.unilite.modules.human.hrt.Hrt507ukrModel">
+    	IF EXISTS (SELECT *
+                     FROM HRT610T WITH(NOLOCK)
+                    WHERE COMP_CODE   = #{S_COMP_CODE}
+                      AND PERSON_NUMB = #{PERSON_NUMB}
+                   )
+        UPDATE HRT610T
+        SET COMP_CODE      = #{S_COMP_CODE}
+           ,PERSON_NUMB    = #{PERSON_NUMB}
+           ,COMP_NAME      = #{COMP_NAME}
+           ,COMP_NUM       = REPLACE(#{COMP_NUM},'-','')
+           ,DEPOSIT_DATE   = #{DEPOSIT_DATE}
+           ,TRANS_RETR_PAY = #{TRANS_RETR_PAY}
+           ,DEFER_TAX_I    = #{DEFER_TAX_I}
+           ,DEFER_SP_TAX_I = #{DEFER_SP_TAX_I}
+           ,INSERT_DB_USER = #{S_USER_ID}
+           ,INSERT_DB_TIME = GETDATE()
+           ,UPDATE_DB_USER = #{S_USER_ID}
+           ,UPDATE_DB_TIME = GETDATE()
+           ,BANK_ACCOUNT   = #{BANK_ACCOUNT_EXPOS}
+        
+        WHERE COMP_CODE    = #{S_COMP_CODE}
+          AND PERSON_NUMB  = #{PERSON_NUMB}
+        ELSE
+		INSERT INTO HRT610T
+           (COMP_CODE
+           ,PERSON_NUMB
+           ,COMP_NAME
+           ,COMP_NUM
+           ,DEPOSIT_DATE
+           ,TRANS_RETR_PAY
+           ,DEFER_TAX_I
+           ,DEFER_SP_TAX_I
+           ,INSERT_DB_USER
+           ,INSERT_DB_TIME
+           ,UPDATE_DB_USER
+           ,UPDATE_DB_TIME
+           ,BANK_ACCOUNT)
+     VALUES
+           (#{S_COMP_CODE}
+           ,#{PERSON_NUMB}
+           ,#{COMP_NAME}
+           ,REPLACE(#{COMP_NUM},'-','')
+           ,#{DEPOSIT_DATE}
+           ,#{TRANS_RETR_PAY}
+           ,#{DEFER_TAX_I}
+           ,#{DEFER_SP_TAX_I}
+           ,#{S_USER_ID}
+           ,GETDATE()
+           ,#{S_USER_ID}
+           ,GETDATE()
+           ,#{BANK_ACCOUNT_EXPOS}
+		 )
+    </insert>
+    <select id="hrt507ukrServiceImpl.retireProcStChangedSuppTotal" parameterType="Map" resultType="rMap">
+          /* hrt507ukrServiceImpl.retireProcStChangedSuppTotal */
+            DECLARE @JSON_PARAM    NVARCHAR(2000), @ERROR_DESC   NVARCHAR(2000) 
+            SET @ERROR_DESC = ''
+            
+            --※ 주의 : Json 파람조건에 엔터키 값 없이 해야함.
+            SET @JSON_PARAM = '{"COMP_CODE":"${S_COMP_CODE}", "PERSON_NUMB":"${PERSON_NUMB}", "RETR_TYPE":"${RETR_TYPE}", "RETR_DATE":"${RETR_DATE}", "SUPP_DATE":"${SUPP_DATE}", "TAX_CALCU_YN":"${TAX_CALCU}", "RANNU_TOTAL_I":"${R_ANNU_TOTAL_I}", "OUT_INCOME_I":"${OUT_INCOME_I}", "MANNU_TOTAL_I":"${M_ANNU_TOTAL_I}", "MOUT_INCOME_I":"${M_OUT_INCOME_I}", "PAY_END_TAX":"${PAY_END_TAX}", "DED_INTAX_ADD_I":"${DED_IN_TAX_ADD_I}", "DED_INLOCAL_ADD_I":"${DED_IN_LOCAL_ADD_I}", "DED_ETC_I":"${DED_ETC_I}", "DED_ETC_I2":"${DED_ETC_I2}", "DED_ETC_I3":"${DED_ETC_I3}", "DED_ETC_I4":"${DED_ETC_I4}", "DED_ETC_I5":"${DED_ETC_I5}", "DED_ETC_I6":"${DED_ETC_I6}", "SLONG_YEARS":"${S_LONG_YEARS}", "LONG_YEARS_BE13":"${LONG_YEARS_BE13}", "LONG_YEARS_AF13":"${LONG_YEARS_AF13}", "RCALCU_END_DATE":"${R_CALCU_END_DATE}", "LONG_YEARS":"${LONG_YEARS}", "SCHANGE_RETR_DATE":"${RETR_DATE}", "EXEP_MONTHS_BE13":"${EXEP_MONTHS_BE13}", "R_EXEP_DAY_BE13":"${R_EXEP_DAY_BE13}", "EXEP_MONTHS_AF13":"${EXEP_MONTHS_AF13}", "R_EXEP_DAY_AF13":"${R_EXEP_DAY_AF13}", "KEY_VALUE":"", "UPDATE_DB_USER":"${S_USER_ID}", "LANG_TYPE":"${S_LANG_CODE}"}'
+            exec uniLITE.USP_HUMAN_HRT506UKR_RetireProcStChangedSuppTotal @JSON_PARAM, @ERROR_DESC OUTPUT
+            
+            IF(@ERROR_DESC !='')    
+            BEGIN
+                SELECT ISNULL(@ERROR_DESC, '') AS errorDesc  
+            END  
+    </select>
+</mapper>

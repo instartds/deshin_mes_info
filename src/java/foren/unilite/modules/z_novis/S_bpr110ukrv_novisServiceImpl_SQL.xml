@@ -1,0 +1,494 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_bpr110ukrv_novisServiceImpl">
+
+
+<select id="s_bpr110ukrv_novisServiceImpl.selectCheckItemCode" parameterType="Map" resultType="rMap">
+	SELECT 
+		ITEM_CODE
+	  FROM BPR100T WITH(NOLOCK)
+	 WHERE COMP_CODE = #{S_COMP_CODE}
+	   AND ITEM_CODE = #{NEW_ITEM_CODE} 
+</select>
+
+<select id="s_bpr110ukrv_novisServiceImpl.selectAutoItemCode" parameterType="Map" resultType="rMap">
+DECLARE
+	@gubunValue NVARCHAR(10)	-- 코드채번룰(구분값)
+	,@gubunLen NUMERIC	-- 코드채번룰(자릿수)
+	,@seqValue NVARCHAR(10)	-- BAUTONOT에 저장되어있던 최종순번
+	,@lastItemCode NVARCHAR(100)	-- BPR100T에 저장되어있던 최종품목코드
+
+IF EXISTS(
+	SELECT REF_CODE7 = @gubunLen
+	FROM BSA100T WITH(NOLOCK)
+	WHERE COMP_CODE = #{S_COMP_CODE}
+	AND MAIN_CODE = 'B020' -- 고정
+	AND SUB_CODE != '$'	--고정
+	AND REF_CODE6 = #{CODE_1} -- 코드1의 필드값 PARAM
+)
+	BEGIN
+
+		SELECT TOP 1 @gubunLen = CONVERT(NUMERIC,REF_CODE7)
+		FROM BSA100T WITH(NOLOCK)
+		WHERE COMP_CODE = #{S_COMP_CODE}
+		AND MAIN_CODE = 'B020' -- 고정
+		AND SUB_CODE != '$'	--고정
+		AND REF_CODE6 = #{CODE_1} -- 코드1의 필드값 PARAM
+	
+		SET @gubunValue = #{CODE_1} + #{CODE_2} + #{CODE_3}
+
+		SELECT
+			@seqValue = LAST_SEQ
+		FROM
+		(
+		SELECT
+		ROW_NUMBER()OVER(PARTITION BY COMP_CODE, DIV_CODE, TABLE_ID, AUTO_MAN ORDER BY BASIS_DATE DESC )  AS RN
+		,LAST_SEQ
+		FROM BAUTONOT WITH(NOLOCK)
+		WHERE COMP_CODE = #{S_COMP_CODE}
+		  AND DIV_CODE = '01'  --고정
+		  AND TABLE_ID = 'BPR100T' --고정
+		  AND AUTO_MAN = @gubunValue
+		) T
+		WHERE T.RN = 1
+
+
+
+
+
+
+		SELECT
+			@lastItemCode = ITEM_CODE
+		FROM
+		(
+		SELECT 
+			ROW_NUMBER()OVER(PARTITION BY COMP_CODE ORDER BY RIGHT(LEFT(ITEM_CODE,@gubunLen),@gubunLen-LEN(@gubunValue)) DESC )  AS RN
+			,RIGHT(LEFT(ITEM_CODE,@gubunLen),@gubunLen-LEN(@gubunValue)) AS ITEM_CODE
+		FROM BPR100T WITH(NOLOCK)
+		WHERE COMP_CODE = #{S_COMP_CODE}
+			AND ITEM_CODE LIKE @gubunValue + '%'
+			AND LEN(ITEM_CODE) = @gubunLen
+			AND ISNUMERIC(RIGHT(LEFT(ITEM_CODE,@gubunLen),@gubunLen-LEN(@gubunValue))) = 1
+		) T
+		WHERE T.RN = 1
+
+		IF(ISNULL(@seqValue,'') != '')
+			BEGIN -- 이미 해당데이터 채번이력이 채번테이블에 존재할시
+				SELECT @gubunValue + REPLICATE('0', @gubunLen - LEN(@gubunValue) - LEN(CONVERT( NVARCHAR, @seqValue + 1 ))) + CONVERT( NVARCHAR, @seqValue + 1 )   AS AUTO_ITEM_CODE
+					,@gubunValue + @lastItemCode  AS LAST_ITEM_CODE
+
+					,@gubunValue	AS AUTO_MAN
+					,@seqValue + 1	AS LAST_SEQ
+			END
+		ELSE
+			BEGIN	 -- 해당데이터 채번이력이 채번테이블에 존재하지 않을시 BPR100T에서 최대값 읽고 + 1  ('N1A000100' -> 'N1A'는 구분값 , 맨뒤의 '00' 은 대표품목코드는 무조건 '00' 중간의 '0001'이 +1로 채번되는 것) 00-> 제거하기로 변경
+					 -- BPR100T에도 해당조건으로 코드 존재 하지 않을시 해당조건으로 신규코드 생성시킴 예)@gubunValue = 'N1A',@gubunLen = 7 이면 'N1A'+ '0001'  =  'N1A000100'
+				IF(ISNULL(@lastItemCode,'') != '')
+					BEGIN
+						SELECT @gubunValue + REPLICATE('0', @gubunLen - LEN(@gubunValue) - LEN(CONVERT(NVARCHAR, CONVERT(NUMERIC, @lastItemCode )+1))) + CONVERT(NVARCHAR, CONVERT(NUMERIC, @lastItemCode )+1) AS AUTO_ITEM_CODE
+							,@gubunValue + @lastItemCode  AS LAST_ITEM_CODE
+
+							,@gubunValue	AS AUTO_MAN
+							, RIGHT(CONVERT(NVARCHAR, CONVERT(NUMERIC, @lastItemCode )+1), @gubunLen - LEN(@gubunValue)) AS LAST_SEQ
+					END
+				ELSE
+					BEGIN
+						SELECT @gubunValue + REPLICATE('0', @gubunLen - LEN(@gubunValue) - 1) + CONVERT( NVARCHAR, 1 )  AS AUTO_ITEM_CODE
+							,'' AS LAST_ITEM_CODE
+
+							,@gubunValue	AS AUTO_MAN
+							, 1 AS LAST_SEQ
+					END
+			END
+	END
+	
+	
+	
+ELSE
+	BEGIN
+		SELECT '' AS AUTO_ITEM_CODE
+			,'' AS LAST_ITEM_CODE
+
+			,''	AS AUTO_MAN
+			,'' AS LAST_SEQ
+	END 
+
+</select>
+
+
+<update id="s_bpr110ukrv_novisServiceImpl.saveAutoItemCode" parameterType="Map">
+	IF NOT EXISTS (
+		SELECT
+			TOP 1 COMP_CODE
+		FROM BAUTONOT WITH(NOLOCK)
+		WHERE COMP_CODE = #{S_COMP_CODE}
+		  AND DIV_CODE = '01'  --고정
+		  AND TABLE_ID = 'BPR100T' --고정
+		  AND AUTO_MAN = #{AUTO_MAN}
+	)
+
+		BEGIN
+			INSERT INTO BAUTONOT(
+				COMP_CODE
+				,DIV_CODE
+				,TABLE_ID
+				,BASIS_DATE
+				,AUTO_MAN
+				,LAST_SEQ
+				,INSERT_DB_USER
+				,INSERT_DB_TIME
+				,UPDATE_DB_USER
+				,UPDATE_DB_TIME
+			)VALUES(
+				#{S_COMP_CODE}
+				,'01'
+				,'BPR100T'
+				,CONVERT(CHAR(8), GETDATE(), 112)
+				,#{AUTO_MAN}
+				,${LAST_SEQ}
+				,#{S_USER_ID}
+				,GETDATE()
+				,#{S_USER_ID}
+				,GETDATE()
+
+			)
+
+		END
+	ELSE
+		BEGIN
+			UPDATE A SET
+				 LAST_SEQ = ${LAST_SEQ}
+				,UPDATE_DB_USER = #{S_USER_ID}
+				,UPDATE_DB_TIME = GETDATE()
+			FROM BAUTONOT A WITH(NOLOCK)
+			WHERE A.COMP_CODE = #{S_COMP_CODE}
+			  AND A.DIV_CODE = '01'  --고정
+			  AND A.TABLE_ID = 'BPR100T' --고정
+			  AND A.BASIS_DATE = (SELECT 	BASIS_DATE
+									FROM (
+										SELECT
+											ROW_NUMBER()OVER(PARTITION BY COMP_CODE, DIV_CODE, TABLE_ID, AUTO_MAN ORDER BY BASIS_DATE DESC )  AS RN
+											,BASIS_DATE
+										FROM BAUTONOT WITH(NOLOCK)
+										WHERE COMP_CODE = #{S_COMP_CODE}
+										AND DIV_CODE = '01'  --고정
+										AND TABLE_ID = 'BPR100T' --고정
+										AND AUTO_MAN = #{AUTO_MAN}
+									) T
+								WHERE T.RN = 1
+							  )
+			  AND A.AUTO_MAN = #{AUTO_MAN}
+
+		END
+</update>
+
+<select id="s_bpr110ukrv_novisServiceImpl.getCode_2" parameterType="Map" resultType="comboItem">
+	SELECT
+		SUB_CODE AS 'value'
+		,CODE_NAME AS 'text'
+		,REF_CODE1 AS 'refCode1'
+		
+	  FROM BSA100T
+	 WHERE COMP_CODE = #{S_COMP_CODE}
+	   AND MAIN_CODE = (SELECT TOP 1 REF_CODE8
+						 FROM BSA100T
+						WHERE COMP_CODE = #{S_COMP_CODE}
+							AND MAIN_CODE = 'B020'
+							AND REF_CODE6 = #{CODE_1}
+						)
+	   AND SUB_CODE != '$'
+</select>
+
+<select id="s_bpr110ukrv_novisServiceImpl.getCode_3" parameterType="Map" resultType="comboItem">  
+	SELECT
+		SUB_CODE AS 'value'
+		,CODE_NAME AS 'text'
+		
+	  FROM BSA100T
+	 WHERE COMP_CODE = #{S_COMP_CODE}
+	   AND MAIN_CODE = #{CODE_2_REF_CODE1}
+	   AND SUB_CODE != '$'
+		
+</select>
+
+<select id="s_bpr110ukrv_novisServiceImpl.selectList1" parameterType="Map" resultType="rMap">
+
+SELECT A.COMP_CODE
+     , A.ITEM_CODE            --대표품목코드
+     , A.ITEM_NAME            --품명
+     , A.UNIT_WGT             --단위중량
+     , A.STOCK_UNIT           --재고단위
+     , A.USE_YN               --사용여부
+     , A.SALE_UNIT            --판매단위
+     , A.TAX_TYPE             --세구분
+     
+     , A.PACKING_SHAPE   --제형
+     , A.ITEM_LEVEL1          --대분류
+     , A.ITEM_LEVEL2          --중분류
+     , A.ITEM_LEVEL3          --소분류
+     , A.REGISTER_NO     --품목신고번호
+     , A.PACKING_TYPE    --포장형태
+     , A.ITEM_FEATURE    --성상
+     , A.RECOMMAND_EAT   --권장섭취량
+     , A.SALE_NAME       --판매원
+     
+     
+     , B.DIV_CODE             --사업장
+     , B.CUSTOM_CODE          --주거래처
+     , C.CUSTOM_NAME          --주거래처명
+     , B.ORDER_UNIT           --구매단위
+     , B.SUPPLY_TYPE          --조달구분(2)
+     , B.ROUT_TYPE            --공정구분(200)
+     , B.WORK_SHOP_CODE       --주작업장(S201)
+     , B.OUT_METH             --출고방법(1)
+     , B.WH_CODE              --기준창고(W10)
+     , B.RESULT_YN            --실적입고방법(1)
+     , B.ORDER_PLAN           --발주방침(1)
+     , B.ORDER_METH           --생산방식(2)
+     , B.ITEM_ACCOUNT         --계정(20)
+     , A.USE_BY_DATE          --유효기간
+     , A.DAY_QTY         --1일 섭취량
+  FROM      BPR100T A WITH(NOLOCK)
+ INNER JOIN BPR200T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                  AND B.ITEM_CODE = A.ITEM_CODE
+  LEFT JOIN BCM100T C WITH(NOLOCK) ON C.COMP_CODE   = B.COMP_CODE
+                                  AND C.CUSTOM_CODE = B.CUSTOM_CODE
+ WHERE A.COMP_CODE    = #{S_COMP_CODE}
+   AND B.DIV_CODE     = #{DIV_CODE}
+   AND LEFT(A.ITEM_CODE, 1) = 'N'
+<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+	AND A.ITEM_CODE = #{ITEM_CODE}
+</if>
+   AND B.ITEM_ACCOUNT = '20'
+ ORDER BY A.ITEM_CODE
+</select>
+
+
+<select id="s_bpr110ukrv_novisServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+	SELECT A.COMP_CODE
+     , A.ITEM_CODE            --제품코드
+     , A.ITEM_NAME            --품명
+     , A.UNIT_Q          --단위수량
+     , A.SPEC                 --규격
+     , A.STOCK_UNIT           --재고단위
+     , A.SALE_UNIT            --판매단위
+     , A.TRNS_RATE            --입수(1)
+     , A.USE_YN               --사용여부
+     , A.TAX_TYPE             --세구분(1)
+     , A.PACKING_SHAPE   --제형
+     , A.ITEM_LEVEL1          --대분류
+     , A.ITEM_LEVEL2          --중분류
+     , A.ITEM_LEVEL3          --소분류
+     , A.REGISTER_NO     --품목신고번호
+     , A.PACKING_TYPE    --포장형태
+     , A.ITEM_FEATURE    --성상
+     , A.RECOMMAND_EAT   --권장섭취량
+     , A.SALE_NAME       --판매원
+     , B.DIV_CODE             --사업장
+     , B.CUSTOM_CODE          --주거래처
+     , C.CUSTOM_NAME          --주거래처명
+     , B.ORDER_UNIT           --구매단위
+     , B.SUPPLY_TYPE          --조달구분(2)
+     , B.ROUT_TYPE            --공정구분(100)
+     , B.WORK_SHOP_CODE       --주작업장(S101)
+     , B.OUT_METH             --출고방법(2)
+     , B.WH_CODE              --기준창고(W40)
+     , B.RESULT_YN            --실적입고방법()
+     , B.ORDER_PLAN           --발주방침(4)
+     , B.ORDER_METH           --생산방식(2)
+     , B.ITEM_ACCOUNT         --계정(10)
+     , A.ITEM_GROUP           --대표품목
+     , A.UNIT_WGT             --단위중량
+     , A.USE_BY_DATE          --유효기간
+     , A.DAY_QTY         --1일 섭취량
+  FROM      BPR100T A WITH(NOLOCK)
+ INNER JOIN BPR200T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                  AND B.ITEM_CODE = A.ITEM_CODE
+  LEFT JOIN BCM100T C WITH(NOLOCK) ON C.COMP_CODE   = B.COMP_CODE
+                                  AND C.CUSTOM_CODE = B.CUSTOM_CODE
+ WHERE A.COMP_CODE    = #{S_COMP_CODE}
+   AND B.DIV_CODE     = #{DIV_CODE}
+   AND A.ITEM_GROUP   = #{ITEM_CODE}
+   AND B.ITEM_ACCOUNT = '10'
+ ORDER BY A.ITEM_CODE
+</select>
+
+<insert id="s_bpr110ukrv_novisServiceImpl.insertDetail_100T" parameterType="Map">
+INSERT INTO BPR100T(
+	COMP_CODE
+	, ITEM_CODE
+	, ITEM_NAME
+	, UNIT_WGT
+	
+	, SPEC
+	
+	, STOCK_UNIT
+	, USE_YN
+	, SALE_UNIT
+	, TAX_TYPE
+	          
+
+	, USE_BY_DATE
+	                
+	, PACKING_SHAPE
+	, PACKING_TYPE
+	, ITEM_LEVEL1
+	, ITEM_FEATURE
+	, ITEM_LEVEL2
+	, RECOMMAND_EAT
+	, DAY_QTY
+	, ITEM_LEVEL3
+	, SALE_NAME
+	, REGISTER_NO
+
+	,ITEM_GROUP
+
+	, INSERT_DB_USER
+	, INSERT_DB_TIME
+	, UPDATE_DB_USER
+	, UPDATE_DB_TIME
+)VALUES( 
+	#{S_COMP_CODE}
+	, #{ITEM_CODE}
+	, #{ITEM_NAME}
+	, #{UNIT_WGT}
+	
+	, #{SPEC}			-- spec 조합 해서      대표품목(UNIT_WGT)
+		
+	, #{STOCK_UNIT}
+	, #{USE_YN}
+	, #{SALE_UNIT}
+	, #{TAX_TYPE}
+ 
+
+	, #{USE_BY_DATE}
+	                
+	, #{PACKING_SHAPE}
+	, #{PACKING_TYPE}
+	, #{ITEM_LEVEL1}
+	, #{ITEM_FEATURE}
+	, #{ITEM_LEVEL2}
+	, #{RECOMMAND_EAT}
+	, #{DAY_QTY}
+	, #{ITEM_LEVEL3}
+	, #{SALE_NAME}
+	, #{REGISTER_NO}
+		
+	,#{ITEM_GROUP}
+        
+	, #{S_USER_ID}
+	, GETDATE()
+	, #{S_USER_ID}
+	, GETDATE()
+)
+</insert>
+
+<insert id="s_bpr110ukrv_novisServiceImpl.insertDetail_200T" parameterType="Map">
+INSERT INTO BPR200T( 
+	COMP_CODE
+	, DIV_CODE
+	, ITEM_CODE
+	, ITEM_NAME
+	, CUSTOM_CODE
+	, ORDER_UNIT
+	, SUPPLY_TYPE
+	, ROUT_TYPE
+	
+	, WORK_SHOP_CODE
+	, OUT_METH
+	, WH_CODE
+	, RESULT_YN
+	, ORDER_PLAN
+	, MATRL_PRESENT_DAY
+	, ORDER_METH
+	, ITEM_ACCOUNT
+	
+	, EXCESS_RATE
+	, DISTR_TYPE
+	
+	, INSPEC_YN
+	, LOT_YN
+	
+	, INSERT_DB_USER
+	, INSERT_DB_TIME
+	, UPDATE_DB_USER
+	, UPDATE_DB_TIME
+)VALUES(
+	  #{S_COMP_CODE}
+	, #{DIV_CODE}
+	, #{ITEM_CODE}
+	, #{ITEM_NAME}
+	, #{CUSTOM_CODE}
+	, #{ORDER_UNIT}
+	, #{SUPPLY_TYPE}
+	, #{ROUT_TYPE}
+	
+	, #{WORK_SHOP_CODE}
+	, #{OUT_METH}
+	, #{WH_CODE}
+	, #{RESULT_YN}
+	, #{ORDER_PLAN}
+	, #{MATRL_PRESENT_DAY}
+	, #{ORDER_METH}
+	, #{ITEM_ACCOUNT}
+	
+	, 150
+	, 2
+	
+	, #{INSPEC_YN}
+	, #{LOT_YN}
+	
+	, #{S_USER_ID}
+	, GETDATE()
+	, #{S_USER_ID}
+	, GETDATE()
+)
+</insert>
+
+<update id="s_bpr110ukrv_novisServiceImpl.updateDetail_100T" parameterType="Map">
+UPDATE BPR100T
+   SET ITEM_NAME = #{ITEM_NAME}
+      , UNIT_WGT = #{UNIT_WGT}
+      , STOCK_UNIT = #{STOCK_UNIT}
+	, PACKING_SHAPE = #{PACKING_SHAPE}
+	, PACKING_TYPE = #{PACKING_TYPE}
+	, ITEM_LEVEL1 = #{ITEM_LEVEL1}
+	, ITEM_FEATURE = #{ITEM_FEATURE}
+	, ITEM_LEVEL2 = #{ITEM_LEVEL2}
+	, RECOMMAND_EAT = #{RECOMMAND_EAT}
+	, DAY_QTY = #{DAY_QTY}
+	, ITEM_LEVEL3 = #{ITEM_LEVEL3}
+	, SALE_NAME = #{SALE_NAME}
+	, REGISTER_NO = #{REGISTER_NO}
+	, UPDATE_DB_USER = #{S_USER_ID}      
+	, UPDATE_DB_TIME = GETDATE()         
+ WHERE COMP_CODE = #{S_COMP_CODE}
+   AND ITEM_CODE = #{ITEM_CODE}
+		
+</update>
+
+<update id="s_bpr110ukrv_novisServiceImpl.updateDetail_200T" parameterType="Map">
+UPDATE BPR200T
+   SET ITEM_NAME = #{ITEM_NAME}
+     , CUSTOM_CODE = #{CUSTOM_CODE}
+
+	, UPDATE_DB_USER = #{S_USER_ID}
+	, UPDATE_DB_TIME = GETDATE()
+ WHERE COMP_CODE = #{S_COMP_CODE}
+   AND DIV_CODE = #{DIV_CODE}
+   AND ITEM_CODE = #{ITEM_CODE}
+
+</update>
+<delete id="s_bpr110ukrv_novisServiceImpl.deleteDetail_100T" parameterType="Map">
+	DELETE BPR100T
+	 WHERE COMP_CODE = #{S_COMP_CODE}
+	   AND ITEM_CODE = #{ITEM_CODE}
+</delete>
+
+<delete id="s_bpr110ukrv_novisServiceImpl.deleteDetail_200T" parameterType="Map">
+	DELETE BPR200T
+	 WHERE COMP_CODE = #{S_COMP_CODE}
+	   AND DIV_CODE = #{DIV_CODE}
+	   AND ITEM_CODE = #{ITEM_CODE}
+</delete>
+</mapper>

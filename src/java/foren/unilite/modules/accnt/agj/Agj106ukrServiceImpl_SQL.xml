@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="agj106ukrServiceImpl">
+
+    <select id="agj106ukrServiceImpl.getPrevSlipNum" parameterType="Map" resultType="rMap">     
+        SELECT TOP 1 A.EX_DATE, A.EX_NUM , A.AP_STS, A.IN_DEPT_CODE, A.IN_DEPT_NAME, A.CHARGE_CODE, B.CODE_NAME AS CHARGE_NAME, A.IN_DIV_CODE
+          FROM AGJ110T A WITH (NOLOCK)
+     LEFT JOIN (SELECT COMP_CODE, SUB_CODE, CODE_NAME
+                FROM BSA100T WITH (NOLOCK) 
+                WHERE COMP_CODE = #{S_COMP_CODE}
+                  AND MAIN_CODE = 'A009') B ON B.COMP_CODE = A.COMP_CODE
+                                      AND B.SUB_CODE  = A.CHARGE_CODE
+         WHERE A.COMP_CODE   = #{S_COMP_CODE}
+           AND ((A.EX_DATE     = #{AC_DATE}   AND A.EX_NUM       &lt; #{EX_NUM})
+                OR A.EX_DATE   &lt; #{AC_DATE}  )
+           <if test="AUTHORITY != &quot;1&quot;">
+            <if test="@foren.Ognl@isNotEmpty(CHARGE_CODE)">
+                AND A.CHARGE_CODE  = #{CHARGE_CODE} 
+            </if>
+           </if>      
+           <if test="@foren.Ognl@isNotEmpty(INPUT_PATH) ">
+           AND A.INPUT_PATH    = #{INPUT_PATH} 
+           </if>
+           AND ISNULL(A.MOD_DIVI,'') = ''
+         ORDER BY A.EX_DATE DESC, A.EX_NUM DESC
+    </select>
+    
+    
+    <select id="agj106ukrServiceImpl.getNextSlipNum" parameterType="Map" resultType="rMap">     
+        SELECT TOP 1 A.EX_DATE, A.EX_NUM , A.AP_STS, A.IN_DEPT_CODE, A.IN_DEPT_NAME, A.CHARGE_CODE, B.CODE_NAME AS CHARGE_NAME, A.IN_DIV_CODE
+          FROM AGJ110T A WITH (NOLOCK)
+     LEFT JOIN (SELECT COMP_CODE, SUB_CODE, CODE_NAME
+                FROM BSA100T WITH (NOLOCK) 
+                WHERE COMP_CODE = #{S_COMP_CODE}
+                  AND MAIN_CODE = 'A009') B ON B.COMP_CODE = A.COMP_CODE
+                                      AND B.SUB_CODE  = A.CHARGE_CODE
+         WHERE A.COMP_CODE     = #{S_COMP_CODE}
+           AND ((A.EX_DATE     = #{AC_DATE}  AND A.EX_NUM       &gt; #{EX_NUM})
+                OR A.EX_DATE     &gt; #{AC_DATE} )
+           <if test="AUTHORITY != &quot;1&quot;">
+            <if test="@foren.Ognl@isNotEmpty(CHARGE_CODE)">
+                AND A.CHARGE_CODE  = #{CHARGE_CODE} 
+            </if>
+           </if>   
+            <if test="@foren.Ognl@isNotEmpty(INPUT_PATH) ">
+           AND A.INPUT_PATH    = #{INPUT_PATH} 
+           </if>
+           AND ISNULL(A.MOD_DIVI,'') = ''
+         ORDER BY A.EX_DATE DESC, A.EX_NUM DESC
+    </select>
+    
+    
+    
+    
+     <update id="agj106ukrServiceImpl.slipUpdate" parameterType="Map">
+        /* agj106ukrServiceImpl.slipUpdate */
+        UPDATE AGJ110T
+           SET REPORT_TYPE = #{REPORT_TYPE}
+             , REMARK2     = #{REMARK2}
+			 , DRAFT_CODE = CASE WHEN ISNULL(DRAFT_CODE, '') = ''
+			                     THEN '0'
+								 ELSE DRAFT_CODE
+							 END
+         WHERE COMP_CODE           = #{S_COMP_CODE}
+           AND ISNULL(MOD_DIVI,'') = ''
+           AND ISNULL(CASH_NUM, 0) =  0
+           AND EX_DATE             = #{AC_DATE}
+           AND EX_NUM              = #{EX_NUM}
+     </update>
+     
+     <update id="agj106ukrServiceImpl.draftNoUpdate" parameterType="Map">
+        /* agj106ukrServiceImpl.draftNoUpdate */
+        UPDATE AGJ110T
+           SET DRAFT_NO   = #{DRAFT_NO}
+ 			 --, DRAFT_CODE = CASE WHEN ISNULL(DRAFT_CODE, '0') = '0'
+             --        THEN '1'
+			 --		 ELSE DRAFT_CODE
+			 --	 END
+         WHERE COMP_CODE           = #{S_COMP_CODE}
+           AND ISNULL(MOD_DIVI,'') = ''
+           AND ISNULL(CASH_NUM, 0) =  0
+           AND EX_DATE             = #{AC_DATE}
+           AND EX_NUM              = #{EX_NUM}
+     </update>
+
+
+
+    <!-- 기안콤보 생성 -->
+    <select id="agj106ukrServiceImpl.fnGetA134MakeCombo" parameterType="Map" resultType="comboItem">
+        /* agj106ukrServiceImpl.fnGetA134MakeCombo */
+        SELECT REF_CODE1  AS 'value'
+        	 , CODE_NAME AS 'text'
+        	 , SUB_CODE + CODE_NAME search
+         FROM BSA100T WITH (NOLOCK)
+        WHERE COMP_CODE   = #{S_COMP_CODE}
+          AND MAIN_CODE   = 'A134'
+          AND SUB_CODE   != '$'
+          AND REF_CODE1  != ''
+        ORDER BY SORT_SEQ, SUB_CODE
+    </select>
+    
+    <select id="agj106ukrServiceImpl.selectSlipList" parameterType="Map" resultType="rMap">
+        /* agj106ukrServiceImpl.selectSlipList */
+        BEGIN
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+    
+        DECLARE @COMP_CODE         NVARCHAR(08)                -- (필수) 법인코드
+              , @FR_DATE           NVARCHAR(08)                -- (필수) 전표일(FR)
+              , @TO_DATE           NVARCHAR(08)                -- (필수) 전표일(TO)
+              , @EX_NUM            NVARCHAR(03)                -- (선택) 전표번호
+              , @CUSTOM_CODE       NVARCHAR(10)                -- (선택) 거래처코드
+              , @CHARGE_CODE       NVARCHAR(10)                -- (필수) 입력자ID
+              , @INPUT_PATH        NVARCHAR(02)                -- (선택) 입력경로 : 공통코드(A011)
+              
+            SET @COMP_CODE    =  #{S_COMP_CODE}
+            SET @FR_DATE      =  #{FR_DATE}
+            SET @TO_DATE      =  #{TO_DATE}
+            SET @EX_NUM       =  #{EX_NUM}
+            SET @CUSTOM_CODE  =  #{CUSTOM_CODE}
+            SET @CHARGE_CODE  =  #{CHARGE_CODE}
+            SET @INPUT_PATH   =  #{INPUT_PATH}
+    
+            IF ( ISNULL(@EX_NUM, '')        = 0 )   SET @EX_NUM       = 0
+            IF ( ISNULL(@CUSTOM_CODE, '')   = '' )  SET @CUSTOM_CODE  = ''
+            IF ( ISNULL(@INPUT_PATH, '')    = '' )  SET @INPUT_PATH   = ''
+                
+        /*-- 1. 날짜 포맷 유형 설정 ------------------------------------------------------------------------------------------*/
+        DECLARE @DateFormat         NVARCHAR(01)
+              , @TimeFormat         NVARCHAR(01)    
+                
+        SELECT TOP 1 @DateFormat = SUBSTRING(CODE_NAME, 5, 1)
+        FROM   BSA100T WITH (NOLOCK)
+        WHERE  COMP_CODE  = @COMP_CODE
+        AND    MAIN_CODE  = 'B044'
+        AND    REF_CODE1  = 'Y'
+                
+        SET @DateFormat = ISNULL(@DateFormat, '.')
+        SET @TimeFormat = ISNULL(@TimeFormat, ':')
+                
+    
+        SELECT A.AUTO_NUM AS AUTO_NUM                                                               --(히든)
+            , CASE WHEN ISNULL(A.EX_DATE, '') = '' 
+                   THEN NULL
+                   ELSE SUBSTRING(A.EX_DATE, 1, 4) + @DateFormat + 
+                        SUBSTRING(A.EX_DATE, 5, 2) + @DateFormat + 
+                        SUBSTRING(A.EX_DATE, 7, 2)
+               END                                                    AS AC_DATE        --전표일
+            , A.EX_NUM                                                AS SLIP_NUM       --전표번호
+    
+            , CASE DR_CR WHEN '1'
+                         THEN 0
+                         WHEN '2' 
+                         THEN A.AMT_I
+               END                                                    AS CR_AMT_I       --금액
+    
+            , ISNULL(A.REMARK,'')                                     AS REMARK         --적요
+            , ISNULL(A.CUSTOM_CODE, '')                               AS CUSTOM_CODE    --거래처코드
+            , CASE WHEN ISNULL(A.CUSTOM_NAME,'') ='' 
+                   THEN ISNULL(M1.CUSTOM_NAME,'')
+                   ELSE ISNULL(A.CUSTOM_NAME,'') 
+                END                                                   AS CUSTOM_NAME    --거래처명
+                        
+            , ISNULL(A.DEPT_CODE,'')                                  AS DEPT_CODE      --귀속부서
+            , ISNULL(A.DEPT_NAME,'')                                  AS DEPT_NAME      --귀속부서명
+    
+            FROM           AGJ110T A  WITH (NOLOCK)
+                LEFT JOIN BCM100T M1 WITH (NOLOCK) ON M1.COMP_CODE    = A.COMP_CODE
+                                                  AND M1.CUSTOM_CODE  = A.CUSTOM_CODE
+    
+    
+        WHERE A.COMP_CODE = @COMP_CODE
+          AND   A.DR_CR     = '2'               --대변
+          AND (A.MOD_DIVI IS NULL OR A.MOD_DIVI = '')
+          AND ((@FR_DATE  != ''  AND A.EX_DATE   >= @FR_DATE) OR (@FR_DATE  = ''))
+          AND ((@TO_DATE  != ''  AND A.EX_DATE   <![CDATA[<=]]> @TO_DATE) OR (@TO_DATE  = ''))
+    
+          AND ((@EX_NUM        != 0   AND A.EX_NUM       = @EX_NUM)       OR (@EX_NUM       = 0))
+          AND ((@CUSTOM_CODE   != ''  AND A.CUSTOM_CODE  = @CUSTOM_CODE)  OR (@CUSTOM_CODE  = ''))
+          AND ((@CHARGE_CODE   != ''  AND A.CHARGE_CODE  = @CHARGE_CODE)  OR (@CHARGE_CODE  = ''))
+          AND ((@INPUT_PATH    != ''  AND A.INPUT_PATH  = @INPUT_PATH)    OR (@INPUT_PATH   = ''))
+    
+                                  
+          AND A.DIV_CODE IN
+              (  
+               #{S_DIV_CODE}
+              )          
+                     
+                    
+        SET ARITHABORT OFF
+        SET NOCOUNT OFF
+                
+    END 
+    </select>
+
+    
+</mapper>

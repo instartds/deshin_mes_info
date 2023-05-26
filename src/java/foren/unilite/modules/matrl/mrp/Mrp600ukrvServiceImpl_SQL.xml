@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mrp600ukrvServiceImpl">
+	<delete id="mrp600ukrvServiceImpl.deleteMaster" parameterType="Map" >
+		DELETE FROM MRP600T
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND DIV_CODE  = #{DIV_CODE}
+		 <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">   
+		   AND ITEM_CODE = #{ITEM_CODE}
+		 </if>
+		 <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+		   AND DEPT_CODE = #{DEPT_CODE}
+		 </if>
+	</delete>
+	<update id="mrp600ukrvServiceImpl.insertMaster" parameterType="Map" >
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON	 
+			
+			   DECLARE @PROPER_STOCK  NUMERIC(5,2)			
+			   
+				--- 적정재고율 값  ---
+				SELECT @PROPER_STOCK = REF_CODE1
+			      FROM BSA100T WITH (NOLOCK)  
+			     WHERE COMP_CODE = #{S_COMP_CODE}
+			       AND MAIN_CODE = 'YP18'
+			       AND SUB_CODE != '$'
+			       AND REF_CODE2  = 'Y' 
+			       
+			   SET @PROPER_STOCK = ISNULL(@PROPER_STOCK, 1)
+				----------------------				
+				
+				INSERT INTO MRP600T (COMP_CODE, DIV_CODE,ITEM_CODE ,DEPT_CODE ,AVG_Q ,SD_Q ,PURCH_LDTIME ,LDTIME_SD ,SAFETY_Q ,REORDER_POINT 
+									,WORKING_DAY ,TOT_AVG_Q ,EOQ, START_DATE, END_DATE, INSERT_DB_USER, UPDATE_DB_USER, UPDATE_DB_TIME)
+				
+				-- 재주문점(R) 구하기
+				SELECT A.COMP_CODE								AS COMP_CODE
+					 , A.DIV_CODE								AS DIV_CODE
+					 , A.ITEM_CODE								AS ITEM_CODE
+					 , A.DEPT_CODE								AS DEPT_CODE
+				     , ROUND(AVG(A.QTY),   2)					AS AVG_Q																-- 평균
+				     , ROUND(STDEV(A.QTY), 2)					AS SD_Q																	-- 표준편차
+				     , ISNULL(C.PURCH_LDTIME, 0)												 AS PURCH_LDTIME						-- 리드타임
+				     , ROUND(STDEV(A.QTY) * SQRT(ISNULL(C.PURCH_LDTIME, 1)), 2)					 AS LDTIME_SD							--리드타임표준편차
+				     , ROUND((@PROPER_STOCK * STDEV(A.QTY) * SQRT(ISNULL(C.PURCH_LDTIME, 1))),0) AS SAFETY_Q							-- 안전재고
+				     , ROUND(AVG(A.QTY),0) + ROUND((@PROPER_STOCK * STDEV(A.QTY) * SQRT(ISNULL(C.PURCH_LDTIME, 1))),0) AS REORDER_POINT	-- 재주문점
+				     ------
+				     , COUNT(A.SALE_DATE)														 AS WORKING_DAY							-- 영업일수 
+				     , ROUND(AVG(A.QTY) * COUNT(A.SALE_DATE), 0)								 AS TOT_AVG_Q							-- 기간평균수요량
+				     , ROUND(SQRT( 2 * (AVG(A.QTY) * COUNT(A.SALE_DATE)) * 1 / 1 ),0)			 AS EOQ									-- 경제주문량
+				     , #{START_DATE}															 AS START_DATE
+				     , #{END_DATE}																 AS END_DATE
+				     , #{S_USER_ID}																 AS INSERT_DB_USER
+				     , #{S_USER_ID}																 AS UPDATE_DB_USER
+				     , GETDATE()																 AS UPDATE_DB_TIME
+				  FROM (
+						SELECT A.COMP_CODE, A.DIV_CODE, B.ITEM_CODE, A.DEPT_CODE, A.SALE_DATE, SUM(B.SALE_Q) AS QTY
+						  FROM SSA100T A WITH(NOLOCK)
+						       INNER JOIN SSA110T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+						                                        AND A.DIV_CODE  = B.DIV_CODE
+						                                        AND A.BILL_NUM  = B.BILL_NUM 				                                        
+						  WHERE A.COMP_CODE = #{S_COMP_CODE}
+						    AND A.DIV_CODE  = #{DIV_CODE}
+						    AND A.SALE_DATE BETWEEN #{START_DATE} AND #{END_DATE}
+						    <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+							AND B.ITEM_CODE = #{ITEM_CODE}
+						    </if>
+						    <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+						    AND A.DEPT_CODE = #{DEPT_CODE}
+						    </if>							
+						  GROUP BY A.COMP_CODE, A.DIV_CODE, B.ITEM_CODE, A.DEPT_CODE, A.SALE_DATE
+
+						) A
+						  INNER JOIN BPR100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+						                                   AND A.ITEM_CODE = B.ITEM_CODE
+						                                   <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)"> 
+														   AND B.ITEM_LEVEL1 LIKE '%' + #{ITEM_LEVEL1} + '%'
+						                                   </if>  
+						                                   <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL2)">
+														   AND B.ITEM_LEVEL2 LIKE '%' + #{ITEM_LEVEL2} + '%'
+						                                   </if>
+														   <if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL3)">  
+														   AND B.ITEM_LEVEL3 LIKE '%' + #{ITEM_LEVEL3} + '%'
+														   </if>  
+ 						  INNER JOIN BPR200T C WITH(NOLOCK) ON A.COMP_CODE = C.COMP_CODE
+														   AND A.DIV_CODE  = C.DIV_CODE
+														   AND A.ITEM_CODE = C.ITEM_CODE
+													       AND C.ITEM_ACCOUNT > '00'
+				 GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.DEPT_CODE, C.PURCH_LDTIME
+				 HAVING AVG(A.QTY) > 0 
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+	</update>	
+</mapper>

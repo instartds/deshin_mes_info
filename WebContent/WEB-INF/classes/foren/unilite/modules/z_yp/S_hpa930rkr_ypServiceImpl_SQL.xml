@@ -1,0 +1,407 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_hpa930rkr_ypServiceImpl">
+
+	<select id="s_hpa930rkr_ypServiceImpl.printList1" parameterType="Map" resultType="rMap">		
+        BEGIN
+            DECLARE               @COMP_CODE           NVARCHAR(08)             --(필수) 법인코드
+                                , @DIV_CODE            NVARCHAR(08)             --(필수) 사업장                          
+                                , @USER_ID             NVARCHAR(100)             --(필수) USER ID
+                                , @PRINT_USER          NVARCHAR(100)            --(선택) 출력자
+                                , @VIEW_PRINT_INFO_YN  NVARCHAR(01)             --인쇄출력정보 여부
+        
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+        
+                SET @COMP_CODE                  =   ISNULL(#{S_COMP_CODE}, '')
+                SET @DIV_CODE                   =   ISNULL(#{DIV_CODE}, '')        
+                SET @USER_ID                    =   ISNULL(#{S_USER_ID}, '')
+        
+                SELECT @PRINT_USER = USER_NAME 
+                 FROM BSA300T WITH(NOLOCK)
+                WHERE COMP_CODE = @COMP_CODE
+                  AND USER_ID = @USER_ID
+                        
+                SELECT @VIEW_PRINT_INFO_YN = SUB_CODE
+                  FROM BSA100T WITH(NOLOCK)
+                 WHERE COMP_CODE = @COMP_CODE
+                   AND MAIN_CODE = 'B249'
+                   AND SUB_CODE != '$'
+                   AND REF_CODE1 = 'Y'
+                
+                IF EXISTS (SELECT TOP 1 1 FROM  tempdb..sysobjects WHERE id=object_id('tempdb..#S_HPA930T_tmp'))
+                    DROP TABLE #S_HPA930T_tmp
+        
+                SELECT Z.PRINT_SEQ                                            --순번
+                     , Z.PAY_YYYYMM                                           --지급년월  
+                     , Z.SUPP_TYPE                                            --급상여 구분
+                     , Z.PERSON_NUMB                                          --사번
+                     , Z.NAME                                                 --성명
+                     , Z.BANK_CODE1                                           --은행코드
+                     , Z.BANK_NAME1                                           --은행        
+                     , Z.BANK_ACCOUNT1                                        --계좌번호
+                     , Z.COST_KIND                                            --회계부서
+                     , Z.COST_KIND_NAME                                       --회계부서명
+                     , Z.AMOUNT_I                                             --금액             
+                     , Z.PAY_GUBUN                                            --고용형태(1:정규직, 2:비정규직)
+                     , Z.PAY_GUBUN_NAME                                       --고용형태명
+                     , Z.GROUP_KEY                                            --레포트 그룹키
+                     , Z.REMARK                                               --비고    
+                     , Z.PRINT_USER                                           --출력자 이름
+                     , Z.VIEW_PRINT_INFO_YN                                   --인쇄출력정보 표시여부     
+                     , Z.TITLE                                                --메인타이틀
+                     , Z.DED_SORT                                             --공제코드 소팅용
+                     , Z.COMP_CODE                                            --법인코드
+                 INTO #S_HPA930T_tmp
+                 FROM(
+                    SELECT 
+                        CAST ( ROW_NUMBER() OVER(PARTITION BY H.COST_KIND + H.PAY_GUBUN ORDER BY H.NAME) AS NVARCHAR (1000) ) AS PRINT_SEQ          --순번
+                        , SUBSTRING(A.PAY_YYYYMM, 1, 4) + '.' + SUBSTRING(A.PAY_YYYYMM, 5, 2)       AS PAY_YYYYMM           --지급년월  
+                        , A.SUPP_TYPE                                                               AS SUPP_TYPE            --급상여 구분
+                        , A.PERSON_NUMB                                                             AS PERSON_NUMB          --사번
+                        , H.NAME                                                                    AS NAME                 --성명
+                        , H.BANK_CODE1                                                              AS BANK_CODE1           --은행코드
+                        , C.CUSTOM_NAME                                                             AS BANK_NAME1           --은행        
+                        , unilite.fnCipherDecrypt(H.BANK_ACCOUNT1, '')                              AS BANK_ACCOUNT1        --계좌번호
+                        , H.COST_KIND                                                               AS COST_KIND            --회계부서
+                        , D.COST_POOL_NAME                                                          AS COST_KIND_NAME       --회계부서명
+                        , SUM(A.REAL_AMOUNT_I) - ISNULL(SUM(B.AMOUNT_I), 0)                         AS AMOUNT_I             --금액(실지급액 - 수당(당직수당 제외))
+                        , H.PAY_GUBUN                                                               AS PAY_GUBUN            --고용형태(1:정규직, 2:비정규직)
+                        , E.CODE_NAME                                                               AS PAY_GUBUN_NAME       --고용형태명
+                        , H.COST_KIND + H.PAY_GUBUN                                                 AS GROUP_KEY            --레포트 그룹키
+                        , ''                                                                        AS REMARK               --비고    
+                        , @PRINT_USER                                                               AS PRINT_USER           --출력자 이름
+                        , @VIEW_PRINT_INFO_YN                                                       AS VIEW_PRINT_INFO_YN   --인쇄출력정보 표시여부     
+                        , SUBSTRING(A.PAY_YYYYMM, 1, 4) + '년 ' + SUBSTRING(A.PAY_YYYYMM, 5, 2) + '월 ' +  ISNULL(D.COST_POOL_NAME, '') + '(' + E.CODE_NAME + ') ' + '급여 입금명세'    AS TITLE    --메인타이틀
+                        , ''                                                                        AS DED_SORT             --공제코드 소팅용
+                        , A.COMP_CODE
+                     FROM   HPA600T A WITH (NOLOCK)
+                         LEFT JOIN (
+                                  SELECT COMP_CODE
+                                       , SUPP_TYPE
+                                       , PAY_YYYYMM
+                                       , PERSON_NUMB
+                                       , SUM(AMOUNT_I) AS AMOUNT_I   -- 당직수당
+                                    FROM HPA300T WITH (NOLOCK)
+                                    WHERE COMP_CODE  = #{S_COMP_CODE}
+                                        AND SUPP_TYPE  = #{SUPP_TYPE}
+                                        AND PAY_YYYYMM = #{PAY_YYYYMM}
+                                        AND WAGES_CODE IN ('420', '430')
+                                    GROUP BY COMP_CODE, SUPP_TYPE, PAY_YYYYMM, PERSON_NUMB
+        
+                        )   B                               ON B.COMP_CODE = A.COMP_CODE
+                                                           AND B.SUPP_TYPE = A.SUPP_TYPE
+                                                           AND B.PAY_YYYYMM = A.PAY_YYYYMM
+                                                           AND B.PERSON_NUMB = A.PERSON_NUMB
+                        INNER JOIN  HUM100T H WITH (NOLOCK) ON H.COMP_CODE   = A.COMP_CODE
+                                                           AND H.PERSON_NUMB = A.PERSON_NUMB
+                                                           <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                                           AND H.DIV_CODE    = #{DIV_CODE}
+                                                           </if>
+                                                           <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+                                                           AND H.DEPT_CODE   = #{DEPT_CODE}
+                                                           </if>
+                                                           <if test="@foren.Ognl@isNotEmpty(COST_KIND)">
+                                                           AND H.COST_KIND   = #{COST_KIND}
+                                                           </if>
+                                                           <if test="@foren.Ognl@isNotEmpty(PAY_CODE)">
+                                                           AND H.PAY_CODE    = #{PAY_CODE}
+                                                           </if>
+                                                           <if test="@foren.Ognl@isNotEmpty(PAY_PROV_FLAG)">
+                                                           AND H.PAY_PROV_FLAG = #{PAY_PROV_FLAG}
+                                                           </if>
+                                                           <if test="@foren.Ognl@isNotEmpty(BANK_CODE)">
+                                                           AND H.BANK_CODE2 = #{BANK_CODE}
+                                                           </if>
+
+                         LEFT JOIN  BCM100T C WITH (NOLOCK) ON C.COMP_CODE   = H.COMP_CODE
+                                                           AND C.CUSTOM_CODE = H.BANK_CODE1
+                                                           AND C.CUSTOM_TYPE = '4'
+                         LEFT JOIN (
+                                    SELECT COST_POOL_CODE                   
+                                         , COST_POOL_NAME   
+                                         , COMP_CODE
+                                     FROM CBM600T WITH (NOLOCK)             
+                                    WHERE COMP_CODE = #{S_COMP_CODE}
+                                    )       D                ON D.COMP_CODE      = H.COMP_CODE
+                                                            AND D.COST_POOL_CODE = H.COST_KIND
+                         LEFT JOIN   BSA100T E WITH (NOLOCK) ON E.COMP_CODE      = H.COMP_CODE
+                                                            AND E.MAIN_CODE      = 'H011'
+                                                            AND E.SUB_CODE       = H.PAY_GUBUN
+                    WHERE A.COMP_CODE  = #{S_COMP_CODE}
+                      AND A.SUPP_TYPE  = #{SUPP_TYPE}
+                      AND A.PAY_YYYYMM = #{PAY_YYYYMM}
+                      <if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+                      AND H.PERSON_NUMB = #{PERSON_NUMB}
+                      </if>
+                    GROUP BY  A.COMP_CODE, A.PAY_YYYYMM, A.SUPP_TYPE, A.PERSON_NUMB, H.NAME, H.BANK_CODE1,
+                              C.CUSTOM_NAME, H.BANK_ACCOUNT1, H.COST_KIND, D.COST_POOL_NAME, H.PAY_GUBUN, E.CODE_NAME
+            
+                    UNION ALL
+        
+                    --공제대상 합계
+                    SELECT 
+                          F.CODE_NAME                                                               AS PRINT_SEQ            --순번
+                        , SUBSTRING(A.PAY_YYYYMM, 1, 4) + '.' + SUBSTRING(A.PAY_YYYYMM, 5, 2)       AS PAY_YYYYMM           --지급년월  
+                        , A.SUPP_TYPE                                                               AS SUPP_TYPE            --급상여 구분
+                        , ''                                                                        AS PERSON_NUMB          --사번
+                        , CASE WHEN A.DED_CODE = 'S04'  THEN    '고창배'                           
+                               WHEN A.DED_CODE = 'S09'  THEN    '양평공사 노동조합'
+                               ELSE '양평공사'
+                          END                                                                       AS NAME                 --성명
+                        , D.BANK_CODE                                                               AS BANK_CODE1           --은행코드
+                        , D.BANK_NAME                                                               AS BANK_NAME1           --은행        
+                
+                        , CASE WHEN A.DED_CODE = 'S05'  THEN    '301-0177-2432-91'  --급식비                           
+                               WHEN A.DED_CODE = 'S04'  THEN    '356-1032-5025-73'  --상조회비
+                               WHEN A.DED_CODE = 'S09'  THEN    '351-0835-4098-63'  --노동조합회비
+                               ELSE 
+                                    D.BANK_ACCOUNT
+                          END                                                                       AS BANK_ACCOUNT1        --계좌번호
+                        , H.COST_KIND                                                               AS COST_KIND            --회계부서
+                        , D.COST_POOL_NAME                                                          AS COST_KIND_NAME       --회계부서명
+                        , SUM(DED_AMOUNT_I)                                                         AS AMOUNT_I             --공제금액
+                        , H.PAY_GUBUN                                                               AS PAY_GUBUN            --고용형태(1:정규직, 2:비정규직)
+                        , E.CODE_NAME                                                               AS PAY_GUBUN_NAME       --고용형태명
+                        , H.COST_KIND + H.PAY_GUBUN                                                 AS GROUP_KEY            --레포트 그룹키
+                        , ''                                                                        AS REMARK               --비고    
+                        , @PRINT_USER                                                               AS PRINT_USER           --출력자 이름
+                        , @VIEW_PRINT_INFO_YN                                                       AS VIEW_PRINT_INFO_YN   --인쇄출력정보 표시여부       
+                        , SUBSTRING(A.PAY_YYYYMM, 1, 4) + '년 ' + SUBSTRING(A.PAY_YYYYMM, 5, 2) + '월 ' +  ISNULL(D.COST_POOL_NAME, '') + '(' + E.CODE_NAME + ') ' + '급여 입금명세'    AS TITLE    --메인타이틀
+                        , F.REF_CODE2                                                               AS DED_SORT             --공제코드 소팅용
+                        , A.COMP_CODE
+                     FROM   HPA400T A WITH (NOLOCK)      
+                        INNER JOIN  HUM100T H WITH (NOLOCK) ON H.COMP_CODE   = A.COMP_CODE
+                                                           AND H.PERSON_NUMB = A.PERSON_NUMB
+                                                           <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+                                                           AND H.DIV_CODE    = #{DIV_CODE}
+                                                           </if>
+                                                           <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+                                                           AND H.DEPT_CODE   = #{DEPT_CODE}
+                                                           </if>
+                                                           <if test="@foren.Ognl@isNotEmpty(COST_KIND)">
+                                                           AND H.COST_KIND   = #{COST_KIND}
+                                                           </if>
+                                                           <if test="@foren.Ognl@isNotEmpty(PAY_CODE)">
+                                                           AND H.PAY_CODE    = #{PAY_CODE}
+                                                           </if>
+                                                           <if test="@foren.Ognl@isNotEmpty(PAY_PROV_FLAG)">
+                                                           AND H.PAY_PROV_FLAG = #{PAY_PROV_FLAG}
+                                                           </if>
+                                                           <if test="@foren.Ognl@isNotEmpty(BANK_CODE)">
+                                                           AND H.BANK_CODE2 = #{BANK_CODE}
+                                                           </if>
+
+                         LEFT JOIN  BCM100T C WITH (NOLOCK) ON C.COMP_CODE   = H.COMP_CODE
+                                                           AND C.CUSTOM_CODE = H.BANK_CODE1
+                                                           AND C.CUSTOM_TYPE = '4'
+                         LEFT JOIN (
+                                    SELECT A.COST_POOL_CODE                   
+                                         , A.COST_POOL_NAME
+                                         , A.SAVE_CODE
+                                         , A.SAVE_NAME
+                                         , A.BANK_CODE
+                                         , C.CUSTOM_NAME        AS BANK_NAME
+                                         , A.BANK_ACCOUNT
+                                         , A.COMP_CODE
+                                     FROM         CBM600T A WITH (NOLOCK)  
+                                     LEFT JOIN    BCM100T C WITH (NOLOCK) ON A.COMP_CODE = C.COMP_CODE
+                                                                         AND A.BANK_CODE = C.CUSTOM_CODE
+                                                                         AND C.CUSTOM_TYPE = '4'           
+                                    WHERE A.COMP_CODE = #{S_COMP_CODE}
+                                    )       D               ON D.COMP_CODE      = H.COMP_CODE
+                                                           AND D.COST_POOL_CODE = H.COST_KIND
+                        LEFT JOIN   BSA100T E WITH (NOLOCK) ON E.COMP_CODE      = H.COMP_CODE
+                                                           AND E.MAIN_CODE      = 'H011'
+                                                           AND E.SUB_CODE       = H.PAY_GUBUN
+                        LEFT JOIN   BSA100T F WITH (NOLOCK) ON F.COMP_CODE      = H.COMP_CODE
+                                                           AND F.MAIN_CODE      = 'H034'
+                                                           AND F.SUB_CODE       = A.DED_CODE
+                                                                                           
+                   WHERE  A.COMP_CODE  = #{S_COMP_CODE}
+                      AND A.SUPP_TYPE  = #{SUPP_TYPE}
+                      AND A.PAY_YYYYMM = #{PAY_YYYYMM}
+                      AND A.DED_CODE IN ('S05', 'ANU', 'HIR', 'LCI', 'MED', 'RAN', 'RLC', 'RME', 'S03', 'S04', 'S09', 'INC', 'LOC')
+                      <if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+                      AND H.PERSON_NUMB = #{PERSON_NUMB}
+                      </if>
+                    GROUP BY  A.COMP_CODE, A.PAY_YYYYMM, A.SUPP_TYPE, A.DED_CODE, H.COST_KIND, D.COST_POOL_NAME, 
+                              D.BANK_CODE, D.BANK_NAME, D.BANK_ACCOUNT, H.PAY_GUBUN, E.CODE_NAME, F.CODE_NAME, F.REF_CODE2
+             
+                 ) Z
+        
+                SELECT  A.PRINT_SEQ                                                                         --순번
+                      , A.PAY_YYYYMM                                                                        --지급년월  
+                      , A.SUPP_TYPE                                                                         --급상여 구분
+                      , A.PERSON_NUMB                                                                       --사번
+                      , A.NAME                                                                              --성명
+                      , A.BANK_CODE1                                                                        --은행코드
+                      , A.BANK_NAME1                                                                        --은행        
+                      , A.BANK_ACCOUNT1                                                                     --계좌번호
+                      , A.COST_KIND                                                                         --회계부서
+                      , A.COST_KIND_NAME                                                                    --회계부서명
+                      , A.AMOUNT_I                                                                          --금액        
+                      , B.AMOUNT_I          AS TOT_AMOUNT_I                                                 --토탈 금액  
+                      , unilite.fnConvertToAmt(ISNULL(B.AMOUNT_I, 0)) + '원정'        AS TOT_AMOUNT_I_KO      --토탈 금액(한글)
+                      , A.PAY_GUBUN                                                                         --고용형태(1:정규직, 2:비정규직)
+                      , A.PAY_GUBUN_NAME                                                                    --고용형태명
+                      , A.GROUP_KEY                                                                         --레포트 그룹키
+                      , A.REMARK                                                                            --비고    
+                      , A.PRINT_USER                                                                        --출력자 이름
+                      , A.VIEW_PRINT_INFO_YN                                                                --인쇄출력정보 표시여부     
+                      , A.TITLE                                                                             --메인타이틀
+                      , A.DED_SORT                                                                          --공제코드 소팅용
+                      , A.COMP_CODE                                                                         --법인코드
+                 FROM #S_HPA930T_tmp    A
+                 LEFT JOIN (
+                    SELECT  COMP_CODE
+                          , GROUP_KEY
+                          , SUM(AMOUNT_I)  AS AMOUNT_I
+                     FROM #S_HPA930T_tmp
+                     GROUP BY COMP_CODE, GROUP_KEY
+                 )  B   ON  B.COMP_CODE = A.COMP_CODE   
+                       AND  B.GROUP_KEY = A.GROUP_KEY
+                ORDER BY  A.COMP_CODE, A.COST_KIND, A.PAY_GUBUN, A.DED_SORT, A.NAME
+        
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF    
+        END 
+
+	</select>
+	
+	<select id="s_hpa930rkr_ypServiceImpl.printList2" parameterType="Map" resultType="rMap">       
+        BEGIN
+    DECLARE               @COMP_CODE           NVARCHAR(08)             --(필수) 법인코드
+                        , @DIV_CODE            NVARCHAR(08)             --(필수) 사업장                          
+                        , @USER_ID             NVARCHAR(100)             --(필수) USER ID
+                        , @PRINT_USER          NVARCHAR(100)            --(선택) 출력자
+                        , @VIEW_PRINT_INFO_YN  NVARCHAR(01)             --인쇄출력정보 여부
+        
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+    SET @COMP_CODE                  =   ISNULL(#{S_COMP_CODE}, '')
+    SET @DIV_CODE                   =   ISNULL(#{DIV_CODE}, '')        
+    SET @USER_ID                    =   ISNULL(#{S_USER_ID}, '')
+
+    SELECT @PRINT_USER = USER_NAME 
+        FROM BSA300T WITH(NOLOCK)
+        WHERE COMP_CODE = @COMP_CODE
+        AND USER_ID = @USER_ID
+                        
+    SELECT @VIEW_PRINT_INFO_YN = SUB_CODE
+        FROM BSA100T WITH(NOLOCK)
+        WHERE COMP_CODE = @COMP_CODE
+        AND MAIN_CODE = 'B249'
+        AND SUB_CODE != '$'
+        AND REF_CODE1 = 'Y'
+    IF EXISTS (SELECT TOP 1 1 FROM  tempdb..sysobjects WHERE id=object_id('tempdb..#S_HPA930T_tmp'))
+       DROP TABLE #S_HPA930T_tmp
+           
+    SELECT 
+          CAST ( ROW_NUMBER() OVER(PARTITION BY H.COST_KIND + H.PAY_GUBUN ORDER BY H.NAME) AS NVARCHAR (1000) ) AS PRINT_SEQ          --순번
+        , SUBSTRING(A.PAY_YYYYMM, 1, 4) + '.' + SUBSTRING(A.PAY_YYYYMM, 5, 2)       AS PAY_YYYYMM                                     --지급년월  
+        , A.SUPP_TYPE                                                               AS SUPP_TYPE                                      --급상여 구분
+        , A.PERSON_NUMB                                                             AS PERSON_NUMB                                    --사번
+        , H.NAME                                                                    AS NAME                                           --성명
+        , H.BANK_CODE1                                                              AS BANK_CODE1                                     --은행코드
+        , C.CUSTOM_NAME                                                             AS BANK_NAME1                                     --은행        
+        , unilite.fnCipherDecrypt(H.BANK_ACCOUNT1, '')                              AS BANK_ACCOUNT1                                  --계좌번호
+        , H.COST_KIND                                                               AS COST_KIND                                      --회계부서
+        , D.COST_POOL_NAME                                                          AS COST_KIND_NAME                                 --회계부서명
+        , SUM(AMOUNT_I)                                                             AS AMOUNT_I                                       -- 당직수당
+        , H.PAY_GUBUN                                                               AS PAY_GUBUN                                      --고용형태(1:정규직, 2:비정규직)
+        , E.CODE_NAME                                                               AS PAY_GUBUN_NAME                                 --고용형태명
+        , H.COST_KIND + H.PAY_GUBUN                                                 AS GROUP_KEY                                      --레포트 그룹키
+        , ''                                                                        AS REMARK                                         --비고    
+        , @PRINT_USER                                                               AS PRINT_USER                                     --출력자 이름
+        , @VIEW_PRINT_INFO_YN                                                       AS VIEW_PRINT_INFO_YN                             --인쇄출력정보 표시여부     
+        , SUBSTRING(A.PAY_YYYYMM, 1, 4) + '년 ' + SUBSTRING(A.PAY_YYYYMM, 5, 2) + '월 ' +  ISNULL(D.COST_POOL_NAME, '') + '(' + E.CODE_NAME + ') ' + '당직비'    AS TITLE    --메인타이틀
+        , ''                                                                        AS DED_SORT             --공제코드 소팅용
+        , A.COMP_CODE           
+    INTO    #S_HPA930T_tmp    
+    FROM         HPA300T A WITH (NOLOCK)
+     INNER JOIN  HUM100T H WITH (NOLOCK) ON H.COMP_CODE   = A.COMP_CODE
+                                        AND H.PERSON_NUMB = A.PERSON_NUMB                                                        
+                                                  
+      LEFT JOIN  BCM100T C WITH (NOLOCK) ON C.COMP_CODE   = H.COMP_CODE
+                                        AND C.CUSTOM_CODE = H.BANK_CODE1
+                                        AND C.CUSTOM_TYPE = '4'
+      LEFT JOIN (
+                SELECT COST_POOL_CODE                   
+                     , COST_POOL_NAME   
+                     , COMP_CODE
+                 FROM CBM600T WITH (NOLOCK)             
+                WHERE COMP_CODE = #{S_COMP_CODE}
+                )       D                ON D.COMP_CODE      = H.COMP_CODE
+                                        AND D.COST_POOL_CODE = H.COST_KIND
+    LEFT JOIN   BSA100T E WITH (NOLOCK) ON E.COMP_CODE       = H.COMP_CODE
+                                       AND E.MAIN_CODE       = 'H011'
+                                       AND E.SUB_CODE        = H.PAY_GUBUN
+    WHERE   A.COMP_CODE  = #{S_COMP_CODE}
+        AND A.SUPP_TYPE  = #{SUPP_TYPE}
+        AND A.PAY_YYYYMM = #{PAY_YYYYMM}
+        AND A.WAGES_CODE IN ('420', '430')
+        <if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+        AND H.PERSON_NUMB = #{PERSON_NUMB}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+        AND H.DIV_CODE    = #{DIV_CODE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+        AND H.DEPT_CODE   = #{DEPT_CODE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(COST_KIND)">
+        AND H.COST_KIND   = #{COST_KIND}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(PAY_CODE)">
+        AND H.PAY_CODE    = #{PAY_CODE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(PAY_PROV_FLAG)">
+        AND H.PAY_PROV_FLAG = #{PAY_PROV_FLAG}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(BANK_CODE)">
+        AND H.BANK_CODE2 = #{BANK_CODE}
+        </if>
+
+    GROUP BY  A.COMP_CODE, A.PAY_YYYYMM, A.SUPP_TYPE, A.PERSON_NUMB, H.NAME, H.BANK_CODE1,
+              C.CUSTOM_NAME, H.BANK_ACCOUNT1, H.COST_KIND, D.COST_POOL_NAME, H.PAY_GUBUN, E.CODE_NAME
+              
+    SELECT  A.PRINT_SEQ                                                                         --순번
+          , A.PAY_YYYYMM                                                                        --지급년월  
+          , A.SUPP_TYPE                                                                         --급상여 구분
+          , A.PERSON_NUMB                                                                       --사번
+          , A.NAME                                                                              --성명
+          , A.BANK_CODE1                                                                        --은행코드
+          , A.BANK_NAME1                                                                        --은행        
+          , A.BANK_ACCOUNT1                                                                     --계좌번호
+          , A.COST_KIND                                                                         --회계부서
+          , A.COST_KIND_NAME                                                                    --회계부서명
+          , A.AMOUNT_I                                                                          --금액        
+          , B.AMOUNT_I          AS TOT_AMOUNT_I                                                 --토탈 금액  
+          , unilite.fnConvertToAmt(ISNULL(B.AMOUNT_I, 0)) + '원정'        AS TOT_AMOUNT_I_KO      --토탈 금액(한글)
+          , A.PAY_GUBUN                                                                         --고용형태(1:정규직, 2:비정규직)
+          , A.PAY_GUBUN_NAME                                                                    --고용형태명
+          , A.GROUP_KEY                                                                         --레포트 그룹키
+          , A.REMARK                                                                            --비고    
+          , A.PRINT_USER                                                                        --출력자 이름
+          , A.VIEW_PRINT_INFO_YN                                                                --인쇄출력정보 표시여부     
+          , A.TITLE                                                                             --메인타이틀
+          , A.DED_SORT                                                                          --공제코드 소팅용
+          , A.COMP_CODE                                                                         --법인코드
+     FROM #S_HPA930T_tmp    A
+     LEFT JOIN (
+        SELECT  COMP_CODE
+              , GROUP_KEY
+              , SUM(AMOUNT_I)  AS AMOUNT_I
+         FROM #S_HPA930T_tmp
+         GROUP BY COMP_CODE, GROUP_KEY
+     )  B   ON  B.COMP_CODE = A.COMP_CODE   
+           AND  B.GROUP_KEY = A.GROUP_KEY
+    ORDER BY  A.COMP_CODE, A.COST_KIND, A.PAY_GUBUN, A.DED_SORT, A.NAME             
+
+    SET NOCOUNT OFF
+    SET ARITHABORT OFF    
+END 
+    </select>
+</mapper>

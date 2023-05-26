@@ -1,0 +1,10 @@
+CREATE OR REPLACE FUNCTION TRA_CM.F_TOTIMESTR (date in date)
+RETURN varchar2 IS 
+
+
+BEGIN
+
+   RETURN to_char(date,'HH24');
+
+END F_TOTIMESTR;
+/

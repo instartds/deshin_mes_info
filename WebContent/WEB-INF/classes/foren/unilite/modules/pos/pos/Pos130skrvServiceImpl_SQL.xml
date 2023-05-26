@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="pos130skrvServiceImpl">
+	
+	<select id="pos130skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+				SET NOCOUNT ON
+				SET ARITHABORT ON
+					
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+					
+				DECLARE @COMP_CODE		NVARCHAR(08)	/* 법인코드  */
+				      , @TotalSales     NUMERIC(30,6)   /* 총매출액 */
+					
+				SET @COMP_CODE = #{S_COMP_CODE}
+	
+				SELECT @TotalSales = (SUM(B.SALE_AMT_O)) - (SUM(B.SALE_Q * B.DISCOUNT_P)) 
+				
+				FROM 			     SSA100T A WITH(NOLOCK)
+						 INNER JOIN  SSA110T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE 
+		                                     			   AND A.DIV_CODE  = B.DIV_CODE
+		                             		 			   AND A.BILL_NUM  = B.BILL_NUM
+						 LEFT  JOIN BPR100T  C WITH(NOLOCK) ON B.COMP_CODE = C.COMP_CODE
+		                     				 			   AND B.ITEM_CODE = C.ITEM_CODE 
+				         INNER JOIN BSA210T  D WITH(NOLOCK) ON A.COMP_CODE = D.COMP_CODE
+		         							 			   AND A.DIV_CODE  = D.TYPE_LEVEL
+		         							 			   AND A.DEPT_CODE = D.TREE_CODE           				 
+	
+				WHERE A.COMP_CODE   = @COMP_CODE
+				AND   A.ORDER_TYPE	= '10'
+				 <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">     
+			     AND    A.DIV_CODE          = #{DIV_CODE}
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(SALE_DATE_FR)">     
+			     AND    A.SALE_DATE     &gt;= #{SALE_DATE_FR}
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(SALE_DATE_TO)">     
+			     AND    A.SALE_DATE      &lt;= #{SALE_DATE_TO}
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">     
+			     AND    C.ITEM_CODE        LIKE #{ITEM_CODE} + '%'
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">     
+			     AND    C.ITEM_NAME        LIKE #{ITEM_NAME} + '%'
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(TXTLV_L1)">     
+			     AND    C.ITEM_LEVEL1          = #{TXTLV_L1}
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(TXTLV_L2)">     
+			     AND    C.ITEM_LEVEL2          = #{TXTLV_L2}
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(TXTLV_L3)">     
+			     AND    C.ITEM_LEVEL3          = #{TXTLV_L3}
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(POS_CODE)">					
+			        AND A.POS_NO IN
+						 <foreach collection="POS_CODE" item="item" separator="," close=")" open="(">
+			              		 #{item}
+			        	</foreach>									
+		         </if>
+		         <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">   
+				   AND  D.TREE_LEVEL  LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) 
+				                                              WHERE COMP_CODE  = @COMP_CODE 
+				                                                AND TYPE_LEVEL = #{DIV_CODE} 
+				                                                AND TREE_CODE  = #{DEPT_CODE}) + '%'
+				</if>
+
+				
+				 SELECT
+				 /* 상품별 매출현황 조회 pos130skrv */
+				  A.COMP_CODE
+				 , A.DIV_CODE
+				 , B.ITEM_CODE																											    /*품목코드*/
+				 , C.ITEM_NAME																												/*품목명*/
+				 , SUM(B.SALE_Q) 																						  AS SALE_Q			/*매출수량*/
+				 
+				 , SUM(B.SALE_AMT_O + B.TAX_AMT_O)																	      AS SALE_AMT	/*총매출액*/
+				 , SUM(B.SALE_AMT_O) 																					  AS SALE_O       /*공급가액*/ 
+				 , SUM(B.TAX_AMT_O)														 								  AS TAX_AMT		/*부가세 */
+				 
+				 
+				 , SUM(B.SALE_Q * B.DISCOUNT_P) 											  							  AS DISCOUNT_O     /*할인금액*/
+				 , (SUM(B.SALE_AMT_O)) - (SUM(B.SALE_Q * B.DISCOUNT_P)) 					  							  AS NETSALES 		/*순매출액*/
+				 , @TotalSales 																							  AS TOSALES		/*총순매출액*/
+				 , CASE WHEN @TotalSales = 0 THEN 0
+				   ELSE ROUND(((SUM(B.SALE_AMT_O)) - (SUM(B.SALE_Q * B.DISCOUNT_P)))/@TotalSales * 100,2) END AS TOTALRATIO     /*총순매출액비*/
+				   
+				 FROM                      SSA100T A WITH(NOLOCK)
+				    		INNER JOIN     SSA110T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE 
+				                         			 			 AND A.DIV_CODE  = B.DIV_CODE
+				         							 			 AND A.BILL_NUM  = B.BILL_NUM
+				   			LEFT JOIN BPR100T C WITH(NOLOCK)  ON B.COMP_CODE = C.COMP_CODE
+				                      				 	     AND B.ITEM_CODE = C.ITEM_CODE  
+				       		INNER JOIN 	BSA210T D WITH(NOLOCK) ON A.COMP_CODE = D.COMP_CODE
+				 								  				  AND A.DIV_CODE  = D.TYPE_LEVEL
+				 								  				  AND A.DEPT_CODE = D.TREE_CODE
+				       		
+				       								 
+				 WHERE A.COMP_CODE = @COMP_CODE
+				 AND   A.ORDER_TYPE	= '10'    
+				 <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">     
+			     AND    A.DIV_CODE          = #{DIV_CODE}
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(SALE_DATE_FR)">     
+			     AND    A.SALE_DATE      &gt;= #{SALE_DATE_FR}
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(SALE_DATE_TO)">     
+			     AND    A.SALE_DATE      &lt;= #{SALE_DATE_TO}
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">     
+			     AND    C.ITEM_CODE        LIKE #{ITEM_CODE} + '%'
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">     
+			     AND    C.ITEM_NAME        LIKE #{ITEM_NAME} + '%'
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(TXTLV_L1)">     
+			     AND    C.ITEM_LEVEL1          = #{TXTLV_L1}
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(TXTLV_L2)">     
+			     AND    C.ITEM_LEVEL2          = #{TXTLV_L2}
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(TXTLV_L3)">     
+			     AND    C.ITEM_LEVEL3          = #{TXTLV_L3}
+			     </if> 
+				 <if test="@foren.Ognl@isNotEmpty(POS_CODE)">					
+			        AND A.POS_NO IN
+						 <foreach collection="POS_CODE" item="item" separator="," close=")" open="(">
+			              		 #{item}
+			        	</foreach>									
+		         </if>
+		         <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">     
+			        AND  D.TREE_LEVEL  LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) 
+			                                                   WHERE COMP_CODE  = @COMP_CODE
+			                                                     AND TYPE_LEVEL = #{DIV_CODE} 
+			                                                     AND TREE_CODE  = #{DEPT_CODE}) + '%'
+			     </if>
+				 
+				 GROUP BY A.COMP_CODE, A.DIV_CODE, B.ITEM_CODE, C.ITEM_NAME
+				 HAVING SUM(B.SALE_AMT_O) != 0
+				 
+				 ORDER BY TOTALRATIO DESC
+				
+				
+SET @END_TIME   = GETDATE()
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'pos130skrv', '상품별 매출현황조회', #{SALE_DATE_FR}, #{SALE_DATE_TO}, @DIFF_TIME
+				
+				SET ARITHABORT OFF 
+				SET NOCOUNT OFF
+			
+			END
+    </select>	
+</mapper>

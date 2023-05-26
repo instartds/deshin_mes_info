@@ -1,0 +1,725 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cam100ukrvServiceImpl">
+	<update id="cam100ukrvServiceImpl.processCosting" parameterType="Map" statementType="CALLABLE">
+		{call uniLITE.USP_COST_ProcessCosting (
+			#{S_COMP_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DIV_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{WORK_MONTH, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{COST_PRSN, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_LANG_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_USER_ID, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ERROR_DESC, 		mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update> 
+	<update id="cam100ukrvServiceImpl.closeCosting" parameterType="Map" statementType="CALLABLE">
+		{call uniLITE.USP_COST_CloseCosting  (
+			#{S_COMP_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DIV_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{WORK_MONTH, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{COST_PRSN, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{WORK_GUBUN, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_LANG_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_USER_ID, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ERROR_DESC, 		mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update>
+	<select id="cam100ukrvServiceImpl.selectRefConfig" parameterType="Map" resultType="rMap">
+        --cam100ukrvServiceImpl.selectRefConfig
+	    DECLARE @RefCC05	NVARCHAR(10)
+
+        SELECT @RefCC05 = MAX(SUB_CODE)
+          FROM BSA100T WITH (NOLOCK)
+         WHERE COMP_CODE = #{S_COMP_CODE}
+           AND MAIN_CODE = 'CC05'
+           AND UPPER(ISNULL(LEFT(REF_CODE1,1),'')) = 'Y'
+
+		SELECT @RefCC05 AS REF_CC05    
+	</select>
+
+	<select id="cam100ukrvServiceImpl.selectMaxSeq" parameterType="Map" resultType="rMap">
+		SELECT ISNULL(MAX(WORK_SEQ),0) WORK_SEQ
+	      FROM CDB100T WITH (NOLOCK)
+	     WHERE COMP_CODE  = #{S_COMP_CODE}
+	       AND DIV_CODE   = #{DIV_CODE}
+	       AND WORK_MONTH = #{WORK_MONTH}
+	</select>
+	<select id="cam100ukrvServiceImpl.selectIDGb" parameterType="Map" resultType="rMap">
+		DECLARE @CompCode     NVARCHAR(8)				-- 법인코드
+		      , @DivCode      NVARCHAR(8)				-- 사업장
+		      , @WorkMonth    NVARCHAR(6)				-- 작업년월
+		
+		SET @CompCode  = #{S_COMP_CODE}
+		SET @DivCode   = #{DIV_CODE}
+		SET @WorkMonth = #{WORK_MONTH}
+		
+		
+		IF OBJECT_ID('tempdb..#TEMP_CAM100T') IS NOT NULL
+		    DROP TABLE #TEMP_CAM100T
+		-- 비목별집계
+		-- 직접비-재료비
+		SELECT 	  ID_GB
+				, COST_GB
+				, COST_GB_NAME
+				, ACCNT
+				, ACCNT_NAME
+				
+			  	<foreach collection="COST_POOL_LIST" item="item" index="i" >
+					  , [${item}] AS COSTPOOL${i}
+				</foreach> 
+				, SUM_AMT
+		INTO #TEMP_CAM100T
+		FROM 
+		(
+			SELECT ID_GB
+				, COST_GB
+				, COST_GB_NAME
+				, ACCNT
+				, ACCNT_NAME
+				<foreach collection="COST_POOL_LIST" item="item"  >
+					  , [${item}] 
+				</foreach> 
+				<foreach collection="COST_POOL_LIST" item="item"  separator="+" close=")" open=",(">
+					   ISNULL([${item}], 0) 
+				</foreach> 
+				 AS SUM_AMT
+			FROM(
+			--재료비
+			SELECT '1'  AS ID_GB
+				 , '01' AS COST_GB
+				 , (SELECT CODE_NAME FROM BSA100T WITH (NOLOCK) WHERE COMP_CODE=@CompCode AND MAIN_CODE ='C007' AND SUB_CODE='01') AS COST_GB_NAME
+				 , ''   AS ACCNT
+				 , ''   AS ACCNT_NAME
+				 , A.COST_POOL_CODE
+				 ,ISNULL(D.AMT,0) AS AMT
+			  FROM            CBM700T A WITH (NOLOCK)
+				   INNER JOIN CBM720T B WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+													 AND B.DIV_CODE       = A.DIV_CODE
+													 AND B.COST_POOL_CODE = A.COST_POOL_CODE 
+				   INNER JOIN BSA230T C WITH (NOLOCK) ON C.COMP_CODE      = B.COMP_CODE
+													 AND C.TYPE_LEVEL     = B.DIV_CODE
+													 AND C.SECTION_CD     = B.SECTION_CD 
+				   LEFT JOIN (SELECT A.COMP_CODE
+								   , A.DIV_CODE
+								   , A.WORK_MONTH
+								   , A.WORK_SHOP_CD
+								   , SUM(A.INOUT_Q * A.UNIT_COST) AS AMT
+								FROM CAM200T A WITH (NOLOCK)
+							   WHERE A.COMP_CODE  = @CompCode
+								 AND A.DIV_CODE   = @DivCode
+								 AND A.WORK_MONTH = @WorkMonth
+							   GROUP BY A.COMP_CODE, A.DIV_CODE, A.WORK_MONTH, A.WORK_SHOP_CD) D ON D.COMP_CODE    = C.COMP_CODE
+																								AND D.DIV_CODE     = C.TYPE_LEVEL
+																								AND D.WORK_SHOP_CD = C.TREE_CODE
+			) as T01
+			 PIVOT (
+				SUM(AMT) 
+			 FOR COST_POOL_CODE IN 
+			 	<foreach collection="COST_POOL_LIST" item="item"  separator="," close=")" open="(">
+					   [${item}] 
+				</foreach> 
+			 ) as TP01
+		UNION ALL
+			SELECT  ID_GB
+				, COST_GB
+				, COST_GB_NAME
+				, ACCNT
+				, ACCNT_NAME
+				<foreach collection="COST_POOL_LIST" item="item"  >
+					  , [${item}] 
+				</foreach> 
+				<foreach collection="COST_POOL_LIST" item="item"  separator="+" close=")" open=",(">
+					   ISNULL([${item}], 0) 
+				</foreach> 
+				 AS SUM_AMT
+			FROM(
+					-- 직접비-경비-외주가공비
+					SELECT A.ID_GB
+						 , A.COST_GB
+						 , (SELECT CODE_NAME FROM BSA100T WITH (NOLOCK) WHERE COMP_CODE=@CompCode AND MAIN_CODE ='C007' AND SUB_CODE=A.COST_GB) AS COST_GB_NAME
+						 , (CASE WHEN A.ID_GB = '2' AND A.COST_GB = '01' THEN ''       ELSE A.ACCNT      END) AS ACCNT
+						 , (CASE WHEN A.ID_GB = '2' AND A.COST_GB = '01' THEN '재료비' ELSE D.ACCNT_NAME END) AS ACCNT_NAME
+						 , B.COST_POOL_CODE
+						 , ISNULL(B.AMT,0) AS AMT
+					  FROM            CBM130T A WITH (NOLOCK)
+						   INNER JOIN CAM310T B WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+															 AND B.DIV_CODE       = A.DIV_CODE
+															 AND B.WORK_MONTH     = A.WORK_MONTH
+															 AND B.ACCNT          = A.ACCNT
+						   INNER JOIN CBM700T C WITH (NOLOCK) ON C.COMP_CODE      = B.COMP_CODE 
+															 AND C.DIV_CODE       = B.DIV_CODE
+															 AND C.COST_POOL_CODE = B.COST_POOL_CODE
+						   LEFT  JOIN ABA400T D WITH (NOLOCK) ON D.COMP_CODE      = A.COMP_CODE
+															 AND D.ACCNT          = A.ACCNT
+					 WHERE A.COMP_CODE     = @CompCode
+					   AND A.DIV_CODE      = @DivCode
+					   AND A.WORK_MONTH    = @WorkMonth
+					   AND A.SUMMARY_CODE != '06'
+			) as T03
+			 PIVOT (
+				SUM(AMT) 
+			 FOR COST_POOL_CODE IN 
+			 	<foreach collection="COST_POOL_LIST" item="item"  separator="," close=")" open="(">
+					   [${item}] 
+				</foreach> 
+			 ) as TP03
+		 ) AS T
+		
+		
+		SELECT  '1' AS DATAKINDS
+				, CASE WHEN ID_GB = '1' THEN '직접비' 
+					  ELSE '간접비'
+				 END AS ID_GB_NAME 
+				, ID_GB
+				, COST_GB
+				, COST_GB_NAME
+				, ACCNT
+				, ACCNT_NAME 
+				<foreach collection="COST_POOL_LIST" item="item" index="i" >
+					  ,COSTPOOL${i}
+				</foreach>
+				,SUM_AMT
+			FROM #TEMP_CAM100T
+			UNION ALL
+			SELECT
+				'2' AS DATAKINDS
+				,CASE WHEN ID_GB = '1' THEN '직접비' 
+					  ELSE '간접비'
+				 END AS ID_GB_NAME 
+				, ID_GB
+				, COST_GB
+				, '소계' AS COST_GB_NAME
+				, '' AS ACCNT
+				, '' AS ACCNT_NAME 
+				<foreach collection="COST_POOL_LIST" item="item" index="i" >
+					  ,SUM(COSTPOOL${i}) AS COSTPOOL${i}
+				</foreach>
+				, SUM(SUM_AMT) AS SUM_AMT
+			FROM #TEMP_CAM100T
+			GROUP BY ID_GB, COST_GB, COST_GB_NAME
+			UNION ALL
+			SELECT
+				'3' AS DATAKINDS
+				,'합계' AS ID_GB_NAME 
+				, '99' AS ID_GB
+				, '' AS COST_GB
+				, '' COST_GB_NAME
+				, '' AS ACCNT
+				, '' AS ACCNT_NAME 
+				<foreach collection="COST_POOL_LIST" item="item" index="i" >
+					  ,SUM(COSTPOOL${i}) AS COSTPOOL${i}
+				</foreach>
+				, SUM(SUM_AMT) AS SUM_AMT
+			FROM #TEMP_CAM100T
+			ORDER BY  ID_GB, COST_GB, DATAKINDS
+		
+
+	</select>
+	<select id="cam100ukrvServiceImpl.selectCostGb" parameterType="Map" resultType="rMap">
+		DECLARE @CompCode     NVARCHAR(8)				-- 법인코드
+		      , @DivCode      NVARCHAR(8)				-- 사업장
+		      , @WorkMonth    NVARCHAR(6)				-- 작업년월
+		
+		SET @CompCode  = #{S_COMP_CODE}
+		SET @DivCode   = #{DIV_CODE}
+		SET @WorkMonth = #{WORK_MONTH}
+		
+		-- 제조부문
+		SELECT 'SUBTITLE'			AS COST_POOL_CODE
+		     , '제조부문'				AS COST_POOL_NAME
+		     , '제조부문'				AS COST_POOL_GB
+		     , 0				    AS AMT_DIRECT
+		     , 0					AS AMT_DISTR
+		     , 0					AS AMT
+		UNION ALL
+		SELECT A.COST_POOL_CODE
+		     , B.COST_POOL_NAME
+		     , '제조부문'				AS COST_POOL_GB
+		     , SUM(A.AMT_DIRECT)    AS AMT_DIRECT
+		     , SUM(A.AMT_DISTR)     AS AMT_DISTR
+		     , SUM(A.AMT)           AS AMT
+		  FROM            CAM315T A WITH (NOLOCK)
+		       INNER JOIN CBM700T B WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE 
+		                                         AND B.DIV_CODE       = A.DIV_CODE
+		                                         AND B.COST_POOL_CODE = A.COST_POOL_CODE
+		 WHERE A.COMP_CODE  = @CompCode
+		   AND A.DIV_CODE   = @DivCode
+		   AND A.WORK_MONTH = @WorkMonth
+		   AND B.APPORTION_YN = 'N'
+		 GROUP BY A.COST_POOL_CODE, B.COST_POOL_NAME
+		UNION ALL
+		SELECT 'SUB_SUMMARY'					AS COST_POOL_CODE
+		     , '소계'				AS COST_POOL_NAME
+		     , '제조부문'				AS COST_POOL_GB
+		     , SUM(A.AMT_DIRECT)    AS AMT_DIRECT
+		     , SUM(A.AMT_DISTR)     AS AMT_DISTR
+		     , SUM(A.AMT)           AS AMT
+		  FROM            CAM315T A WITH (NOLOCK)
+		       INNER JOIN CBM700T B WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE 
+		                                         AND B.DIV_CODE       = A.DIV_CODE
+		                                         AND B.COST_POOL_CODE = A.COST_POOL_CODE
+		 WHERE A.COMP_CODE  = @CompCode
+		   AND A.DIV_CODE   = @DivCode
+		   AND A.WORK_MONTH = @WorkMonth
+		   AND B.APPORTION_YN = 'N'
+		UNION ALL
+		SELECT 'SUBTITLE'			AS COST_POOL_CODE
+		     , '보조부문'				AS COST_POOL_NAME
+		     , '보조부문'				AS COST_POOL_GB
+		     , 0				    AS AMT_DIRECT
+		     , 0					AS AMT_DISTR
+		     , 0					AS AMT
+		UNION ALL 
+		--보조부문
+		SELECT A.COST_POOL_CODE
+		     , B.COST_POOL_NAME
+		     , '보조부문'				AS COST_POOL_GB
+		     , SUM(A.AMT)           AS AMT_DIRECT
+		     , 0                    AS AMT_DISTR
+		     , SUM(A.AMT)           AS AMT
+		  FROM            CAM310T A WITH (NOLOCK)
+		       INNER JOIN CBM700T B WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE 
+		                                         AND B.DIV_CODE       = A.DIV_CODE
+		                                         AND B.COST_POOL_CODE = A.COST_POOL_CODE
+		 WHERE A.COMP_CODE  = @CompCode
+		   AND A.DIV_CODE   = @DivCode
+		   AND A.WORK_MONTH = @WorkMonth
+		   AND B.APPORTION_YN = 'Y'
+		 GROUP BY A.COST_POOL_CODE, B.COST_POOL_NAME
+		 UNION ALL
+		 SELECT 'SUB_SUMMARY' AS COST_POOL_CODE
+		     , '소계' AS COST_POOL_NAME
+		     , '보조부문'				AS COST_POOL_GB
+		     , SUM(A.AMT)           AS AMT_DIRECT
+		     , 0                    AS AMT_DISTR
+		     , SUM(A.AMT)           AS AMT
+		  FROM            CAM310T A WITH (NOLOCK)
+		       INNER JOIN CBM700T B WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE 
+		                                         AND B.DIV_CODE       = A.DIV_CODE
+		                                         AND B.COST_POOL_CODE = A.COST_POOL_CODE
+		 WHERE A.COMP_CODE  = @CompCode
+		   AND A.DIV_CODE   = @DivCode
+		   AND A.WORK_MONTH = @WorkMonth
+		   AND B.APPORTION_YN = 'Y'
+		UNION ALL
+		 SELECT 'SUMMARY' AS COST_POOL_CODE
+		     , '합계' AS COST_POOL_NAME
+		     , ''				AS COST_POOL_GB
+		     , SUM(A.AMT)           AS AMT_DIRECT
+		     , 0                    AS AMT_DISTR
+		     , SUM(A.AMT)           AS AMT
+		  FROM            CAM310T A WITH (NOLOCK)
+		       INNER JOIN CBM700T B WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE 
+		                                         AND B.DIV_CODE       = A.DIV_CODE
+		                                         AND B.COST_POOL_CODE = A.COST_POOL_CODE
+		 WHERE A.COMP_CODE  = @CompCode
+		   AND A.DIV_CODE   = @DivCode
+		   AND A.WORK_MONTH = @WorkMonth
+	</select>
+	<select id="cam100ukrvServiceImpl.selectProdItem" parameterType="Map" resultType="rMap">
+		DECLARE @CompCode     NVARCHAR(8)				-- 법인코드
+		      , @DivCode      NVARCHAR(8)				-- 사업장
+		      , @WorkMonth    NVARCHAR(6)				-- 작업년월
+		
+		SET @CompCode  = #{S_COMP_CODE}
+		SET @DivCode   = #{DIV_CODE}
+		SET @WorkMonth = #{WORK_MONTH}
+		
+		
+		IF OBJECT_ID('tempdb..#TEMP_CAM101T') IS NOT NULL
+		    DROP TABLE #TEMP_CAM101T
+		-- 비목별집계
+		-- 직접비-재료비
+		SELECT 	  ID_GB
+				, COST_GB
+				, COST_GB_NAME
+				, ACCNT
+				, ACCNT_NAME
+				
+			  	<foreach collection="COST_POOL_LIST" item="item" index="i" >
+					  , [${item}] AS COSTPOOL${i}
+				</foreach> 
+				, SUM_AMT
+		INTO #TEMP_CAM101T
+		FROM 
+		(
+			SELECT ID_GB
+				, COST_GB
+				, COST_GB_NAME
+				, ACCNT
+				, ACCNT_NAME
+				<foreach collection="COST_POOL_LIST" item="item"  >
+					  , [${item}] 
+				</foreach> 
+				<foreach collection="COST_POOL_LIST" item="item"  separator="+" close=")" open=",(">
+					   ISNULL([${item}] , 0)
+				</foreach> 
+				 AS SUM_AMT
+			FROM(
+			-- 직접비-재료비
+			SELECT '1'  AS ID_GB
+				 , '01' AS COST_GB
+				 , (SELECT CODE_NAME FROM BSA100T WITH (NOLOCK) WHERE COMP_CODE=@CompCode AND MAIN_CODE ='C007' AND SUB_CODE='01') AS COST_GB_NAME
+				 , ''   AS ACCNT
+				 , ''   AS ACCNT_NAME
+				 , A.COST_POOL_CODE
+				 , D.AMT
+			  FROM            CBM700T A WITH (NOLOCK)
+				   INNER JOIN CBM720T B WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+													 AND B.DIV_CODE       = A.DIV_CODE
+													 AND B.COST_POOL_CODE = A.COST_POOL_CODE 
+				   INNER JOIN BSA230T C WITH (NOLOCK) ON C.COMP_CODE      = B.COMP_CODE
+													 AND C.TYPE_LEVEL     = B.DIV_CODE
+													 AND C.SECTION_CD     = B.SECTION_CD 
+				   LEFT JOIN (SELECT A.COMP_CODE
+								   , A.DIV_CODE
+								   , A.WORK_MONTH
+								   , A.WORK_SHOP_CD
+								   , SUM(A.INOUT_Q * A.UNIT_COST) AS AMT
+								FROM CAM200T A WITH (NOLOCK)
+							   WHERE A.COMP_CODE  = @CompCode
+								 AND A.DIV_CODE   = @DivCode
+								 AND A.WORK_MONTH = @WorkMonth
+							   GROUP BY A.COMP_CODE, A.DIV_CODE, A.WORK_MONTH, A.WORK_SHOP_CD) D ON D.COMP_CODE    = C.COMP_CODE
+																								AND D.DIV_CODE     = C.TYPE_LEVEL
+																								AND D.WORK_SHOP_CD = C.TREE_CODE
+			) as T01
+			 PIVOT (
+				SUM(AMT) 
+			 FOR COST_POOL_CODE IN 
+			 	<foreach collection="COST_POOL_LIST" item="item"  separator="," close=")" open="(">
+					   [${item}] 
+				</foreach> 
+			 ) as TP01
+		UNION ALL
+			-- 직접비-노무비
+			SELECT  ID_GB
+				, COST_GB
+				, COST_GB_NAME
+				, ACCNT
+				, ACCNT_NAME
+				<foreach collection="COST_POOL_LIST" item="item"  >
+					  , [${item}] 
+				</foreach> 
+				<foreach collection="COST_POOL_LIST" item="item"  separator="+" close=")" open=",(">
+					   ISNULL([${item}] , 0)
+				</foreach> 
+				 AS SUM_AMT
+			FROM(
+					-- 직접비-경비-외주가공비
+					SELECT A.ID_GB
+						 , A.COST_GB
+						 , (SELECT CODE_NAME FROM BSA100T WITH (NOLOCK) WHERE COMP_CODE=@CompCode AND MAIN_CODE ='C007' AND SUB_CODE=A.COST_GB) AS COST_GB_NAME
+						 , A.ACCNT
+						 , D.ACCNT_NAME
+						 , B.COST_POOL_CODE
+						 , SUM(ISNULL(B.AMT,0)) AS AMT
+					  FROM            CBM130T A WITH (NOLOCK)
+						   INNER JOIN CAM315T B WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+															 AND B.DIV_CODE       = A.DIV_CODE
+															 AND B.WORK_MONTH     = A.WORK_MONTH
+															 AND B.ACCNT          = A.ACCNT
+						   INNER JOIN CBM700T C WITH (NOLOCK) ON C.COMP_CODE      = B.COMP_CODE 
+															 AND C.DIV_CODE       = B.DIV_CODE
+															 AND C.COST_POOL_CODE = B.COST_POOL_CODE
+						   LEFT  JOIN ABA400T D WITH (NOLOCK) ON D.COMP_CODE      = A.COMP_CODE
+															 AND D.ACCNT          = A.ACCNT
+					 WHERE A.COMP_CODE    = @CompCode
+					   AND A.DIV_CODE     = @DivCode
+					   AND A.WORK_MONTH   = @WorkMonth
+					   AND A.SUMMARY_CODE = '06'
+					 GROUP BY A.ID_GB, A.COST_GB, A.ACCNT, D.ACCNT_NAME, B.COST_POOL_CODE
+			) as T03
+			 PIVOT (
+				SUM(AMT) 
+			 FOR COST_POOL_CODE IN 
+			 	<foreach collection="COST_POOL_LIST" item="item"  separator="," close=")" open="(">
+					   [${item}] 
+				</foreach> 
+			 ) as TP03
+		  	UNION ALL
+		   SELECT  ID_GB
+				, COST_GB
+				, COST_GB_NAME
+				, ACCNT
+				, ACCNT_NAME
+				<foreach collection="COST_POOL_LIST" item="item"  >
+					  , [${item}] 
+				</foreach> 
+				<foreach collection="COST_POOL_LIST" item="item"  separator="+" close=")" open=",(">
+					   ISNULL([${item}] , 0)
+				</foreach> 
+				 AS SUM_AMT
+			FROM(
+					-- 간접비-재료비/노무비/경비
+					SELECT A.ID_GB
+						 , A.COST_GB
+						 , (SELECT CODE_NAME FROM BSA100T WITH (NOLOCK) WHERE COMP_CODE=@CompCode AND MAIN_CODE ='C007' AND SUB_CODE=A.COST_GB) AS COST_GB_NAME
+						 , (CASE WHEN A.ID_GB = '2' AND A.COST_GB = '01' THEN ''       ELSE A.ACCNT      END) AS ACCNT
+						 , (CASE WHEN A.ID_GB = '2' AND A.COST_GB = '01' THEN '재료비' ELSE D.ACCNT_NAME END) AS ACCNT_NAME
+						 , B.COST_POOL_CODE
+						 , SUM(ISNULL(B.AMT,0)) AS AMT
+					  FROM            CBM130T A WITH (NOLOCK)
+						   INNER JOIN CAM315T B WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+															 AND B.DIV_CODE       = A.DIV_CODE
+															 AND B.WORK_MONTH     = A.WORK_MONTH
+															 AND B.ACCNT          = A.ACCNT
+						   INNER JOIN CBM700T C WITH (NOLOCK) ON C.COMP_CODE      = B.COMP_CODE 
+															 AND C.DIV_CODE       = B.DIV_CODE
+															 AND C.COST_POOL_CODE = B.COST_POOL_CODE
+						   LEFT  JOIN ABA400T D WITH (NOLOCK) ON D.COMP_CODE      = A.COMP_CODE
+															 AND D.ACCNT          = A.ACCNT
+					 WHERE A.COMP_CODE     = @CompCode
+					   AND A.DIV_CODE      = @DivCode
+					   AND A.WORK_MONTH    = @WorkMonth
+					   AND A.SUMMARY_CODE != '06'
+					 GROUP BY A.ID_GB, A.COST_GB, A.ACCNT, D.ACCNT_NAME, B.COST_POOL_CODE
+			) as T04
+			 PIVOT (
+				SUM(AMT) 
+			 FOR COST_POOL_CODE IN 
+			 	<foreach collection="COST_POOL_LIST" item="item"  separator="," close=")" open="(">
+					   [${item}] 
+				</foreach> 
+			 ) as TP04
+		 ) AS T
+		
+		
+		SELECT  '1' AS DATAKINDS
+				, CASE WHEN ID_GB = '1' THEN '직접비' 
+					  ELSE '간접비'
+				 END AS ID_GB_NAME 
+				, ID_GB
+				, COST_GB
+				, COST_GB_NAME
+				, ACCNT
+				, ACCNT_NAME 
+				<foreach collection="COST_POOL_LIST" item="item" index="i" >
+					  ,COSTPOOL${i}
+				</foreach>
+				,SUM_AMT
+			FROM #TEMP_CAM101T
+			UNION ALL
+			SELECT
+				'2' AS DATAKINDS
+				,CASE WHEN ID_GB = '1' THEN '직접비' 
+					  ELSE '간접비'
+				 END AS ID_GB_NAME 
+				, ID_GB
+				, COST_GB
+				, '소계' AS COST_GB_NAME
+				, '' AS ACCNT
+				, '' AS ACCNT_NAME 
+				<foreach collection="COST_POOL_LIST" item="item" index="i" >
+					  ,SUM(COSTPOOL${i}) AS COSTPOOL${i}
+				</foreach>
+				, SUM(SUM_AMT) AS SUM_AMT
+			FROM #TEMP_CAM101T
+			GROUP BY ID_GB, COST_GB, COST_GB_NAME
+			
+			UNION ALL
+			SELECT
+				'3' AS DATAKINDS
+				,'간접비 시간당 원가' AS ID_GB_NAME 
+				, '98' AS ID_GB
+				, '' AS COST_GB
+				, '' COST_GB_NAME
+				, '' AS ACCNT
+				, '' AS ACCNT_NAME 
+				<foreach collection="COST_POOL_LIST" item="item" index="i" >
+					  ,SUM(COSTPOOL${i})/160 AS COSTPOOL${i}
+				</foreach>
+				, SUM(SUM_AMT)/160 AS SUM_AMT
+			FROM #TEMP_CAM101T
+			UNION ALL
+			SELECT
+				'4' AS DATAKINDS
+				,'합계' AS ID_GB_NAME 
+				, '99' AS ID_GB
+				, '' AS COST_GB
+				, '' COST_GB_NAME
+				, '' AS ACCNT
+				, '' AS ACCNT_NAME 
+				<foreach collection="COST_POOL_LIST" item="item" index="i" >
+					  ,SUM(COSTPOOL${i}) AS COSTPOOL${i}
+				</foreach>
+				, SUM(SUM_AMT) AS SUM_AMT
+			FROM #TEMP_CAM101T
+			ORDER BY  ID_GB, COST_GB, DATAKINDS
+	</select>
+	<select id="cam100ukrvServiceImpl.selectLastWorkInfo" parameterType="Map" resultType="rMap">
+		/* 원가계산 최종작업정보 */
+		DECLARE @CompCode   NVARCHAR(8)
+		      , @DivCode    NVARCHAR(8)
+		
+		SET @CompCode = #{S_COMP_CODE}
+		SET @DivCode  = #{DIV_CODE}
+		
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.WORK_MONTH_FR
+		     , A.WORK_MONTH
+		     , ISNULL(C.USER_NAME,'') + '(' + A.INSERT_DB_USER + ')' AS COST_PRSN
+		     , CONVERT(NVARCHAR(20), A.INSERT_DB_TIME, 120) AS UPDATE_DB_TIME
+		  FROM CDB100T A WITH (NOLOCK)
+		       INNER JOIN (SELECT COMP_CODE
+		                        , DIV_CODE
+		                        , MAX(WORK_MONTH) WORK_MONTH
+		                     FROM CDB100T WITH (NOLOCK)
+		                    WHERE COMP_CODE = @CompCode
+		                      AND DIV_CODE  = @DivCode
+		                    GROUP BY COMP_CODE, DIV_CODE) B ON B.COMP_CODE  = A.COMP_CODE
+		                                                   AND B.DIV_CODE   = A.DIV_CODE
+		                                                   AND B.WORK_MONTH = A.WORK_MONTH
+		       LEFT JOIN BSA300T C WITH (NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+		                                        AND C.USER_ID   = A.INSERT_DB_USER
+		 WHERE A.COMP_CODE = @CompCode
+		   AND A.DIV_CODE  = @DivCode
+	</select>
+	<select id="cam100ukrvServiceImpl.selectLastCloseInfo" parameterType="Map" resultType="rMap">
+		/* 원가마감 최종작업정보 */
+		DECLARE @CompCode   NVARCHAR(8)
+		      , @DivCode    NVARCHAR(8)
+		
+		SET @CompCode = #{S_COMP_CODE}
+		SET @DivCode  = #{DIV_CODE}
+		
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.WORK_MONTH_FR
+		     , A.WORK_MONTH
+		     , ISNULL(C.USER_NAME,'') + '(' + A.UPDATE_DB_USER + ')' AS COST_PRSN
+		     , CONVERT(NVARCHAR(20), A.UPDATE_DB_TIME, 120) AS UPDATE_DB_TIME
+		  FROM CDB100T A WITH (NOLOCK)
+		       INNER JOIN (SELECT COMP_CODE
+		                        , DIV_CODE
+		                        , MAX(WORK_MONTH) WORK_MONTH
+		                     FROM CDB100T WITH (NOLOCK)
+		                    WHERE COMP_CODE = @CompCode
+		                      AND DIV_CODE  = @DivCode
+		                      AND IS_CLOSE  = 'Y'
+		                    GROUP BY COMP_CODE, DIV_CODE) B ON B.COMP_CODE  = A.COMP_CODE
+		                                                   AND B.DIV_CODE   = A.DIV_CODE
+		                                                   AND B.WORK_MONTH = A.WORK_MONTH
+		       LEFT JOIN BSA300T C WITH (NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+		                                        AND C.USER_ID   = A.UPDATE_DB_USER
+		 WHERE A.COMP_CODE = @CompCode
+		   AND A.DIV_CODE  = @DivCode
+
+	</select>
+	<select id="cam100ukrvServiceImpl.selectStatusList" parameterType="Map" resultType="rMap">
+		DECLARE @CompCode     NVARCHAR(8)				-- 법인코드
+		      , @DivCode      NVARCHAR(8)				-- 사업장
+		      , @WorkMonth    NVARCHAR(6)				-- 작업년월
+		
+		SET @CompCode  = #{S_COMP_CODE}
+		SET @DivCode   = #{DIV_CODE}
+		SET @WorkMonth = #{WORK_MONTH}
+		
+		--원가기준
+		--제조간접비 집계/배부기준
+		SELECT 4               AS COST_GB_SEQ
+			 , '원가기준'         AS COST_GB
+			 , '제조간접비 집계/배부기준'  AS COST_CONTENT			--항목
+		     , (CASE WHEN (SELECT COUNT(*)
+		                     FROM CBM130T WITH (NOLOCK)
+		                    WHERE COMP_CODE  = @CompCode
+		                      AND DIV_CODE   = @DivCode
+		                      AND WORK_MONTH = @WorkMonth) &gt;= 1
+		             THEN '등록됨'
+		             ELSE '미등록'
+		         END)          AS STATE						--상태
+			  , '필수(월기준)' 	   AS REMARK1					--참고사항1
+		UNION ALL
+		--[부문별계산]비목의 부문별 배부기준
+		SELECT 5               AS COST_GB_SEQ
+			 , '원가기준'         AS COST_GB
+			 , '비목의 부문별 배부기준' AS COST_CONTENT				--항목
+		     , (CASE WHEN (SELECT COUNT(*)
+		                     FROM CAM030T WITH (NOLOCK)
+		                    WHERE COMP_CODE  = @CompCode
+		                      AND DIV_CODE   = @DivCode
+		                      AND WORK_MONTH = @WorkMonth) &gt;= 1
+		             THEN '등록됨'
+		             ELSE '미등록'
+		         END)          AS STATE						--상태
+			  , '선택(월기준)'	   AS REMARK1					--참고사항1
+		UNION ALL
+		--품목별 가중치
+		SELECT 6               AS COST_GB_SEQ
+			 , '원가기준'         AS COST_GB
+			 , '품목별 가중치'      AS COST_CONTENT				--항목
+		     , (CASE WHEN (SELECT COUNT(*)
+		                     FROM CBM150T WITH (NOLOCK)
+		                    WHERE COMP_CODE  = @CompCode
+		                      AND DIV_CODE   = @DivCode
+		                      AND WORK_MONTH = @WorkMonth) &gt;= 1
+		             THEN '등록됨'
+		             ELSE '미등록'
+		         END)          AS STATE						--상태
+			  , '선택(월기준)'          AS REMARK1				--참고사항1
+		UNION ALL
+		--보조부문 제조배부율
+		SELECT 7               AS COST_GB_SEQ
+			 , '원가기준'         AS COST_GB
+			 , '보조부문 제조배부율'  AS COST_CONTENT				--항목
+		     , (CASE WHEN (SELECT COUNT(*)
+		                     FROM CAM040T WITH (NOLOCK)
+		                    WHERE COMP_CODE  = @CompCode
+		                      AND DIV_CODE   = @DivCode
+		                      AND WORK_MONTH = @WorkMonth) &gt;= 1
+		             THEN '등록됨'
+		             ELSE '미등록'
+		         END) AS STATE								--상태
+			  , '선택(월기준)'     AS REMARK1					--참고사항1
+		UNION ALL
+		--원가작업
+		--재고마감
+		SELECT 1               AS COST_GB_SEQ
+			 , '원가작업'         AS COST_GB
+			 , '재고마감'         AS COST_CONTENT				--항목
+		     , (CASE WHEN (SELECT COUNT(*)
+						     FROM BIV900T WITH (NOLOCK)
+						    WHERE COMP_CODE     = @CompCode
+						      AND DIV_CODE      = @DivCode
+						      AND LAST_YYYYMM   > BASIS_YYYYMM
+						      AND (BASIS_YYYYMM > @WorkMonth OR LAST_YYYYMM &gt;= @WorkMonth)) &gt;= 1
+		             THEN '마감됨'
+		             ELSE '미마감'
+		         END)          AS STATE						--상태
+			  , ''             AS REMARK1					--참고사항1
+		UNION ALL
+		--원가계산
+		SELECT 2               AS COST_GB_SEQ
+			 ,'원가작업'          AS COST_GB
+			 ,'원가계산'          AS COST_CONTENT				--항목
+		     , (CASE WHEN (SELECT COUNT(*)
+						     FROM CDB100T WITH (NOLOCK)
+						    WHERE COMP_CODE  = @CompCode
+						      AND DIV_CODE   = @DivCode
+						      AND WORK_MONTH = @WorkMonth
+						      AND IS_LAST    = 'Y') &gt;= 1
+		             THEN '계산됨'
+		             ELSE '미계산'
+		         END)          AS STATE						--상태
+			  , ''             AS REMARK1					--참고사항1
+		UNION ALL
+		--원가마감
+		SELECT 3               AS COST_GB_SEQ
+			 ,'원가작업'          AS COST_GB
+			 ,'원가마감'          AS COST_CONTENT				--항목
+		     , (CASE WHEN (SELECT COUNT(*)
+						     FROM CDB100T WITH (NOLOCK)
+						    WHERE COMP_CODE  = @CompCode
+						      AND DIV_CODE   = @DivCode
+						      AND WORK_MONTH = @WorkMonth
+						      AND IS_LAST    = 'Y'
+						      AND ISNULL(IS_CLOSE, 'N') = 'Y') &gt;= 1
+		             THEN '마감됨'
+		             ELSE '미마감'
+		         END)          AS STATE						--상태
+			  , ''             AS REMARK1					--참고사항1
+		
+
+	</select>
+</mapper>

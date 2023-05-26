@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="agb330skrServiceImpl">
+	
+	<select id="agb330skrServiceImpl.selectMasterList" parameterType="Map" resultType="rMap">
+		/*  agb330skrServiceImpl.selectMasterList  */
+		BEGIN
+			DECLARE	@COMP_CODE		NVARCHAR(08)	= #{S_COMP_CODE}
+				  , @AC_DATE_FR		NVARCHAR(08)	= #{FR_DATE}
+				  , @AC_DATE_TO		NVARCHAR(08)	= #{TO_DATE}
+		
+				  , @REF_ITEM		NVARCHAR(01)	= #{ACCOUNT_NAME}
+		
+			SELECT DISTINCT
+				   A.ACCNT
+				 , CASE WHEN @REF_ITEM = '1' THEN B.ACCNT_NAME2
+						WHEN @REF_ITEM = '2' THEN B.ACCNT_NAME3
+						ELSE B.ACCNT_NAME
+				   END	ACCNT_NAME
+			  FROM AGB100T A
+					INNER JOIN		ABA400T B
+								 ON A.COMP_CODE	= B.COMP_CODE
+								AND A.ACCNT		= B.ACCNT
+			 WHERE A.COMP_CODE		= @COMP_CODE
+			   AND A.AC_DATE  BETWEEN @AC_DATE_FR AND @AC_DATE_TO
+		<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">
+			   AND A.DIV_CODE IN
+				<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+					#{item}
+				</foreach>
+		</if>
+			   AND (A.DR_AMT_I != 0 OR A.CR_AMT_I != 0)
+			 ORDER BY A.ACCNT
+		END
+	</select>	
+	
+	<select id="agb330skrServiceImpl.selectDetailList" parameterType="Map" resultType="rMap">
+		/*  agb330skrServiceImpl.selectDetailList  */
+		BEGIN
+			DECLARE	@COMP_CODE		NVARCHAR(08)	= #{S_COMP_CODE}
+				  , @AC_DATE_FR		NVARCHAR(08)	= #{FR_DATE}
+				  , @AC_DATE_TO		NVARCHAR(08)	= #{TO_DATE}
+				  , @ACCNT			NVARCHAR(16)	= #{ACCNT}
+				  , @ST_DATE		NVARCHAR(06)	= ''
+				  , @REF_ITEM		NVARCHAR(01)	= '0'
+				  
+				  , @JAN_AMT_I		NUMERIC(30, 6)	= 0
+				  , @DR_AMT_I		NUMERIC(30, 6)	= 0
+				  , @CR_AMT_I		NUMERIC(30, 6)	= 0
+			
+			SELECT @ST_DATE		= CASE WHEN FN_DATE &lt; @AC_DATE_FR THEN FN_DATE
+									   ELSE LEFT(@AC_DATE_FR, 4) + RIGHT(FN_DATE, 2)
+								  END
+			  FROM BOR100T
+			 WHERE COMP_CODE	= @COMP_CODE
+			 
+			IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects  WHERE id=object_id('tempdb..#AGB310SKR_DTL'))
+				DROP TABLE #AGB310SKR_DTL
+			
+			SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+	
+			CREATE TABLE #AGB310SKR_DTL
+			( 
+				GUBUN			NVARCHAR(01)	,
+				COMP_CODE		NVARCHAR(08)	,
+				DIV_CODE		NVARCHAR(08)	,
+				ACCNT			NVARCHAR(16)	,
+				ACCNT_NAME		NVARCHAR(100)	,
+				INPUT_PATH		NVARCHAR(02)	,
+				AC_DATE			NVARCHAR(100)	,
+				SLIP_NUM		NUMERIC(05)		,
+				SLIP_SEQ		NUMERIC(05)		,
+				REMARK			NVARCHAR(100)	,
+				CUSTOM_CODE		NVARCHAR(08)	,
+				CUSTOM_NAME		NVARCHAR(40)	,
+				DR_AMT_I		NUMERIC(30, 6)	,
+				CR_AMT_I		NUMERIC(30, 6)	,
+				JAN_AMT_I		NUMERIC(30, 6)	,
+				JAN_DIVI		NVARCHAR(02)
+			)
+			
+			CREATE INDEX AGB310SKR_DTL_IDX01 ON #AGB310SKR_DTL(AC_DATE, SLIP_NUM, SLIP_SEQ)
+			
+			INSERT INTO #AGB310SKR_DTL
+				 ( GUBUN		, COMP_CODE		, DIV_CODE		, ACCNT			, ACCNT_NAME
+				 , INPUT_PATH	, AC_DATE		, SLIP_NUM		, SLIP_SEQ		, REMARK
+				 , CUSTOM_CODE	, CUSTOM_NAME	, DR_AMT_I		, CR_AMT_I		, JAN_AMT_I
+				 , JAN_DIVI		)
+			SELECT GUBUN		, COMP_CODE		, DIV_CODE		, ACCNT			, ACCNT_NAME
+				 , INPUT_PATH	, AC_DATE		, SLIP_NUM		, SLIP_SEQ		, REMARK
+				 , CUSTOM_CODE	, CUSTOM_NAME	, DR_AMT_I		, CR_AMT_I		, JAN_AMT_I
+				 , JAN_DIVI
+			  FROM (
+					SELECT '0'				AS GUBUN
+						 , ''				AS COMP_CODE
+						 , ''				AS DIV_CODE
+						 , A.ACCNT
+						 , CASE WHEN @REF_ITEM = '1' THEN B.ACCNT_NAME2
+								WHEN @REF_ITEM = '2' THEN B.ACCNT_NAME3
+								ELSE B.ACCNT_NAME
+						   END				AS ACCNT_NAME
+						 , ''				AS INPUT_PATH
+						 , @ST_DATE + '00'	AS AC_DATE
+						 , NULL				AS SLIP_NUM
+						 , NULL				AS SLIP_SEQ
+						 , '전기이월'		AS REMARK
+						 , ''				AS CUSTOM_CODE
+						 , ''				AS CUSTOM_NAME
+						 , SUM(A.DR_AMT_I)	AS DR_AMT_I
+						 , SUM(A.CR_AMT_I)	AS CR_AMT_I
+						 , SUM(CASE WHEN A.JAN_DIVI = '1' THEN A.DR_AMT_I - A.CR_AMT_I
+									ELSE A.CR_AMT_I - A.DR_AMT_I
+							   END)			AS JAN_AMT_I
+						 , B.JAN_DIVI
+					  FROM AGB100T A
+							INNER JOIN		ABA400T B
+										 ON A.COMP_CODE	= B.COMP_CODE
+										AND A.ACCNT		= B.ACCNT
+					 WHERE A.COMP_CODE	 = @COMP_CODE
+					   AND A.AC_DATE	&gt;= @ST_DATE
+					   AND A.AC_DATE	 &lt; @AC_DATE_FR
+					   AND A.ACCNT		 = @ACCNT
+		<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">
+					   AND A.DIV_CODE IN
+						<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+							#{item}
+						</foreach>
+		</if>
+					 GROUP BY A.ACCNT
+						 , CASE WHEN @REF_ITEM = '1' THEN B.ACCNT_NAME2
+								WHEN @REF_ITEM = '2' THEN B.ACCNT_NAME3
+								ELSE B.ACCNT_NAME
+						   END
+						 , B.JAN_DIVI
+			
+					UNION ALL
+					
+					SELECT '1'				AS GUBUN
+						 , ''				AS COMP_CODE
+						 , ''				AS DIV_CODE
+						 , A.ACCNT
+						 , CASE WHEN @REF_ITEM = '1' THEN B.ACCNT_NAME2
+								WHEN @REF_ITEM = '2' THEN B.ACCNT_NAME3
+								ELSE B.ACCNT_NAME
+						   END				AS ACCNT_NAME
+						 , ''				AS INPUT_PATH
+						 , SUBSTRING(A.AC_DATE, 1, 6) + '98'	AS AC_DATE
+						 , NULL				AS SLIP_NUM
+						 , NULL				AS SLIP_SEQ
+						 , '월계'			AS REMARK
+						 , ''				AS CUSTOM_CODE
+						 , ''				AS CUSTOM_NAME
+						 , SUM(A.DR_AMT_I)	AS DR_AMT_I
+						 , SUM(A.CR_AMT_I)	AS CR_AMT_I
+						 , NULL				AS JAN_AMT_I
+						 , B.JAN_DIVI
+					  FROM AGB100T A
+							INNER JOIN		ABA400T B
+										 ON A.COMP_CODE	= B.COMP_CODE
+										AND A.ACCNT		= B.ACCNT
+					 WHERE A.COMP_CODE		= @COMP_CODE
+					   AND A.AC_DATE  BETWEEN @AC_DATE_FR AND @AC_DATE_TO
+					   AND A.ACCNT			= @ACCNT
+		<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">
+					   AND A.DIV_CODE IN
+						<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+							#{item}
+						</foreach>
+					   AND (A.DR_AMT_I != 0 OR A.CR_AMT_I != 0)
+		</if>
+					 GROUP BY A.ACCNT
+						 , CASE WHEN @REF_ITEM = '1' THEN B.ACCNT_NAME2
+								WHEN @REF_ITEM = '2' THEN B.ACCNT_NAME3
+								ELSE B.ACCNT_NAME
+						   END
+						 , SUBSTRING(A.AC_DATE, 1, 6)
+						 , B.JAN_DIVI
+			
+					UNION ALL
+					
+					SELECT '2'				AS GUBUN
+						 , ''				AS COMP_CODE
+						 , ''				AS DIV_CODE
+						 , A.ACCNT
+						 , CASE WHEN @REF_ITEM = '1' THEN B.ACCNT_NAME2
+								WHEN @REF_ITEM = '2' THEN B.ACCNT_NAME3
+								ELSE B.ACCNT_NAME
+						   END				AS ACCNT_NAME
+						 , ''				AS INPUT_PATH
+						 , SUBSTRING(A.AC_DATE, 1, 6) + '99'	AS AC_DATE
+						 , NULL				AS SLIP_NUM
+						 , NULL				AS SLIP_SEQ
+						 , '누계'			AS REMARK
+						 , ''				AS CUSTOM_CODE
+						 , ''				AS CUSTOM_NAME
+						 , SUM(A.DR_AMT_I)	AS DR_AMT_I
+						 , SUM(A.CR_AMT_I)	AS CR_AMT_I
+						 , 0				AS JAN_AMT_I
+						 , B.JAN_DIVI
+					  FROM AGB100T A
+							INNER JOIN		ABA400T B
+										 ON A.COMP_CODE	= B.COMP_CODE
+										AND A.ACCNT		= B.ACCNT
+					 WHERE A.COMP_CODE		= @COMP_CODE
+					   AND A.AC_DATE  BETWEEN @AC_DATE_FR AND @AC_DATE_TO
+					   AND A.ACCNT			= @ACCNT
+		<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">
+					   AND A.DIV_CODE IN
+						<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+							#{item}
+						</foreach>
+					   AND (A.DR_AMT_I != 0 OR A.CR_AMT_I != 0)
+		</if>
+					 GROUP BY A.ACCNT
+						 , CASE WHEN @REF_ITEM = '1' THEN B.ACCNT_NAME2
+								WHEN @REF_ITEM = '2' THEN B.ACCNT_NAME3
+								ELSE B.ACCNT_NAME
+						   END
+						 , SUBSTRING(A.AC_DATE, 1, 6)
+						 , B.JAN_DIVI
+			
+					UNION ALL
+
+					SELECT '4'				AS GUBUN
+						 , A.COMP_CODE
+						 , A.DIV_CODE
+						 , A.ACCNT
+						 , CASE WHEN @REF_ITEM = '1' THEN B.ACCNT_NAME2
+								WHEN @REF_ITEM = '2' THEN B.ACCNT_NAME3
+								ELSE B.ACCNT_NAME
+						   END				AS ACCNT_NAME
+						 , A.INPUT_PATH
+						 , A.AC_DATE
+						 , A.SLIP_NUM
+						 , A.SLIP_SEQ
+						 , A.REMARK
+						 , A.CUSTOM_CODE
+						 , A.CUSTOM_NAME
+						 , CASE WHEN A.DR_CR = '1' THEN A.AMT_I ELSE 0 END	AS DR_AMT_I
+						 , CASE WHEN A.DR_CR = '2' THEN A.AMT_I ELSE 0 END	AS CR_AMT_I
+						 , 0				AS JAN_AMT_I
+						 , B.JAN_DIVI
+					  FROM AGJ210T A
+							INNER JOIN		ABA400T B
+										 ON A.COMP_CODE	= B.COMP_CODE
+										AND A.ACCNT		= B.ACCNT
+					 WHERE A.COMP_CODE		= @COMP_CODE
+					   AND A.AC_DATE  BETWEEN @AC_DATE_FR AND @AC_DATE_TO
+					   AND A.ACCNT			= @ACCNT
+					   AND ISNULL(A.MOD_DIVI, '') != 'D'
+		<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">
+					   AND A.DIV_CODE IN
+						<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+							#{item}
+						</foreach>
+		</if>
+				   ) A
+				   
+			UPDATE A
+			   SET @JAN_AMT_I	= CASE WHEN A.JAN_DIVI = '1' THEN @JAN_AMT_I + A.DR_AMT_I - A.CR_AMT_I
+									   ELSE						  @JAN_AMT_I + A.CR_AMT_I - A.DR_AMT_I
+								  END
+				 , A.JAN_AMT_I	= @JAN_AMT_I
+			  FROM #AGB310SKR_DTL A WITH(NOLOCK, INDEX(AGB310SKR_DTL_IDX01))
+			 WHERE A.GUBUN IN ('0', '4')
+			
+			SET @JAN_AMT_I		= 0
+			UPDATE A
+			   SET @DR_AMT_I	= @DR_AMT_I + A.DR_AMT_I
+				 , @CR_AMT_I	= @CR_AMT_I + A.CR_AMT_I
+				 , A.DR_AMT_I	= @DR_AMT_I
+				 , A.CR_AMT_I	= @CR_AMT_I
+				 , @JAN_AMT_I	= CASE WHEN A.JAN_DIVI = '1' THEN @JAN_AMT_I + A.DR_AMT_I - A.CR_AMT_I
+									   ELSE						  @JAN_AMT_I + A.CR_AMT_I - A.DR_AMT_I
+								  END
+				 , A.JAN_AMT_I	= @JAN_AMT_I
+			  FROM #AGB310SKR_DTL A WITH(NOLOCK, INDEX(AGB310SKR_DTL_IDX01))
+			 WHERE A.GUBUN IN ('0', '2')
+
+			IF NOT EXISTS (	SELECT *
+							  FROM #AGB310SKR_DTL
+							 WHERE GUBUN = '0'	)
+			BEGIN
+				INSERT INTO #AGB310SKR_DTL
+					 ( GUBUN		, COMP_CODE		, DIV_CODE		, ACCNT			, ACCNT_NAME
+					 , INPUT_PATH	, AC_DATE		, SLIP_NUM		, SLIP_SEQ		, REMARK
+					 , CUSTOM_CODE	, CUSTOM_NAME	, DR_AMT_I		, CR_AMT_I		, JAN_AMT_I
+					 , JAN_DIVI		)
+				SELECT '0'			, ''			, ''			, A.ACCNT		, ''
+					 , ''			, @ST_DATE + '00', NULL			, NULL			, '전기이월'
+					 , ''			, ''			, 0				, 0				, 0
+					 , A.JAN_DIVI
+				  FROM ABA400T A
+				 WHERE A.COMP_CODE		= @COMP_CODE
+				   AND A.ACCNT			= @ACCNT
+			END
+
+			SELECT A.GUBUN
+				 , A.COMP_CODE
+				 , A.DIV_CODE
+				 , A.ACCNT
+				 , A.ACCNT_NAME
+				 , A.INPUT_PATH
+				 , CASE WHEN A.GUBUN = '4'	THEN uniLITE.fnGetUserdate(@COMP_CODE, A.AC_DATE)
+						ELSE ''
+				   END	AS AC_DATE
+				 , A.SLIP_NUM
+				 , A.SLIP_SEQ
+				 , A.REMARK
+				 , A.CUSTOM_CODE
+				 , A.CUSTOM_NAME
+				 , A.DR_AMT_I
+				 , A.CR_AMT_I
+				 , A.JAN_AMT_I
+			  FROM #AGB310SKR_DTL A
+			 ORDER BY A.AC_DATE, A.SLIP_NUM, A.SLIP_SEQ
+		END
+	</select>	
+	
+</mapper>

@@ -1,0 +1,382 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mrp100ukrvServiceImpl">
+		<!-- <select id="mrp100ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/*mrp100ukrv.Cmrp100ukrv[fnMrp100q] Query1*/
+		/*
+	    MRP 대상 확정
+	   */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		    DECLARE @CompCode    NVARCHAR(08) /* 법인코드    */
+		          , @UserId      NVARCHAR(20) /* 사용자ID    */
+		          , @LangType    NVARCHAR(2)  /* 언어구분    */
+		          , @RefItem     NVARCHAR(01) /* 명칭 참조 유형  */
+		          , @DateFormat  NVARCHAR(10) /* 날짜 포맷 유형 설정 */
+		
+				    SET @CompCode = #{S_COMP_CODE}
+				    SET @UserId   = #{S_USER_ID}
+				    SET @LangType = #{S_LANG_CODE} 
+		
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+		
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+		
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		      FROM BSA100T WITH (NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+		       AND MAIN_CODE = N'B044'
+		       AND REF_CODE1 = N'Y'
+		
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		
+		    /* 데이터 조회 */ 
+		<if test="TARGET_TYPE != &quot;2&quot;">
+		    SELECT  
+		           CAST('' AS BIT)                                              AS CHK
+		         , '1'                                                          AS FLAG
+		         , A.AGREE_STATUS                                               AS AGREE_STATUS
+		         , M1.CODE_NAME                                                 AS AGREE_NAME
+		         , M2.CODE_NAME                                                 AS PLAN_NAME
+		         , A.WORK_SHOP_CODE                                             AS WORK_SHOP_CODE
+		         , B1.TREE_NAME                                                 AS WORK_SHOP_NAME
+		         , A.ITEM_CODE
+		         , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+		                WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+		                ELSE C1.ITEM_NAME
+		           END                                                          AS ITEM_NAME
+		         , C1.SPEC
+		       /*  , uniLITE.fnGetUserDateComp(A.COMP_CODE, A.PRODT_PLAN_DATE)    AS PRODT_PLAN_DATE*/
+		
+		         , (CASE WHEN ISNULL(A.PRODT_PLAN_DATE, '') = ''
+		                 THEN ''
+		                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PRODT_PLAN_DATE, 1, 4))
+		                                                         , 'MM'  , SUBSTRING(A.PRODT_PLAN_DATE, 5, 2))
+		                                                         , 'DD'  , SUBSTRING(A.PRODT_PLAN_DATE, 7, 2))
+		            END)                                            AS PRODT_PLAN_DATE
+		
+		         , A.WK_PLAN_Q
+		         , C1.STOCK_UNIT
+		         , A.WK_PLAN_NUM
+		         , A.PROJECT_NO
+		         , A.DIV_CODE
+		    FROM              PPL100T A  WITH(NOLOCK)
+		           INNER JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE
+		                                             AND C1.ITEM_CODE  = A.ITEM_CODE
+		           LEFT  JOIN BSA100T M1 WITH(NOLOCK) ON M1.COMP_CODE  = A.COMP_CODE
+		                                             AND M1.MAIN_CODE  = 'P401'          /* 확정/미확정 구분: 미확정/확정*/
+		                                             AND M1.SUB_CODE   = A.AGREE_STATUS
+		           LEFT  JOIN BSA100T M2 WITH(NOLOCK) ON M2.COMP_CODE  = A.COMP_CODE
+		                                             AND M2.MAIN_CODE  = 'P402'          /* MPS 계획 유형 : 판매계획 참조/생산계획 등록/수주참조/무역 SO/주간판매계획*/
+		                                             AND M2.SUB_CODE   = A.PLAN_TYPE
+		           LEFT  JOIN BSA230T B1 WITH(NOLOCK) ON B1.COMP_CODE  = A.COMP_CODE
+		                                             AND B1.TREE_CODE  = A.WORK_SHOP_CODE
+		                                             AND B1.TYPE_LEVEL = A.DIV_CODE
+		    WHERE  A.COMP_CODE         = @CompCode
+			<if test="@foren.Ognl@isNotEmpty(DIV_CODE)"> 
+			    AND    A.DIV_CODE          = #{DIV_CODE}
+			</if>
+			    AND   (A.WK_PLAN_NUM       = A.PROD_WK_PLAN_NUM OR A.PROD_WK_PLAN_NUM IS NULL OR A.PROD_WK_PLAN_NUM  = '') /* 반제품 생산계획 수립 항목 제외 처리*/
+			    AND    A.WKORD_YN          = 'N'                                                                           /* 작업지시 확정된 생산계획 제외*/
+			    AND   (A.MRP_CONTROL_NUM  IS NULL OR  A.MRP_CONTROL_NUM  = '')
+			<if test="@foren.Ognl@isNotEmpty(PRODT_PLAN_DATE_FR)">                                             /* 이미, MRP 반영된 생산계획 제외*/
+			    AND  A.PRODT_PLAN_DATE &gt;= #{PRODT_PLAN_DATE_FR}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(PRODT_PLAN_DATE_TO)">
+			    AND  A.PRODT_PLAN_DATE &lt;= #{PRODT_PLAN_DATE_TO}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+			    AND  A.ITEM_CODE     LIKE #{ITEM_CODE} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+			    AND (CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+			              WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+			                                  ELSE C1.ITEM_NAME
+			          END)        LIKE #{ITEM_NAME}+ '%'
+			</if>
+			<if test="CONFIRM_TYPE == &quot;2&quot;">
+				AND   M1.SUB_CODE = '2'      
+			</if>
+			<if test="CONFIRM_TYPE == &quot;1&quot;">
+				AND   M1.SUB_CODE = '1'      
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(WORK_SHOP_CODE)">			           		
+			    AND  A.WORK_SHOP_CODE   = #{WORK_SHOP_CODE}
+			</if>
+			
+			</if>
+			<if test="TARGET_TYPE == &quot;&quot;">
+			    UNION ALL
+			</if>
+			<if test="TARGET_TYPE != &quot;1&quot;">
+		    SELECT 
+		           CAST('' AS BIT)                                              AS CHK
+		         , '2'                                                          AS FLAG
+		         , B.AGREE_STATUS                                               AS AGREE_STATUS
+		         , M1.CODE_NAME                                                 AS AGREE_NAME
+		         , M2.CODE_NAME                                                 AS PLAN_NAME
+		         , A.WORK_SHOP_CODE                                             AS WORK_SHOP_CODE
+		         , B1.TREE_NAME                                                 AS WORK_SHOP_NAME
+		         , A.ITEM_CODE
+		         , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+		                WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+		                WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+		                ELSE C1.ITEM_NAME
+		           END                                                          AS ITEM_NAME
+		         , C1.SPEC
+		        /* , uniLITE.fnGetUserDateComp(A.COMP_CODE, A.BASIS_DATE)         AS PRODT_PLAN_DATE*/
+		
+		         , (CASE WHEN ISNULL(A.BASIS_DATE, '') = ''
+		                 THEN ''
+		                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.BASIS_DATE, 1, 4))
+		                                                         , 'MM'  , SUBSTRING(A.BASIS_DATE, 5, 2))
+		                                                         , 'DD'  , SUBSTRING(A.BASIS_DATE, 7, 2))
+		            END)                                            AS PRODT_PLAN_DATE
+		         , A.ORDER_PLAN_Q                                               AS WK_PLAN_Q
+		         , C1.STOCK_UNIT
+		         , A.ORDER_REQ_NUM                                              AS WK_PLAN_NUM
+		         , A.PROJECT_NO
+		         , A.DIV_CODE
+		    FROM              MRP400T A  WITH(NOLOCK)
+		           INNER JOIN PPL100T B  WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		                                             AND B.WK_PLAN_NUM = A.WK_PLAN_NUM
+		           INNER JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+		                                             AND C1.ITEM_CODE = A.ITEM_CODE
+		           LEFT  JOIN BSA100T M1 WITH(NOLOCK) ON M1.COMP_CODE = A.COMP_CODE
+		                                             AND M1.MAIN_CODE = 'M404'          /* MRP 계획오더 확정구분 : 전환/확정*/
+		                                             AND M1.SUB_CODE  = A.ORDER_YN
+		           LEFT  JOIN BSA100T M2 WITH(NOLOCK) ON M2.COMP_CODE = A.COMP_CODE
+		                                             AND M2.MAIN_CODE = 'M401'          /* MRP 계획오더 상태 : OPEN/전환/확정/완료*/
+		                                             AND M2.SUB_CODE  = '2'
+		           LEFT  JOIN BSA230T B1 WITH(NOLOCK) ON B1.COMP_CODE  = A.COMP_CODE
+		                                             AND B1.TREE_CODE  = A.WORK_SHOP_CODE
+		                                             AND B1.TYPE_LEVEL = A.DIV_CODE
+		    WHERE  A.COMP_CODE         = @CompCode
+			<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+			    AND    A.DIV_CODE          = #{DIV_CODE}
+			</if>
+			    AND    A.ORDER_YN          = '1'
+			                					
+			<if test="@foren.Ognl@isNotEmpty(PRODT_PLAN_DATE_FR)">                                                                           /* 전환된 계획오더*/
+			    AND    A.BASIS_DATE  &gt;= #{PRODT_PLAN_DATE_FR}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(PRODT_PLAN_DATE_TO)">
+			    AND    A.BASIS_DATE  &lt;= #{PRODT_PLAN_DATE_TO}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+			    AND    A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+			    AND (CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+			                 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+			                                     ELSE C1.ITEM_NAME
+			             END)        LIKE #{ITEM_NAME}+ '%'
+			</if>
+			<if test="CONFIRM_TYPE == &quot;2&quot;">
+				AND   M1.SUB_CODE	= '2'      
+			</if>
+			<if test="CONFIRM_TYPE == &quot;1&quot;">
+				AND   M1.SUB_CODE	= '1'      
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(WORK_SHOP_CODE)">			           		
+			    AND  A.WORK_SHOP_CODE   = #{WORK_SHOP_CODE}
+			</if>
+			</if>
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	
+	</select> -->
+				
+	 
+	<select id="mrp100ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/*mrp100ukrv.Cmrp100ukrv[fnMrp100q] Query1*/
+		/*
+	    MRP 대상 확정
+	   */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		    DECLARE  @COMP_CODE         NVARCHAR(08)                -- (필수) 법인코드
+		          , @DIV_CODE           NVARCHAR(08)                -- (필수) 사업장코드
+		          , @FR_PLAN_DATE       NVARCHAR(08)                -- (선택) 시작 요청기간
+		          , @TO_PLAN_DATE       NVARCHAR(08)                -- (선택) 종료 요청기간
+		          
+		          , @ITEM_CODE          NVARCHAR(20)                -- (선택) 품목코드
+		          , @ITEM_NAME          NVARCHAR(200)               -- (선택) 품명
+		          
+		          , @CONFIRM_TYPE       NVARCHAR(20)                -- (필수) 확정여부 ('', '확정', '미확정')
+		 		  , @TARGET_TYPE        NVARCHAR(01)                -- (필수) 대상구분 ('': 전체, 1: 생산계획, 2: MRP전환)
+				    
+				  , @USER_ID            NVARCHAR(100)                -- (필수) USER ID
+				  , @WORKSHOP_CODE      NVARCHAR(10)                -- (선택) @WORKSHOP_CODE
+				  
+		
+		  
+		  --  변수 값 할당 ----------------------------------------------------------------------------------------------------
+		    SET @COMP_CODE    =#{S_COMP_CODE}
+		    SET @DIV_CODE     =#{DIV_CODE}
+			SET @FR_PLAN_DATE = #{PRODT_PLAN_DATE_FR}
+			SET @TO_PLAN_DATE = #{PRODT_PLAN_DATE_TO}
+			
+			SET @ITEM_CODE    = #{ITEM_CODE}
+			SET @ITEM_NAME    =#{ITEM_NAME}
+			
+			SET @CONFIRM_TYPE =#{CONFIRM_TYPE}
+			SET @TARGET_TYPE  =#{TARGET_TYPE}
+			
+			SET @USER_ID      =#{S_USER_ID}
+			SET @WORKSHOP_CODE= #{WORK_SHOP_CODE}
+		  --  품목명 구분 -----------------------------------------------------------------------------------------------------
+			DECLARE @RefItem            NVARCHAR(01)
+			SELECT TOP 1 @RefItem = REF_ITEM
+		    FROM   BSA300T WITH (NOLOCK)
+		    WHERE  USER_ID = @USER_ID
+		    SET @RefItem = ISNULL(@RefItem, '')
+			
+		
+		    /* 데이터 조회 */ 
+		 SELECT    <if test="@foren.Ognl@isEmpty(DIV_CODE)">TOP 0</if>
+               CAST('' AS BIT)                                              AS CHK
+             , A.DIV_CODE													AS DIV_CODE
+             , '1'                                                          AS FLAG
+             , A.AGREE_STATUS                                               AS AGREE_STATUS
+             , M1.CODE_NAME                                                 AS AGREE_NAME
+             , M2.CODE_NAME                                                 AS PLAN_NAME
+             , A.WORK_SHOP_CODE                                             AS WORK_SHOP_CODE
+             , B1.TREE_NAME                                                 AS WORK_SHOP_NAME
+             , A.ITEM_CODE
+             , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                    WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                    WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                    ELSE C1.ITEM_NAME
+               END                                                          AS ITEM_NAME
+             , C1.SPEC
+             , uniLITE.fnGetUserDateComp(A.COMP_CODE, A.PRODT_PLAN_DATE)    AS PRODT_PLAN_DATE
+             , A.WK_PLAN_Q
+             , C1.STOCK_UNIT
+             , A.WK_PLAN_NUM
+             , A.PROJECT_NO
+        FROM              PPL100T A  WITH(NOLOCK)
+               INNER JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE
+                                                 AND C1.ITEM_CODE  = A.ITEM_CODE
+               LEFT  JOIN BSA100T M1 WITH(NOLOCK) ON M1.COMP_CODE  = A.COMP_CODE
+                                                 AND M1.MAIN_CODE  = 'P401'          -- 확정/미확정 구분: 미확정/확정
+                                                 AND M1.SUB_CODE   = A.AGREE_STATUS
+               LEFT  JOIN BSA100T M2 WITH(NOLOCK) ON M2.COMP_CODE  = A.COMP_CODE
+                                                 AND M2.MAIN_CODE  = 'P402'          -- MPS 계획 유형 : 판매계획 참조/생산계획 등록/수주참조/무역 SO/주간판매계획
+                                                 AND M2.SUB_CODE   = A.PLAN_TYPE
+               LEFT  JOIN BSA230T B1 WITH(NOLOCK) ON B1.COMP_CODE  = A.COMP_CODE
+                                                 AND B1.TREE_CODE  = A.WORK_SHOP_CODE
+                                                 AND B1.TYPE_LEVEL = A.DIV_CODE
+        WHERE  A.COMP_CODE         = @COMP_CODE
+        AND    A.DIV_CODE          = @DIV_CODE
+        AND   (A.WK_PLAN_NUM       = A.PROD_WK_PLAN_NUM OR A.PROD_WK_PLAN_NUM IS NULL OR A.PROD_WK_PLAN_NUM  = '') -- 반제품 생산계획 수립 항목 제외 처리
+        AND    A.WKORD_YN          = 'N'                                                                           -- 작업지시 확정된 생산계획 제외
+        AND   (A.MRP_CONTROL_NUM  IS NULL OR  A.MRP_CONTROL_NUM  = '')                                             -- 이미, MRP 반영된 생산계획 제외
+        AND  ((@FR_PLAN_DATE      &lt;&gt; ''   AND A.PRODT_PLAN_DATE &gt;= @FR_PLAN_DATE)    OR (@FR_PLAN_DATE = ''))
+        AND  ((@TO_PLAN_DATE      &lt;&gt; ''   AND A.PRODT_PLAN_DATE &lt;= @TO_PLAN_DATE)    OR (@TO_PLAN_DATE = ''))
+        
+		<!--2021.08 표준화 작업 Start-->
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE = #{ITEM_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND		(@RefItem       = N'0' AND C1.ITEM_NAME  LIKE N'%' + #{ITEM_NAME} + N'%')
+				OR	(@RefItem       = N'1' AND C1.ITEM_NAME1 LIKE N'%' + #{ITEM_NAME} + N'%')
+				OR	(@RefItem       = N'2' AND C1.ITEM_NAME2 LIKE N'%' + #{ITEM_NAME} + N'%')
+		</if>
+		<!--2021.08 표준화 작업 End-->
+		
+        AND  ((@CONFIRM_TYPE      &lt;&gt; ''   AND M1.SUB_CODE        = @CONFIRM_TYPE)    OR (@CONFIRM_TYPE = ''))      -- 확정구분
+        AND   (@TARGET_TYPE        = ''   OR  @TARGET_TYPE       = '1')                                            -- 대상구분이 '전체, 생산계획'일 경우
+        AND  ((@WORKSHOP_CODE     &lt;&gt; ''   AND A.WORK_SHOP_CODE   = @WORKSHOP_CODE)    OR (@WORKSHOP_CODE = ''))
+        
+        UNION ALL
+    
+        SELECT <if test="@foren.Ognl@isEmpty(DIV_CODE)">TOP 0</if>
+               CAST('' AS BIT)                                              AS CHK
+             , B.DIV_CODE													AS DIV_CODE
+             , '2'                                                          AS FLAG
+             , B.AGREE_STATUS                                               AS AGREE_STATUS
+             , M1.CODE_NAME                                                 AS AGREE_NAME
+             , M2.CODE_NAME                                                 AS PLAN_NAME
+             , A.WORK_SHOP_CODE                                             AS WORK_SHOP_CODE
+             , B1.TREE_NAME                                                 AS WORK_SHOP_NAME
+             , A.ITEM_CODE
+             , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+                    WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+                    WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+                    ELSE C1.ITEM_NAME
+               END                                                          AS ITEM_NAME
+             , C1.SPEC
+             , uniLITE.fnGetUserDateComp(A.COMP_CODE, A.BASIS_DATE)         AS PRODT_PLAN_DATE
+             , A.ORDER_PLAN_Q                                               AS WK_PLAN_Q
+             , C1.STOCK_UNIT
+             , A.ORDER_REQ_NUM                                              AS WK_PLAN_NUM
+             , A.PROJECT_NO
+        FROM              MRP400T A  WITH(NOLOCK)
+               INNER JOIN PPL100T B  WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                 AND B.WK_PLAN_NUM = A.WK_PLAN_NUM
+               INNER JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+                                                 AND C1.ITEM_CODE = A.ITEM_CODE
+               LEFT  JOIN BSA100T M1 WITH(NOLOCK) ON M1.COMP_CODE = A.COMP_CODE
+                                                 AND M1.MAIN_CODE = 'M404'          -- MRP 계획오더 확정구분 : 전환/확정
+                                                 AND M1.SUB_CODE  = A.ORDER_YN
+               LEFT  JOIN BSA100T M2 WITH(NOLOCK) ON M2.COMP_CODE = A.COMP_CODE
+                                                 AND M2.MAIN_CODE = 'M401'          -- MRP 계획오더 상태 : OPEN/전환/확정/완료
+                                                 AND M2.SUB_CODE  = '2'
+               LEFT  JOIN BSA230T B1 WITH(NOLOCK) ON B1.COMP_CODE  = A.COMP_CODE
+                                                 AND B1.TREE_CODE  = A.WORK_SHOP_CODE
+                                                 AND B1.TYPE_LEVEL = A.DIV_CODE
+        WHERE  A.COMP_CODE         = @COMP_CODE
+        AND    A.DIV_CODE          = @DIV_CODE
+        AND    A.ORDER_YN          = '1'                                                                           -- 전환된 계획오더
+        AND  ((@FR_PLAN_DATE      &lt;&gt; ''   AND A.BASIS_DATE  &gt;= @FR_PLAN_DATE)    OR (@FR_PLAN_DATE = ''))
+        AND  ((@TO_PLAN_DATE      &lt;&gt; ''   AND A.BASIS_DATE  &lt;= @TO_PLAN_DATE)    OR (@TO_PLAN_DATE = ''))
+        
+		<!--2021.08 표준화 작업 Start-->
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE = #{ITEM_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND		(@RefItem       = N'0' AND C1.ITEM_NAME  LIKE N'%' + #{ITEM_NAME} + N'%')
+				OR	(@RefItem       = N'1' AND C1.ITEM_NAME1 LIKE N'%' + #{ITEM_NAME} + N'%')
+				OR	(@RefItem       = N'2' AND C1.ITEM_NAME2 LIKE N'%' + #{ITEM_NAME} + N'%')
+		</if>
+		<!--2021.08 표준화 작업 End-->
+		
+        AND  ((@CONFIRM_TYPE      &lt;&gt; ''   AND M1.SUB_CODE   = @CONFIRM_TYPE)    OR (@CONFIRM_TYPE = ''))      -- 확정구분
+        AND   (@TARGET_TYPE        = ''   OR  @TARGET_TYPE   = '2')                                            -- 대상구분이 '전체, MRP 전환'일 경우
+        AND  ((@WORKSHOP_CODE     &lt;&gt; ''   AND A.WORK_SHOP_CODE   = @WORKSHOP_CODE)    OR (@WORKSHOP_CODE = ''))
+  
+   SET NOCOUNT OFF
+   SET ARITHABORT OFF
+   
+    END
+	
+	</select>		
+
+	<update id="mrp100ukrvServiceImpl.updateDetail" parameterType="Map">		
+		----mrp100ukrv.Cmrp100ukrv[fnMrp100u] QUERY01
+		UPDATE PPL100T                 
+		SET    AGREE_STATUS = #{AGREE_STATUS}
+		WHERE  COMP_CODE    = #{S_COMP_CODE}
+		AND    DIV_CODE     = #{DIV_CODE} 
+		AND    WK_PLAN_NUM  = #{WK_PLAN_NUM}
+	</update>
+</mapper>

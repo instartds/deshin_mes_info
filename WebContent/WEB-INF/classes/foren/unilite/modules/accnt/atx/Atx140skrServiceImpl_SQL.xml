@@ -1,0 +1,842 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="atx140skrServiceImpl">
+	<select id="atx140skrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	--계산서 합계표
+	--atx140skr.Catx140skr[fnAtx140QStd] Query01
+	BEGIN
+	
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+	
+	--  1. 로컬 변수 선언 -----------------------------------------------------------------------------------------------
+	    DECLARE             @TypeKey            NVARCHAR(20)
+	
+	    SET @TypeKey      = REPLACE(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(30), GETDATE(), 121), '-', ''), ':', ''), '.', ''), ' ', '')
+	
+	    -- 1) 하루전 임시 데이터 삭제
+	    IF NOT EXISTS   (
+	                    SELECT TOP 1 1
+	                    FROM   T_ATX140SKR1 WITH (NOLOCK)
+	                    WHERE  TYPE_KEY LIKE LEFT(@TypeKey, 8) + '%'
+	                    )
+	    BEGIN
+	        TRUNCATE TABLE T_ATX140SKR1
+	    END
+	
+	--  2. 사업자번호분 생성 --------------------------------------------------------------------------------------------
+	    INSERT INTO T_ATX140SKR1
+	    (       TYPE_KEY        , GUBUN
+	          , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+	          , COMPANY_NUM
+	          , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+	          , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+	    )
+	    SELECT  @TypeKey        , N'1'
+	          , S1.COMP_CODE    , S1.CUSTOM_CODE        , ISNULL(S2.CUSTOM_NAME, '')    AS CUSTOM_NAME
+	          , CASE WHEN ISNULL(S1.COMPANY_NUM, '') = '' THEN ''
+	                 ELSE SUBSTRING(S1.COMPANY_NUM, 1, 3) + '-' +
+	                      SUBSTRING(S1.COMPANY_NUM, 4, 2) + '-' +
+	                      SUBSTRING(S1.COMPANY_NUM, 6, 5)
+	            END                                                                     AS COMPANY_NUM
+	          , NULL                                                                    AS CUST_COUNT
+	          , S1.NUM          , S2.COMP_TYPE          , S2.COMP_CLASS
+	          , S1.SUPPLY_AMT_I , S1.TAX_AMT_I          , S1.EB_YN
+	    FROM                (
+	                        SELECT  A.COMP_CODE, MIN(A.CUSTOM_CODE) CUSTOM_CODE, A.COMPANY_NUM
+	                              , SUM(CASE WHEN A.TAXNO_YN = 'Y' THEN 1 ELSE 0 END)   AS NUM
+	                              , SUM(A.SUPPLY_AMT_I)                                 AS SUPPLY_AMT_I
+	                              , SUM(A.TAX_AMT_I)                                    AS TAX_AMT_I
+	                              , A.EB_YN
+	                        FROM                ATX100T A  WITH (NOLOCK)
+	                                INNER JOIN  BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE    = A.COMP_CODE
+	                                                                    AND M1.MAIN_CODE    = 'A022'
+	                                                                    AND M1.SUB_CODE     = A.PROOF_KIND
+																	    <if test="INOUT_DIVI == &quot;1&quot;">
+	                                                                    AND M1.REF_CODE1    = 'B'
+	                                                                    AND M1.REF_CODE3    = '1'
+																	    </if>
+																	    <if test="INOUT_DIVI == &quot;2&quot;">
+	                                                                    AND M1.REF_CODE1    = 'B'
+	                                                                    AND M1.REF_CODE3    = '2'
+	                                                                    AND M1.SUB_CODE    != '31'
+																	    </if>
+	    
+	                        WHERE   A.COMP_CODE        = #{S_COMP_CODE}
+	                        AND     A.PUB_DATE        &gt;= #{PUB_DATE_FR}
+	                        AND     A.PUB_DATE        &lt;= #{PUB_DATE_TO}
+	                        AND     A.BILL_DIVI_CODE   = #{BILL_DIVI_CODE}
+	    					<if test="EB_YN == &quot;Y&quot;">
+	    					AND     A.EB_YN            = #{EB_YN}
+	    					</if>
+	    					<if test="EB_YN == &quot;N&quot;">
+	    					AND     A.EB_YN            = #{EB_YN}
+	    					</if>
+	    					
+	                        GROUP   BY A.COMP_CODE, A.COMPANY_NUM, A.EB_YN
+	                        ) S1
+	            LEFT  JOIN  BCM100T   S2 WITH (NOLOCK) ON S2.COMP_CODE    = S1.COMP_CODE
+	                                                  AND S2.CUSTOM_CODE  = S1.CUSTOM_CODE
+	    WHERE   1=1
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			AND S1.CUSTOM_CODE = #{CUSTOM_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+			AND S1.CUSTOM_CODE LIKE #{CUSTOM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			AND S2.CUSTOM_NAME LIKE '%' + #{CUSTOM_NAME} + '%' 
+		</if> 
+	    <if test="@foren.Ognl@isNotEmpty(COMPANY_NUM)">
+	    AND     S1.COMPANY_NUM       = REPLACE(#{COMPANY_NUM}, '-', '')
+	    </if>
+	
+	--  3. 사업자번호분 합계 생성 ---------------------------------------------------------------------------------------
+	    INSERT INTO T_ATX140SKR1
+	    (       TYPE_KEY        , GUBUN
+	          , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+	          , COMPANY_NUM
+	          , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+	          , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+	    )
+	    SELECT  @TypeKey        , N'2'
+	          , A.COMP_CODE     , N'합계'               , ''
+	          , ''
+	          , ISNULL(SUM(A.CUST_COUNT), 0)            AS CUST_COUNT
+	          , ISNULL(SUM(A.NUM), 0)                   AS NUM
+	          , ''                                      AS COMP_TYPE
+	          , ''                                      AS COMP_CLASS
+	          , ISNULL(SUM(A.SUPPLY_AMT_I), 0)          AS SUPPLY_AMT_I
+	          , ISNULL(SUM(A.TAX_AMT_I)   , 0)          AS TAX_AMT_I
+	          , ''                                      AS EB_YN
+	    FROM    (
+	            SELECT  COMP_CODE
+	                  , 1                               AS CUST_COUNT
+	                  , ISNULL(SUM(NUM), 0)             AS NUM
+	                  , ISNULL(SUM(SUPPLY_AMT_I), 0)    AS SUPPLY_AMT_I
+	                  , ISNULL(SUM(TAX_AMT_I)   , 0)    AS TAX_AMT_I
+	            FROM    T_ATX140SKR1  WITH (NOLOCK)
+	            WHERE   TYPE_KEY    = @TypeKey
+	            AND     GUBUN       = '1'
+	            GROUP   BY COMP_CODE, CUSTOM_CODE
+	            ) A
+	    GROUP   BY A.COMP_CODE
+	
+	--  4. 주민번호발행분 생성 ------------------------------------------------------------------------------------------
+	    INSERT INTO T_ATX140SKR1
+	    (       TYPE_KEY        , GUBUN
+	          , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+	          , COMPANY_NUM
+	          , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+	          , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+	    )
+	    SELECT @TypeKey         , N'3'
+	          , A.COMP_CODE     , N'주민등록분'         , ''
+	          , ''
+	          , ISNULL(COUNT(1), 0)                     AS CUST_COUNT
+	          , ISNULL(SUM(NUM), 0)                     AS NUM
+	          , ''                                      AS COMP_TYPE
+	          , ''                                      AS COMP_CLASS
+	          , ISNULL(SUM(SUPPLY_AMT_I), 0)            AS SUPPLY_AMT_I
+	          , ISNULL(SUM(TAX_AMT_I)   , 0)            AS TAX_AMT_I
+	          , ''                                      AS EB_YN
+	    FROM    (
+	            SELECT  S1.COMP_CODE
+	                  , SUM(CASE WHEN S1.TAXNO_YN = 'Y' THEN 1 ELSE 0 END)  AS NUM
+	                  , SUM(S1.SUPPLY_AMT_I)                                AS SUPPLY_AMT_I
+	                  , SUM(S1.TAX_AMT_I)                                   AS TAX_AMT_I
+	                  , uniLITE.fnCipherDecrypt(S2.TOP_NUM, 'A')            AS TOP_NUM
+	                  , S1.EB_YN
+	            FROM                ATX100T   S1  WITH (NOLOCK)
+	                    LEFT JOIN   BCM100T   S2  WITH (NOLOCK) ON S2.COMP_CODE   = S1.COMP_CODE
+	                                                           AND S2.CUSTOM_CODE = S1.CUSTOM_CODE
+	             WHERE   S1.COMP_CODE          = #{S_COMP_CODE}
+	            AND     S1.PUB_DATE          &gt;= #{PUB_DATE_FR}
+	            AND     S1.PUB_DATE          &lt;= #{PUB_DATE_TO}
+	            AND     S1.BILL_DIVI_CODE     = #{BILL_DIVI_CODE}
+				<if test="EB_YN == &quot;Y&quot;">
+	    		AND     S1.EB_YN              = #{EB_YN}
+	    		</if>
+				<if test="EB_YN == &quot;N&quot;">
+	    		AND     S1.EB_YN              = #{EB_YN}
+	    		</if>
+	    
+	            AND     S1.PROOF_KIND         = '31'
+	            AND     S1.INOUT_DIVI         = #{INOUT_DIVI}
+	            GROUP   BY S1.COMP_CODE, uniLITE.fnCipherDecrypt(S2.TOP_NUM, 'A'), S1.EB_YN
+	            ) A
+	    GROUP   BY A.COMP_CODE
+	
+	--  5. 총계 생성 ----------------------------------------------------------------------------------------------------
+	    INSERT INTO T_ATX140SKR1
+	    (       TYPE_KEY        , GUBUN
+	          , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+	          , COMPANY_NUM
+	          , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+	          , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+	    )
+	    SELECT  @TypeKey        , N'4'
+	          , A.COMP_CODE     , N'총계'               , ''
+	          , ''                                      AS COMPANY_NUM
+	          , ISNULL(SUM(A.CUST_COUNT), 0)            AS CUST_COUNT
+	          , ISNULL(SUM(A.NUM)       , 0)            AS NUM
+	          , ''                                      AS COMP_TYPE
+	          , ''                                      AS COMP_CLASS
+	          , ISNULL(SUM(A.SUPPLY_AMT_I), 0)          AS SUPPLY_AMT_I
+	          , ISNULL(SUM(A.TAX_AMT_I)   , 0)          AS TAX_AMT_I
+	          , ''                                      AS EB_YN
+	    FROM    T_ATX140SKR1    A  WITH (NOLOCK)
+	    WHERE   TYPE_KEY = @TypeKey
+	    AND     GUBUN   IN ('2', '3')
+	    GROUP   BY A.COMP_CODE
+	
+	--  6. 데이터 조회 --------------------------------------------------------------------------------------------------
+	    SELECT  GUBUN
+	          , CUSTOM_CODE
+	          , CUSTOM_NAME
+	          , COMPANY_NUM
+	          , CUST_COUNT
+	          , NUM
+	          , COMP_TYPE
+	          , COMP_CLASS
+	          , SUPPLY_AMT_I
+	          , TAX_AMT_I
+	    FROM    T_ATX140SKR1  WITH (NOLOCK)
+	    WHERE   TYPE_KEY    = @TypeKey
+	
+	    ORDER   BY
+	            KEY_STRING
+	
+	   SET ARITHABORT OFF
+	   SET NOCOUNT OFF
+	END
+
+	</select>	
+	<select id="atx140skrServiceImpl.selectListToPrint"  parameterType="Map" resultType="rMap">
+			--atx140skr.Catx140skr[fnAtx140QStd] Query01
+			BEGIN
+			
+			    SET NOCOUNT ON
+			    SET ARITHABORT ON
+			
+			--  1. 로컬 변수 선언 -----------------------------------------------------------------------------------------------
+			    DECLARE             @TypeKey            NVARCHAR(20)
+			
+			    SET @TypeKey      = REPLACE(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(30), GETDATE(), 121), '-', ''), ':', ''), '.', ''), ' ', '')
+			
+			    -- 1) 하루전 임시 데이터 삭제
+			    IF NOT EXISTS   (
+			                    SELECT TOP 1 1
+			                    FROM   T_ATX140SKR1 WITH (NOLOCK)
+			                    WHERE  TYPE_KEY LIKE LEFT(@TypeKey, 8) + '%'
+			                    )
+			    BEGIN
+			        TRUNCATE TABLE T_ATX140SKR1
+			    END
+			
+			--  2. 사업자번호분 생성 --------------------------------------------------------------------------------------------
+			    INSERT INTO T_ATX140SKR1
+			    (       TYPE_KEY        , GUBUN
+			          , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+			          , COMPANY_NUM
+			          , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+			          , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+			    )
+			    SELECT  @TypeKey        , N'1'
+			          , S1.COMP_CODE    , S1.CUSTOM_CODE        , ISNULL(S2.CUSTOM_NAME, '')    AS CUSTOM_NAME
+			          , CASE WHEN ISNULL(S1.COMPANY_NUM, '') = '' THEN ''
+			                 ELSE SUBSTRING(S1.COMPANY_NUM, 1, 3) + '-' +
+			                      SUBSTRING(S1.COMPANY_NUM, 4, 2) + '-' +
+			                      SUBSTRING(S1.COMPANY_NUM, 6, 5)
+			            END                                                                     AS COMPANY_NUM
+		                  , 1                                                                       AS CUST_COUNT
+			          , S1.NUM          , S2.COMP_TYPE          , S2.COMP_CLASS
+			          , S1.SUPPLY_AMT_I , S1.TAX_AMT_I          , S1.EB_YN
+			    FROM                (
+			                        SELECT  A.COMP_CODE, MIN(A.CUSTOM_CODE) CUSTOM_CODE, A.COMPANY_NUM
+			                              , SUM(CASE WHEN A.TAXNO_YN = 'Y' THEN 1 ELSE 0 END)   AS NUM
+			                              , SUM(A.SUPPLY_AMT_I)                                 AS SUPPLY_AMT_I
+			                              , SUM(A.TAX_AMT_I)                                    AS TAX_AMT_I
+			                              , A.EB_YN
+			                        FROM                ATX100T A  WITH (NOLOCK)
+			                                INNER JOIN  BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE    = A.COMP_CODE
+			                                                                    AND M1.MAIN_CODE    = 'A022'
+			                                                                    AND M1.SUB_CODE     = A.PROOF_KIND
+			    
+			    																<if test="INOUT_DIVI == &quot;1&quot;">																
+			                                                                    AND M1.REF_CODE1    = 'B'
+			                                                                    AND M1.REF_CODE3    = '1'
+																			    </if>
+																			    <if test="INOUT_DIVI == &quot;2&quot;">
+			                                                                    AND M1.REF_CODE1    = 'B'
+			                                                                    AND M1.REF_CODE3    = '2'
+			                                                                    AND M1.SUB_CODE    != '31'
+																	    		</if>
+			    
+			                        WHERE   A.COMP_CODE        = #{S_COMP_CODE}
+			                        AND     A.PUB_DATE        &gt;= #{PUB_DATE_FR}
+			                        AND     A.PUB_DATE        &lt;= #{PUB_DATE_TO}
+			                        AND     A.BILL_DIVI_CODE   = #{BILL_DIVI_CODE}
+			    					<if test="EB_YN == &quot;Y&quot;">
+			    					AND     A.EB_YN            = #{EB_YN}
+			    					</if>
+			    					<if test="EB_YN == &quot;N&quot;">
+			    					AND     A.EB_YN            = #{EB_YN}
+			    					</if>
+			                        GROUP   BY A.COMP_CODE, A.COMPANY_NUM, A.EB_YN
+			                        ) S1
+			            LEFT  JOIN  BCM100T   S2 WITH (NOLOCK) ON S2.COMP_CODE    = S1.COMP_CODE
+			                                                  AND S2.CUSTOM_CODE  = S1.CUSTOM_CODE
+		
+			
+			--  3. 사업자번호분 합계 생성 ---------------------------------------------------------------------------------------
+			    INSERT INTO T_ATX140SKR1
+			    (       TYPE_KEY        , GUBUN
+			          , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+			          , COMPANY_NUM
+			          , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+			          , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+			    )
+			    SELECT  @TypeKey        , N'2'
+			          , A.COMP_CODE     , N'합계'               , ''
+			          , ''
+			          , ISNULL(SUM(A.CUST_COUNT), 0)            AS CUST_COUNT
+			          , ISNULL(SUM(A.NUM), 0)                   AS NUM
+			          , ''                                      AS COMP_TYPE
+			          , ''                                      AS COMP_CLASS
+			          , ISNULL(SUM(A.SUPPLY_AMT_I), 0)          AS SUPPLY_AMT_I
+			          , ISNULL(SUM(A.TAX_AMT_I)   , 0)          AS TAX_AMT_I
+			          , ''                                      AS EB_YN
+			    FROM    (
+			            SELECT  COMP_CODE
+			                  , 1                               AS CUST_COUNT
+			                  , ISNULL(SUM(NUM), 0)             AS NUM
+			                  , ISNULL(SUM(SUPPLY_AMT_I), 0)    AS SUPPLY_AMT_I
+			                  , ISNULL(SUM(TAX_AMT_I)   , 0)    AS TAX_AMT_I
+			            FROM    T_ATX140SKR1  WITH (NOLOCK)
+			            WHERE   TYPE_KEY    = @TypeKey
+			            AND     GUBUN       = '1'
+			            GROUP   BY COMP_CODE, CUSTOM_CODE
+			            ) A
+			    GROUP   BY A.COMP_CODE
+		--3사업자번호분 합계(발행여부별) 생성---------------------------------------------------------------------------
+		    INSERT INTO T_ATX140SKR1
+		    (       TYPE_KEY        , GUBUN
+		          , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+		          , COMPANY_NUM
+		          , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+		          , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+		    )
+		    SELECT  @TypeKey        , N'2' + A.EB_YN
+		          , A.COMP_CODE     , N'합계_EBYN'          , ''
+		          , ''
+		          , ISNULL(SUM(A.CUST_COUNT), 0)            AS CUST_COUNT
+		          , ISNULL(SUM(A.NUM), 0)                   AS NUM
+		          , ''                                      AS COMP_TYPE
+		          , ''                                      AS COMP_CLASS
+		          , ISNULL(SUM(A.SUPPLY_AMT_I), 0)          AS SUPPLY_AMT_I
+		          , ISNULL(SUM(A.TAX_AMT_I)   , 0)          AS TAX_AMT_I
+		          , A.EB_YN
+		    FROM    (
+		            SELECT  COMP_CODE
+		                  , 1                               AS CUST_COUNT
+		                  , ISNULL(SUM(NUM), 0)             AS NUM
+		                  , ISNULL(SUM(SUPPLY_AMT_I), 0)    AS SUPPLY_AMT_I
+		                  , ISNULL(SUM(TAX_AMT_I)   , 0)    AS TAX_AMT_I
+		                  , EB_YN
+		            FROM    T_ATX140SKR1  WITH (NOLOCK)
+		            WHERE   TYPE_KEY    = @TypeKey
+		            AND     GUBUN       = '1'
+		            GROUP   BY COMP_CODE,  CUSTOM_CODE, EB_YN
+		            ) A
+		    GROUP   BY A.COMP_CODE, A.EB_YN
+			--  4. 주민번호발행분 생성 ------------------------------------------------------------------------------------------
+			    INSERT INTO T_ATX140SKR1
+			    (       TYPE_KEY        , GUBUN
+			          , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+			          , COMPANY_NUM
+			          , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+			          , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+			    )
+			    SELECT @TypeKey         , N'3'
+			          , A.COMP_CODE     , N'주민등록분'         , ''
+			          , ''
+			          , ISNULL(COUNT(1), 0)                     AS CUST_COUNT
+			          , ISNULL(SUM(NUM), 0)                     AS NUM
+			          , ''                                      AS COMP_TYPE
+			          , ''                                      AS COMP_CLASS
+			          , ISNULL(SUM(SUPPLY_AMT_I), 0)            AS SUPPLY_AMT_I
+			          , ISNULL(SUM(TAX_AMT_I)   , 0)            AS TAX_AMT_I
+			          , ''                                      AS EB_YN
+			    FROM    (
+			            SELECT  S1.COMP_CODE
+			                  , SUM(CASE WHEN S1.TAXNO_YN = 'Y' THEN 1 ELSE 0 END)  AS NUM
+			                  , SUM(S1.SUPPLY_AMT_I)                                AS SUPPLY_AMT_I
+			                  , SUM(S1.TAX_AMT_I)                                   AS TAX_AMT_I
+			                  , uniLITE.fnCipherDecrypt(S2.TOP_NUM, 'A')            AS TOP_NUM
+			                  , S1.EB_YN
+		            FROM                ATX100T   S1  WITH (NOLOCK)
+		                    LEFT JOIN   BCM100T   S2  WITH (NOLOCK) ON S2.COMP_CODE   = S1.COMP_CODE
+		                                                           AND S2.CUSTOM_CODE = S1.CUSTOM_CODE
+		            WHERE   S1.COMP_CODE          = #{S_COMP_CODE}
+			            AND     S1.PUB_DATE          &gt;= #{PUB_DATE_FR}
+			            AND     S1.PUB_DATE          &lt;= #{PUB_DATE_TO}
+			            AND     S1.BILL_DIVI_CODE     = #{BILL_DIVI_CODE}
+		            AND     S1.PROOF_KIND        ='31'
+		             AND     S1.INOUT_DIVI         = #{INOUT_DIVI}
+		            GROUP   BY S1.COMP_CODE, uniLITE.fnCipherDecrypt(S2.TOP_NUM, 'A'), S1.EB_YN
+		            ) A
+		    GROUP   BY A.COMP_CODE
+		
+		--4. 주민번호발행분 (발행여부별) 생성 -----------------------------------------------------------------------------
+		    INSERT INTO T_ATX140SKR1
+		    (       TYPE_KEY        , GUBUN
+		          , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+		          , COMPANY_NUM
+		          , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+		          , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+		    )
+		    SELECT @TypeKey         , N'3' + A.EB_YN
+		          , A.COMP_CODE     , N'주민등록분_EBYN', ''
+		          , ''
+		          , ISNULL(COUNT(1), 0)                     AS CUST_COUNT
+		          , ISNULL(SUM(NUM), 0)                     AS NUM
+		          , ''                                      AS COMP_TYPE
+		          , ''                                      AS COMP_CLASS
+		          , ISNULL(SUM(SUPPLY_AMT_I), 0)            AS SUPPLY_AMT_I
+		          , ISNULL(SUM(TAX_AMT_I)   , 0)            AS TAX_AMT_I
+		          , A.EB_YN
+		    FROM    (
+		            SELECT  S1.COMP_CODE
+		                  , SUM(CASE WHEN S1.TAXNO_YN = 'Y' THEN 1 ELSE 0 END)  AS NUM
+		                  , SUM(S1.SUPPLY_AMT_I)                                AS SUPPLY_AMT_I
+		                  , SUM(S1.TAX_AMT_I)                                   AS TAX_AMT_I
+		                  , uniLITE.fnCipherDecrypt(S2.TOP_NUM, 'A')            AS TOP_NUM
+			                  , S1.EB_YN
+			            FROM                ATX100T   S1  WITH (NOLOCK)
+			                    LEFT JOIN   BCM100T   S2  WITH (NOLOCK) ON S2.COMP_CODE   = S1.COMP_CODE
+			                                                           AND S2.CUSTOM_CODE = S1.CUSTOM_CODE
+			            WHERE   S1.COMP_CODE          = #{S_COMP_CODE}
+			            AND     S1.PUB_DATE          &gt;= #{PUB_DATE_FR}
+			            AND     S1.PUB_DATE          &lt;= #{PUB_DATE_TO}
+			            AND     S1.BILL_DIVI_CODE     = #{BILL_DIVI_CODE}
+						<if test="EB_YN == &quot;Y&quot;">
+			    		AND     S1.EB_YN              = #{EB_YN}
+			    		</if>
+						<if test="EB_YN == &quot;N&quot;">
+			    		AND     S1.EB_YN              = #{EB_YN}
+			    		</if>
+			    
+			            AND     S1.PROOF_KIND        ='31'
+			            AND     S1.INOUT_DIVI         = #{INOUT_DIVI}
+			            GROUP   BY S1.COMP_CODE, uniLITE.fnCipherDecrypt(S2.TOP_NUM, 'A'), S1.EB_YN
+			            ) A
+		    GROUP   BY A.COMP_CODE, A.EB_YN
+			
+			--  5. 총계 생성 ----------------------------------------------------------------------------------------------------
+			    INSERT INTO T_ATX140SKR1
+			    (       TYPE_KEY        , GUBUN
+			          , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+			          , COMPANY_NUM
+			          , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+			          , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+			    )
+			    SELECT  @TypeKey        , N'4'
+			          , A.COMP_CODE     , N'총계'               , ''
+			          , ''                                      AS COMPANY_NUM
+			          , ISNULL(SUM(A.CUST_COUNT), 0)            AS CUST_COUNT
+			          , ISNULL(SUM(A.NUM)       , 0)            AS NUM
+			          , ''                                      AS COMP_TYPE
+			          , ''                                      AS COMP_CLASS
+			          , ISNULL(SUM(A.SUPPLY_AMT_I), 0)          AS SUPPLY_AMT_I
+			          , ISNULL(SUM(A.TAX_AMT_I)   , 0)          AS TAX_AMT_I
+			          , ''                                      AS EB_YN
+			    FROM    T_ATX140SKR1    A  WITH (NOLOCK)
+			    WHERE   TYPE_KEY = @TypeKey
+			    AND     GUBUN   IN ('2', '3')
+			    GROUP   BY A.COMP_CODE
+			
+			--  6. 데이터 조회 --------------------------------------------------------------------------------------------------
+			    SELECT  GUBUN
+			          , CUSTOM_CODE
+			          , CUSTOM_NAME
+			          , COMPANY_NUM
+		          , ISNULL(CUST_COUNT  , 0)                                             AS CUST_COUNT
+		          , ISNULL(NUM         , 0)                                             AS NUM
+		          , COMP_TYPE
+		          , COMP_CLASS
+		          , ISNULL(SUPPLY_AMT_I, 0)                                             AS SUPPLY_AMT_I
+		          , ISNULL(TAX_AMT_I   , 0)                                             AS TAX_AMT_I
+		          , EB_YN
+		          , CASE WHEN EB_YN = 'Y' THEN ISNULL(NUM         , 0)  ELSE 0  END     AS NUM1
+		          , CASE WHEN EB_YN = 'N' THEN ISNULL(NUM         , 0)  ELSE 0  END     AS NUM2
+		          , CASE WHEN EB_YN = 'Y' THEN ISNULL(CUST_COUNT  , 0)  ELSE 0  END     AS CUST_COUNT1
+		          , CASE WHEN EB_YN = 'N' THEN ISNULL(CUST_COUNT  , 0)  ELSE 0  END     AS CUST_COUNT2
+		          , CASE WHEN EB_YN = 'Y' THEN ISNULL(SUPPLY_AMT_I, 0)  ELSE 0  END     AS SUPPLY_AMT_I1
+		          , CASE WHEN EB_YN = 'N' THEN ISNULL(SUPPLY_AMT_I, 0)  ELSE 0  END     AS SUPPLY_AMT_I2
+		          , CASE WHEN EB_YN = 'Y' THEN ISNULL(TAX_AMT_I   , 0)  ELSE 0  END     AS TAX_AMT_I1
+		          , CASE WHEN EB_YN = 'N' THEN ISNULL(TAX_AMT_I   , 0)  ELSE 0  END     AS TAX_AMT_I2
+			    FROM    T_ATX140SKR1  WITH (NOLOCK)
+			    WHERE   TYPE_KEY    = @TypeKey
+		    AND    (EB_YN       = 'N'
+		        OR  GUBUN       > '1')
+		
+		    ORDER   BY
+		            COMPANY_NUM
+		
+		   SET ARITHABORT OFF
+		   SET NOCOUNT OFF
+		
+		END
+		</select>
+
+<!-- 20200728 추가: clip report 출력 관련 조회쿼리 추가 -->
+	<select id="atx140skrServiceImpl.selectPrintList" parameterType="Map" resultType="rMap">
+		/* atx140skrServiceImpl.selectPrintList */
+		    BEGIN
+		    
+		        SET NOCOUNT ON
+		        SET ARITHABORT ON
+		    
+		    --  1. 로컬 변수 선언 -----------------------------------------------------------------------------------------------
+		        DECLARE             @TypeKey            NVARCHAR(20)
+		    
+		        SET @TypeKey      = REPLACE(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(30), GETDATE(), 121), '-', ''), ':', ''), '.', ''), ' ', '')
+		    
+		        -- 1) 하루전 임시 데이터 삭제
+		        IF NOT EXISTS   (
+		                        SELECT TOP 1 1
+		                        FROM   T_ATX140SKR1 WITH (NOLOCK)
+		                        WHERE  TYPE_KEY LIKE LEFT(@TypeKey, 8) + '%'
+		                        )
+		        BEGIN
+		            TRUNCATE TABLE T_ATX140SKR1
+		        END
+		    
+		    --  2. 사업자번호분 생성 --------------------------------------------------------------------------------------------
+		        INSERT INTO T_ATX140SKR1
+		        (       TYPE_KEY        , GUBUN
+		              , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+		              , COMPANY_NUM
+		              , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+		              , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+		        )
+		        SELECT  @TypeKey        , N'1'
+		              , S1.COMP_CODE    , S1.CUSTOM_CODE        , ISNULL(S2.CUSTOM_NAME, '')    AS CUSTOM_NAME
+		              , CASE WHEN ISNULL(S1.COMPANY_NUM, '') = '' THEN ''
+		                     ELSE SUBSTRING(S1.COMPANY_NUM, 1, 3) + '-' +
+		                          SUBSTRING(S1.COMPANY_NUM, 4, 2) + '-' +
+		                          SUBSTRING(S1.COMPANY_NUM, 6, 5)
+		                END                                                                     AS COMPANY_NUM
+		                  , 1                                                                       AS CUST_COUNT
+		              , S1.NUM          , S2.COMP_TYPE          , S2.COMP_CLASS
+		              , S1.SUPPLY_AMT_I , S1.TAX_AMT_I          , S1.EB_YN
+		        FROM              (
+		                            SELECT  A.COMP_CODE, MIN(A.CUSTOM_CODE) CUSTOM_CODE, A.COMPANY_NUM
+		                                  , SUM(CASE WHEN A.TAXNO_YN = 'Y' THEN 1 ELSE 0 END)   AS NUM
+		                                  , SUM(A.SUPPLY_AMT_I)                                 AS SUPPLY_AMT_I
+		                                  , SUM(A.TAX_AMT_I)                                    AS TAX_AMT_I
+		                                  , A.EB_YN
+		                            FROM                ATX100T A  WITH (NOLOCK)
+		                                    INNER JOIN  BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE    = A.COMP_CODE
+		                                                                        AND M1.MAIN_CODE    = 'A022'
+		                                                                        AND M1.SUB_CODE     = A.PROOF_KIND
+		                                                                        <if test="INOUT_DIVI == &quot;1&quot;">																
+		                                                                        AND M1.REF_CODE1    = 'B'
+		                                                                        AND M1.REF_CODE3    = '1'
+		                                                                        </if>
+		                                                                        <if test="INOUT_DIVI == &quot;2&quot;">
+		                                                                        AND M1.REF_CODE1    = 'B'
+		                                                                        AND M1.REF_CODE3    = '2'
+		                                                                        AND M1.SUB_CODE    != '31'
+		                                                                        </if>
+		                            WHERE   A.COMP_CODE        = #{S_COMP_CODE}
+		                            AND     A.PUB_DATE        &gt;= #{PUB_DATE_FR}
+		                            AND     A.PUB_DATE        &lt;= #{PUB_DATE_TO}
+		                            AND     A.BILL_DIVI_CODE   = #{BILL_DIVI_CODE}
+		                            <if test="EB_YN == &quot;Y&quot;">
+		                            AND     A.EB_YN            = #{EB_YN}
+		                            </if>
+		                            <if test="EB_YN == &quot;N&quot;">
+		                            AND     A.EB_YN            = #{EB_YN}
+		                            </if>
+		                            GROUP   BY A.COMP_CODE, A.COMPANY_NUM, A.EB_YN
+		                            ) S1
+		                LEFT  JOIN  BCM100T   S2 WITH (NOLOCK) ON S2.COMP_CODE    = S1.COMP_CODE
+		                                                      AND S2.CUSTOM_CODE  = S1.CUSTOM_CODE
+
+		    --  3. 사업자번호분 합계 생성 ---------------------------------------------------------------------------------------
+		        INSERT INTO T_ATX140SKR1
+		        (       TYPE_KEY        , GUBUN
+		              , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+		              , COMPANY_NUM
+		              , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+		              , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+		        )
+		        SELECT  @TypeKey        , N'2'
+		              , A.COMP_CODE     , N'합계'               , ''
+		              , ''
+		              , ISNULL(SUM(A.CUST_COUNT), 0)            AS CUST_COUNT
+		              , ISNULL(SUM(A.NUM), 0)                   AS NUM
+		              , ''                                      AS COMP_TYPE
+		              , ''                                      AS COMP_CLASS
+		              , ISNULL(SUM(A.SUPPLY_AMT_I), 0)          AS SUPPLY_AMT_I
+		              , ISNULL(SUM(A.TAX_AMT_I)   , 0)          AS TAX_AMT_I
+		              , ''                                      AS EB_YN
+		        FROM  (
+		                SELECT  COMP_CODE
+		                      , 1                               AS CUST_COUNT
+		                      , ISNULL(SUM(NUM), 0)             AS NUM
+		                      , ISNULL(SUM(SUPPLY_AMT_I), 0)    AS SUPPLY_AMT_I
+		                      , ISNULL(SUM(TAX_AMT_I)   , 0)    AS TAX_AMT_I
+		                FROM    T_ATX140SKR1  WITH (NOLOCK)
+		                WHERE   TYPE_KEY    = @TypeKey
+		                AND     GUBUN       = '1'
+		                GROUP   BY COMP_CODE, CUSTOM_CODE
+		                ) A
+		        GROUP   BY A.COMP_CODE
+
+		    --3. 사업자번호분 합계(발행여부별) 생성---------------------------------------------------------------------------
+		        INSERT INTO T_ATX140SKR1
+		        (       TYPE_KEY        , GUBUN
+		              , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+		              , COMPANY_NUM
+		              , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+		              , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+		        )
+		        SELECT  @TypeKey        , N'2' + A.EB_YN
+		              , A.COMP_CODE     , N'합계_EBYN'          , ''
+		              , ''
+		              , ISNULL(SUM(A.CUST_COUNT), 0)            AS CUST_COUNT
+		              , ISNULL(SUM(A.NUM), 0)                   AS NUM
+		              , ''                                      AS COMP_TYPE
+		              , ''                                      AS COMP_CLASS
+		              , ISNULL(SUM(A.SUPPLY_AMT_I), 0)          AS SUPPLY_AMT_I
+		              , ISNULL(SUM(A.TAX_AMT_I)   , 0)          AS TAX_AMT_I
+		              , A.EB_YN
+		        FROM  (
+		                SELECT  COMP_CODE
+		                      , 1                               AS CUST_COUNT
+		                      , ISNULL(SUM(NUM), 0)             AS NUM
+		                      , ISNULL(SUM(SUPPLY_AMT_I), 0)    AS SUPPLY_AMT_I
+		                      , ISNULL(SUM(TAX_AMT_I)   , 0)    AS TAX_AMT_I
+		                      , EB_YN
+		                FROM    T_ATX140SKR1  WITH (NOLOCK)
+		                WHERE   TYPE_KEY    = @TypeKey
+		                AND     GUBUN       = '1'
+		                GROUP   BY COMP_CODE,  CUSTOM_CODE, EB_YN
+		                ) A
+		        GROUP   BY A.COMP_CODE, A.EB_YN
+
+		    --  4. 주민번호발행분 생성 ------------------------------------------------------------------------------------------
+		        INSERT INTO T_ATX140SKR1
+		        (       TYPE_KEY        , GUBUN
+		              , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+		              , COMPANY_NUM
+		              , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+		              , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+		        )
+		        SELECT @TypeKey         , N'3'
+		              , A.COMP_CODE     , N'주민등록분'         , ''
+		              , ''
+		              , ISNULL(COUNT(1), 0)                     AS CUST_COUNT
+		              , ISNULL(SUM(NUM), 0)                     AS NUM
+		              , ''                                      AS COMP_TYPE
+		              , ''                                      AS COMP_CLASS
+		              , ISNULL(SUM(SUPPLY_AMT_I), 0)            AS SUPPLY_AMT_I
+		              , ISNULL(SUM(TAX_AMT_I)   , 0)            AS TAX_AMT_I
+		              , ''                                      AS EB_YN
+		        FROM  (
+		                SELECT  S1.COMP_CODE
+		                      , SUM(CASE WHEN S1.TAXNO_YN = 'Y' THEN 1 ELSE 0 END)  AS NUM
+		                      , SUM(S1.SUPPLY_AMT_I)                                AS SUPPLY_AMT_I
+		                      , SUM(S1.TAX_AMT_I)                                   AS TAX_AMT_I
+		                      , uniLITE.fnCipherDecrypt(S2.TOP_NUM, 'A')            AS TOP_NUM
+		                      , S1.EB_YN
+		                   FROM        ATX100T   S1  WITH (NOLOCK)
+		                   LEFT JOIN   BCM100T   S2  WITH (NOLOCK) ON S2.COMP_CODE   = S1.COMP_CODE
+		                                                          AND S2.CUSTOM_CODE = S1.CUSTOM_CODE
+		                  WHERE S1.COMP_CODE       = #{S_COMP_CODE}
+		                    AND S1.PUB_DATE       &gt;= #{PUB_DATE_FR}
+		                    AND S1.PUB_DATE       &lt;= #{PUB_DATE_TO}
+		                    AND S1.BILL_DIVI_CODE  = #{BILL_DIVI_CODE}
+		                    AND S1.PROOF_KIND      ='31'
+		                    AND S1.INOUT_DIVI      = #{INOUT_DIVI}
+		                  GROUP BY S1.COMP_CODE, uniLITE.fnCipherDecrypt(S2.TOP_NUM, 'A'), S1.EB_YN
+		            ) A
+		    GROUP   BY A.COMP_CODE
+
+		    --4. 주민번호발행분 (발행여부별) 생성 -----------------------------------------------------------------------------
+		        INSERT INTO T_ATX140SKR1
+		        (       TYPE_KEY        , GUBUN
+		              , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+		              , COMPANY_NUM
+		              , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+		              , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+		        )
+		        SELECT @TypeKey         , N'3' + A.EB_YN
+		              , A.COMP_CODE     , N'주민등록분_EBYN', ''
+		              , ''
+		              , ISNULL(COUNT(1), 0)                     AS CUST_COUNT
+		              , ISNULL(SUM(NUM), 0)                     AS NUM
+		              , ''                                      AS COMP_TYPE
+		              , ''                                      AS COMP_CLASS
+		              , ISNULL(SUM(SUPPLY_AMT_I), 0)            AS SUPPLY_AMT_I
+		              , ISNULL(SUM(TAX_AMT_I)   , 0)            AS TAX_AMT_I
+		              , A.EB_YN
+		        FROM    (
+		                 SELECT S1.COMP_CODE
+		                      , SUM(CASE WHEN S1.TAXNO_YN = 'Y' THEN 1 ELSE 0 END)  AS NUM
+		                      , SUM(S1.SUPPLY_AMT_I)                                AS SUPPLY_AMT_I
+		                      , SUM(S1.TAX_AMT_I)                                   AS TAX_AMT_I
+		                      , uniLITE.fnCipherDecrypt(S2.TOP_NUM, 'A')            AS TOP_NUM
+		                      , S1.EB_YN
+		                    FROM                ATX100T   S1  WITH (NOLOCK)
+		                            LEFT JOIN   BCM100T   S2  WITH (NOLOCK) ON S2.COMP_CODE   = S1.COMP_CODE
+		                                                                   AND S2.CUSTOM_CODE = S1.CUSTOM_CODE
+		                    WHERE   S1.COMP_CODE          = #{S_COMP_CODE}
+		                    AND     S1.PUB_DATE          &gt;= #{PUB_DATE_FR}
+		                    AND     S1.PUB_DATE          &lt;= #{PUB_DATE_TO}
+		                    AND     S1.BILL_DIVI_CODE     = #{BILL_DIVI_CODE}
+		                    <if test="EB_YN == &quot;Y&quot;">
+		                    AND     S1.EB_YN              = #{EB_YN}
+		                    </if>
+		                    <if test="EB_YN == &quot;N&quot;">
+		                    AND     S1.EB_YN              = #{EB_YN}
+		                    </if>
+		                    AND     S1.PROOF_KIND         = '31'
+		                    AND     S1.INOUT_DIVI         = #{INOUT_DIVI}
+		                    GROUP   BY S1.COMP_CODE, uniLITE.fnCipherDecrypt(S2.TOP_NUM, 'A'), S1.EB_YN
+		                    ) A
+		        GROUP   BY A.COMP_CODE, A.EB_YN
+
+		    --  5. 총계 생성 ----------------------------------------------------------------------------------------------------
+		        INSERT INTO T_ATX140SKR1
+		        (       TYPE_KEY        , GUBUN
+		              , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+		              , COMPANY_NUM
+		              , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+		              , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+		        )
+		        SELECT  @TypeKey        , N'4'
+		              , A.COMP_CODE     , N'총계'               , ''
+		              , '01'                                    AS COMPANY_NUM
+		              , ISNULL(SUM(A.CUST_COUNT), 0)            AS CUST_COUNT
+		              , ISNULL(SUM(A.NUM)       , 0)            AS NUM
+		              , ''                                      AS COMP_TYPE
+		              , ''                                      AS COMP_CLASS
+		              , ISNULL(SUM(A.SUPPLY_AMT_I), 0)          AS SUPPLY_AMT_I
+		              , ISNULL(SUM(A.TAX_AMT_I)   , 0)          AS TAX_AMT_I
+		              , ''                                      AS EB_YN
+		        FROM    T_ATX140SKR1    A  WITH (NOLOCK)
+		        WHERE   TYPE_KEY = @TypeKey
+		        AND     GUBUN   IN ('2', '3')
+		        GROUP   BY A.COMP_CODE
+
+		    --  6. 발행/미발행 데이터 합계 ----------------------------------------------------------------------------------------------------
+		    --  6-1. 발행 데이터 합계       ----------------------------------------------------------------------------------------------------
+		        INSERT INTO T_ATX140SKR1
+		        (       TYPE_KEY        , GUBUN
+		              , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+		              , COMPANY_NUM
+		              , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+		              , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+		        )
+		        SELECT  @TypeKey        , N'5'
+		              , #{S_COMP_CODE}  , N'발행 데이터'             , ''
+		              , '02'         AS COMPANY_NUM
+		              , 0            AS CUST_COUNT
+		              , 0            AS NUM
+		              , ''           AS COMP_TYPE
+		              , ''           AS COMP_CLASS
+		              , 0            AS SUPPLY_AMT_I
+		              , 0            AS TAX_AMT_I
+		              , 'Y'          AS EB_YN
+
+		        UPDATE A
+		           SET CUST_COUNT    = Z.CUST_COUNT
+		             , NUM           = Z.NUM
+		             , SUPPLY_AMT_I  = Z.SUPPLY_AMT_I
+		             , TAX_AMT_I     = Z.TAX_AMT_I
+		         FROM T_ATX140SKR1 A WITH (NOLOCK)
+		         INNER JOIN (
+		                     SELECT  @TypeKey AS TYPE_KEY , N'5' + A.EB_YN AS GUBUN
+		                           , A.COMP_CODE          , N'발행 데이터' AS CUSTOM_CODE             , '' AS CUSTOM_NAME
+		                           , '02'                                    AS COMPANY_NUM
+		                           , ISNULL(SUM(A.CUST_COUNT), 0)            AS CUST_COUNT
+		                           , ISNULL(SUM(A.NUM)       , 0)            AS NUM
+		                           , ''                                      AS COMP_TYPE
+		                           , ''                                      AS COMP_CLASS
+		                           , ISNULL(SUM(A.SUPPLY_AMT_I), 0)          AS SUPPLY_AMT_I
+		                           , ISNULL(SUM(A.TAX_AMT_I)   , 0)          AS TAX_AMT_I
+		                           , A.EB_YN
+		                     FROM    T_ATX140SKR1    A  WITH (NOLOCK)
+		                     WHERE   TYPE_KEY = @TypeKey
+		                     AND     GUBUN   IN ('2Y', '3Y')
+		                     GROUP   BY A.COMP_CODE, A.EB_YN) Z ON Z.TYPE_KEY = A.TYPE_KEY AND Z.EB_YN = A.EB_YN
+
+		    --  6-2. 미발행 데이터 합계       ----------------------------------------------------------------------------------------------------
+		        INSERT INTO T_ATX140SKR1
+		        (       TYPE_KEY        , GUBUN
+		              , COMP_CODE       , CUSTOM_CODE           , CUSTOM_NAME
+		              , COMPANY_NUM
+		              , CUST_COUNT      , NUM                   , COMP_TYPE             , COMP_CLASS
+		              , SUPPLY_AMT_I    , TAX_AMT_I             , EB_YN
+		        )
+		        SELECT  @TypeKey        , N'5'
+		              , #{S_COMP_CODE}  , N'미발행 데이터'            , ''
+		              , '03'         AS COMPANY_NUM
+		              , 0            AS CUST_COUNT
+		              , 0            AS NUM
+		              , ''           AS COMP_TYPE
+		              , ''           AS COMP_CLASS
+		              , 0            AS SUPPLY_AMT_I
+		              , 0            AS TAX_AMT_I
+		              , 'N'          AS EB_YN
+
+		        UPDATE A
+		           SET CUST_COUNT    = Z.CUST_COUNT
+		             , NUM           = Z.NUM
+		             , SUPPLY_AMT_I  = Z.SUPPLY_AMT_I
+		             , TAX_AMT_I     = Z.TAX_AMT_I
+		         FROM T_ATX140SKR1 A WITH (NOLOCK)
+		         INNER JOIN (
+		                     SELECT  @TypeKey AS TYPE_KEY , N'5' + A.EB_YN AS GUBUN
+		                           , A.COMP_CODE          , N'미발행 데이터' AS CUSTOM_CODE            , '' AS CUSTOM_NAME
+		                           , '03'                                    AS COMPANY_NUM
+		                           , ISNULL(SUM(A.CUST_COUNT), 0)            AS CUST_COUNT
+		                           , ISNULL(SUM(A.NUM)       , 0)            AS NUM
+		                           , ''                                      AS COMP_TYPE
+		                           , ''                                      AS COMP_CLASS
+		                           , ISNULL(SUM(A.SUPPLY_AMT_I), 0)          AS SUPPLY_AMT_I
+		                           , ISNULL(SUM(A.TAX_AMT_I)   , 0)          AS TAX_AMT_I
+		                           , A.EB_YN
+		                     FROM    T_ATX140SKR1    A  WITH (NOLOCK)
+		                     WHERE   TYPE_KEY = @TypeKey
+		                     AND     GUBUN   IN ('2N', '3N')
+		                     GROUP   BY A.COMP_CODE, A.EB_YN) Z ON Z.TYPE_KEY = A.TYPE_KEY AND Z.EB_YN = A.EB_YN
+
+		    --  6. 데이터 조회 --------------------------------------------------------------------------------------------------
+		        SELECT  GUBUN
+		              , CUSTOM_CODE
+		              , CUSTOM_NAME
+		              , COMPANY_NUM
+		              , ISNULL(CUST_COUNT  , 0)                                             AS CUST_COUNT
+		              , ISNULL(NUM         , 0)                                             AS NUM
+		              , COMP_TYPE
+		              , COMP_CLASS
+		              , ISNULL(SUPPLY_AMT_I, 0)                                             AS SUPPLY_AMT_I
+		              , ISNULL(TAX_AMT_I   , 0)                                             AS TAX_AMT_I
+		              , EB_YN
+		        FROM    T_ATX140SKR1  WITH (NOLOCK)
+		        WHERE   TYPE_KEY    = @TypeKey
+		        AND    (EB_YN       = 'N' OR GUBUN       > '3')
+		        AND     RIGHT(GUBUN, 1) NOT IN ('Y', 'N')
+
+		    ORDER BY COMPANY_NUM
+
+		   SET ARITHABORT OFF
+		   SET NOCOUNT OFF
+		END
+	</select>
+</mapper>

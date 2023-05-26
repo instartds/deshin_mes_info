@@ -1,0 +1,419 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cam451skrvServiceImpl">
+	<select id="cam451skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+        DECLARE @COMP_CODE  NVARCHAR(8)
+              , @DIV_CODE   NVARCHAR(8)
+              , @WORK_MONTH NVARCHAR(6)
+        
+        SET @COMP_CODE  = #{S_COMP_CODE}
+        SET @DIV_CODE   = #{DIV_CODE}
+        SET @WORK_MONTH = #{WORK_MONTH}
+
+        SELECT A.COST_POOL_CODE                     AS COST_POOL_CODE   -- 부문코드
+             , ISNULL(P.COST_POOL_NAME,'')          AS COST_POOL_NAME   -- 부문코드명
+             , C.ITEM_ACCOUNT                   AS ITEM_ACCOUNT         -- 품목계정
+             , B.ST_GB                            	AS PROD_TYPE            -- 생산구분
+             , A.COST_POOL_CODE                     AS COST_POOL_CODE       -- 부문코드
+             , A.PROD_ITEM_CODE                 	AS PROD_ITEM_CODE       -- 모품목코드
+             , C.ITEM_NAME                      	AS PROD_ITEM_NAME       -- 모품목명
+             , ISNULL(D.SPEC,'')                	AS PROD_ITEM_SPEC       -- 모품목규격
+             , SUM(ISNULL(B.PRODT_Q      ,0))   	AS PRODT_Q              -- 모품목생산량
+             , SUM(ISNULL(F.DEVI_DATA    ,0))   	AS MAN_HOUR             -- 투입공수
+             , SUM(ISNULL(A.MAT_DAMT_ONE ,0))   	AS MAT_DAMT_ONE         -- 직접재료비(재공/반제품)
+             , SUM(ISNULL(A.MAT_DAMT_TWO ,0))   	AS MAT_DAMT_TWO         -- 직접재료비(원자재)
+             , SUM(ISNULL(A.MAT_IAMT_ONE ,0))   	AS MAT_IAMT_ONE         -- 직접재료비(부자재)
+
+             , MAX(ISNULL(E.WORK_PROGRESS_MONTH,0)) AS WORK_PROGRESS_MONTH  -- 당월완성률
+             , MAX(ISNULL(E.WORK_PROGRESS      ,0)) AS WORK_PROGRESS        -- 누적완성률
+             , (CASE WHEN MAX(ISNULL(G.TOT_DEVI_DATA,0)) = 0
+                     THEN 0
+                     ELSE (CASE WHEN MAX(ISNULL(E.WORK_PROGRESS_MONTH,0)) = 0 THEN 100 ELSE MAX(ISNULL(E.WORK_PROGRESS_MONTH,0)) END) * 100 * SUM(ISNULL(F.DEVI_DATA,0)) / MAX(ISNULL(G.TOT_DEVI_DATA,0)) 
+                 END)                           AS MAN_HOUR_RATE        -- 투입비율(OH)
+             , (CASE WHEN MAX(ISNULL(I.TOT_MAT_DAMT_TWO,0) + ISNULL(I.TOT_MAT_IAMT_ONE,0)) = 0
+                     THEN 0
+                     ELSE 100 * (SUM(ISNULL(J.MAT_DAMT_TWO,0)) + SUM(ISNULL(J.MAT_IAMT_ONE,0))) / MAX(ISNULL(I.TOT_MAT_DAMT_TWO,0) + ISNULL(I.TOT_MAT_IAMT_ONE,0))
+                 END)                           AS MAT_DAMT_TWO_RATE    -- 투입비율(M)
+             , (CASE WHEN MAX(ISNULL(K.TOT_MAT_DAMT_TWO,0) + ISNULL(K.TOT_MAT_IAMT_ONE,0)) = 0
+                     THEN 0
+                     ELSE 100 * (SUM(ISNULL(L.MAT_DAMT_TWO,0)) + SUM(ISNULL(L.MAT_IAMT_ONE,0))) / MAX(ISNULL(K.TOT_MAT_DAMT_TWO,0) + ISNULL(K.TOT_MAT_IAMT_ONE,0))
+                 END)                           AS MAT_IAMT_TWO_RATE    -- 투입비율(S)
+
+             , SUM(ISNULL(B.MAT_IAMT_TWO,0))    AS MAT_IAMT_TWO         -- 간접재료비
+             , SUM(ISNULL(B.LABOR_DAMT  ,0))    AS LABOR_DAMT           -- 직접노무비
+             , SUM(ISNULL(B.LABOR_IAMT  ,0))    AS LABOR_IAMT           -- 간접노무비
+             , SUM(CASE WHEN B.ST_GB IN ('F','M')
+                        THEN 0
+                        ELSE ISNULL(B.EXPENSE_DAMT,0)
+                    END)                        AS EXPENSE_DAMT         -- 직접경비
+             , SUM(ISNULL(B.EXPENSE_IAMT,0))    AS EXPENSE_IAMT         -- 간접경비
+             , SUM(CASE WHEN B.ST_GB IN ('F','M')
+                        THEN ISNULL(B.EXPENSE_DAMT,0)
+                        ELSE 0
+                    END)                        AS EXPENSE_FAMT         -- 외주가공비
+
+             , SUM(ISNULL(A.MAT_DAMT_ONE,0)) 
+             + SUM(ISNULL(A.MAT_DAMT_TWO,0)) 
+             + SUM(ISNULL(A.MAT_IAMT_ONE,0)) 
+             + SUM(ISNULL(B.MAT_IAMT_TWO,0))
+             + SUM(ISNULL(B.LABOR_DAMT  ,0))
+             + SUM(ISNULL(B.LABOR_IAMT  ,0))
+             + SUM(ISNULL(B.EXPENSE_DAMT,0))
+             + SUM(ISNULL(B.EXPENSE_IAMT,0))    AS TOTAL_AMT            -- 총계
+             
+             , (CASE WHEN SUM(ISNULL(B.PRODT_Q,0)) = 0 
+                     THEN 0
+                     ELSE (SUM(ISNULL(A.MAT_DAMT_ONE,0)) 
+                         + SUM(ISNULL(A.MAT_DAMT_TWO,0)) 
+                         + SUM(ISNULL(A.MAT_IAMT_ONE,0)) 
+                         + SUM(ISNULL(B.MAT_IAMT_TWO,0))
+                         + SUM(ISNULL(B.LABOR_DAMT  ,0))
+                         + SUM(ISNULL(B.LABOR_IAMT  ,0))
+                         + SUM(ISNULL(B.EXPENSE_DAMT,0))
+                         + SUM(ISNULL(B.EXPENSE_IAMT,0))) / SUM(ISNULL(B.PRODT_Q,0))
+                 END)                           AS PER_UNIT_COST        -- 단위당원가
+          FROM -- 품목별재료비(적상전)의 JOIN TABLE
+               (SELECT A.COMP_CODE
+                     , A.DIV_CODE
+                     , A.WORK_MONTH
+                     , ISNULL(P.COST_POOL_CODE,'') AS COST_POOL_CODE
+                     , A.WORK_SHOP_CD
+                     , A.WKORD_NUM
+                     , A.PROD_ITEM_CODE
+                     , A.ST_GB 
+                     , SUM(ISNULL(A.MAT_DAMT_ONE,0)) AS MAT_DAMT_ONE
+                     , SUM(ISNULL(A.MAT_DAMT_TWO,0)) AS MAT_DAMT_TWO
+                     , SUM(ISNULL(A.MAT_IAMT_ONE,0)) AS MAT_IAMT_ONE
+                  FROM (SELECT A.COMP_CODE
+                             , A.DIV_CODE
+                             , A.WORK_MONTH
+                             , A.WORK_SHOP_CD
+                             , A.WKORD_NUM
+                             , A.PROD_ITEM_CODE
+                             , A.ST_GB 
+                             , (CASE WHEN ISNULL(R1.REF_CODE3,'') IN ('10','20') THEN D_AMT ELSE 0 END) AS MAT_DAMT_ONE
+                             , (CASE WHEN ISNULL(R1.REF_CODE3,'')  = '40'        THEN D_AMT ELSE 0 END) AS MAT_DAMT_TWO
+                             , (CASE WHEN ISNULL(R1.REF_CODE3,'')  = '50'        THEN D_AMT ELSE 0 END) AS MAT_IAMT_ONE
+                          FROM            CAM400T A  WITH (NOLOCK)
+                               LEFT  JOIN BPR200T B  WITH (NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+                                                                  AND A.ITEM_CODE  = B.ITEM_CODE
+                                                                  AND A.DIV_CODE   = B.DIV_CODE
+                               LEFT  JOIN BSA100T R1 WITH (NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+                                                                  AND R1.MAIN_CODE = 'B020'
+                                                                  AND R1.SUB_CODE  = B.ITEM_ACCOUNT
+                         WHERE A.COMP_CODE  = @COMP_CODE
+                           AND A.DIV_CODE   = @DIV_CODE
+                           AND A.WORK_MONTH = @WORK_MONTH) A
+                       LEFT  JOIN (SELECT A.COMP_CODE
+                                        , A.DIV_CODE
+                                        , A.COST_POOL_CODE
+                                        , C.TREE_CODE AS WORK_SHOP_CD
+                                     FROM            CBM700T A WITH (NOLOCK)
+                                          INNER JOIN CBM720T B WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+                                                                            AND B.DIV_CODE       = A.DIV_CODE
+                                                                            AND B.COST_POOL_CODE = A.COST_POOL_CODE 
+                                          INNER JOIN BSA230T C WITH (NOLOCK) ON C.COMP_CODE      = B.COMP_CODE
+                                                                            AND C.TYPE_LEVEL     = B.DIV_CODE
+                                                                            AND C.SECTION_CD     = B.SECTION_CD
+                                    WHERE A.COMP_CODE = @COMP_CODE
+                                      AND A.DIV_CODE  = @DIV_CODE) P ON P.COMP_CODE    = A.COMP_CODE
+                                                                    AND P.DIV_CODE     = A.DIV_CODE
+                                                                    AND P.WORK_SHOP_CD = A.WORK_SHOP_CD
+                 GROUP BY A.COMP_CODE, A.DIV_CODE, A.WORK_MONTH, ISNULL(P.COST_POOL_CODE,''), A.WORK_SHOP_CD, A.WKORD_NUM, A.PROD_ITEM_CODE, A.ST_GB) A
+               -- 품목별재료비(적상후)의 JOIN TABLE
+               LEFT  JOIN
+               (SELECT A.COMP_CODE
+                     , A.DIV_CODE
+                     , A.WORK_MONTH
+                     , A.WORK_SHOP_CD
+                     , A.WKORD_NUM
+                     , A.PROD_ITEM_CODE
+                     , A.ST_GB 
+                     , SUM(ISNULL(A.MAT_IAMT    ,0)) AS MAT_IAMT_TWO
+                     , SUM(ISNULL(A.PRODT_Q     ,0)) AS PRODT_Q
+                     , SUM(ISNULL(A.LABOR_DAMT  ,0)) AS LABOR_DAMT
+                     , SUM(ISNULL(A.LABOR_IAMT  ,0)) AS LABOR_IAMT
+                     , SUM(ISNULL(A.EXPENSE_DAMT,0)) AS EXPENSE_DAMT
+                     , SUM(ISNULL(A.EXPENSE_IAMT,0)) AS EXPENSE_IAMT
+                  FROM CAM450T A WITH (NOLOCK)
+                 WHERE A.COMP_CODE  = @COMP_CODE
+                   AND A.DIV_CODE   = @DIV_CODE
+                   AND A.WORK_MONTH = @WORK_MONTH
+                  GROUP BY A.COMP_CODE     , A.DIV_CODE, A.WORK_MONTH, A.WORK_SHOP_CD, A.WKORD_NUM
+                         , A.PROD_ITEM_CODE, A.ST_GB) B ON B.COMP_CODE      = A.COMP_CODE
+                                                       AND B.DIV_CODE       = A.DIV_CODE
+                                                       AND B.WORK_MONTH     = A.WORK_MONTH
+                                                       AND B.WORK_SHOP_CD   = A.WORK_SHOP_CD
+                                                       AND B.WKORD_NUM      = A.WKORD_NUM
+                                                       AND B.PROD_ITEM_CODE = A.PROD_ITEM_CODE
+               INNER JOIN BPR200T C  WITH (NOLOCK) ON C.COMP_CODE      = A.COMP_CODE
+                                                  AND C.DIV_CODE       = A.DIV_CODE
+                                                  AND C.ITEM_CODE      = A.PROD_ITEM_CODE
+               INNER JOIN BPR100T D  WITH (NOLOCK) ON D.COMP_CODE      = A.COMP_CODE
+                                                  AND D.ITEM_CODE      = A.PROD_ITEM_CODE
+               LEFT  JOIN CMP100T E  WITH (NOLOCK) ON E.COMP_CODE      = A.COMP_CODE
+                                                  AND E.DIV_CODE       = A.DIV_CODE
+                                                  AND E.WORK_MONTH     = A.WORK_MONTH
+                                                  AND E.WORK_SHOP_CD   = A.WORK_SHOP_CD
+                                                  AND E.WKORD_NUM      = A.WKORD_NUM
+                                                  AND E.ITEM_CODE      = A.PROD_ITEM_CODE
+               LEFT  JOIN CBM700T P  WITH (NOLOCK) ON P.COMP_CODE      = A.COMP_CODE
+                                                  AND P.COST_POOL_CODE = A.COST_POOL_CODE
+               LEFT  JOIN (SELECT A.COMP_CODE
+                                , A.DIV_CODE
+                                , A.WORK_MONTH
+                                , A.WORK_SHOP_CD
+                                , A.WKORD_NUM
+                                , A.ITEM_CODE
+                                , A.DEVI_DATA
+                             FROM            CAM010T A WITH (NOLOCK)
+                                  INNER JOIN CAM100T B WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+                                                                    AND B.DIV_CODE       = A.DIV_CODE
+                                                                    AND B.WORK_MONTH     = A.WORK_MONTH
+                                                                    AND B.WORK_SHOP_CD   = A.WORK_SHOP_CD
+                                                                    AND B.WKORD_NUM      = A.WKORD_NUM
+                                                                    AND B.PROD_ITEM_CODE = A.ITEM_CODE
+                            WHERE A.COMP_CODE  = @COMP_CODE
+                              AND A.DIV_CODE   = @DIV_CODE
+                              AND A.WORK_MONTH = @WORK_MONTH                             
+                              AND A.DEVI_BASE  = '02'
+                              AND B.PRODT_GB  IN ('I','M')) F ON F.COMP_CODE    = A.COMP_CODE
+                                                             AND F.DIV_CODE     = A.DIV_CODE
+                                                             AND F.WORK_MONTH   = A.WORK_MONTH
+                                                             AND F.WORK_SHOP_CD = A.WORK_SHOP_CD
+                                                             AND F.WKORD_NUM    = A.WKORD_NUM
+                                                             AND F.ITEM_CODE    = A.PROD_ITEM_CODE
+               LEFT  JOIN (SELECT A.COMP_CODE
+                                , A.DIV_CODE
+                                , A.WORK_MONTH
+                                , ISNULL(P.COST_POOL_CODE,'') AS COST_POOL_CODE
+                                , SUM(A.DEVI_DATA * CASE WHEN ISNULL(E.WORK_PROGRESS_MONTH,0) = 0 THEN 100 ELSE ISNULL(E.WORK_PROGRESS_MONTH,0) END) AS TOT_DEVI_DATA
+                             FROM            CAM010T A WITH (NOLOCK)
+                                  INNER JOIN CAM100T B WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+                                                                    AND B.DIV_CODE       = A.DIV_CODE
+                                                                    AND B.WORK_MONTH     = A.WORK_MONTH
+                                                                    AND B.WORK_SHOP_CD   = A.WORK_SHOP_CD
+                                                                    AND B.WKORD_NUM      = A.WKORD_NUM
+                                                                    AND B.PROD_ITEM_CODE = A.ITEM_CODE
+                                  LEFT  JOIN CMP100T E WITH (NOLOCK) ON E.COMP_CODE    = A.COMP_CODE
+                                                                    AND E.DIV_CODE     = A.DIV_CODE
+                                                                    AND E.WORK_MONTH   = A.WORK_MONTH
+                                                                    AND E.WORK_SHOP_CD = A.WORK_SHOP_CD
+                                                                    AND E.WKORD_NUM    = A.WKORD_NUM
+                                  LEFT  JOIN (SELECT A.COMP_CODE
+                                                   , A.DIV_CODE
+                                                   , A.COST_POOL_CODE
+                                                   , C.TREE_CODE AS WORK_SHOP_CD
+                                                FROM            CBM700T A WITH (NOLOCK)
+                                                     INNER JOIN CBM720T B WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+                                                                                       AND B.DIV_CODE       = A.DIV_CODE
+                                                                                       AND B.COST_POOL_CODE = A.COST_POOL_CODE 
+                                                     INNER JOIN BSA230T C WITH (NOLOCK) ON C.COMP_CODE      = B.COMP_CODE
+                                                                                       AND C.TYPE_LEVEL     = B.DIV_CODE
+                                                                                       AND C.SECTION_CD     = B.SECTION_CD
+                                               WHERE A.COMP_CODE = @COMP_CODE
+                                                 AND A.DIV_CODE  = @DIV_CODE) P ON P.COMP_CODE    = A.COMP_CODE
+                                                                               AND P.DIV_CODE     = A.DIV_CODE
+                                                                               AND P.WORK_SHOP_CD = A.WORK_SHOP_CD
+                            WHERE A.COMP_CODE  = @COMP_CODE
+                              AND A.DIV_CODE   = @DIV_CODE
+                              AND A.WORK_MONTH = @WORK_MONTH                             
+                              AND A.DEVI_BASE  = '02'
+                              AND B.PRODT_GB  IN ('I','M')
+                            GROUP BY A.COMP_CODE, A.DIV_CODE, A.WORK_MONTH, ISNULL(P.COST_POOL_CODE,'')) G ON G.COMP_CODE      = A.COMP_CODE
+                                                                                                          AND G.DIV_CODE       = A.DIV_CODE
+                                                                                                          AND G.WORK_MONTH     = A.WORK_MONTH
+                                                                                                          AND G.COST_POOL_CODE = A.COST_POOL_CODE
+               LEFT  JOIN
+               (SELECT A.COMP_CODE
+                     , A.DIV_CODE
+                     , A.WORK_MONTH
+                     , A.WORK_SHOP_CD
+                     , A.WKORD_NUM
+                     , A.PROD_ITEM_CODE
+                     , A.ST_GB 
+                     , SUM(ISNULL(A.MAT_DAMT_ONE,0)) AS MAT_DAMT_ONE
+                     , SUM(ISNULL(A.MAT_DAMT_TWO,0)) AS MAT_DAMT_TWO
+                     , SUM(ISNULL(A.MAT_IAMT_ONE,0)) AS MAT_IAMT_ONE
+                  FROM (SELECT A.COMP_CODE
+                             , A.DIV_CODE
+                             , A.WORK_MONTH
+                             , A.WORK_SHOP_CD
+                             , A.WKORD_NUM
+                             , A.PROD_ITEM_CODE
+                             , A.ST_GB 
+                             , (CASE WHEN ISNULL(R1.REF_CODE3,'') = '20' THEN D_AMT ELSE 0 END) AS MAT_DAMT_ONE
+                             , (CASE WHEN ISNULL(R1.REF_CODE3,'') = '40' THEN D_AMT ELSE 0 END) AS MAT_DAMT_TWO
+                             , (CASE WHEN ISNULL(R1.REF_CODE3,'') = '50' THEN D_AMT ELSE 0 END) AS MAT_IAMT_ONE
+                          FROM            CAM400T A  WITH (NOLOCK)
+                               LEFT  JOIN BPR200T B  WITH (NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+                                                                  AND A.ITEM_CODE  = B.ITEM_CODE
+                                                                  AND A.DIV_CODE   = B.DIV_CODE
+                               LEFT  JOIN BSA100T R1 WITH (NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+                                                                  AND R1.MAIN_CODE = 'B020'
+                                                                  AND R1.SUB_CODE  = B.ITEM_ACCOUNT
+                         WHERE A.COMP_CODE  = @COMP_CODE
+                           AND A.DIV_CODE   = @DIV_CODE
+                           AND A.WORK_MONTH = @WORK_MONTH
+                           AND A.ST_GB     != 'F') A
+                 GROUP BY A.COMP_CODE     , A.DIV_CODE, A.WORK_MONTH, A.WORK_SHOP_CD, A.WKORD_NUM
+                        , A.PROD_ITEM_CODE, A.ST_GB) J ON J.COMP_CODE      = A.COMP_CODE
+                                                      AND J.DIV_CODE       = A.DIV_CODE
+                                                      AND J.WORK_MONTH     = A.WORK_MONTH
+                                                      AND J.WORK_SHOP_CD   = A.WORK_SHOP_CD
+                                                      AND J.WKORD_NUM      = A.WKORD_NUM
+                                                      AND J.PROD_ITEM_CODE = A.PROD_ITEM_CODE
+               LEFT  JOIN
+               (SELECT A.COMP_CODE
+                     , A.DIV_CODE
+                     , A.WORK_MONTH
+                     , (CASE WHEN A.ST_GB IN ('I','M') THEN 'I' ELSE 'F' END) AS ST_GB
+                     , SUM(ISNULL(A.MAT_DAMT_TWO,0)) AS TOT_MAT_DAMT_TWO
+                     , SUM(ISNULL(A.MAT_IAMT_ONE,0)) AS TOT_MAT_IAMT_ONE
+                  FROM (SELECT A.COMP_CODE
+                             , A.DIV_CODE
+                             , A.WORK_MONTH
+                             , A.WORK_SHOP_CD
+                             , A.WKORD_NUM
+                             , A.PROD_ITEM_CODE
+                             , A.ST_GB 
+                             , (CASE WHEN ISNULL(R1.REF_CODE3,'') = '20' THEN D_AMT ELSE 0 END) AS MAT_DAMT_ONE
+                             , (CASE WHEN ISNULL(R1.REF_CODE3,'') = '40' THEN D_AMT ELSE 0 END) AS MAT_DAMT_TWO
+                             , (CASE WHEN ISNULL(R1.REF_CODE3,'') = '50' THEN D_AMT ELSE 0 END) AS MAT_IAMT_ONE
+                          FROM            CAM400T A  WITH (NOLOCK)
+                               LEFT  JOIN BPR200T B  WITH (NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+                                                                  AND A.ITEM_CODE  = B.ITEM_CODE
+                                                                  AND A.DIV_CODE   = B.DIV_CODE
+                               LEFT  JOIN BSA100T R1 WITH (NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+                                                                  AND R1.MAIN_CODE = 'B020'
+                                                                  AND R1.SUB_CODE  = B.ITEM_ACCOUNT
+                         WHERE A.COMP_CODE  = @COMP_CODE
+                           AND A.DIV_CODE   = @DIV_CODE
+                           AND A.WORK_MONTH = @WORK_MONTH
+                           AND A.ST_GB     != 'F') A
+                 GROUP BY A.COMP_CODE, A.DIV_CODE, A.WORK_MONTH, (CASE WHEN A.ST_GB IN ('I','M') THEN 'I' ELSE 'F' END)) I ON I.COMP_CODE  = A.COMP_CODE
+                                                                                                                          AND I.DIV_CODE   = A.DIV_CODE
+                                                                                                                          AND I.WORK_MONTH = A.WORK_MONTH
+                                                                                                                          AND I.ST_GB      = (CASE WHEN A.ST_GB IN ('I','M') THEN 'I' ELSE 'F' END)
+               LEFT  JOIN
+               (SELECT A.COMP_CODE
+                     , A.DIV_CODE
+                     , A.WORK_MONTH
+                     , A.WORK_SHOP_CD
+                     , A.WKORD_NUM
+                     , A.PROD_ITEM_CODE
+                     , A.ST_GB 
+                     , SUM(ISNULL(A.MAT_DAMT_ONE,0)) AS MAT_DAMT_ONE
+                     , SUM(ISNULL(A.MAT_DAMT_TWO,0)) AS MAT_DAMT_TWO
+                     , SUM(ISNULL(A.MAT_IAMT_ONE,0)) AS MAT_IAMT_ONE
+                  FROM (SELECT A.COMP_CODE
+                             , A.DIV_CODE
+                             , A.WORK_MONTH
+                             , A.WORK_SHOP_CD
+                             , A.WKORD_NUM
+                             , A.PROD_ITEM_CODE
+                             , A.ST_GB 
+                             , (CASE WHEN ISNULL(R1.REF_CODE3,'') = '20' THEN D_AMT ELSE 0 END) AS MAT_DAMT_ONE
+                             , (CASE WHEN ISNULL(R1.REF_CODE3,'') = '40' THEN D_AMT ELSE 0 END) AS MAT_DAMT_TWO
+                             , (CASE WHEN ISNULL(R1.REF_CODE3,'') = '50' THEN D_AMT ELSE 0 END) AS MAT_IAMT_ONE
+                          FROM            CAM400T A  WITH (NOLOCK)
+                               LEFT  JOIN BPR200T B  WITH (NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+                                                                  AND A.ITEM_CODE  = B.ITEM_CODE
+                                                                  AND A.DIV_CODE   = B.DIV_CODE
+                               LEFT  JOIN BSA100T R1 WITH (NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+                                                                  AND R1.MAIN_CODE = 'B020'
+                                                                  AND R1.SUB_CODE  = B.ITEM_ACCOUNT
+                               INNER JOIN BPR200T C  WITH (NOLOCK) ON C.COMP_CODE  = A.COMP_CODE
+                                                                  AND C.ITEM_CODE  = A.PROD_ITEM_CODE
+                                                                  AND C.DIV_CODE   = A.DIV_CODE
+                                                                  AND C.ITEM_ACCOUNT IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = @COMP_CODE AND MAIN_CODE = 'B020' AND REF_CODE3 = '10')
+                         WHERE A.COMP_CODE  = @COMP_CODE
+                           AND A.DIV_CODE   = @DIV_CODE
+                           AND A.WORK_MONTH = @WORK_MONTH
+                           AND A.WORK_SHOP_CD IN (SELECT WORK_SHOP_CD
+                                                    FROM CAM210T WITH (NOLOCK)
+                                                   WHERE COMP_CODE  = @COMP_CODE
+                                                     AND DIV_CODE   = @DIV_CODE
+                                                     AND WORK_MONTH = @WORK_MONTH
+                                                   GROUP BY WORK_SHOP_CD)
+                           AND A.ST_GB     != 'F') A
+                 GROUP BY A.COMP_CODE     , A.DIV_CODE, A.WORK_MONTH, A.WORK_SHOP_CD, A.WKORD_NUM
+                        , A.PROD_ITEM_CODE, A.ST_GB) L ON L.COMP_CODE      = A.COMP_CODE
+                                                      AND L.DIV_CODE       = A.DIV_CODE
+                                                      AND L.WORK_MONTH     = A.WORK_MONTH
+                                                      AND L.WORK_SHOP_CD   = A.WORK_SHOP_CD
+                                                      AND L.WKORD_NUM      = A.WKORD_NUM
+                                                      AND L.PROD_ITEM_CODE = A.PROD_ITEM_CODE
+               LEFT  JOIN
+               (SELECT A.COMP_CODE
+                     , A.DIV_CODE
+                     , A.WORK_MONTH
+                     , (CASE WHEN A.ST_GB IN ('I','M') THEN 'I' ELSE 'F' END) AS ST_GB
+                     , SUM(ISNULL(A.MAT_DAMT_TWO,0)) AS TOT_MAT_DAMT_TWO
+                     , SUM(ISNULL(A.MAT_IAMT_ONE,0)) AS TOT_MAT_IAMT_ONE
+                  FROM (SELECT A.COMP_CODE
+                             , A.DIV_CODE
+                             , A.WORK_MONTH
+                             , A.WORK_SHOP_CD
+                             , A.WKORD_NUM
+                             , A.PROD_ITEM_CODE
+                             , A.ST_GB 
+                             , (CASE WHEN ISNULL(R1.REF_CODE3,'') = '20' THEN D_AMT ELSE 0 END) AS MAT_DAMT_ONE
+                             , (CASE WHEN ISNULL(R1.REF_CODE3,'') = '40' THEN D_AMT ELSE 0 END) AS MAT_DAMT_TWO
+                             , (CASE WHEN ISNULL(R1.REF_CODE3,'') = '50' THEN D_AMT ELSE 0 END) AS MAT_IAMT_ONE
+                          FROM            CAM400T A  WITH (NOLOCK)
+                               LEFT  JOIN BPR200T B  WITH (NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+                                                                  AND A.ITEM_CODE  = B.ITEM_CODE
+                                                                  AND A.DIV_CODE   = B.DIV_CODE
+                               LEFT  JOIN BSA100T R1 WITH (NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+                                                                  AND R1.MAIN_CODE = 'B020'
+                                                                  AND R1.SUB_CODE  = B.ITEM_ACCOUNT
+                               INNER JOIN BPR200T C  WITH (NOLOCK) ON C.COMP_CODE  = A.COMP_CODE
+                                                                  AND C.ITEM_CODE  = A.PROD_ITEM_CODE
+                                                                  AND C.DIV_CODE   = A.DIV_CODE
+                                                                  AND C.ITEM_ACCOUNT IN (SELECT SUB_CODE FROM BSA100T WHERE COMP_CODE = @COMP_CODE AND MAIN_CODE = 'B020' AND REF_CODE3 = '10')
+                         WHERE A.COMP_CODE  = @COMP_CODE
+                           AND A.DIV_CODE   = @DIV_CODE
+                           AND A.WORK_MONTH = @WORK_MONTH
+                           AND A.WORK_SHOP_CD IN (SELECT WORK_SHOP_CD
+                                                    FROM CAM210T WITH (NOLOCK)
+                                                   WHERE COMP_CODE  = @COMP_CODE
+                                                     AND DIV_CODE   = @DIV_CODE
+                                                     AND WORK_MONTH = @WORK_MONTH
+                                                   GROUP BY WORK_SHOP_CD)
+                           AND A.ST_GB     != 'F') A
+                 GROUP BY A.COMP_CODE, A.DIV_CODE, A.WORK_MONTH, (CASE WHEN A.ST_GB IN ('I','M') THEN 'I' ELSE 'F' END)) K ON K.COMP_CODE  = A.COMP_CODE
+                                                                                                                          AND K.DIV_CODE   = A.DIV_CODE
+                                                                                                                          AND K.WORK_MONTH = A.WORK_MONTH
+                                                                                                                          AND K.ST_GB      = (CASE WHEN A.ST_GB IN ('I','M') THEN 'I' ELSE 'F' END)
+          WHERE A.COMP_CODE         = @COMP_CODE
+            AND A.DIV_CODE          = @DIV_CODE
+            AND A.WORK_MONTH        = @WORK_MONTH
+        --  AND B.PRODT_Q           > 0
+
+        <if  test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+            AND C.ITEM_ACCOUNT      = #{ITEM_ACCOUNT}
+        </if>
+		<if test="@foren.Ognl@isNotEmpty(PROD_ITEM_CODE) and @foren.Ognl@isNotEmpty(PROD_ITEM_NAME)"> <!-- 20210819 수정: 품목코드 팝업창 정규화 -->
+			AND A.PROD_ITEM_CODE 			  = #{PROD_ITEM_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(PROD_ITEM_CODE) and @foren.Ognl@isEmpty(PROD_ITEM_NAME)"> <!-- 20210819 수정: 품목코드 팝업창 정규화 -->
+			AND A.PROD_ITEM_CODE 	 	   LIKE #{PROD_ITEM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isEmpty(PROD_ITEM_CODE) and @foren.Ognl@isNotEmpty(PROD_ITEM_NAME)"> <!-- 20210819 수정: 품목코드 팝업창 정규화 -->
+			AND C.ITEM_NAME 	 LIKE '%' + #{PROD_ITEM_NAME} + '%'
+		</if>
+        <if  test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)">
+            AND D.ITEM_LEVEL1       = #{ITEM_LEVEL1}
+        </if> 
+        <if  test="@foren.Ognl@isNotEmpty(ITEM_LEVEL2)">
+            AND D.ITEM_LEVEL2       = #{ITEM_LEVEL2}
+        </if>
+        <if  test="@foren.Ognl@isNotEmpty(ITEM_LEVEL3)">
+            AND D.ITEM_LEVEL3       = #{ITEM_LEVEL3}
+        </if>
+
+          GROUP BY A.COST_POOL_CODE, ISNULL(P.COST_POOL_NAME,''), C.ITEM_ACCOUNT, B.ST_GB, A.PROD_ITEM_CODE, C.ITEM_NAME, D.SPEC
+          ORDER BY (CASE WHEN A.COST_POOL_CODE = '' THEN 'ZZZZ' ELSE A.COST_POOL_CODE END), A.PROD_ITEM_CODE, C.ITEM_NAME, D.SPEC 
+	</select>
+</mapper>

@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ssa730skrvServiceImpl">
+	
+	<select id="ssa730skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">		
+		BEGIN
+		
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+		
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+		
+		DECLARE  @COMP_CODE  NVARCHAR(08)     		  --법인
+		              ,@DIV_CODE     NVARCHAR(08)     --사업장
+					  ,@BASIS_DATE   NVARCHAR(08)     --기준일자
+					  ,@CUSTOM_CODE   NVARCHAR(08)    --매입처
+					  ,@ITEM_LEVEL1  NVARCHAR(08)     --대분류
+					  ,@ITEM_LEVEL2  NVARCHAR(08)     --중분류
+					  ,@ITEM_LEVEL3  NVARCHAR(08)     --소분류
+					  ,@OPT              NVARCHAR(01) --구분('1'-품목분류별, '2'-매입처별)
+					  ,@DEPT_CODE    NVARCHAR(10)
+					  
+		SET @COMP_CODE     = #{S_COMP_CODE}
+		SET @DIV_CODE      = #{DIV_CODE}
+		SET @BASIS_DATE    = #{BASIS_DATE}
+		SET @CUSTOM_CODE    = #{CUSTOM_CODE}
+		SET @ITEM_LEVEL1   = #{ITEM_LEVEL1}
+		SET @ITEM_LEVEL2   = #{ITEM_LEVEL2}
+		SET @ITEM_LEVEL3   = #{ITEM_LEVEL3}
+		SET @OPT           = #{GUBUN}
+		SET @DEPT_CODE     = #{DEPT_CODE}
+		
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb.sys.objects WHERE object_id = OBJECT_ID('tempdb..#SALE_20160624'))        
+			DROP TABLE #SALE_20160624
+	
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb.sys.objects WHERE object_id = OBJECT_ID('tempdb..#RETURN_20160624'))        
+			DROP TABLE #RETURN_20160624
+	
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb.sys.objects WHERE object_id = OBJECT_ID('tempdb..#SALE_20161004'))        
+			DROP TABLE #SALE_20161004
+            		 
+        SELECT X2.COMP_CODE
+             , X2.DIV_CODE
+             , X2.ITEM_CODE
+        INTO #SALE_20160624
+        FROM       SSA100T X1 WITH(NOLOCK)
+        INNER JOIN SSA110T X2 WITH(NOLOCK) ON X2.COMP_CODE    = X1.COMP_CODE 
+                                          AND X2.DIV_CODE     = X1.DIV_CODE 
+                                          AND X2.BILL_NUM     = X1.BILL_NUM
+        WHERE X1.COMP_CODE    = @COMP_CODE
+        AND   X1.DIV_CODE     = @DIV_CODE
+        AND   X1.SALE_DATE    &lt; @BASIS_DATE
+        AND   ((X1.DEPT_CODE = @DEPT_CODE AND @DEPT_CODE != '') OR (@DEPT_CODE = ''))
+        GROUP BY X2.COMP_CODE, X2.DIV_CODE, X2.ITEM_CODE
+
+
+        SELECT X2.COMP_CODE
+             , X2.DIV_CODE
+             , X2.ITEM_CODE
+        INTO #SALE_20161004
+        FROM       SSA100T X1 WITH(NOLOCK)
+        INNER JOIN SSA110T X2 WITH(NOLOCK) ON X2.COMP_CODE    = X1.COMP_CODE 
+                                          AND X2.DIV_CODE     = X1.DIV_CODE 
+                                          AND X2.BILL_NUM     = X1.BILL_NUM
+        WHERE X1.COMP_CODE     = @COMP_CODE
+        AND   X1.DIV_CODE      = @DIV_CODE
+        AND   X1.SALE_DATE    &gt;= @BASIS_DATE
+        AND   ((X1.DEPT_CODE = @DEPT_CODE AND @DEPT_CODE != '') OR (@DEPT_CODE = ''))
+        GROUP BY X2.COMP_CODE, X2.DIV_CODE, X2.ITEM_CODE
+
+
+        SELECT A.COMP_CODE
+             , A.DIV_CODE
+             , A.ITEM_CODE
+             , SUM(C.STOCK_Q) AS STOCK_Q
+             , SUM((ISNULL(D.PURCHASE_P, 0) * C.STOCK_Q)) AS COST_AMT
+             , C.CUSTOM_CODE
+        INTO #RETURN_20160624
+        FROM      #SALE_20160624  A WITH (NOLOCK)
+        LEFT JOIN #SALE_20161004  B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE 
+                                                 AND B.DIV_CODE  = A.DIV_CODE
+                                                 AND B.ITEM_CODE = A.ITEM_CODE
+        INNER JOIN        BIV150T C WITH (NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+                                                 AND C.DIV_CODE  = A.DIV_CODE
+                                                 AND C.ITEM_CODE = A.ITEM_CODE
+        LEFT JOIN         BIV350T D WITH (NOLOCK) ON D.COMP_CODE = C.COMP_CODE
+                                                 AND D.DIV_CODE  = C.DIV_CODE
+                                                 AND D.LOT_NO    = C.LOT_NO
+                                                 AND D.WH_CODE   = C.WH_CODE
+                                                 AND D.ITEM_CODE = C.ITEM_CODE
+
+        WHERE C.COMP_CODE = @COMP_CODE
+        AND   C.DIV_CODE  = @DIV_CODE
+        AND   C.STOCK_Q   > 0.0
+        AND   B.COMP_CODE IS NULL
+        GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, C.CUSTOM_CODE
+        
+        		
+		SELECT
+		 CASE WHEN @OPT= '1' THEN B.ITEM_LEVEL1    ELSE '' END AS ITEM_LEVEL1
+		,CASE WHEN @OPT= '1' THEN B.ITEM_LEVEL2    ELSE '' END AS ITEM_LEVEL2
+		,CASE WHEN @OPT= '1' THEN B.ITEM_LEVEL3    ELSE '' END AS ITEM_LEVEL3
+		,CASE WHEN @OPT= '2' THEN ISNULL(A.CUSTOM_CODE, '')  ELSE '' END 		AS CUSTOM_CODE
+		,CASE WHEN @OPT= '2' THEN ISNULL(C.CUSTOM_NAME, '')  ELSE '' END 		AS CUSTOM_NAME
+		,A.ITEM_CODE                         									AS ITEM_CODE
+		,B.ITEM_NAME                         									AS ITEM_NAME
+		,ISNULL(B.AUTHOR1, '')             										AS AUTHOR1
+		,ISNULL(B.PUBLISHER, '')           										AS PUBLISHER
+		,ISNULL(B.SALE_BASIS_P, 0)       										AS SALE_BASIS_P
+		,ISNULL(D.FIRST_SALES_DATE, '') 										AS FIRST_SALES_DATE
+		,ISNULL(D.LAST_SALES_DATE, '')  										AS LAST_SALES_DATE
+		, A.STOCK_Q                            									AS GOOD_STOCK_Q
+        , A.COST_AMT                                                            AS COST_AMT
+		FROM #RETURN_20160624 A
+				   INNER JOIN BPR100T B WITH(NOLOCK)  ON A.COMP_CODE   = B.COMP_CODE  
+				                                     AND A.ITEM_CODE   = B.ITEM_CODE
+				   LEFT  JOIN BCM100T C  WITH(NOLOCK) ON A.COMP_CODE   = C.COMP_CODE 
+				                                     AND A.CUSTOM_CODE = C.CUSTOM_CODE
+				   INNER JOIN BPR200T D WITH(NOLOCK)  ON D.COMP_CODE   = A.COMP_CODE  
+                                                     AND D.DIV_CODE    = A.DIV_CODE
+				                                     AND D.ITEM_CODE   = A.ITEM_CODE            
+			   
+		WHERE  A.COMP_CODE    = @COMP_CODE
+		   AND A.DIV_CODE     = @DIV_CODE
+		<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)">
+		   AND B.ITEM_LEVEL1 = @ITEM_LEVEL1
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL2)">
+		   AND B.ITEM_LEVEL2 = @ITEM_LEVEL3
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL3)">   
+		   AND B.ITEM_LEVEL2 = @ITEM_LEVEL3
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">   
+		   AND A.CUSTOM_CODE = @CUSTOM_CODE
+		</if>
+		ORDER BY (CASE WHEN @OPT = '1' THEN B.ITEM_LEVEL1 + B.ITEM_LEVEL2 + B.ITEM_LEVEL3
+		                         ELSE A.CUSTOM_CODE END), A.ITEM_CODE
+		
+SET @END_TIME   = GETDATE()
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'ssa730skrv', '장기미판매현황 조회', @BASIS_DATE, '', @DIFF_TIME
+
+		
+		SET NOCOUNT OFF
+		SET ARITHABORT OFF
+		
+		END       
+	</select>
+</mapper>

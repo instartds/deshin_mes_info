@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="sfa300rkrServiceImpl">
+	<select id="selectPrimaryDataList" parameterType="Map" resultType="rMap" >	
+		BEGIN
+		    SET NOCOUNT ON
+		
+		    DECLARE @COMP_CODE NVARCHAR(08)
+		          , @DIV_CODE  NVARCHAR(08)
+		          , @DEPT_CODE NVARCHAR(08)
+		          , @FR_DATE   NVARCHAR(08)
+		          , @TO_DATE   NVARCHAR(08)
+		
+		    SET @COMP_CODE = #{COMP_CODE}
+		    SET @DIV_CODE  = ''
+		    SET @DEPT_CODE = ''
+		    SET @FR_DATE   = #{SALE_DATE_FR}
+		    SET @TO_DATE   = #{SALE_DATE_TO}
+		    
+		    DECLARE @FLAG        NVARCHAR(01)
+		          , @TODAY       NVARCHAR(08)
+		          , @NEW_TO_DATE NVARCHAR(08)
+		
+		    SET @FLAG = 'N'
+		
+		    IF @TO_DATE >= CONVERT(NVARCHAR, GETDATE(), 112)
+		    BEGIN
+		        SET @FLAG = 'Y'
+		    END
+		
+		    SET @TODAY       = CONVERT(NVARCHAR, GETDATE(), 112)
+		    SET @NEW_TO_DATE = CONVERT(NVARCHAR, DATEADD(D, -1, GETDATE()), 112)
+		
+		
+		    -- @FLAG = 'N' 일때는 집계테이블에서만 조회
+		    -- @FLAG = 'Y' 일때는 집계테이블 + 오늘날짜데이터 조회
+		    IF @FLAG = 'N'
+		    BEGIN
+		
+		        SELECT A.COMP_CODE
+			         , A.DIV_CODE
+			         , A.TEAM_CODE
+			         , A.TEAM_NAME
+			         , A.STORE_CODE												AS  DEPT_CODE
+			         , A.STORE_NAME												AS  DEPT_NAME
+			         , SUM(A.LAST_YEAR_SALE_AMT_O)								AS  LAST_YEAR_SALE_AMT_O		--전년도 매출액
+			         , SUM(A.LAST_YEAR_CM_FEE)									AS	LAST_YEAR_CM_FEE			--전년도 위탁수수료
+			         , SUM(A.LAST_YEAR_SALE_AMT_O) + SUM(A.LAST_YEAR_CM_FEE)	AS	LAST_YEAR_SALE_AMT_SUM	    --전년도 총매출액
+			         , SUM(A.SALE_AMT_O)										AS  SALE_AMT_O					--금년도 매출액
+			         , SUM(A.CM_FEE)											AS	CM_FEE						--금년도 위탁수수료
+			         , SUM(A.SALE_AMT_O)+ SUM(A.CM_FEE)							AS	SALE_AMT_SUM				--금년도 총매출액
+			         ,(  (SUM(A.SALE_AMT_O) 			+ SUM(A.CM_FEE)) 
+			         - (SUM(A.LAST_YEAR_SALE_AMT_O)	+ SUM(A.LAST_YEAR_CM_FEE))) AS  INCREASE_DECREASE_O		--증감액
+			         , CASE WHEN SUM(A.LAST_YEAR_SALE_AMT_O) = 0 THEN 0
+			 	        ELSE ((SUM(A.SALE_AMT_O) - SUM(A.LAST_YEAR_SALE_AMT_O)) / SUM(A.LAST_YEAR_SALE_AMT_O)) * 100
+			         END														AS INCREASE_DECREASE_RATE		--증감율
+			         , B.COMP_NAME
+		        FROM(
+			        SELECT    A.COMP_CODE
+					        , A.DIV_CODE
+					        , E2.TREE_CODE AS TEAM_CODE
+					        , E2.TREE_NAME AS TEAM_NAME
+					        , E1.TREE_CODE AS STORE_CODE
+					        , E1.TREE_NAME AS STORE_NAME				
+					        , A.SALE_AMT_O AS LAST_YEAR_SALE_AMT_O  -- 총판매금액
+					        , A.CM_FEE     AS LAST_YEAR_CM_FEE -- 수탁수수료 
+			
+					        , 0 AS SALE_AMT_O
+					        , 0 AS CM_FEE
+		                    
+				    FROM           SSA400T  A WITH (NOLOCK)
+					    INNER JOIN BSA210T E1 WITH(NOLOCK) ON E1.COMP_CODE = A.COMP_CODE
+														    AND E1.TYPE_LEVEL = A.DIV_CODE
+														    AND E1.TREE_CODE = A.STORE_CODE
+					    INNER JOIN BSA210T E2 WITH(NOLOCK) ON E2.COMP_CODE = E1.COMP_CODE
+														    AND E2.TYPE_LEVEL = E1.TYPE_LEVEL
+														    AND E2.TREE_LEVEL = SUBSTRING(E1.TREE_LEVEL, 1, 4)
+					
+				    WHERE A.COMP_CODE     = @COMP_CODE
+					AND   ((A.DIV_CODE    = @DIV_CODE  AND @DIV_CODE  != '') OR (@DIV_CODE  = ''))
+		            AND   ((E1.TREE_CODE  = @DEPT_CODE AND @DEPT_CODE != '') OR (@DEPT_CODE = ''))
+					AND   A.SALE_DATE    &gt;=  CONVERT(NVARCHAR(8),DATEADD(YEAR, -1, @FR_DATE),112)
+					AND   A.SALE_DATE    &lt;=  CONVERT(NVARCHAR(8),DATEADD(YEAR, -1, @TO_DATE),112)
+					
+				    UNION ALL
+					
+			        SELECT    A.COMP_CODE
+					        , A.DIV_CODE
+					        , E2.TREE_CODE AS TEAM_CODE
+					        , E2.TREE_NAME AS TEAM_NAME
+					        , E1.TREE_CODE AS STORE_CODE
+					        , E1.TREE_NAME AS STORE_NAME				
+					        , 0            AS LAST_YEAR_SALE_AMT_O  -- 총판매금액
+					        , 0            AS LAST_YEAR_CM_FEE -- 수탁수수료 
+			
+					        , A.SALE_AMT_O AS SALE_AMT_O
+					        , A.CM_FEE     AS CM_FEE
+		                    
+				        FROM           SSA400T  A WITH (NOLOCK)
+					        INNER JOIN BSA210T E1 WITH(NOLOCK) ON E1.COMP_CODE = A.COMP_CODE
+														        AND E1.TYPE_LEVEL = A.DIV_CODE
+														        AND E1.TREE_CODE = A.STORE_CODE
+					        INNER JOIN BSA210T E2 WITH(NOLOCK) ON E2.COMP_CODE = E1.COMP_CODE
+														        AND E2.TYPE_LEVEL = E1.TYPE_LEVEL
+														        AND E2.TREE_LEVEL = SUBSTRING(E1.TREE_LEVEL, 1, 4)
+					
+				        WHERE A.COMP_CODE     = @COMP_CODE
+					    AND   ((A.DIV_CODE    = @DIV_CODE  AND @DIV_CODE  != '') OR (@DIV_CODE  = ''))
+		                AND   ((E1.TREE_CODE  = @DEPT_CODE AND @DEPT_CODE != '') OR (@DEPT_CODE = ''))
+					    AND   A.SALE_DATE    &gt;=  @FR_DATE
+					    AND   A.SALE_DATE    &lt;=  @TO_DATE
+					
+			        )A		
+			        LEFT  JOIN BOR100T B WITH (NOLOCK) ON A.COMP_CODE  = B.COMP_CODE  
+		        GROUP BY A.COMP_CODE, A.DIV_CODE, A.TEAM_CODE, A.TEAM_NAME, A.STORE_CODE, A.STORE_NAME, B.COMP_NAME
+		        ORDER BY A.COMP_CODE, A.DIV_CODE, A.TEAM_CODE, A.TEAM_NAME, A.STORE_CODE, A.STORE_NAME 
+		    END
+		    ELSE
+		    BEGIN
+		        SELECT A.COMP_CODE
+			         , A.DIV_CODE
+			         , A.TEAM_CODE
+			         , A.TEAM_NAME
+			         , A.STORE_CODE												AS  DEPT_CODE
+			         , A.STORE_NAME												AS  DEPT_NAME
+			         , SUM(A.LAST_YEAR_SALE_AMT_O)								AS  LAST_YEAR_SALE_AMT_O		--전년도 매출액
+			         , SUM(A.LAST_YEAR_CM_FEE)									AS	LAST_YEAR_CM_FEE			--전년도 위탁수수료
+			         , SUM(A.LAST_YEAR_SALE_AMT_O) + SUM(A.LAST_YEAR_CM_FEE)	AS	LAST_YEAR_SALE_AMT_SUM	    --전년도 총매출액
+			         , SUM(A.SALE_AMT_O)										AS  SALE_AMT_O					--금년도 매출액
+			         , SUM(A.CM_FEE)											AS	CM_FEE						--금년도 위탁수수료
+			         , SUM(A.SALE_AMT_O)+ SUM(A.CM_FEE)							AS	SALE_AMT_SUM				--금년도 총매출액
+			         ,(  (SUM(A.SALE_AMT_O) 			+ SUM(A.CM_FEE)) 
+			         - (SUM(A.LAST_YEAR_SALE_AMT_O)	+ SUM(A.LAST_YEAR_CM_FEE))) AS  INCREASE_DECREASE_O		--증감액
+			         , CASE WHEN SUM(A.LAST_YEAR_SALE_AMT_O) = 0 THEN 0
+			 	        ELSE ((SUM(A.SALE_AMT_O) - SUM(A.LAST_YEAR_SALE_AMT_O)) / SUM(A.LAST_YEAR_SALE_AMT_O)) * 100
+			         END														AS INCREASE_DECREASE_RATE		--증감율
+			         , B.COMP_NAME
+		        FROM(
+		            -- 전년도데이터
+			        SELECT    A.COMP_CODE
+					        , A.DIV_CODE
+					        , E2.TREE_CODE AS TEAM_CODE
+					        , E2.TREE_NAME AS TEAM_NAME
+					        , E1.TREE_CODE AS STORE_CODE
+					        , E1.TREE_NAME AS STORE_NAME				
+					        , A.SALE_AMT_O AS LAST_YEAR_SALE_AMT_O  -- 총판매금액
+					        , A.CM_FEE     AS LAST_YEAR_CM_FEE      -- 수탁수수료 
+			
+					        , 0 AS SALE_AMT_O
+					        , 0 AS CM_FEE
+		                    
+				    FROM           SSA400T  A WITH (NOLOCK)
+					    INNER JOIN BSA210T E1 WITH(NOLOCK) ON E1.COMP_CODE = A.COMP_CODE
+														    AND E1.TYPE_LEVEL = A.DIV_CODE
+														    AND E1.TREE_CODE = A.STORE_CODE
+					    INNER JOIN BSA210T E2 WITH(NOLOCK) ON E2.COMP_CODE = E1.COMP_CODE
+														    AND E2.TYPE_LEVEL = E1.TYPE_LEVEL
+														    AND E2.TREE_LEVEL = SUBSTRING(E1.TREE_LEVEL, 1, 4)
+					
+				    WHERE A.COMP_CODE     = @COMP_CODE
+					AND   ((A.DIV_CODE    = @DIV_CODE  AND @DIV_CODE  != '') OR (@DIV_CODE  = ''))
+		            AND   ((E1.TREE_CODE  = @DEPT_CODE AND @DEPT_CODE != '') OR (@DEPT_CODE = ''))
+					AND   A.SALE_DATE    &gt;=  CONVERT(NVARCHAR(8),DATEADD(YEAR, -1, @FR_DATE),112)
+					AND   A.SALE_DATE    &lt;=  CONVERT(NVARCHAR(8),DATEADD(YEAR, -1, @TO_DATE),112)
+					
+				    UNION ALL
+					
+		            -- 오늘날짜 직전일까지는 집계테이블에서 데이터조회
+			        SELECT    A.COMP_CODE
+					        , A.DIV_CODE
+					        , E2.TREE_CODE AS TEAM_CODE
+					        , E2.TREE_NAME AS TEAM_NAME
+					        , E1.TREE_CODE AS STORE_CODE
+					        , E1.TREE_NAME AS STORE_NAME				
+					        , 0            AS LAST_YEAR_SALE_AMT_O  -- 총판매금액
+					        , 0            AS LAST_YEAR_CM_FEE      -- 수탁수수료 
+			
+					        , A.SALE_AMT_O AS SALE_AMT_O
+					        , A.CM_FEE     AS CM_FEE
+		                    
+				        FROM           SSA400T  A WITH (NOLOCK)
+					        INNER JOIN BSA210T E1 WITH(NOLOCK) ON E1.COMP_CODE = A.COMP_CODE
+														        AND E1.TYPE_LEVEL = A.DIV_CODE
+														        AND E1.TREE_CODE = A.STORE_CODE
+					        INNER JOIN BSA210T E2 WITH(NOLOCK) ON E2.COMP_CODE = E1.COMP_CODE
+														        AND E2.TYPE_LEVEL = E1.TYPE_LEVEL
+														        AND E2.TREE_LEVEL = SUBSTRING(E1.TREE_LEVEL, 1, 4)
+					
+				        WHERE A.COMP_CODE     = @COMP_CODE
+					    AND   ((A.DIV_CODE    = @DIV_CODE  AND @DIV_CODE  != '') OR (@DIV_CODE  = ''))
+		                AND   ((E1.TREE_CODE  = @DEPT_CODE AND @DEPT_CODE != '') OR (@DEPT_CODE = ''))
+					    AND   A.SALE_DATE    &gt;=  @FR_DATE
+					    AND   A.SALE_DATE    &lt;=  @NEW_TO_DATE
+					
+						UNION ALL
+					
+		                -- 오늘날짜 데이터
+						SELECT   A.COMP_CODE
+							, A.DIV_CODE
+							, E2.TREE_CODE AS TEAM_CODE
+							, E2.TREE_NAME AS TEAM_NAME
+							, E1.TREE_CODE AS STORE_CODE
+							, E1.TREE_NAME AS STORE_NAME	
+							, 0 AS LAST_YEAR_SALE_AMT_O
+							, 0 AS LAST_YEAR_CM_FEE			
+							, CASE WHEN C.ITEM_ACCOUNT NOT IN ( '02', '03', '04', '05' ) THEN (CASE WHEN B.TAX_TYPE = '1' THEN SUM(ROUND((B.SALE_AMT_O + B.TAX_AMT_O)/ 1.1, 0))
+			                               						  								ELSE SUM(B.SALE_AMT_O + B.TAX_AMT_O)
+			             				   													END) 																		
+			             		ELSE 0 	END			 AS 	SALE_AMT_O  -- 총판매금액
+							, CASE WHEN C.ITEM_ACCOUNT  = '02' OR C.ITEM_ACCOUNT  = '04' THEN (CASE WHEN ISNULL(E1.TAX_TYPE, '1') = '1' THEN SUM(ROUND((B.CONSIGNMENT_FEE * ABS(B.SALE_Q))/ 1.1, 0))
+			                               						  								 	ELSE SUM(ROUND((B.CONSIGNMENT_FEE * ABS(B.SALE_Q)), 0)) 
+			             																		END) 
+								ELSE 0 END  AS CM_FEE -- 수탁수수료
+													
+						FROM           SSA100T  A WITH(NOLOCK, INDEX(SSA100T_IDX01))
+							INNER JOIN SSA110T  B WITH(NOLOCK, INDEX(SSA110T_IDX00)) ON B.COMP_CODE = A.COMP_CODE
+												 					                AND B.DIV_CODE  = A.DIV_CODE
+																	                AND B.BILL_NUM  = A.BILL_NUM
+							INNER JOIN BPR200T  C WITH(NOLOCK) ON C.COMP_CODE = B.COMP_CODE
+																AND C.DIV_CODE  = B.DIV_CODE
+																AND C.ITEM_CODE = B.ITEM_CODE
+							INNER JOIN BSA210T E1 WITH(NOLOCK) ON E1.COMP_CODE = A.COMP_CODE
+																AND E1.TYPE_LEVEL = A.DIV_CODE
+																AND E1.TREE_CODE = A.DEPT_CODE
+							INNER JOIN BSA210T E2 WITH(NOLOCK) ON E2.COMP_CODE = E1.COMP_CODE
+																AND E2.TYPE_LEVEL = E1.TYPE_LEVEL
+																AND E2.TREE_LEVEL = SUBSTRING(E1.TREE_LEVEL, 1, 4)
+					
+						WHERE A.COMP_CODE 	  = @COMP_CODE
+						AND   ((A.DIV_CODE    = @DIV_CODE  AND @DIV_CODE  != '') OR (@DIV_CODE  = ''))
+						AND   ((E1.TREE_CODE  = @DEPT_CODE AND @DEPT_CODE != '') OR (@DEPT_CODE = ''))	  
+						AND   A.SALE_DATE     = @TODAY
+							    
+						GROUP BY A.COMP_CODE, A.DIV_CODE, E1.TREE_CODE, E1.TREE_NAME, E2.TREE_CODE, E2.TREE_NAME, B.TAX_TYPE, E1.TAX_TYPE, C.ITEM_ACCOUNT
+		
+			        )A		
+			        LEFT  JOIN BOR100T B WITH (NOLOCK) ON A.COMP_CODE  = B.COMP_CODE  
+		        GROUP BY A.COMP_CODE, A.DIV_CODE, A.TEAM_CODE, A.TEAM_NAME, A.STORE_CODE, A.STORE_NAME, B.COMP_NAME
+		        ORDER BY A.COMP_CODE, A.DIV_CODE, A.TEAM_CODE, A.TEAM_NAME, A.STORE_CODE, A.STORE_NAME 
+		    END
+		
+		    SET NOCOUNT OFF
+		END
+				 
+	</select>
+	
+
+</mapper>

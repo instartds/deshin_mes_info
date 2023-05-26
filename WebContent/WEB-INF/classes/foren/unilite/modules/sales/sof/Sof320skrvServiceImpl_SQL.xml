@@ -1,0 +1,307 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sof320skrvServiceImpl">
+   
+   <select id="sof320skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+   /* sof320skrv.Csof300skrv[fnsof320q] Query01 */
+    BEGIN
+        DECLARE     @COMP_CODE                  NVARCHAR(08)             -- (필수) 법인코드
+                  , @DIV_CODE                   NVARCHAR(08)             -- (필수) 사업장코드
+    
+                  , @ORDER_PRSN                 NVARCHAR(03)             -- (선택) 영업담당
+                  , @FR_ORDER_DATE              NVARCHAR(08)             -- (선택) 시작수주일자
+                  , @TO_ORDER_DATE              NVARCHAR(08)             -- (선택) 종료수주일자
+                  , @CUSTOM_CODE                NVARCHAR(08)             -- (선택) 거래처코드
+                  , @CUSTOM_NAME                NVARCHAR(20)             -- (선택) 거래처명
+                  , @PROJECT_NO                 NVARCHAR(20)             -- (선택) 관리번호
+                  , @AGENT_TYPE                 NVARCHAR(03)             -- (선택) 고객분류
+                  , @AREA_TYPE                  NVARCHAR(03)             -- (선택) 지역구분
+                  , @ORDER_TYPE                 NVARCHAR(03)             -- (선택) 판매유형
+                  , @FR_ORDER_AMT               NUMERIC(30,6)            -- (선택) 시작수주금액
+                  , @TO_ORDER_AMT               NUMERIC(30,6)            -- (선택) 종료수주금액
+                  , @PROGRESS_YN                NVARCHAR(03)             -- (선택) 진척율100% 포함여부
+                  , @DIVI                       NVARCHAR(03)             -- (선택) 완료구분
+    
+                  , @USER_ID                    NVARCHAR(100)             -- (필수) 사용자ID
+    
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+    
+    /*  1. 변수 값 할당 */
+        SET     @COMP_CODE          = #{S_COMP_CODE}
+        SET     @DIV_CODE           = #{DIV_CODE}
+        SET     @ORDER_PRSN         = #{SALE_PRSN}
+        SET     @FR_ORDER_DATE      = #{ORDER_DATE_FR}
+        SET     @TO_ORDER_DATE      = #{ORDER_DATE_TO}
+        SET     @CUSTOM_CODE        = #{CUSTOM_CODE}
+        SET     @CUSTOM_NAME        = #{CUSTOM_NAME}
+        SET     @PROJECT_NO         = #{PROJECT_NO_NAME}
+        SET     @AGENT_TYPE         = #{AGENT_TYPE}
+        SET     @AREA_TYPE          = #{AREA_TYPE}
+        SET     @ORDER_TYPE         = #{ORDER_TYPE}
+        SET     @FR_ORDER_AMT       = CASE WHEN #{FR_ORDER_AMT} = '' THEN '0' ELSE #{FR_ORDER_AMT} END
+        SET     @TO_ORDER_AMT       = CASE WHEN #{TO_ORDER_AMT} = '' THEN '0' ELSE #{TO_ORDER_AMT} END
+        SET     @PROGRESS_YN        = #{RDO_PROGRESS}
+        SET     @DIVI               = #{rdoSelect}
+        SET     @USER_ID            = #{S_USER_ID}
+    
+    /*  2. 명칭 조회 유형 설정 */
+        DECLARE @RefItem            NVARCHAR(01)
+    
+        SELECT TOP 1 @RefItem = REF_ITEM
+        FROM   BSA300T WITH (NOLOCK)
+        WHERE  USER_ID = @USER_ID
+    
+        SET @RefItem = ISNULL(@RefItem, '0')
+    
+    /*  3. 날짜 포맷 유형 설정 */
+        DECLARE @DateFormat             NVARCHAR(01)
+        
+        SELECT TOP 1 @DateFormat = SUBSTRING(CODE_NAME, 5, 1)
+        FROM   BSA100T WITH (NOLOCK)
+        WHERE  COMP_CODE = @COMP_CODE
+        AND    MAIN_CODE = 'B044'
+        AND    REF_CODE1 = 'Y'
+        
+        SET @DateFormat = ISNULL(@DateFormat, '.')
+    
+    /*  5. 조회 데이터 생성 */
+        SELECT X.CUSTOM_CODE
+             , X.CUSTOM_NAME
+             , X.PROJECT_NO
+             , X.PJT_NAME
+             , X.ORDER_NUM
+             , X.ORDER_DATE
+             , X.PJT_AMT
+             , X.TOT_ORDER_AMT
+             , X.TOT_SALE_AMT
+             , X.COLLECT_AMT
+             , X.TOT_ORDER_AMT - X.COLLECT_AMT                      AS REMAIN_AMT
+             , CASE WHEN X.TOT_ORDER_AMT = 0 THEN 0
+                    ELSE ROUND((X.COLLECT_AMT / X.TOT_ORDER_AMT) * 100, 2)
+               END                                                  AS COLLECT_RATE
+             , X.TOT_ORDER_AMT - X.TOT_SALE_AMT                     AS SALE_REMAIN_AMT
+             , X.BUY_AMT
+             , X.ACCOUNT_AMT
+             , X.BUY_AMT - X.ACCOUNT_AMT                            AS NOTPAY_AMT
+             , X.TOT_SALE_AMT - X.BUY_AMT                           AS VASALE_AMT
+             , X.TOT_MAN_COST
+             , X.TOT_SALE_AMT - X.BUY_AMT - X.TOT_MAN_COST          AS ESTIMATED_PROFIT
+             , X.ORDER_PRSN
+             , X.DIV_CODE
+             , X.ORDER_TYPE
+             , X.AGENT_TYPE
+             , X.AREA_TYPE
+             , X.DIVI
+             , X.REMARK
+        FROM   (
+               SELECT 
+                      A.COMP_CODE
+                    , A.DIV_CODE
+                    , A.CUSTOM_CODE
+                    , CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+                           WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+                           ELSE C1.CUSTOM_NAME
+                      END                                                  AS CUSTOM_NAME
+                    , A.PROJECT_NO
+                    , C2.PJT_NAME
+                    , C2.PJT_AMT
+                    , CASE WHEN A.STATUS = '6' THEN A.ORDER_O + A.ORDER_TAX_O
+                           ELSE 0
+                      END                                                  AS TOT_ORDER_AMT
+                    , ISNULL(B.TOT_SALE_AMT, 0)                            AS TOT_SALE_AMT
+                    
+                    , CASE WHEN ISNULL(C.COLLECT_AMT, 0) = 0 THEN ISNULL(F.AMT_I,0)
+                           ELSE ISNULL(C.COLLECT_AMT, 0)
+                           END                                             AS COLLECT_AMT
+                           
+                    
+                    , ISNULL(D.BUY_AMT,      0)                            AS BUY_AMT
+                    , ISNULL(D.ACCOUNT_AMT,  0)                            AS ACCOUNT_AMT
+                    , ISNULL(E.TOT_MAN_COST, 0)                            AS TOT_MAN_COST
+                    , A.ORDER_PRSN
+                    , A.ORDER_TYPE
+                    , ISNULL(C1.AGENT_TYPE, '')                            AS AGENT_TYPE
+                    , ISNULL(C1.AREA_TYPE,  '')                            AS AREA_TYPE
+                    , A.ORDER_NUM
+                    , SUBSTRING(A.ORDER_DATE, 1, 4) + @DateFormat + 
+                      SUBSTRING(A.ORDER_DATE, 5, 2) + @DateFormat + 
+                      SUBSTRING(A.ORDER_DATE, 7, 2)                        AS ORDER_DATE
+                    , C2.DIVI
+                    , A.REMARK
+               FROM              SOF100T  A  WITH (NOLOCK)
+                      LEFT  JOIN (
+                                 SELECT S1.COMP_CODE, S1.DIV_CODE, S1.PROJECT_NO
+                                      , SUM(S2.SALE_AMT_O + S2.TAX_AMT_O) AS TOT_SALE_AMT
+                                 FROM              SSA100T  S1 WITH (NOLOCK)
+                                        INNER JOIN SSA110T  S2 WITH (NOLOCK) ON S2.COMP_CODE = S1.COMP_CODE
+                                                                            AND S2.DIV_CODE  = S1.DIV_CODE
+                                                                            AND S2.BILL_NUM  = S1.BILL_NUM
+                                 WHERE  S1.COMP_CODE = @COMP_CODE
+                                 AND    S1.DIV_CODE  = @DIV_CODE
+                                 GROUP  BY S1.COMP_CODE, S1.DIV_CODE, S1.PROJECT_NO
+                                 ) B                       ON B.COMP_CODE    = A.COMP_CODE
+                                                          AND B.DIV_CODE     = A.DIV_CODE
+                                                          AND B.PROJECT_NO   = A.PROJECT_NO
+                      LEFT  JOIN (
+                                 SELECT S1.COMP_CODE, S1.DIV_CODE, S1.PROJECT_NO
+                                      , SUM(S1.COLLECT_AMT) AS COLLECT_AMT
+                                 FROM   SCO100T  S1 WITH (NOLOCK)
+                                 WHERE  S1.COMP_CODE = @COMP_CODE
+                                 AND    S1.DIV_CODE  = @DIV_CODE
+                                 GROUP  BY S1.COMP_CODE, S1.DIV_CODE, S1.PROJECT_NO
+                                 ) C                       ON C.COMP_CODE    = A.COMP_CODE
+                                                          AND C.DIV_CODE     = A.DIV_CODE
+                                                          AND C.PROJECT_NO   = A.PROJECT_NO
+                      LEFT  JOIN (
+                                 SELECT S1.COMP_CODE, S1.DIV_CODE, S2.PROJECT_NO
+                                             , SUM(S2.AMOUNT_I + S2.TAX_I) AS BUY_AMT
+                                      , SUM(CASE WHEN ISNULL(S1.EX_DATE, '') != '' THEN S2.AMOUNT_I + S2.TAX_I
+                                                 ELSE 0
+                                            END )                   AS ACCOUNT_AMT
+                                 FROM              MAP100T  S1 WITH (NOLOCK)
+                                        INNER JOIN MAP200T  S2 WITH (NOLOCK) ON S2.COMP_CODE        = S1.COMP_CODE
+                                                                            AND S2.DIV_CODE         = S1.DIV_CODE
+                                                                            AND S2.BILL_DIV_CODE    = S1.BILL_DIV_CODE
+                                                                            AND S2.CUSTOM_CODE      = S1.CUSTOM_CODE
+                                                                            AND S2.CHANGE_BASIS_NUM = S1.CHANGE_BASIS_NUM
+                                 WHERE  S1.COMP_CODE = @COMP_CODE
+                                 AND    S1.DIV_CODE  = @DIV_CODE
+                                 GROUP  BY S1.COMP_CODE, S1.DIV_CODE, S2.PROJECT_NO
+                                 ) D                       ON D.COMP_CODE    = A.COMP_CODE
+                                                          AND D.DIV_CODE     = A.DIV_CODE
+                                                          AND D.PROJECT_NO   = A.PROJECT_NO
+                      LEFT  JOIN (
+                                 SELECT S1.COMP_CODE, S1.DIV_CODE, S1.PROJECT_NO
+                                      , SUM(S2.MAN_HOUR * ISNULL(S3.PROG_UNIT_COST, 0)) AS TOT_MAN_COST
+                                 FROM              PMP100TV1 S1 WITH (NOLOCK)
+                                        INNER JOIN PMR100T   S2 WITH (NOLOCK) ON S2.COMP_CODE       = S1.COMP_CODE
+                                                                             AND S2.DIV_CODE        = S1.DIV_CODE
+                                                                             AND S2.WKORD_NUM       = S1.WKORD_NUM
+                                        LEFT  JOIN PBS200T   S3 WITH (NOLOCK) ON S3.COMP_CODE       = S2.COMP_CODE
+                                                                             AND S3.DIV_CODE        = S2.DIV_CODE
+                                                                             AND S3.WORK_SHOP_CODE  = S1.WORK_SHOP_CODE
+                                                                             AND S3.PROG_WORK_CODE  = S2.PROG_WORK_CODE
+                                 WHERE  S1.COMP_CODE = @COMP_CODE
+                                 AND    S1.DIV_CODE  = @DIV_CODE
+                                 GROUP  BY S1.COMP_CODE, S1.DIV_CODE, S1.PROJECT_NO
+                                 ) E                       ON E.COMP_CODE    = A.COMP_CODE
+                                                          AND E.DIV_CODE     = A.DIV_CODE
+                                                          AND E.PROJECT_NO   = A.PROJECT_NO
+                      LEFT  JOIN (SELECT COMP_CODE, DIV_CODE
+                                       , CASE WHEN ACCNT = '11300' THEN AC_DATA2
+                                              WHEN ACCNT = '11302' THEN AC_DATA2
+                                              WHEN ACCNT = '11310' THEN AC_DATA2
+                                              WHEN ACCNT = '21320' THEN AC_DATA1
+                                              ELSE ''
+                                           END AS PROJECT_NO
+                                       , ISNULL(SUM(AMT_I), 0) AS AMT_I
+                                    FROM AGJ210T WITH (NOLOCK)
+                                   WHERE COMP_CODE = @COMP_CODE
+                                     AND DIV_CODE  = @DIV_CODE
+                                     AND MOD_DIVI IS NULL
+                                     AND ACCNT IN ('11300', '11302', '11310', '21320')
+                                     AND DR_CR = '2'
+                                   GROUP BY COMP_CODE, DIV_CODE
+                                        , CASE WHEN ACCNT = '11300' THEN AC_DATA2
+                                                    WHEN ACCNT = '11302' THEN AC_DATA2
+                                                    WHEN ACCNT = '11310' THEN AC_DATA2
+                                                    WHEN ACCNT = '21320' THEN AC_DATA1
+                                                    ELSE ''
+                                                END ) AS  F  ON F.COMP_CODE   = A.COMP_CODE
+                                                            AND F.DIV_CODE    = A.DIV_CODE
+                                                            AND F.PROJECT_NO  = A.PROJECT_NO
+                                                            
+                      INNER JOIN BCM100T  C1 WITH (NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE
+                                                          AND C1.CUSTOM_CODE = A.CUSTOM_CODE
+                      LEFT  JOIN BCM600T  C2 WITH (NOLOCK) ON C2.COMP_CODE   = A.COMP_CODE
+                                                          AND C2.PJT_CODE    = A.PROJECT_NO
+             WHERE  A.COMP_CODE        = @COMP_CODE
+               AND  ((A.PROJECT_NO      IS NOT NULL OR A.PROJECT_NO != ''))
+               AND  ((A.DIV_CODE         =          @DIV_CODE                             AND @DIV_CODE      != '') OR (@DIV_CODE      = ''))
+               AND  ((A.ORDER_PRSN       =          @ORDER_PRSN                           AND @ORDER_PRSN    != '') OR (@ORDER_PRSN    = ''))
+               AND  ((A.ORDER_DATE      &gt;=       @FR_ORDER_DATE                        AND @FR_ORDER_DATE != '') OR (@FR_ORDER_DATE = ''))
+               AND  ((A.ORDER_DATE      &lt;=       @TO_ORDER_DATE                        AND @TO_ORDER_DATE != '') OR (@TO_ORDER_DATE = ''))
+               AND  ((A.CUSTOM_CODE   LIKE          @CUSTOM_CODE + '%'                    AND @CUSTOM_CODE   != '') OR (@CUSTOM_CODE   = ''))
+               AND  ((C1.CUSTOM_NAME  LIKE '%' +    @CUSTOM_NAME + '%' AND @RefItem = '0' AND @CUSTOM_NAME   != '')
+                OR (C1.CUSTOM_NAME1   LIKE '%' +    @CUSTOM_NAME + '%' AND @RefItem = '1' AND @CUSTOM_NAME   != '')
+                OR (C1.CUSTOM_NAME2   LIKE '%' +    @CUSTOM_NAME + '%' AND @RefItem = '2' AND @CUSTOM_NAME   != '') OR (@CUSTOM_NAME   = ''))
+                
+               AND  ((A.PROJECT_NO    LIKE          @PROJECT_NO  + '%'                    AND @PROJECT_NO    != '') OR (@PROJECT_NO    = ''))
+               AND  ((C1.AGENT_TYPE      =          @AGENT_TYPE                           AND @AGENT_TYPE    != '') OR (@AGENT_TYPE    = ''))
+               AND  ((C1.AREA_TYPE       =          @AREA_TYPE                            AND @AREA_TYPE     != '') OR (@AREA_TYPE     = ''))
+               AND  ((A.ORDER_TYPE       =          @ORDER_TYPE                           AND @ORDER_TYPE    != '') OR (@ORDER_TYPE    = ''))
+               AND  ((C2.DIVI            =          @DIVI                                 AND @DIVI          != '') OR (@DIVI          = ''))
+
+               ) X
+        WHERE  X.COMP_CODE      = @COMP_CODE
+        AND  ((X.TOT_ORDER_AMT &gt;= @FR_ORDER_AMT AND @FR_ORDER_AMT !=  0)  OR (@FR_ORDER_AMT =  0))
+        AND  ((X.TOT_ORDER_AMT &lt;= @TO_ORDER_AMT AND @TO_ORDER_AMT !=  0)  OR (@TO_ORDER_AMT =  0))
+        AND  ((X.TOT_ORDER_AMT  &gt; X.COLLECT_AMT AND @PROGRESS_YN   = '2') OR (@PROGRESS_YN  = '1'))
+
+        ORDER  BY  X.ORDER_NUM
+    
+        SET NOCOUNT OFF
+        SET ARITHABORT OFF
+    END
+    </select>
+    
+    
+    <select id="sof320skrvServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+     /* sof320skrv.Csof300skrv[fnsof320q] Query02 */                    
+     SELECT ZZ.ITEM_CODE, 
+            MAX(uniLITE.fnItemNameComp(ZZ.COMP_CODE, #{S_USER_ID},ZZ.ITEM_CODE)) AS ITEM_NAME, 
+            ZZ.ORDER_Q, ZZ.DVRY_DATE,
+            unilite.fnFormat(#{S_COMP_CODE},ISNULL(SUM(D.WKORD_Q / ZZ.TRANS_RATE), 0), 'S_FSET_QS') AS WKORD_Q,
+            unilite.fnFormat(#{S_COMP_CODE},ISNULL(SUM(D.PRODT_Q / ZZ.TRANS_RATE), 0), 'S_FSET_QS') AS PRODT_Q,
+            ZZ.PROD_END_DATE, CAST(E.INOUT_DATE AS DATETIME) AS INOUT_DATE,
+            ISNULL(E.ORDER_UNIT_Q, 0) AS ORDER_UNIT_Q, ZZ.ORDER_Q - ISNULL(E.ORDER_UNIT_Q, 0) AS REMAIN_Q
+            , (ISNULL(E.ORDER_UNIT_Q, 0) / ZZ.ORDER_Q * 100.00) AS PROCESS_RATE,
+            ZZ.DIV_CODE, ZZ.ORDER_NUM, ZZ.SER_NO
+       FROM
+            (SELECT                
+                       A.COMP_CODE 
+                      ,A.ITEM_CODE 
+                      ,F.ITEM_NAME
+                      ,A.ORDER_Q
+                      ,CAST(A.DVRY_DATE AS DATETIME) AS DVRY_DATE
+                      ,C.WK_PLAN_NUM
+                      ,A.OUT_DIV_CODE
+                      ,A.DIV_CODE
+                      ,A.ORDER_NUM
+                      ,A.SER_NO
+                      ,CAST(A.PROD_END_DATE AS DATETIME) AS PROD_END_DATE
+                      ,A.TRANS_RATE
+               FROM SOF110T A INNER JOIN SOF100T B 
+                                              ON A.DIV_CODE  = B.DIV_CODE 
+                                             AND A.ORDER_NUM = B.ORDER_NUM 
+                                             AND A.COMP_CODE = B.COMP_CODE
+                               LEFT JOIN PPL100T C
+                                              ON A.OUT_DIV_CODE  = C.DIV_CODE 
+                                             AND A.ORDER_NUM     = C.ORDER_NUM 
+                                             AND A.SER_NO        = C.SEQ
+                                             AND A.COMP_CODE     = C.COMP_CODE
+                              INNER JOIN BPR100T F
+                                              ON A.ITEM_CODE     = F.ITEM_CODE 
+                                             AND A.COMP_CODE     = F.COMP_CODE
+              WHERE 1 = 1
+                AND A.DIV_CODE = #{DIV_CODE}
+                AND A.ORDER_NUM = #{ORDER_NUM}
+                AND A.COMP_CODE = #{S_COMP_CODE}
+                ) ZZ  LEFT JOIN PMP100T D
+                                     ON ZZ.WK_PLAN_NUM  = D.WK_PLAN_NUM 
+                                    AND ZZ.OUT_DIV_CODE = D.DIV_CODE 
+                                    AND ZZ.COMP_CODE    = D.COMP_CODE
+                                    AND D.LINE_END_YN   = 'Y'
+                      LEFT JOIN BTR100T E
+                                     ON ZZ.OUT_DIV_CODE  = E.DIV_CODE 
+                                    AND ZZ.ORDER_NUM     = E.ORDER_NUM 
+                                    AND ZZ.SER_NO        = E.ORDER_SEQ
+                                    AND ZZ.COMP_CODE     = E.COMP_CODE
+     WHERE ZZ.COMP_CODE = #{S_COMP_CODE}
+     GROUP BY ZZ.ITEM_CODE, ZZ.ORDER_Q, ZZ.DVRY_DATE, ZZ.PROD_END_DATE,
+                E.INOUT_DATE , E.ORDER_UNIT_Q, ZZ.DIV_CODE, ZZ.ORDER_NUM, ZZ.SER_NO
+     ORDER BY ZZ.ORDER_NUM, ZZ.SER_NO
+    </select>   
+   
+</mapper>

@@ -1,0 +1,478 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="agd111ukrServiceImpl">
+	<select id="agd111ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	--agd110ukr.Cagd110ukr[fnAgd110QStd] QUERY01
+	BEGIN
+	    SET NOCOUNT    ON
+	    SET ARITHABORT ON
+	
+	---- I. 준비 ---------------------------------------------------------------------------------------------------------------------- 
+	
+	    /*------------------------------------------------------------------------*/
+	    /* 1.1. (파라메터)변수 선언                                               */
+	    /*------------------------------------------------------------------------*/
+	    DECLARE @COMP_CODE              NVARCHAR(08)        --(필수) 법인코드
+	          , @FR_PUB_DATE            NVARCHAR(08)        --(필수) FROM 계산서일
+	          , @TO_PUB_DATE            NVARCHAR(08)        --(필수) TO   계산서일
+	          , @DIV_CODE               NVARCHAR(08)        --(선택) 사업장
+	          , @FR_CUSTOM_CODE         NVARCHAR(08)        --(선택) FROM 거래처코드
+	          , @TO_CUSTOM_CODE         NVARCHAR(08)        --(선택) TO   거래처코드
+	          , @BILL_TYPE              NVARCHAR(02)        --(필수) 부가세유형
+	          , @DATE_OPTION            NVARCHAR(01)        --(필수) 전표일 생성옵션
+	          , @PROC_DATE              NVARCHAR(08)        --(선택) 실행일
+	          , @INPUT_USER_ID          NVARCHAR(100)        --(필수) 로그인사용자ID
+	          , @INPUT_DATE             NVARCHAR(08)        --(필수) 시스템일자
+	          , @AP_STS                 NVARCHAR(01)        --(선택) 전표승인여부
+	          , @WORK                   NVARCHAR(04)        --(필수) 작업구분
+	          , @EB_YN                  NVARCHAR(01)        --(선택) 전자발행여부
+	          , @BILL_PUB_NUM           NVARCHAR(20)        --(선택) 계산서번호/계산서발행번호
+	          , @FR_INSERT_DATE         NVARCHAR(08)        --(선택) FROM 입력일
+	          , @TO_INSERT_DATE         NVARCHAR(08)        --(선택) TO   입력일
+	          , @INSERT_DB_USER         NVARCHAR(20)        --(선택) 입력자
+	          , @DEPT_CODE              NVARCHAR(20)        --(선택) 입력부서
+	          , @INPUT_DIVI             NVARCHAR(02)        --입력구분
+	
+	    -- 품목명 UPDATE시 사용할 변수
+	    DECLARE @PubBaNum               NVARCHAR(20)
+	          , @ItemName               NVARCHAR(200)       --비고로 사용할 품목명
+	          , @ItemSeq                INT
+	
+	    /*------------------------------------------------------------------------*/
+	    /* 2.1. 변수값 정의                                                       */
+	    /*------------------------------------------------------------------------*/
+	    SET     @COMP_CODE          = #{S_COMP_CODE}
+	    SET     @FR_PUB_DATE        = #{PUB_DATE_FR}
+	    SET     @TO_PUB_DATE        = #{PUB_DATE_TO}
+	    SET     @DIV_CODE           = #{DIV_CODE}
+	    SET     @FR_CUSTOM_CODE     = #{CUSTOM_CODE_FR}
+	    SET     @TO_CUSTOM_CODE     = #{CUSTOM_CODE_TO}
+	    SET     @BILL_TYPE          = #{BILL_TYPE}
+	    SET     @DATE_OPTION        = #{PUB_DATE}	--1:계산서일, 2:실행일
+	    SET     @PROC_DATE          = #{WORK_DATE}
+	    SET     @INPUT_USER_ID      = #{S_USER_ID}
+	    SET     @INPUT_DATE         = datename(yyyy, getdate())+datename(mm, getdate())+datename(dd, getdate());
+	    SET     @AP_STS             = #{AP_STS}
+	<if test="WORK_DIVI == &quot;1&quot;"> 
+	    SET     @WORK               = 'PROC'		--Proc:자동기표, Canc:기표취소
+	</if>
+	<if test="WORK_DIVI == &quot;2&quot;"> 
+	    SET     @WORK               = 'CANC'		--Proc:자동기표, Canc:기표취소
+	</if>
+	    SET     @EB_YN              = #{EB_YN}
+	    SET     @BILL_PUB_NUM       = ''
+	    SET     @FR_INSERT_DATE     = #{INSERT_DATE_FR}
+	    SET     @TO_INSERT_DATE     = #{INSERT_DATE_TO}
+	    SET     @INSERT_DB_USER     = #{CHARGE_CODE}
+	    SET     @DEPT_CODE          = #{DEPT_CODE}
+	
+	    --IF ( @BILL_TYPE = '10' OR @BILL_TYPE = '50' )
+		<if test="BILL_TYPE == &quot;10&quot;"> 
+			SET @INPUT_DIVI         = 'B1'                  --세금계산서
+	    </if>
+		<if test="BILL_TYPE == &quot;50&quot;"> 
+			SET @INPUT_DIVI         = 'B1'                  --세금계산서
+		</if>
+		--ELSE
+		<if test="BILL_TYPE != &quot;10&quot;"> 
+			<if test="BILL_TYPE != &quot;50&quot;"> 
+				SET @INPUT_DIVI         = 'B2'                  --매출
+			</if>
+		</if>
+	
+	    /*------------------------------------------------------------------------*/
+	    /* 2.2. 테이블변수/임시테이블 선언                                        */
+	    /*------------------------------------------------------------------------*/
+	    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#AGD110UKR'))
+	        DROP TABLE #AGD110UKR
+	
+	    CREATE TABLE #AGD110UKR
+	            (   FR_PUB_DATE         NVARCHAR(10)
+	            ,   TO_PUB_DATE         NVARCHAR(10)
+	            ,   FR_CUSTOM_CODE      NVARCHAR(08)
+	            ,   TO_CUSTOM_CODE      NVARCHAR(08)
+	            ,   BILL_TYPE           NVARCHAR(10)
+	            ,   INPUT_USER_ID       NVARCHAR(100)
+	            ,   INPUT_DATE          NVARCHAR(10)
+	            ,   COMP_CODE           NVARCHAR(08)
+	            ,   DIV_CODE            NVARCHAR(08)
+	            ,   PUB_NUM             NVARCHAR(20)
+	            ,   BILL_FLAG           NVARCHAR(10)
+	            ,   SALE_DATE           NVARCHAR(10)
+	            ,   PROOF_KIND          NVARCHAR(30)
+	            ,   CUSTOM_CODE         NVARCHAR(08)
+	            ,   CUSTOM_NAME         NVARCHAR(100)
+	            ,   RECEIPT_PLAN_DATE   NVARCHAR(10)
+	            ,   SALE_LOC_AMT_I      NUMERIC(30, 6)
+	            ,   TAX_AMT_O           NUMERIC(30, 6)
+	            ,   SALE_TAX_AMT_I      NUMERIC(30, 6)
+	            ,   BILL_DIV_CODE       NVARCHAR(08)
+	            ,   EB_YN               NVARCHAR(01)
+	            ,   REMARK              NVARCHAR(100)
+	            ,   EX_DATE             NVARCHAR(10)
+	            ,   EX_NUM              NUMERIC(07, 0)
+	            ,   AP_STS              NVARCHAR(01)
+	            ,   BEFORE_PUB_NUM      NVARCHAR(20)
+	            ,   MODI_REASON         NVARCHAR(02)
+	            ,   ITEM_CODE           NVARCHAR(25)
+	            )
+	    CREATE INDEX #AGD110UKR_IDX01 ON #AGD110UKR (COMP_CODE, DIV_CODE, PUB_NUM)
+	
+	    /*------------------------------------------------------------------------*/
+	    /* 3.1. 자동기표대상 데이터 테이블에 insert 및 품명 비고에 update         */
+	    /*------------------------------------------------------------------------*/
+	    IF ( @INPUT_DIVI = 'B1' )
+	      BEGIN
+	        -- 3.1.1 조회데이터 임시테이블에 INSERT
+	        INSERT INTO #AGD110UKR
+	        SELECT  @FR_PUB_DATE                    AS FR_PUB_DATE
+	             ,  @TO_PUB_DATE                    AS TO_PUB_DATE
+	             ,  @FR_CUSTOM_CODE                 AS FR_CUSTOM_CODE
+	             ,  @TO_CUSTOM_CODE                 AS TO_CUSTOM_CODE
+	             ,  @BILL_TYPE                      AS BILL_TYPE
+	             ,  @INPUT_USER_ID                  AS INPUT_USER_ID
+	             ,  @INPUT_DATE                     AS INPUT_DATE
+	             ,  A.COMP_CODE
+	             ,  A.SALE_DIV_CODE                                                     AS DIV_CODE
+	             ,  A.PUB_NUM
+	             ,  A.BILL_FLAG
+	             ,  uniLITE.fnGetUserDateComp(A.COMP_CODE, A.BILL_DATE)                 AS SALE_DATE
+	             ,  CASE A.BILL_TYPE WHEN '11' THEN CONVERT(NVARCHAR(04), (CASE WHEN N1.BUSINESS_TYPE = '3' THEN '19' ELSE '11' END))
+	                                 WHEN '20' THEN CONVERT(NVARCHAR(04), (CASE WHEN N1.BUSINESS_TYPE = '3' THEN '31' ELSE '20' END))
+	                                 ELSE A.BILL_TYPE
+	                 END                                                                AS PROOF_KIND
+	             ,  A.CUSTOM_CODE
+	             ,  ISNULL(N1.CUSTOM_NAME  , '')                                        AS CUSTOM_NAME
+	             ,  uniLITE.fnGetUserDateComp(A.COMP_CODE, A.RECEIPT_PLAN_DATE)         AS RECEIPT_PLAN_DATE
+	             ,  C1.SALE_LOC_AMT_I
+	             ,  C1.TAX_AMT_O
+	             ,  ISNULL(C1.SALE_LOC_AMT_I, 0 ) + ISNULL(C1.TAX_AMT_O, 0)             AS SALE_TAX_AMT_I
+	             ,  ISNULL(A.DIV_CODE      , '')                                        AS BILL_DIV_CODE
+	             ,  CASE WHEN ISNULL(M1.SUB_CODE, '00') = '00' THEN CONVERT(NVARCHAR(01), '')
+	                     ELSE CASE WHEN ISNULL(PRE_SEND_YN, '') IN ('', 'N') THEN ISNULL(A.BILL_SEND_YN, '')     --20210715 추가
+	                               ELSE 'Y'
+	                          END
+	                END                                                                 AS EB_YN
+	             ,  ''                                                                  AS REMARK
+	             ,  uniLITE.fnGetUserDateComp(A.COMP_CODE, A.EX_DATE)                   AS EX_DATE
+	             ,  CASE WHEN A.EX_NUM = 0 THEN NULL
+	                     ELSE A.EX_NUM
+	                END AS EX_NUM
+	             ,  ISNULL(B.AP_STS        , '')                                        AS AP_STS
+	             ,  ISNULL(A.BEFORE_PUB_NUM, '')                                        AS BEFORE_PUB_NUM
+	             ,  ISNULL(A.MODI_REASON   , '')                                        AS MODI_REASON
+	             ,  C1.ITEM_CODE
+	        FROM           STB100T  AS A  WITH (NOLOCK)
+	            INNER JOIN SSA110T  AS C1 WITH (NOLOCK) ON  C1.COMP_CODE     = A.COMP_CODE
+	                                                    AND C1.DIV_CODE      = A.SALE_DIV_CODE
+	                                                    AND C1.PUB_NUM       = (CASE WHEN A.BILL_FLAG = '2' AND ISNULL(A.MODI_REASON, '') = '01' THEN A.ORIGINAL_PUB_NUM
+	                                                                                 ELSE A.PUB_NUM
+	                                                                            END)
+	            INNER JOIN SSA100T  AS C2 WITH (NOLOCK) ON  C2.COMP_CODE     = C1.COMP_CODE
+	                                                    AND C2.DIV_CODE      = C1.DIV_CODE
+	                                                    AND C2.BILL_NUM      = C1.BILL_NUM
+	            LEFT  JOIN (SELECT COMP_CODE
+	                             , EX_DATE
+	                             , EX_NUM
+	                             , AP_STS
+	                        FROM   AGJ110T WITH (NOLOCK)
+	                        WHERE  COMP_CODE = @COMP_CODE
+	                        AND    (MOD_DIVI IS NULL OR MOD_DIVI = '')
+	                        GROUP BY COMP_CODE, EX_DATE, EX_NUM, AP_STS
+	                        )       AS B                ON  B.COMP_CODE      = A.COMP_CODE
+	                                                    AND B.EX_DATE        = A.EX_DATE
+	                                                    AND B.EX_NUM         = A.EX_NUM
+	            LEFT  JOIN BSA100T  AS M1 WITH (NOLOCK) ON  M1.COMP_CODE     = A.COMP_CODE
+	                                                    AND M1.MAIN_CODE     = 'S084'
+	                                                    AND M1.REF_CODE1     = 'Y'
+	            LEFT  JOIN BSA100T  AS M2 WITH (NOLOCK) ON  M2.COMP_CODE     = C2.COMP_CODE
+	                                                    AND M2.MAIN_CODE     = 'S002'
+	                                                    AND M2.SUB_CODE      = C2.ORDER_TYPE
+	            LEFT  JOIN BCM100T  AS N1 WITH (NOLOCK) ON  N1.COMP_CODE     = A.COMP_CODE
+	                                                    AND N1.CUSTOM_CODE   = A.CUSTOM_CODE
+	            LEFT  JOIN BSA100T  AS M5 WITH (NOLOCK) ON  M5.COMP_CODE     = A.COMP_CODE
+	                                                    AND M5.MAIN_CODE     = 'A009'
+	                                                    AND M5.REF_CODE1     = A.UPDATE_DB_USER  -- INSERT_DB_USER에는 'uniLITE'가 들어가서 사용할 수 없음
+	            LEFT  JOIN BSA300T  AS M6 WITH (NOLOCK) ON  M6.COMP_CODE     = M5.COMP_CODE
+	                                                    AND M6.USER_ID       = M5.REF_CODE1
+	        WHERE   A.COMP_CODE               =       @COMP_CODE
+	        AND     A.BILL_DATE              &gt;=       @FR_PUB_DATE
+	        AND     A.BILL_DATE              &lt;=       @TO_PUB_DATE
+	        AND     A.BILL_TYPE              IN       ('11', '20', '12')
+			-- 부가세유형 조건 적용.2021.06.22 
+			AND		C2.BILL_TYPE = @BILL_TYPE
+
+	        AND     (ISNULL(M2.REF_CODE3, '')!= 'N')              -- 판매유형(S002) 중 REF_CODE3가 'N'인 것은 조회되지 않도록 함
+	        AND     ((ISNULL(A.EX_DATE , '')  =       ''                  AND
+	                  ISNULL(A.EX_NUM  , 0 )  =       0                   AND
+	                  ISNULL(A.AGREE_YN,'N') !=       'Y'                 AND @WORK = 'PROC')
+	        OR       (ISNULL(A.EX_DATE , '') !=       ''                  AND @WORK = 'CANC'))
+	        AND     ((B.AP_STS                =       @AP_STS             AND @AP_STS         != '') OR (@AP_STS         = ''))
+	        AND     ((A.SALE_DIV_CODE         =       @DIV_CODE           AND @DIV_CODE       != '') OR (@DIV_CODE       = ''))
+	        AND     ((A.CUSTOM_CODE          &gt;=       @FR_CUSTOM_CODE     AND @FR_CUSTOM_CODE != '') OR (@FR_CUSTOM_CODE = ''))
+	        AND     ((A.CUSTOM_CODE          &lt;=       @TO_CUSTOM_CODE     AND @TO_CUSTOM_CODE != '') OR (@TO_CUSTOM_CODE = ''))
+	        AND     ISNULL(A.PLUS_MINUS_TYPE, '+') = '+'
+	        AND     ((CONVERT(NVARCHAR(08), A.INSERT_DB_TIME,112) &gt;= @FR_INSERT_DATE AND @FR_INSERT_DATE != '') OR (@FR_INSERT_DATE = ''))
+	        AND     ((CONVERT(NVARCHAR(08), A.INSERT_DB_TIME,112) &lt;= @TO_INSERT_DATE AND @TO_INSERT_DATE != '') OR (@TO_INSERT_DATE = ''))
+	        AND     ((M5.SUB_CODE             =       @INSERT_DB_USER     AND @INSERT_DB_USER  != '') OR (@INSERT_DB_USER = ''))
+	        AND     ((M6.DEPT_CODE            =       @DEPT_CODE          AND @DEPT_CODE       != '') OR (@DEPT_CODE      = ''))
+	        -- 20210330 조건추가
+	        AND      A.SALE_LOC_AMT_I        &lt;&gt; 0
+	
+	        -- 3.1.2 여러 개의 매출상세내역 중에서 첫번째 등록된 품목의 명칭으로 비고에 적용함
+	        SET     @ItemName               = ''
+	        SET     @ItemSeq                = 0
+	        SET     @PubBaNum               = ''
+	
+	        UPDATE  A
+	        SET     @ItemSeq    = CASE WHEN ISNULL(@PubBaNum, '') != A.PUB_NUM THEN 1 ELSE @ItemSeq + 1 END
+	            ,   @ItemName   = (CASE WHEN @ItemSeq = 1 THEN LEFT(ISNULL(N1.ITEM_NAME, ''), 20)
+	                                    WHEN @ItemSeq = 2 THEN @ItemName
+	                                    ELSE @ItemName
+	                               END)
+	            ,   @PubBaNum   = A.PUB_NUM
+	            ,   A.REMARK    = @ItemName
+	        FROM        #AGD110UKR AS A
+	            INNER JOIN (SELECT  COMP_CODE, DIV_CODE, PUB_NUM
+	                        FROM    #AGD110UKR
+	                        GROUP BY COMP_CODE, DIV_CODE, PUB_NUM
+	                       )        AS B                ON  B.COMP_CODE  = A.COMP_CODE
+	                                                    AND B.DIV_CODE   = A.DIV_CODE
+	                                                    AND B.PUB_NUM    = A.PUB_NUM
+	            LEFT  JOIN BPR100T  AS N1 WITH (NOLOCK) ON  N1.COMP_CODE = A.COMP_CODE
+	                                                    AND N1.ITEM_CODE = A.ITEM_CODE
+	      END
+	
+	    ELSE        --매출
+	      BEGIN
+	        -- 3.2.1 조회데이터 임시테이블에 INSERT
+	        INSERT INTO #AGD110UKR
+	        SELECT  @FR_PUB_DATE                    AS FR_PUB_DATE
+	             ,  @TO_PUB_DATE                    AS TO_PUB_DATE
+	             ,  @FR_CUSTOM_CODE                 AS FR_CUSTOM_CODE
+	             ,  @TO_CUSTOM_CODE                 AS TO_CUSTOM_CODE
+	             ,  @BILL_TYPE                      AS BILL_TYPE
+	             ,  @INPUT_USER_ID                  AS INPUT_USER_ID
+	             ,  @INPUT_DATE                     AS INPUT_DATE
+	             ,  A.COMP_CODE
+	             ,  A.DIV_CODE
+	             ,  A.BILL_NUM                                                  AS PUB_NUM
+	             ,  CONVERT(NVARCHAR(01)   , '')                                AS BILL_FLAG
+	             ,  uniLITE.fnGetUserDateComp(A.COMP_CODE, A.SALE_DATE)         AS SALE_DATE
+	             ,  ISNULL(M1.REF_CODE1    , '')                                AS PROOF_KIND
+	             ,  A.SALE_CUSTOM_CODE                                          AS CUSTOM_CODE
+	             ,  ISNULl(N1.CUSTOM_NAME  , '')                                AS CUSTOM_NAME
+	             ,  uniLITE.fnGetUserDatEComp(A.COMP_CODE, A.RECEIPT_PLAN_DATE) AS RECEIPT_PLAN_DATE
+	             ,  C2.SALE_LOC_AMT_I
+	             ,  C2.TAX_AMT_O
+	             ,  ISNULL(C2.SALE_LOC_AMT_I, 0 ) + ISNULL(C2.TAX_AMT_O, 0)     AS SALE_TAX_AMT_I
+	             ,  ISNULL(C.BILL_DIV_CODE , '')                                AS BILL_DIV_CODE
+	             ,  CONVERT(NVARCHAR(01)   , '')                                AS EB_YN
+	             ,  ''                                                          AS REMARK
+	             ,  uniLITE.fnGetUserDateComp(A.COMP_CODE, A.EX_DATE)           AS EX_DATE
+	             ,  CASE WHEN A.EX_NUM = 0 THEN NULL
+	                     ELSE A.EX_NUM
+	                END AS EX_NUM
+	             ,  ISNULL(B.AP_STS        , '')                                AS AP_STS
+	             ,  CONVERT(NVARCHAR(20)   , '')                                AS BEFORE_PUB_NUM
+	             ,  CONVERT(NVARCHAR(02)   , '')                                AS MODI_REASON
+	             ,  C2.ITEM_CODE
+	        FROM           SSA100T  AS A  WITH (NOLOCK)
+	            INNER JOIN SSA110T  AS C2 WITH (NOLOCK) ON  C2.COMP_CODE     = A.COMP_CODE
+	                                                    AND C2.DIV_CODE      = A.DIV_CODE
+	                                                    AND C2.BILL_NUM      = A.BILL_NUM
+	            LEFT  JOIN (SELECT COMP_CODE
+	                             , EX_DATE
+	                             , EX_NUM
+	                             , AP_STS
+	                        FROM   AGJ110T WITH (NOLOCK)
+	                        WHERE  COMP_CODE = @COMP_CODE
+	                        AND    (MOD_DIVI IS NULL OR MOD_DIVI = '')
+	                        GROUP BY COMP_CODE, EX_DATE, EX_NUM, AP_STS
+	                        )       AS B                ON  B.COMP_CODE      = A.COMP_CODE
+	                                                    AND B.EX_DATE        = A.EX_DATE
+	                                                    AND B.EX_NUM         = A.EX_NUM
+	            LEFT  JOIN BOR120T  AS C  WITH (NOLOCK) ON  C.COMP_CODE      = A.COMP_CODE
+	                                                    AND C.DIV_CODE       = A.DIV_CODE
+	            LEFT  JOIN BSA100T  AS M1 WITH (NOLOCK) ON  M1.COMP_CODE     = A.COMP_CODE
+	                                                    AND M1.MAIN_CODE     = 'S024'
+	                                                    AND M1.SUB_CODE      = A.BILL_TYPE
+	            LEFT  JOIN BSA100T  AS M2 WITH (NOLOCK) ON  M2.COMP_CODE     = A.COMP_CODE
+	                                                    AND M2.MAIN_CODE     = 'S002'
+	                                                    AND M2.SUB_CODE      = A.ORDER_TYPE
+	            LEFT  JOIN BCM100T  AS N1 WITH (NOLOCK) ON  N1.COMP_CODE     = A.COMP_CODE
+	                                                    AND N1.CUSTOM_CODE   = A.SALE_CUSTOM_CODE
+	            LEFT  JOIN BSA100T  AS M5 WITH (NOLOCK) ON  M5.COMP_CODE     = A.COMP_CODE
+	                                                    AND M5.MAIN_CODE     = 'A009'
+	                                                    AND M5.REF_CODE1     = A.UPDATE_DB_USER  -- INSERT_DB_USER에는 'uniLITE'가 들어가서 사용할 수 없음
+	            LEFT  JOIN BSA300T  AS M6 WITH (NOLOCK) ON  M6.COMP_CODE     = M5.COMP_CODE
+	                                                    AND M6.USER_ID       = M5.REF_CODE1
+	        WHERE   A.COMP_CODE               =       @COMP_CODE
+	        AND     A.SALE_DATE              &gt;=       @FR_PUB_DATE
+	        AND     A.SALE_DATE              &lt;=       @TO_PUB_DATE
+	        AND     A.BILL_TYPE               =       @BILL_TYPE
+	        AND     (ISNULL(M2.REF_CODE3, '')!= 'N')              -- 판매유형(S002) 중 REF_CODE3가 'N'인 것은 조회되지 않도록 함
+	        AND     ((ISNULL(A.EX_DATE , '')  =       ''                  AND
+	                  ISNULL(A.EX_NUM  , 0 )  =       0                   AND
+	                  ISNULL(A.AGREE_YN,'N') !=       'Y'                 AND @WORK = 'PROC')
+	        OR       (ISNULL(A.EX_DATE , '') !=       ''                  AND @WORK = 'CANC'))
+	        AND     ((B.AP_STS                =       @AP_STS             AND @AP_STS         != '') OR (@AP_STS         = ''))
+	        AND     ((A.DIV_CODE              =       @DIV_CODE           AND @DIV_CODE       != '') OR (@DIV_CODE       = ''))
+	        AND     ((A.SALE_CUSTOM_CODE     &gt;=       @FR_CUSTOM_CODE     AND @FR_CUSTOM_CODE != '') OR (@FR_CUSTOM_CODE = ''))
+	        AND     ((A.SALE_CUSTOM_CODE     &lt;=       @TO_CUSTOM_CODE     AND @TO_CUSTOM_CODE != '') OR (@TO_CUSTOM_CODE = ''))
+	        AND     ((CONVERT(NVARCHAR(08), A.INSERT_DB_TIME,112) &gt;= @FR_INSERT_DATE AND @FR_INSERT_DATE != '') OR (@FR_INSERT_DATE = ''))
+	        AND     ((CONVERT(NVARCHAR(08), A.INSERT_DB_TIME,112) &lt;= @TO_INSERT_DATE AND @TO_INSERT_DATE != '') OR (@TO_INSERT_DATE = ''))
+	        AND     ((M5.SUB_CODE             =       @INSERT_DB_USER     AND @INSERT_DB_USER  != '') OR (@INSERT_DB_USER = ''))
+	        AND     ((M6.DEPT_CODE            =       @DEPT_CODE          AND @DEPT_CODE       != '') OR (@DEPT_CODE      = ''))
+	        -- 20210330 조건추가
+	        AND     (A.SALE_LOC_AMT_I        &lt;&gt; 0                    OR A.SALE_LOC_EXP_I  &lt;&gt; 0)
+	
+	        -- 3.1.2 여러 개의 매출상세내역 중에서 첫번째 등록된 품목의 명칭으로 비고에 적용함
+	        SET     @ItemName               = ''
+	        SET     @ItemSeq                = 0
+	        SET     @PubBaNum               = ''
+	
+	        UPDATE  A
+	        SET     @ItemSeq    = CASE WHEN ISNULL(@PubBaNum, '') != A.PUB_NUM THEN 1 ELSE @ItemSeq + 1 END
+	            ,   @ItemName   = (CASE WHEN @ItemSeq = 1 THEN LEFT(ISNULL(N1.ITEM_NAME, ''), 20)
+	                                    WHEN @ItemSeq = 2 THEN @ItemName
+	                                    ELSE @ItemName
+	                               END)
+	            ,   @PubBaNum   = A.PUB_NUM
+	            ,   A.REMARK    = @ItemName
+	        FROM        #AGD110UKR AS A
+	            INNER JOIN (SELECT  COMP_CODE, DIV_CODE, PUB_NUM
+	                        FROM    #AGD110UKR
+	                        GROUP BY COMP_CODE, DIV_CODE, PUB_NUM
+	                       )        AS B                ON  B.COMP_CODE  = A.COMP_CODE
+	                                                    AND B.DIV_CODE   = A.DIV_CODE
+	                                                    AND B.PUB_NUM    = A.PUB_NUM
+	            LEFT  JOIN BPR100T  AS N1 WITH (NOLOCK) ON  N1.COMP_CODE = A.COMP_CODE
+	                                                    AND N1.ITEM_CODE = A.ITEM_CODE
+	      END
+	
+	    /*------------------------------------------------------------------------*/
+	    /* 3.2. 자동기표대상 데이터 조회                                          */
+	    /*------------------------------------------------------------------------*/
+	        SELECT  DISTINCT
+	                CONVERT(BIT, 0)        AS CHOICE
+	             ,  FR_PUB_DATE
+	             ,  TO_PUB_DATE
+	             ,  FR_CUSTOM_CODE
+	             ,  TO_CUSTOM_CODE
+	             ,  BILL_TYPE
+	             ,  INPUT_USER_ID
+	             ,  INPUT_DATE
+	             ,  COMP_CODE
+	             ,  DIV_CODE
+	             ,  PUB_NUM
+	             ,  BILL_FLAG
+	             ,  SALE_DATE
+	             ,  PROOF_KIND
+	             ,  CUSTOM_CODE
+	             ,  CUSTOM_NAME
+	             ,  RECEIPT_PLAN_DATE
+	             ,  SUM(SALE_LOC_AMT_I)    AS SALE_LOC_AMT_I
+	             ,  SUM(TAX_AMT_O)         AS TAX_AMT_O
+	             ,  SUM(SALE_TAX_AMT_I)    AS SALE_TAX_AMT_I
+	             ,  BILL_DIV_CODE
+	             ,  EB_YN
+	             ,  MAX(REMARK)            AS REMARK
+	             ,  EX_DATE
+	             ,  EX_NUM
+	             ,  AP_STS
+	             ,  BEFORE_PUB_NUM
+	             ,  MODI_REASON
+	        FROM    #AGD110UKR
+	        WHERE   ((EB_YN =  'Y' AND @EB_YN = 'Y')
+	           OR    (EB_YN != 'Y' AND @EB_YN = 'N')
+	           OR    (@EB_YN  =  ''))
+	        GROUP BY FR_PUB_DATE, TO_PUB_DATE, FR_CUSTOM_CODE, TO_CUSTOM_CODE, BILL_TYPE , INPUT_USER_ID, INPUT_DATE
+	               , COMP_CODE  , DIV_CODE   , PUB_NUM       , BILL_FLAG     , SALE_DATE , PROOF_KIND   , CUSTOM_CODE
+	               , CUSTOM_NAME, RECEIPT_PLAN_DATE          , BILL_DIV_CODE , EB_YN     , EX_DATE      , EX_NUM
+	               , AP_STS     , BEFORE_PUB_NUM             , MODI_REASON
+	
+	    SET NOCOUNT    OFF
+	    SET ARITHABORT OFF
+	END	
+	</select>
+	
+	
+	
+	<insert id="agd111ukrServiceImpl.insertLogTable" parameterType="Map">     
+		INSERT L_AGD110T
+			(
+				  KEY_VALUE 
+				, COMP_CODE		
+				, DIV_CODE		
+				, PUB_NUM			
+				, BEFORE_PUB_NUM	
+				, MODI_REASON		
+				, BILL_TYPE		
+				, INSERT_DB_USER
+				, INSERT_DB_TIME
+				, UPDATE_DB_USER
+				, UPDATE_DB_TIME
+			)
+			VALUES
+			(
+				  #{KEY_VALUE}
+				, #{S_COMP_CODE}
+				, #{DIV_CODE}
+				, #{PUB_NUM}
+				, #{BEFORE_PUB_NUM}
+				, #{MODI_REASON}
+				, #{BILL_TYPE}		
+				, #{S_USER_ID}
+				, GETDATE()
+				, #{S_USER_ID}
+				, GETDATE()
+			)
+	</insert>
+	
+	
+	<update id="agd111ukrServiceImpl.runAutoSlip" parameterType="Map" statementType="CALLABLE">
+		{call uniLITE.USP_ACCNT_AutoSlip30 (
+			#{S_COMP_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DIV_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PUB_DATE_FR, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PUB_DATE_TO, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CUSTOM_CODE_FR, 	mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CUSTOM_CODE_TO, 	mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{BILL_TYPE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PUB_DATE,			mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{WORK_DATE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_USER_ID, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{SYS_DATE,			mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{BILL_PUB_NUM,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{KEY_VALUE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{LANG_TYPE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CALL_PATH,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{EBYN_MESSAGE,		mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ERROR_DESC, 		mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String},
+			#{SLIP_KEY_VALUE, 	mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update> 
+	
+	<update id="agd111ukrServiceImpl.cancelSlip" parameterType="Map" statementType="CALLABLE">
+		{call uniLITE.USP_ACCNT_AutoSlip30Cancel (
+			#{S_COMP_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DIV_CODE, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PUB_DATE_FR, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PUB_DATE_TO, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CUSTOM_CODE_FR, 	mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CUSTOM_CODE_TO, 	mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{BILL_TYPE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PUB_DATE,			mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{WORK_DATE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_USER_ID, 		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{SYS_DATE,			mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{BILL_PUB_NUM,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{KEY_VALUE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{LANG_TYPE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{CALL_PATH,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{EBYN_MESSAGE,		mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ERROR_DESC, 		mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update> 
+</mapper>

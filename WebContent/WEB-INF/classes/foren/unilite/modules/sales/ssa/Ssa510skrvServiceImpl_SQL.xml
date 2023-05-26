@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ssa510skrvServiceImpl">
+	
+	<select id="ssa510skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">		
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+		
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+		
+		    DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+				  , @UserId			NVARCHAR(100)	/* 사용자ID */
+				  , @LangType		NVARCHAR(2)		/* 언어구분 */
+				  , @RefItem		NVARCHAR(01)
+				  , @DateFormat		NVARCHAR(10)
+				
+		    SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_ID}
+			SET @LangType = #{S_LANG_CODE}
+				
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+			    FROM BSA300T WITH (NOLOCK)
+			    WHERE USER_ID = @UserId
+				
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+				
+		    /* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+			    FROM BSA100T WITH (NOLOCK)
+			    WHERE COMP_CODE = @CompCode
+			    AND MAIN_CODE = N'B044'
+			    AND REF_CODE1 = N'Y'
+				
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		    
+		        SELECT A.DEPT_CODE
+					 , D.TREE_NAME      AS DEPT_NAME
+					 ,uniLITE.fnGetUserDateComp(A.COMP_CODE, A.SALE_DATE) AS SALE_DATE
+
+					 , A.POS_NO
+					 , E.POS_NAME									          
+				
+				
+		             , F.ITEM_CODE
+		             , F.ITEM_NAME
+		             , B.SALE_Q                            
+		             , B.SALE_AMT_O  + B.TAX_AMT_O  AS TOT_AMT
+		             , A.SALE_CUSTOM_CODE
+		             
+		             , B.RECEIPT_NO				/* 2015.11.13 추가 영수증 번호 */
+		             
+		             ,(CASE WHEN @RefItem = '1' THEN C.CUSTOM_NAME1
+					        WHEN @RefItem = '2' THEN C.CUSTOM_NAME2
+					                             ELSE C.CUSTOM_NAME
+					    END) AS CUSTOM_NAME    
+					  , C.CUSTOM_NAME                     
+		
+		        FROM            SSA100T A WITH (NOLOCK)    
+		             INNER JOIN SSA110T B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		                                               AND B.DIV_CODE    = A.DIV_CODE
+		                                               AND B.BILL_NUM    = A.BILL_NUM
+	   
+		              INNER JOIN BCM100T C WITH (NOLOCK) ON C.COMP_CODE  = A.COMP_CODE    /*거래처*/
+		                                               AND C.CUSTOM_CODE = A.SALE_CUSTOM_CODE
+		                                          --     AND C.AGENT_TYPE  = '2'
+		              LEFT JOIN BSA210T D WITH (NOLOCK) ON A.COMP_CODE   = D.COMP_CODE    /*부서*/
+		              								   AND A.DIV_CODE    = D.TYPE_LEVEL
+		                                               AND A.DEPT_CODE   = D.TREE_CODE     
+		              LEFT JOIN BSA240T E WITH (NOLOCK) ON E.COMP_CODE   = B.COMP_CODE    /*POS*/
+		                                               AND E.POS_NO      = B.POS_NO
+		                                               AND E.POS_TYPE    = '1'               
+		              LEFT JOIN BPR100T F WITH (NOLOCK) ON F.COMP_CODE   = B.COMP_CODE    /*품목*/
+		                                               AND F.ITEM_CODE   = B.ITEM_CODE
+		        	
+		        WHERE A.COMP_CODE       = @CompCode
+		        <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		          AND A.DIV_CODE = #{DIV_CODE}
+		        </if>  
+		        <if test="@foren.Ognl@isNotEmpty(SALE_DATE_FR)">
+		          AND A.SALE_DATE &gt;= #{SALE_DATE_FR}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(SALE_DATE_TO)">
+		          AND A.SALE_DATE &lt;= #{SALE_DATE_TO}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">     
+			     AND    D.TREE_LEVEL        LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =D.COMP_CODE AND TYPE_LEVEL=D.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+			     </if>
+		         <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+		         AND A.SALE_CUSTOM_CODE = #{CUSTOM_CODE}
+		         </if>
+				 AND A.SALE_CUSTOM_CODE != '000000'
+		        ORDER BY A.DEPT_CODE, A.SALE_DATE, A.POS_NO ,F.ITEM_NAME
+		    
+SET @END_TIME   = GETDATE()
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'ssa510skrv', '외상거래매출상세내역 조회', #{SALE_DATE_FR}, #{SALE_DATE_TO}, @DIFF_TIME
+				
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END   
+    </select>
+</mapper>

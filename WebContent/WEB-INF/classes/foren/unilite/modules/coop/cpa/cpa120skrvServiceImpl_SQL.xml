@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cpa120skrvServiceImpl">
+   
+   <select id="cpa120skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+      BEGIN
+         SET NOCOUNT ON
+         SET ARITHABORT ON
+         
+         DECLARE @CompCode       NVARCHAR(08) /* 법인코드            */
+               , @UserId          NVARCHAR(100) /* 사용자ID            */
+               , @LangType       NVARCHAR(2)  /* 언어구분            */
+               , @RefItem       NVARCHAR(01) /* 명칭 참조 유형          */
+               , @DateFormat      NVARCHAR(10) /* 날짜 포맷 유형 설정     */
+           
+               , @START_DATE_FR   NVARCHAR(08)
+               , @START_DATE_TO   NVARCHAR(08)
+               , @INVEST_DATE_FR  NVARCHAR(08)
+               , @INVEST_DATE_TO  NVARCHAR(08)
+                     
+          SET @CompCode = #{S_COMP_CODE}
+          SET @UserId   = #{S_USER_ID}
+          SET @LangType = #{S_LANG_CODE}
+         
+          SET @START_DATE_FR  = #{START_DATE_FR}
+          SET @START_DATE_TO  = #{START_DATE_TO}
+          SET @INVEST_DATE_FR = #{INVEST_DATE_FR}
+          SET @INVEST_DATE_TO = #{INVEST_DATE_TO}
+                   
+          IF @INVEST_DATE_FR = ''
+            SET @INVEST_DATE_FR = 'XX'--@START_DATE_FR
+
+          IF @INVEST_DATE_TO = ''
+            SET @INVEST_DATE_TO = 'XX'--@START_DATE_TO
+                     
+      
+          /* 명칭 참조 유형 */
+         SELECT TOP 1 @RefItem = REF_ITEM
+           FROM BSA300T WITH (NOLOCK)
+          WHERE USER_ID = @UserId
+         
+          SET @RefItem = ISNULL(@RefItem, N'0')
+         
+         /* 날짜 포맷 유형 설정 */
+         SELECT TOP 1 @DateFormat = CODE_NAME
+           FROM BSA100T WITH (NOLOCK)
+          WHERE COMP_CODE = @CompCode
+            AND MAIN_CODE = N'B044'
+            AND REF_CODE1 = N'Y'
+         
+          SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+      
+      
+         SELECT 
+			  A.COOPTOR_NAME  																	/* 조합원명*/
+--			 ,A.INVEST_CNT   																	/* 구좌    */	--안씀
+			 ,B.INOUT_Q		   																	/* 구좌    */	--수정
+			 ,A.START_DATE AS START_DATE														/* 가입일자   */ --컬럼 추가	
+			 ,UNILITE.FNGETUSERDATE(B.COMP_CODE, B.INVEST_DATE) AS INVEST_DATE					/* 변동일자   */ --컬럼 추가			 
+			 ,C.CODE_NAME										AS INOUT_TYPE					/* 변동구분*/	--컬럼추가
+			 ,A.UNIV_NUMB																		/* 학번    */
+			 ,A.COOPTOR_TYPE 																	/* 구분    */
+--			 ,A.START_DATE   																	/* 가입일  */ --삭제
+			 ,D.CUSTOM_NAME									AS BANK_CODE 						/* 은행명  */
+			 ,unilite.fnCipherDecrypt(A.BANKBOOK_NUM, 'B') 	AS BANKBOOK_NUM						/* 계좌번호*/
+			 ,A.GRADUATE_YN		   																/* 졸업여부*/
+			 ,A.GRADUATE_DATE		   															/* 졸업일자*/
+			 ,A.REPAYMENT_YN 																	/* 반환여부*/
+			 ,UNILITE.FNGETUSERDATE(A.COMP_CODE, A.REPAYMENT_DATE) AS REPAYMENT_DATE			/* 반환일자   */
+
+
+           
+           FROM CPA100T A
+		   ----추가 시작
+		   LEFT OUTER JOIN CPA200T B ON A.COMP_CODE		= B.COMP_CODE
+									AND A.COOPTOR_ID	= B.COOPTOR_ID
+		   LEFT OUTER JOIN BSA100T C ON B.COMP_CODE		= C.COMP_CODE
+									AND B.INOUT_TYPE	= C.SUB_CODE
+									AND C.MAIN_CODE		= 'YP15'
+									AND C.SUB_CODE	   != '$'
+									
+		   LEFT OUTER JOIN BCM100T D ON D.COMP_CODE     = A.COMP_CODE
+		   							AND D.CUSTOM_CODE   = A.BANK_CODE
+		   ----추가 끝
+
+         WHERE A.COMP_CODE         = @CompCode
+            <if test="@foren.Ognl@isNotEmpty(COOPTOR_TYPE)">
+            	AND A.COOPTOR_TYPE     = #{COOPTOR_TYPE}
+            </if>     
+    		<if test="REPAYMENT_YN == &quot;Y&quot;">
+    			AND A.REPAYMENT_YN = 'Y'
+    		</if>
+    		<if test="REPAYMENT_YN == &quot;N&quot;">
+    			AND A.REPAYMENT_YN = 'N'
+    		</if>
+    		<if test="@foren.Ognl@isNotEmpty(COOPTOR_NAME)">
+            	AND A.COOPTOR_NAME LIKE '%' + #{COOPTOR_NAME} + '%'      
+            </if>
+    		<if test="GRADUATE_YN == &quot;Y&quot;">
+				AND A.GRADUATE_YN = 'Y'
+    		</if>
+    		<if test="GRADUATE_YN == &quot;N&quot;">
+    			AND A.GRADUATE_YN = 'N'
+    		</if>
+    		 
+         AND (
+                 (
+                     ((A.START_DATE &gt;= @START_DATE_FR AND @START_DATE_FR != '') OR (@START_DATE_FR = ''))
+                 AND ((A.START_DATE &lt;= @START_DATE_TO AND @START_DATE_TO != '') OR (@START_DATE_TO = ''))
+                    )
+                 OR (
+                     ((B.INVEST_DATE &gt;= @INVEST_DATE_FR AND @INVEST_DATE_FR != '') OR (@INVEST_DATE_FR = ''))
+                 AND ((B.INVEST_DATE &lt;= @INVEST_DATE_TO AND @INVEST_DATE_TO != '') OR (@INVEST_DATE_TO = ''))
+                    )
+              )  
+                  		 
+
+                 
+         ORDER BY A.COOPTOR_NAME, B.INVEST_DATE		--추가         
+                 
+           SET NOCOUNT OFF
+           SET ARITHABORT OFF
+      END
+
+   </select>
+</mapper>

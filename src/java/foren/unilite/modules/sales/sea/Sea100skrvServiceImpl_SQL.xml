@@ -1,0 +1,392 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sea100skrvServiceImpl">
+	<!-- 견적현황조회 -->
+	<select id="sea100skrvServiceImpl.selectMaster" parameterType="Map" resultType="rMap">
+		/* sea100skrvServiceImpl.selectMaster */
+		DECLARE @COMP_CODE		NVARCHAR(08)			-- 법인코드
+			  , @DIV_CODE		NVARCHAR(08)			-- 사업장코드
+
+		SET @COMP_CODE		= #{S_COMP_CODE}
+		SET @DIV_CODE		= #{DIV_CODE}
+
+		SELECT A.COMP_CODE			/* 법인코드 */
+			 , A.DIV_CODE			/* 사업장 */
+			 , A.CUSTOM_CODE		/* 거래처코드 */
+			 , CASE WHEN ISNULL(A.CUSTOM_NAME, '') = '' THEN M1.CUSTOM_NAME
+														ELSE A.CUSTOM_NAME
+				END												AS CUSTOM_NAME		/* 거래처 */
+			 , A.SALE_PRSN			/* 영업담당 */
+			 , A.ESTI_REQ_DATE		/* 견적의뢰일 */
+			 , A.ESTI_ITEM_CODE		/* 품목코드 */
+			 , A.ESTI_ITEM_NAME		/* 품목명 */
+			 , A.ESTI_QTY			/* 견적수량 */
+			 , A.ESTI_TYPE			/* 견적기준 */
+			 , B.BASE_AMT			/* 기본가(합계) */
+			 , B.SPEC_AMT			/* 기획가(합계) */
+			 , A.ESTI_NUM			/* 견적의회번호 */
+			 , A.RES_PART			/* 연구파트 */
+			 , A.PROD_PART			/* 생산파트*/
+			 , A.AGREE_YN			/* 승인여부 */
+			 , '' AS ITEM_CODE		/* ERP 코드 */
+			 , '' AS ITEM_NAME		/* ERP 품목명 */
+			 , CASE WHEN ISNULL(C.ESTI_NUM, '') = '' THEN '미등록'
+													 ELSE '등록'
+			   END 												AS MAN_HOUR_YN	/* 공수등록 */
+			 , CASE WHEN ISNULL(B.ESTI_NUM, '') = '' THEN '미등록'
+													 ELSE '등록'
+			   END 												AS MATR_COST_YN	/* 원가계산등록 */
+			 , '' AS ESTI_DETAIL	/* 상세정보 */
+			 , A.PROD_COST                                                             --20210907 추가: 임가공비
+			 , A.PROD_COST * A.BASE_MAN_RATE /100               AS BASE_PROD_COST      --20210914 추가: 임가공비
+			 , A.PROD_COST * A.SPEC_MAN_RATE /100               AS SPEC_PROD_COST      --20210914 추가: 임가공비
+			 , ISNULL(B.BASE_AMT, 0) - ISNULL(A.PROD_COST, 0)   AS BASE_SOURCE_COST    --20210907 추가: 기본가(원료비)
+			 , ISNULL(B.BASE_AMT, 0) - ISNULL(A.PROD_COST, 0)   AS SPEC_SOURCE_COST    --20210907 추가: 기획가(원료비)
+		  FROM SEA100T A WITH(NOLOCK)
+		  LEFT OUTER JOIN (SELECT X.COMP_CODE
+								 , X.DIV_CODE
+								 , X.ESTI_NUM
+								 , SUM(X.BASE_FILL_AMT) AS BASE_AMT
+								 , SUM(X.SPEC_FILL_AMT) AS SPEC_AMT
+							  FROM SEA210T X WITH(NOLOCK)
+							 WHERE X.COMP_CODE	= @COMP_CODE
+							   AND X.DIV_CODE	= @DIV_CODE
+							 GROUP BY X.COMP_CODE, X.DIV_CODE, X.ESTI_NUM
+							 ) B				  ON B.COMP_CODE	= A.COMP_CODE
+												 AND B.DIV_CODE		= A.DIV_CODE
+												 AND B.ESTI_NUM		= A.ESTI_NUM
+		  LEFT OUTER JOIN (SELECT Y.COMP_CODE
+								 , Y.DIV_CODE
+								 , Y.ESTI_NUM
+							  FROM SEA200T Y WITH(NOLOCK)
+							 WHERE Y.COMP_CODE	= @COMP_CODE
+							   AND Y.DIV_CODE	= @DIV_CODE
+							 GROUP BY Y.COMP_CODE, Y.DIV_CODE, Y.ESTI_NUM
+							 ) C				  ON C.COMP_CODE	= A.COMP_CODE
+												 AND C.DIV_CODE		= A.DIV_CODE
+												 AND C.ESTI_NUM		= A.ESTI_NUM
+			-- 거래처명
+		  LEFT OUTER JOIN BCM100T M1 WITH(NOLOCK) ON M1.COMP_CODE	= A.COMP_CODE
+												 AND M1.CUSTOM_CODE	= A.CUSTOM_CODE
+		 WHERE A.COMP_CODE		= @COMP_CODE
+		   AND A.DIV_CODE		= @DIV_CODE
+
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+		AND A.CUSTOM_CODE 		= #{CUSTOM_CODE}					/* 거래처코드  */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+		AND A.CUSTOM_CODE 		LIKE  #{CUSTOM_CODE} + '%'			/* 거래처코드  */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+		--AND M1.CUSTOM_NAME 		LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+		AND A.CUSTOM_NAME 		LIKE '%' + #{CUSTOM_NAME} + '%'		/* 거래처명  */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(RES_PART)">
+		   AND A.RES_PART		 = #{RES_PART}						/* 연구파트  */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(PROD_PART)">
+		   AND A.PROD_PART		 = #{PROD_PART}						/* 생산파트  */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(SALE_PRSN)">
+		   AND A.SALE_PRSN		 = #{SALE_PRSN}						/* 영업담당  */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(FR_DATE)">
+		   AND A.ESTI_REQ_DATE &gt;= #{FR_DATE}						/* 견적의뢰일  */
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(TO_DATE)">
+		   AND A.ESTI_REQ_DATE &lt;= #{TO_DATE}						/* 견적의뢰일  */
+		</if>
+		<if test="AGREE_YN == &quot;2&quot;">
+		   AND A.AGREE_YN		 = 'Y'								/* 승인여부(미승인:'1' 승인:'2') */
+		</if>
+		<if test="AGREE_YN == &quot;1&quot;">
+		   AND A.AGREE_YN		&lt;&gt; 'Y'						/* 승인여부(미승인:'1' 승인:'2') */
+		</if>
+<!-- 20210907 추가: 조회조건 견적의뢰번호 추가 -->
+		<if test="@foren.Ognl@isNotEmpty(ESTI_NUM)">
+		   AND A.ESTI_NUM		LIKE #{ESTI_NUM} + '%'				/* 견적의뢰번호  */
+		</if>
+	</select>
+
+	<!-- 견적현황  detail 쿼리 -->
+	<select id="sea100skrvServiceImpl.selectDetail" parameterType="Map" resultType="rMap">
+	BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+
+		DECLARE @COMP_CODE  NVARCHAR(08)				-- 법인코드
+			  , @DIV_CODE   NVARCHAR(08)				-- 사업장코드
+			  , @ESTI_NUM	NVARCHAR(20)				-- 견적의뢰번호
+			  , @ESTI_QTY   NUMERIC(30,6)				-- 생산수량
+
+		SET @COMP_CODE  = #{S_COMP_CODE}
+		SET @DIV_CODE   = #{DIV_CODE}
+		SET @ESTI_NUM	= #{ESTI_NUM}
+		SET @ESTI_QTY   = #{ESTI_QTY}
+
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#TEMP_CODE')) 
+					  DROP TABLE #TEMP_CODE
+
+		CREATE TABLE #TEMP_CODE(
+						COMP_CODE		NVARCHAR(08),
+						DIV_CODE		NVARCHAR(08),
+						ESTI_NUM		NVARCHAR(20),
+						CODE_NAME		NVARCHAR(500),
+						SUB_CODE		NVARCHAR(50),
+						ESTI_QTY		NUMERIC(30,6),
+						BASE_PERCENT	INT,
+						BASE_AMT		NUMERIC(30,6),
+						BASE_AMT_PRICE	NUMERIC(30,6),
+						SPEC_PERCENT	INT,
+						SPEC_AMT		NUMERIC(30,6),
+						SPEC_AMT_PRICE	NUMERIC(30,6)
+					)
+		-- 집계항목 데이터
+		;WITH ITEMS AS (	SELECT '원재료비' AS CODE_NAME, '10' AS CODE, @COMP_CODE AS COMP_CODE
+						UNION ALL
+							SELECT '부재료비' AS CODE_NAME, '10' AS CODE, @COMP_CODE AS COMP_CODE
+						UNION ALL
+							SELECT '임가공비' AS CODE_NAME, '20' AS CODE, @COMP_CODE AS COMP_CODE
+						UNION ALL
+							SELECT '영업이익' AS CODE_NAME, '30' AS CODE, @COMP_CODE AS COMP_CODE
+						UNION ALL
+							SELECT '연구개발비' AS CODE_NAME, '40' AS CODE, @COMP_CODE AS COMP_CODE
+						UNION ALL
+							SELECT '일반관리비' AS CODE_NAME, '50' AS CODE, @COMP_CODE AS COMP_CODE
+						UNION ALL                                                                 --20210907
+							SELECT '자재관리비' AS CODE_NAME, '51' AS CODE, @COMP_CODE AS COMP_CODE
+			), CODES AS (
+					-- 기준정보(SE02)에 따른 비율 데이터
+					SELECT B.COMP_CODE
+						 , B.SUB_CODE
+						 , B.CODE_NAME
+					  FROM BSA100T B WITH(NOLOCK)
+					  LEFT OUTER JOIN BSA100T S WITH(NOLOCK) ON S.COMP_CODE	= B.COMP_CODE
+															AND S.MAIN_CODE	= B.MAIN_CODE
+															AND SUBSTRING(S.SUB_CODE, 2, 2) = SUBSTRING(B.SUB_CODE, 2, 2)
+															AND S.SUB_CODE	!= '$'
+															AND S.SUB_CODE LIKE 'S%'
+					 WHERE B.COMP_CODE	= @COMP_CODE
+					   AND B.MAIN_CODE	= 'SE02'
+					   AND B.SUB_CODE	!= '$'
+					   AND B.SUB_CODE LIKE 'B%'
+					
+			)
+			
+			INSERT INTO #TEMP_CODE
+			SELECT I.COMP_CODE																				/* 법인코드 */
+				 , A.DIV_CODE																				/* 사업장코드 */
+				 , A.ESTI_NUM																				/* 견적의뢰번호 */
+				 , I.CODE_NAME																				/* 항목 */
+				 , C.SUB_CODE
+				 , @ESTI_QTY											AS ESTI_QTY							/* 생산수량 */
+				 , CASE WHEN C.SUB_CODE = 'B10' THEN B.BASE_MTRL_RATE	-- 원재료, 부재료
+						WHEN C.SUB_CODE = 'B20' THEN A.BASE_MAN_RATE	-- 임가공비
+						WHEN C.SUB_CODE = 'B30' THEN A.BASE_SALE_RATE	-- 영업이익
+						WHEN C.SUB_CODE = 'B40' THEN A.BASE_RES_RATE	-- 연구개발비
+												ELSE 0					
+						END												AS BASE_PERCENT						/* 기본가 비율 */
+				 , CASE WHEN C.SUB_CODE = 'B10' AND I.CODE_NAME = '원재료비' THEN B.BASE_FILL_AMT
+						WHEN C.SUB_CODE = 'B10' AND I.CODE_NAME = '부재료비' THEN D.SUB_AMT
+						WHEN C.SUB_CODE = 'B20' THEN ( A.MAN_COST + A.PROD_EXPENSE ) * A.BASE_MAN_RATE / 100
+						WHEN C.SUB_CODE = 'B30' THEN 0
+						WHEN C.SUB_CODE = 'B40' THEN B.BASE_FILL_AMT	* A.BASE_RES_RATE / 100
+												ELSE E.COMMON_COST		* @ESTI_QTY
+						END												AS BASE_AMT							/* 기본가 금액 */
+				 , CASE WHEN C.SUB_CODE = 'B10' AND I.CODE_NAME = '원재료비' THEN B.BASE_FILL_AMT
+						WHEN C.SUB_CODE = 'B10' AND I.CODE_NAME = '부재료비' THEN D.SUB_AMT
+						WHEN C.SUB_CODE = 'B20' THEN ( A.MAN_COST + A.PROD_EXPENSE ) * A.BASE_MAN_RATE / 100
+						WHEN C.SUB_CODE = 'B30' THEN 0
+						WHEN C.SUB_CODE = 'B40' THEN B.BASE_FILL_AMT	* A.BASE_RES_RATE / 100
+												ELSE E.COMMON_COST		* @ESTI_QTY
+						END	/ @ESTI_QTY								AS BASE_AMT_PRICE						/* 기본가 개당원가 */
+
+				 , CASE WHEN C.SUB_CODE = 'B10' THEN B.SPEC_MTRL_RATE	-- 원재료, 부재료
+						WHEN C.SUB_CODE = 'B20' THEN A.SPEC_MAN_RATE	-- 임가공비
+						WHEN C.SUB_CODE = 'B30' THEN A.SPEC_SALE_RATE	-- 영업이익
+						WHEN C.SUB_CODE = 'B40' THEN A.SPEC_RES_RATE	-- 연구개발비
+												ELSE 0					
+						END												AS SPEC_PERCENT						/* 기획가 비율 */ 
+				 , CASE WHEN C.SUB_CODE = 'B10' AND I.CODE_NAME = '원재료비' THEN B.SPEC_FILL_AMT
+						WHEN C.SUB_CODE = 'B10' AND I.CODE_NAME = '부재료비' THEN D.SUB_AMT
+						WHEN C.SUB_CODE = 'B20' THEN ( A.MAN_COST + A.PROD_EXPENSE ) * A.SPEC_MAN_RATE / 100
+						WHEN C.SUB_CODE = 'B30' THEN 0
+						WHEN C.SUB_CODE = 'B40' THEN B.SPEC_FILL_AMT	* A.SPEC_RES_RATE / 100
+												ELSE E.COMMON_COST		* @ESTI_QTY
+						END											AS SPEC_AMT								/* 기획가 금액 */
+					
+					
+				 , CASE WHEN C.SUB_CODE = 'B10' AND I.CODE_NAME = '원재료비' THEN B.SPEC_FILL_AMT
+						WHEN C.SUB_CODE = 'B10' AND I.CODE_NAME = '부재료비' THEN D.SUB_AMT
+						WHEN C.SUB_CODE = 'B20' THEN ( A.MAN_COST + A.PROD_EXPENSE ) * A.SPEC_MAN_RATE / 100
+						WHEN C.SUB_CODE = 'B30' THEN 0
+						WHEN C.SUB_CODE = 'B40' THEN B.SPEC_FILL_AMT 	* A.SPEC_RES_RATE / 100
+												ELSE E.COMMON_COST 		* @ESTI_QTY
+						END	/ @ESTI_QTY								AS SPEC_AMT_PRICE						/* 기획가 개당원가 */
+			  FROM ITEMS I -- 집계항목
+			
+			-- 집계항목 코드
+			  LEFT OUTER JOIN CODES   C WITH(NOLOCK) ON C.COMP_CODE					= I.COMP_CODE 
+													AND SUBSTRING(C.SUB_CODE, 2, 2)	= I.CODE
+			-- 견적관리 MASTER
+			  LEFT OUTER JOIN SEA100T A WITH(NOLOCK) ON A.COMP_CODE	= I.COMP_CODE    --20210907 수정: C -> I
+													AND A.DIV_CODE	= @DIV_CODE
+													AND A.ESTI_NUM	= @ESTI_NUM
+			-- 원재료비
+			  LEFT OUTER JOIN ( SELECT X1.COMP_CODE
+									 , X1.DIV_CODE
+									 , X1.ESTI_NUM
+									 , SUM(ISNULL(X1.BASE_FILL_AMT, 0))	AS BASE_FILL_AMT
+									 , SUM(ISNULL(X1.SPEC_FILL_AMT, 0))	AS SPEC_FILL_AMT
+									 , MAX(ISNULL(X1.BASE_MTRL_RATE, 0)) AS BASE_MTRL_RATE
+									 , MAX(ISNULL(X1.SPEC_MTRL_RATE, 0)) AS SPEC_MTRL_RATE
+								  FROM SEA210T X1  WITH(NOLOCK)
+								 WHERE X1.COMP_CODE		= @COMP_CODE
+								   AND X1.DIV_CODE		= @DIV_CODE
+								   AND X1.ESTI_NUM		= @ESTI_NUM
+								 GROUP BY X1.COMP_CODE, X1.DIV_CODE, X1.ESTI_NUM
+									)	B			 ON A.COMP_CODE	= B.COMP_CODE
+													AND A.DIV_CODE	= B.DIV_CODE
+													AND A.ESTI_NUM	= B.ESTI_NUM
+			-- 부재료비
+			  LEFT OUTER JOIN ( SELECT X2.COMP_CODE
+									 , X2.DIV_CODE
+									 , X2.ESTI_NUM
+									 , SUM(ISNULL(X2.ESTI_AMT, 0))	AS SUB_AMT
+								  FROM SEA220T X2  WITH(NOLOCK)
+								 WHERE X2.COMP_CODE		= @COMP_CODE
+								  AND X2.DIV_CODE		= @DIV_CODE
+								  AND X2.ESTI_NUM		= @ESTI_NUM
+								  AND X2.FREE_PAY_TYPE  = '1'
+								GROUP BY X2.COMP_CODE, X2.DIV_CODE, X2.ESTI_NUM
+								)	D				 ON D.COMP_CODE	= A.COMP_CODE
+													AND D.DIV_CODE	= A.DIV_CODE
+													AND D.ESTI_NUM	= A.ESTI_NUM
+			-- 일반관리비
+			  LEFT OUTER JOIN ( SELECT X3.COMP_CODE
+									 , X3.DIV_CODE
+									 , X3.ESTI_NUM
+									 , MAX(ISNULL(X3.COMMON_COST, 0))	AS COMMON_COST
+								  FROM SEA200T X3  WITH(NOLOCK)
+								 WHERE X3.COMP_CODE		= @COMP_CODE
+								   AND X3.DIV_CODE		= @DIV_CODE
+								   AND X3.ESTI_NUM		= @ESTI_NUM
+								GROUP BY X3.COMP_CODE, X3.DIV_CODE, X3.ESTI_NUM
+								)	E				 ON E.COMP_CODE	= A.COMP_CODE
+													AND E.DIV_CODE	= A.DIV_CODE
+													AND E.ESTI_NUM	= A.ESTI_NUM
+		
+		
+		-- 영업이익 데이터 가공
+		UPDATE #TEMP_CODE
+		   SET BASE_AMT		  = ( SELECT SUM(BASE_AMT)
+									FROM #TEMP_CODE
+								   WHERE COMP_CODE		= @COMP_CODE
+									 AND DIV_CODE		= @DIV_CODE
+									 AND ESTI_NUM		= @ESTI_NUM
+									 AND SUB_CODE IN ('B10', 'B20')
+								   GROUP BY COMP_CODE, DIV_CODE, ESTI_NUM) * BASE_PERCENT / 100
+			 , BASE_AMT_PRICE = ( SELECT SUM(BASE_AMT)
+									FROM #TEMP_CODE
+								   WHERE COMP_CODE		= @COMP_CODE
+									 AND DIV_CODE		= @DIV_CODE
+									 AND ESTI_NUM		= @ESTI_NUM
+									 AND SUB_CODE IN ('B10', 'B20')
+								   GROUP BY COMP_CODE, DIV_CODE, ESTI_NUM) * BASE_PERCENT / 100 / ESTI_QTY
+			 , SPEC_AMT 	  = ( SELECT SUM(SPEC_AMT)
+									FROM #TEMP_CODE
+								   WHERE COMP_CODE		= @COMP_CODE
+									 AND DIV_CODE		= @DIV_CODE
+									 AND ESTI_NUM		= @ESTI_NUM
+									 AND SUB_CODE IN ('B10', 'B20')
+									 GROUP BY COMP_CODE, DIV_CODE, ESTI_NUM) * SPEC_PERCENT / 100
+			 , SPEC_AMT_PRICE = ( SELECT SUM(SPEC_AMT)
+									FROM #TEMP_CODE
+								   WHERE COMP_CODE		= @COMP_CODE
+									 AND DIV_CODE		= @DIV_CODE
+									 AND ESTI_NUM		= @ESTI_NUM
+									 AND SUB_CODE IN ('B10', 'B20')
+								   GROUP BY COMP_CODE, DIV_CODE, ESTI_NUM) * SPEC_PERCENT / 100 / ESTI_QTY
+		 WHERE COMP_CODE	= @COMP_CODE
+		   AND DIV_CODE		= @DIV_CODE
+		   AND ESTI_NUM		= @ESTI_NUM
+		   AND SUB_CODE		= 'B30'
+
+		-- 20210907 자재관리비 관련 로직 추가
+		IF EXISTS (SELECT TOP 1 1
+		             FROM SEA100T WITH(NOLOCK)
+		            WHERE COMP_CODE	= @COMP_CODE
+		              AND DIV_CODE	= @DIV_CODE
+		              AND ESTI_NUM	= @ESTI_NUM
+		              AND ISNULL(MAT_TYPE, '') != '')
+		    BEGIN
+		        UPDATE #TEMP_CODE
+		           SET BASE_AMT       = @ESTI_QTY * (SELECT CASE WHEN @DIV_CODE = '01' THEN CONVERT(NUMERIC(30, 6), REF_CODE1)
+		                                                         WHEN @DIV_CODE = '02' THEN CONVERT(NUMERIC(30, 6), REF_CODE2)
+		                                                    END
+		                                               FROM SEA100T A WITH(NOLOCK)
+		                                               LEFT JOIN BSA100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                                                AND B.MAIN_CODE = 'SE05'
+		                                                                                AND B.SUB_CODE  = CASE WHEN A.MAT_TYPE = '01' THEN '51'
+		                                                                                                       WHEN A.MAT_TYPE = '02' THEN '52'
+		                                                                                                   END
+		                                              WHERE A.COMP_CODE = @COMP_CODE
+		                                                AND A.DIV_CODE  = @DIV_CODE
+		                                                AND A.ESTI_NUM  = @ESTI_NUM)
+		             , BASE_AMT_PRICE = (SELECT CASE WHEN @DIV_CODE = '01' THEN CONVERT(NUMERIC(30, 6), REF_CODE1)
+		                                             WHEN @DIV_CODE = '02' THEN CONVERT(NUMERIC(30, 6), REF_CODE2)
+		                                        END
+		                                   FROM SEA100T A WITH(NOLOCK)
+		                                   LEFT JOIN BSA100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                                    AND B.MAIN_CODE = 'SE05'
+		                                                                    AND B.SUB_CODE  = CASE WHEN A.MAT_TYPE = '01' THEN '51'
+		                                                                                           WHEN A.MAT_TYPE = '02' THEN '52'
+		                                                                                       END
+		                                  WHERE A.COMP_CODE = @COMP_CODE
+		                                    AND A.DIV_CODE  = @DIV_CODE
+		                                    AND A.ESTI_NUM  = @ESTI_NUM)
+		             , SPEC_AMT       = @ESTI_QTY * (SELECT CASE WHEN @DIV_CODE = '01' THEN CONVERT(NUMERIC(30, 6), REF_CODE1)
+		                                                         WHEN @DIV_CODE = '02' THEN CONVERT(NUMERIC(30, 6), REF_CODE2)
+		                                                    END
+		                                               FROM SEA100T A WITH(NOLOCK)
+		                                               LEFT JOIN BSA100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                                                AND B.MAIN_CODE = 'SE05'
+		                                                                                AND B.SUB_CODE  = CASE WHEN A.MAT_TYPE = '01' THEN '51'
+		                                                                                                       WHEN A.MAT_TYPE = '02' THEN '52'
+		                                                                                                   END
+		                                              WHERE A.COMP_CODE = @COMP_CODE
+		                                                AND A.DIV_CODE  = @DIV_CODE
+		                                                AND A.ESTI_NUM  = @ESTI_NUM)
+		             , SPEC_AMT_PRICE = (SELECT CASE WHEN @DIV_CODE = '01' THEN CONVERT(NUMERIC(30, 6), REF_CODE1)
+		                                             WHEN @DIV_CODE = '02' THEN CONVERT(NUMERIC(30, 6), REF_CODE2)
+		                                        END
+		                                   FROM SEA100T A WITH(NOLOCK)
+		                                   LEFT JOIN BSA100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                                    AND B.MAIN_CODE = 'SE05'
+		                                                                    AND B.SUB_CODE  = CASE WHEN A.MAT_TYPE = '01' THEN '51'
+		                                                                                           WHEN A.MAT_TYPE = '02' THEN '52'
+		                                                                                       END
+		                                  WHERE A.COMP_CODE = @COMP_CODE
+		                                    AND A.DIV_CODE  = @DIV_CODE
+		                                    AND A.ESTI_NUM  = @ESTI_NUM)
+		        WHERE COMP_CODE = @COMP_CODE
+		          AND DIV_CODE  = @DIV_CODE
+		          AND ESTI_NUM  = @ESTI_NUM
+		          AND CODE_NAME = '자재관리비'
+		    END
+
+		    SELECT *
+		      FROM       #TEMP_CODE A
+		      --20210914 추가: MASTER DATA에 합계 구하기 위해 추가
+		      INNER JOIN (SELECT COMP_CODE, DIV_CODE, ESTI_NUM, SUM(BASE_AMT) AS SUM_BASE_AMT, SUM(SPEC_AMT) AS SUM_SPEC_AMT
+		                    FROM #TEMP_CODE
+		                   GROUP BY COMP_CODE, DIV_CODE, ESTI_NUM ) B ON B.COMP_CODE = A.COMP_CODE
+		                                                             AND B.DIV_CODE  = A.DIV_CODE
+		                                                             AND B.ESTI_NUM  = A.ESTI_NUM
+
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END 
+	</select>
+
+</mapper>

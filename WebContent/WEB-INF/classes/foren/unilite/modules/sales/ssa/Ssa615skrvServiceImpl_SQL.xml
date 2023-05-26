@@ -1,0 +1,538 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ssa615skrvServiceImpl">
+
+	<select id="ssa615skrvServiceImpl.selectList1" parameterType="Map" resultType="rMap">
+	<![CDATA[
+		    /* ssa610skrv.Cssa610skrv[fnSsa610QStd] QUERY01 */
+		    DECLARE     @CompCode       NVARCHAR(10)
+		              , @DivCode        NVARCHAR(10)
+		              , @CustomCode     NVARCHAR(10)
+		              , @FrDate         NVARCHAR(08)
+		              , @ToDate         NVARCHAR(08)
+		              , @AgentType      NVARCHAR(08)
+		              , @PrevYM         NVARCHAR(06)
+		              , @SALE_DATE      NVARCHAR(08)
+		              , @BALANCE_AMT    NUMERIC(30,6)
+		              , @BAL_CALC_AMT   NUMERIC(30,6)
+		              , @BASIS_DATE     NVARCHAR(08)
+		              , @STDT           NVARCHAR(06)
+					  , @TO_STDT		NVARCHAR(08)
+
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+		    SET @CompCode       = #{S_COMP_CODE}
+		    SET @DivCode        = #{DIV_CODE}
+		    SET @FrDate         = #{FrDate}
+		    SET @ToDate         = #{ToDate}
+		    SET @CustomCode     = #{CUSTOM_CODE}
+		    SET @AgentType      = #{AGENT_TYPE}
+		    SET @PrevYM         = CONVERT(VARCHAR(6), DATEADD(month, -1, @FrDate), 112)
+
+		    SELECT @STDT = SUBSTRING(FN_DATE, 1, 6)
+		      FROM BOR100T WITH(NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+
+		IF @STDT > CONVERT(NVARCHAR(08), DATEADD(D, -1, @FrDate), 112) 
+			SET @TO_STDT = @STDT
+		 ELSE 
+			SET @TO_STDT = CONVERT(NVARCHAR(08), DATEADD(D, -1, @FrDate), 112) 
+
+
+		    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE ID=OBJECT_ID('tempdb..#TMP_SSA610'))
+		        DROP TABLE #TMP_SSA610
+
+		    SELECT COMP_CODE
+					, DIV_CODE
+					, MONEY_UNIT
+					, LEFT(BASE_DATE,6) AS SALE_MONTH
+					, BASE_DATE
+					, SUM(REMAIN_AMT) AS CARRIED_OVER_AMT
+					, SALE_AMT --SUM(SALE_AMT) AS SALE_AMT
+					, SUM(COLLECT_AMT) AS COLLECT_AMT
+					, SUM(REMAIN_AMT) AS REMAIN_AMT
+					, GUBUN
+					, ROW_NUMBER() OVER(ORDER BY MONEY_UNIT, GUBUN, BASE_DATE) AS SEQ
+					, CARD_SALE -- SUM(CARD_SALE) AS CARD_SALE
+					, BAL_TYPE, BASIS_NUM, PRE_PAY
+					, CUSTOM_CODE
+					, PUB_YN
+ 		      INTO #TMP_SSA610
+		      FROM (
+		             --SELECT COMP_CODE, DIV_CODE, LEFT(@FrDate,6) AS BASE_DATE, MONEY_UNIT, 0 AS SALE_AMT, 0 AS COLLECT_AMT, SUM(UNCOLLECT_AMT) AS REMAIN_AMT
+		             SELECT COMP_CODE
+		                  , DIV_CODE
+		                  , LEFT(@FrDate,6)    AS BASE_DATE
+		                  , MONEY_UNIT
+		                  , SUM(UNCOLLECT_AMT) AS SALE_AMT
+		                  , 0                  AS COLLECT_AMT
+		                  , 0                  AS REMAIN_AMT
+		                  , '1'                AS GUBUN   --기초(매출)
+		                  , 0                  AS CARD_SALE
+		                  , '매출기초'         	   AS BAL_TYPE
+		                  , ''                 AS BASIS_NUM
+		                  , 0 				   AS PRE_PAY
+		                  , CUSTOM_CODE
+						  , ''					AS PUB_YN
+		               FROM unilite.fnGetBalance4CustomTbl(@CompCode, @DivCode, @CustomCode, @FrDate, '', '3')
+		               GROUP BY COMP_CODE, DIV_CODE, MONEY_UNIT, CUSTOM_CODE
+					   HAVING SUM(UNCOLLECT_AMT) <> 0
+
+		             UNION ALL
+
+		             SELECT A.COMP_CODE
+		                  , A.DIV_CODE
+		                  , LEFT(@FrDate, 6)                                                           AS BASE_DATE
+		                  , A.MONEY_UNIT 
+		                  , 0                                                                          AS SALE_AMT
+		                  , SUM(CASE WHEN B.JAN_DIVI = '2' THEN A.CR_AMT_I - A.DR_AMT_I ELSE 0 END)
+		                  - SUM(CASE WHEN B.JAN_DIVI = '1' THEN A.DR_AMT_I - A.CR_AMT_I ELSE 0 END)    AS COLLECT_AMT
+		                  , 0                                                                          AS REMAIN_AMT
+		                  , '1'                                                                        AS GUBUN --기초(매입)
+		                  , 0                                                                          AS CARD_SALE
+		                  , '매입기초'                                                                    AS BALL_TYPE
+		                  , ''                                                                         AS BASIS_NUM 
+		                  , 0 																		   AS PRE_PAY
+		                  , CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+		                         WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+		                    END                                                                        AS CUSTOM_CODE
+						  , ''					AS PUB_YN
+		               FROM       AGB200T A WITH(NOLOCK)
+		               INNER JOIN ABA400T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                AND B.ACCNT     = A.ACCNT
+		              WHERE A.COMP_CODE = @CompCode
+		                AND A.DIV_CODE  = @DivCode
+--		                AND A.AC_DATE BETWEEN @STDT AND CONVERT(NVARCHAR(08), DATEADD(D, -1, @FrDate), 112) ----회계기초년월 ~ FRDATE 전날
+		                AND A.AC_DATE BETWEEN @STDT AND  @TO_STDT----회계기초년월 ~ FRDATE 전날
+		                AND B.SPEC_DIVI IN ('J1', 'J2')
+		                AND (A.BOOK_CODE1 = 'A4' OR A.BOOK_CODE2 = 'A4')
+		                AND CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+		                         WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+		                    END         = @CustomCode
+		              GROUP BY A.COMP_CODE, A.DIV_CODE, A.MONEY_UNIT 
+		                     , CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+		                            WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+		                       END
+		              --ORDER BY 1, 2
+					UNION ALL
+							SELECT COMP_CODE, DIV_CODE, LEFT(@FrDate, 6)  AS BASE_DATE
+								, MONEY_UNIT
+								, 0 AS SALE_AMT
+								, SUM(AMOUNT_I + VAT_AMOUNT_O)  AS COLLECT_AMT
+								, 0                                                                          AS REMAIN_AMT
+								, '1'                                                                        AS GUBUN --기초(매입)
+								, 0                                                                          AS CARD_SALE
+								, '매입기초'                                                                 AS BALL_TYPE
+								, '매입(회계미반영)'                                                             AS BASIS_NUM 
+								, 0 			    													   AS PRE_PAY
+								, CUSTOM_CODE
+								, ''					AS PUB_YN
+							FROM MAP100T 
+
+							WHERE COMP_CODE = @CompCode
+								AND DIV_CODE = @DivCode
+								AND CHANGE_BASIS_DATE < @FrDate
+								AND ISNULL(AC_DATE, '') = ''	
+								AND CUSTOM_CODE = @CustomCode
+							GROUP BY COMP_CODE, DIV_CODE, CUSTOM_CODE, MONEY_UNIT, CUSTOM_CODE
+
+		             UNION ALL
+
+		             SELECT A.COMP_CODE
+		                  , A.DIV_CODE
+		                  , A.SALE_DATE                     AS BASE_DATE
+		                  , A.MONEY_UNIT
+		                  , SUM(A.SALE_LOC_AMT_I + A.TAX_AMT_O) AS SALE_AMT
+		                  --, 0 AS COLLECT_AMT
+		                  , CASE WHEN A.BILL_TYPE = '40' THEN SUM(A.SALE_LOC_AMT_I + A.TAX_AMT_O)
+		                         ELSE 0
+		                    END                           AS COLLECT_AMT
+		                  , 0                             AS REMAIN_AMT
+		                  , '5'                           AS GUBUN    --매출
+		                  , CASE WHEN A.BILL_TYPE = '40' THEN SUM(A.SALE_LOC_AMT_I + A.TAX_AMT_O)
+		                         ELSE 0
+		                    END                           AS CARD_SALE
+		                  , '매출'                          AS BAL_TYPE
+		                  , A.BILL_NUM                      AS BASIS_NUM
+		                  , 0 							  AS PRE_PAY
+		                  , A.SALE_CUSTOM_CODE              AS CUSTOM_CODE
+						  , CASE WHEN A.BILL_TYPE = '10' AND ISNULL(B.PUB_AMT, 0) < SUM(A.SALE_LOC_AMT_I+A.TAX_AMT_O) THEN '미발행'
+							WHEN A.BILL_TYPE != '10' THEN ''
+							ELSE '발행' 	END							AS PUB_YN
+
+
+		               FROM SALES_V A
+							LEFT JOIN  (
+								SELECT COMP_CODE, DIV_CODE, BILL_NUM, BILL_TYPE
+										, SUM(SALE_LOC_AMT_I+TAX_AMT_O) PUB_AMT, SUM(SALE_LOC_AMT_I+TAX_AMT_O) BILL_AMT
+								FROM SALES_V 
+								WHERE 1 = 1 
+									AND COMP_CODE = 'MASTER' AND DIV_CODE = '01'
+									AND ISNULL(PUB_NUM, '') != ''
+									AND BILL_TYPE = 10 
+									--AND ISNULL(PUB_NUM, '') != 0
+								GROUP BY COMP_CODE, DIV_CODE, BILL_NUM, BILL_TYPE 
+									) B ON B.COMP_CODE = A.COMP_CODE AND B.DIV_CODE = A.DIV_CODE AND B.BILL_NUM = A.BILL_NUM
+
+		              WHERE A.COMP_CODE        = @CompCode
+		                AND A.SALE_CUSTOM_CODE LIKE @CustomCode + '%'
+		                AND A.SALE_DATE        >= @FrDate
+		                AND A.SALE_DATE        <= @ToDate
+		              GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_DATE, A.MONEY_UNIT, A.BILL_TYPE, A.BILL_NUM, A.SALE_CUSTOM_CODE, B.PUB_AMT
+
+		             UNION ALL
+
+		             SELECT COMP_CODE
+		                  , DIV_CODE
+		                  , COLLECT_DATE
+		                  , MONEY_UNIT
+		                  , 0                    AS SALE_AMT
+		                  --, SUM(COLLECT_FOR_AMT) AS COLLECT_AMT
+ 						  , CASE WHEN COLLECT_TYPE = '80' THEN 0 ELSE SUM(COLLECT_FOR_AMT) END AS COLLECT_AMT
+
+		                  , 0                    AS REMAIN_AMT
+		                  , '5'                  AS GUBUN    --수금
+		                  , 0                    AS CARD_SALE
+		                  , '수금'                 AS BAL_TYPE
+		                  , COLLECT_NUM          AS BASIS_NUM
+		                  --, 0 AS PRE_PAY
+						  , CASE WHEN COLLECT_TYPE = '80' THEN SUM(COLLECT_FOR_AMT) ELSE 0 END AS PRE_PAY
+						  , CUSTOM_CODE
+						  , ''					AS PUB_YN
+		               FROM SCO100T WITH(NOLOCK)
+		              WHERE COMP_CODE     = @CompCode
+		                AND CUSTOM_CODE   LIKE @CustomCode + '%'
+		                AND COLLECT_DATE >= @FrDate
+		                AND COLLECT_DATE <= @ToDate
+		             GROUP BY COMP_CODE, DIV_CODE, COLLECT_DATE, MONEY_UNIT, COLLECT_NUM, COLLECT_TYPE, CUSTOM_CODE
+
+		             UNION ALL
+
+		             SELECT A.COMP_CODE
+		                  , A.DIV_CODE
+		                  , B.CHANGE_BASIS_DATE       AS BASE_DATE
+		                  , B.MONEY_UNIT
+		                  , 0                         AS SALE_AMT  
+		                  , SUM(A.AMOUNT_I + A.TAX_I) AS COLLECT_AMT -- PURCHASE_AMT 
+		                  , 0                         AS REMAIN_AMT
+		                  , '5'                       AS GUBUN  --지급결의
+		                  , 0                         AS CARD_SALE
+		                  , '매입'                    AS BAL_TYPE
+		                  , A.CHANGE_BASIS_NUM        AS BASIS_NUM
+		                  , 0 AS PRE_PAY
+		                  , B.CUSTOM_CODE
+						  , ''					AS PUB_YN
+		               FROM       MAP200T A WITH(NOLOCK)--A.CHANGE_BASIS_NUM,
+		               INNER JOIN MAP100T B WITH(NOLOCK) ON B.COMP_CODE        = A.COMP_CODE
+		                                                AND B.DIV_CODE         = A.DIV_CODE
+		                                                AND B.CHANGE_BASIS_NUM = A.CHANGE_BASIS_NUM
+		               WHERE A.COMP_CODE          = @CompCode
+		                 AND B.CUSTOM_CODE        = @CustomCode
+		                 AND B.CHANGE_BASIS_DATE >= @FrDate
+		                 AND B.CHANGE_BASIS_DATE <= @ToDate
+		             GROUP BY A.COMP_CODE, A.DIV_CODE, B.CHANGE_BASIS_DATE  , B.MONEY_UNIT , A.CHANGE_BASIS_NUM, B.CUSTOM_CODE
+
+		             UNION ALL
+
+		             SELECT A.COMP_CODE
+		                  , A.DIV_CODE
+		                  , A.AC_DATE   AS BASE_DATE
+		                  , A.MONEY_UNIT
+		                  --, A.AMT_I     AS SALE_AMT
+		                  , CASE WHEN SUM(A.AMT_I) < ISNULL(C.AMT_I, 0) THEN 0 ELSE SUM(A.AMT_I) - ISNULL(C.AMT_I, 0) END	AS SALE_AMT --@@
+		                  , 0            AS COLLECT_AMT 
+		                  , 0            AS REMAIN_AMT 
+		                  , '5'          AS GUBUN
+		                  , 0            AS CARD_SALE 
+		                  , '지급'        AS BAL_TYPE 
+		                  --, A.AC_DATE  		AS BASIS_NUM
+		                  , A.AC_DATE + '-' + CONVERT(NVARCHAR(8), A.SLIP_NUM ) 		AS BASIS_NUM
+		                  , ISNULL(C.AMT_I, 0)  AS PRE_PAY
+		                  , A.CUSTOM_CODE
+						  , ''					AS PUB_YN
+		               FROM       AGJ210T A WITH(NOLOCK)
+		               INNER JOIN ABA400T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                AND B.ACCNT     = A.ACCNT
+						LEFT OUTER JOIN (
+											SELECT C.COMP_CODE
+												 , C.DIV_CODE
+												 , C.AC_DATE
+												 , C.SLIP_NUM
+												 --, C.SLIP_SEQ
+												 , C.ACCNT
+												 , C.DR_CR
+												 , SUM(C.AMT_I)	AS AMT_I
+											  FROM AGJ210T C
+													INNER JOIN		ABA400T D
+																 ON C.COMP_CODE	= D.COMP_CODE
+																AND C.ACCNT		= D.ACCNT
+											 WHERE C.COMP_CODE	= @CompCode
+											   AND C.DIV_CODE = @DivCode
+											   AND D.SPEC_DIVI	= 'J2'
+											   AND C.CUSTOM_CODE	= @CustomCode
+											   AND ISNULL(C.MOD_DIVI, '') != 'D'
+											   AND C.AC_DATE >= @FrDate
+											   AND C.AC_DATE <= @ToDate
+											 GROUP BY C.COMP_CODE
+												 , C.DIV_CODE
+												 , C.AC_DATE
+												 , C.SLIP_NUM
+												 --, C.SLIP_SEQ
+												 , C.ACCNT
+												 , C.DR_CR
+										) C
+									 ON A.COMP_CODE	= C.COMP_CODE
+									AND A.DIV_CODE	= C.DIV_CODE
+									AND A.AC_DATE	= C.AC_DATE
+									AND A.SLIP_NUM	= C.SLIP_NUM
+									--AND A.SLIP_SEQ	!= C.SLIP_SEQ
+									AND A.DR_CR		!= C.DR_CR
+		                                                
+		              WHERE A.COMP_CODE           = @CompCode
+		                AND A.DIV_CODE            = @DivCode
+		                AND B.SPEC_DIVI           = 'J1'
+		                AND A.DR_CR              != B.JAN_DIVI
+		                AND A.CUSTOM_CODE         = @CustomCode
+		                AND ISNULL(MOD_DIVI, '') != 'D'
+		                AND A.AC_DATE            >= @FrDate
+		                AND A.AC_DATE            <= @ToDate
+		                AND A.AMT_I				>= 0
+				--GROUP BY A.COMP_CODE, A.DIV_CODE, A.AC_DATE, A.MONEY_UNIT, C.AMT_I, A.CUSTOM_CODE
+				GROUP BY A.COMP_CODE, A.DIV_CODE, A.AC_DATE, A.SLIP_NUM, A.MONEY_UNIT, C.AMT_I, A.CUSTOM_CODE
+
+		             UNION ALL
+
+		             SELECT A.COMP_CODE
+		                  , A.DIV_CODE
+		                  , A.AC_DATE   AS BASE_DATE
+		                  , A.MONEY_UNIT
+		                  --, A.AMT_I     AS SALE_AMT
+		                  --, CASE WHEN SUM(A.AMT_I) < ISNULL(C.AMT_I, 0) THEN 0 ELSE SUM(A.AMT_I) - ISNULL(C.AMT_I, 0) END	AS SALE_AMT --@@
+		                  , SUM(A.AMT_I)	AS SALE_AMT --@@
+		                  , 0            AS COLLECT_AMT 
+		                  , 0            AS REMAIN_AMT 
+		                  , '5'          AS GUBUN
+		                  , 0            AS CARD_SALE 
+		                  , '지급'        AS BAL_TYPE 
+		                  --, A.AC_DATE  		AS BASIS_NUM
+		                  , A.AC_DATE + '-' + CONVERT(NVARCHAR(8), A.SLIP_NUM ) 		AS BASIS_NUM
+		                  , 0  AS PRE_PAY
+		                  , A.CUSTOM_CODE
+						  , ''					AS PUB_YN
+		               FROM       AGJ210T A WITH(NOLOCK)
+		               INNER JOIN ABA400T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                AND B.ACCNT     = A.ACCNT
+		              WHERE A.COMP_CODE           = @CompCode
+		                AND A.DIV_CODE            = @DivCode
+		                AND B.SPEC_DIVI           = 'J1'
+		                AND A.DR_CR              != B.JAN_DIVI
+		                AND A.CUSTOM_CODE         = @CustomCode
+		                AND ISNULL(MOD_DIVI, '') != 'D'
+		                AND A.AC_DATE            >= @FrDate
+		                AND A.AC_DATE            <= @ToDate
+						AND A.AMT_I				 < 0
+				--GROUP BY A.COMP_CODE, A.DIV_CODE, A.AC_DATE, A.MONEY_UNIT, A.CUSTOM_CODE
+				GROUP BY A.COMP_CODE, A.DIV_CODE, A.AC_DATE, A.SLIP_NUM, A.MONEY_UNIT, A.CUSTOM_CODE
+
+		             UNION ALL
+
+		             SELECT A.COMP_CODE
+		                  , A.DIV_CODE
+		                  , A.AC_DATE       AS BASE_DATE
+		                  , A.MONEY_UNIT
+		                  , A.AMT_I         AS SALE_AMT
+		                  , 0               AS COLLECT_AMT 
+		                  , 0               AS REMAIN_AMT 
+		                  , '5'             AS GUBUN
+		                  , 0               AS CARD_SALE 
+		                  , '선급'          AS BAL_TYPE 
+		                  --, A.AC_DATE  		AS BASIS_NUM
+		                  , A.AC_DATE + '-' + CONVERT(NVARCHAR(8), A.SLIP_NUM ) 		AS BASIS_NUM
+		                  , 0 			   AS PRE_PAY
+		                  , A.CUSTOM_CODE
+						  , ''					AS PUB_YN
+		               FROM       AGJ210T A WITH(NOLOCK)
+		               INNER JOIN ABA400T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                AND B.ACCNT     = A.ACCNT
+		              WHERE A.COMP_CODE           = @CompCode
+		                AND A.DIV_CODE            = @DivCode
+		                AND B.SPEC_DIVI           = 'J2'
+		                AND A.DR_CR               = B.JAN_DIVI
+		                AND A.CUSTOM_CODE         = @CustomCode
+		                AND ISNULL(MOD_DIVI, '') != 'D'
+		                AND A.AC_DATE            >= @FrDate
+		                AND A.AC_DATE            <= @ToDate
+		      ) X
+		     --GROUP BY COMP_CODE, DIV_CODE, MONEY_UNIT, BASE_DATE, GUBUN, BAL_TYPE, BASIS_NUM, SALE_AMT;
+    		GROUP BY COMP_CODE, DIV_CODE, MONEY_UNIT, BASE_DATE, GUBUN, BAL_TYPE, BASIS_NUM, PRE_PAY, CARD_SALE, SALE_AMT, CUSTOM_CODE, PUB_YN;
+
+		    --SELECT * FROM #TMP_SSA610
+
+		    WITH ACCOUNT_BOOK
+		    AS (
+		        SELECT *
+		        FROM #TMP_SSA610
+		    )
+
+		    SELECT ''  + A.MONEY_UNIT
+		         + ' ' + unilite.fnGetUserdate(A.COMP_CODE, LEFT(A.SALE_MONTH,6))                   AS SALE_MONTH
+		         , A.MONEY_UNIT
+		         , unilite.fnGetUserdate(A.COMP_CODE, A.BASE_DATE)                                  AS SALE_DATE
+		         , A.SALE_AMT
+		         , A.COLLECT_AMT
+		         , SUM(ISNULL(B.CARRIED_OVER_AMT,0) + ISNULL(B.SALE_AMT,0)-ISNULL(B.COLLECT_AMT,0)) AS BALANCE_AMT
+		         , A.GUBUN
+		         , A.DIV_CODE
+		         , A.CARD_SALE
+		         , A.BAL_TYPE
+		         , A.BASIS_NUM
+		         , A.PRE_PAY
+		         , A.CUSTOM_CODE
+		         , C1.CUSTOM_NAME
+				 , A.PUB_YN
+		      FROM      ACCOUNT_BOOK A
+		      LEFT JOIN ACCOUNT_BOOK B ON B.MONEY_UNIT = A.MONEY_UNIT
+		                              AND B.SEQ       <= A.SEQ
+		      INNER JOIN BCM100T     C1 WITH(NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE
+		                                            AND C1.CUSTOM_CODE = A.CUSTOM_CODE
+		    GROUP BY A.COMP_CODE, A.DIV_CODE, A.MONEY_UNIT, A.BASE_DATE, A.SALE_AMT, A.COLLECT_AMT, A.SEQ, A.SALE_MONTH
+		    	, A.GUBUN, A.CARD_SALE , A.BAL_TYPE, A.BASIS_NUM, A.PRE_PAY, A.CUSTOM_CODE, C1.CUSTOM_NAME, A.PUB_YN
+		    ORDER BY A.SEQ, A.MONEY_UNIT, LEFT(A.SALE_MONTH,6)
+
+		    SET NOCOUNT OFF 
+		]]>
+	</select>
+
+<!-- 20210429 추가 -->
+	<select id="ssa615skrvServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+		/* ssa615skrvServiceImpl.selectList2 */
+		    DECLARE     @CompCode       NVARCHAR(10) = #{S_COMP_CODE}
+		              , @DivCode        NVARCHAR(10) = #{DIV_CODE}
+		              , @SaleDate       NVARCHAR(10) = REPLACE(#{SALE_DATE}, '.', '')
+		              , @BasisNum       NVARCHAR(20) = #{BASIS_NUM}
+
+		<if test="BAL_TYPE == &quot;매출&quot;">
+		    SELECT A.COMP_CODE
+		         , A.DIV_CODE
+		         , A.SALE_DATE
+		         , A.ITEM_CODE
+		         , C1.ITEM_NAME
+		         , C1.SPEC
+		         , A.SALE_UNIT
+		         , A.SALE_Q
+		         , A.SALE_P
+		         , A.SALE_AMT_O
+		         , A.TAX_AMT_O
+		         , A.SALE_AMT_O + A.TAX_AMT_O    AS SALE_TOT_O
+		         , ISNULL(A.REMARK, '')          AS REMARK
+		         , C2.CODE_NAME                  AS SALE_NAME
+				 , CASE WHEN A.BILL_TYPE = '10' AND ISNULL(A.PUB_NUM, '') = '' THEN '미발행'
+							WHEN A.BILL_TYPE != '10' THEN ''
+							ELSE '발행' 	END							AS PUB_YN
+
+		      FROM       SALES_V A  WITH(NOLOCK)
+		      INNER JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+		                                        AND C1.ITEM_CODE = A.ITEM_CODE
+		      LEFT  JOIN BSA100T C2 WITH(NOLOCK) ON C2.COMP_CODE = A.COMP_CODE
+		                                        AND C2.MAIN_CODE = 'S010'
+		                                        AND C2.SUB_CODE  = A.SALE_PRSN
+		     WHERE A.COMP_CODE = @CompCode
+		       AND A.DIV_CODE  = @DivCode
+		       AND A.SALE_DATE = @SaleDate
+		       AND A.BILL_NUM  = @BasisNum
+		</if>
+		<if test="BAL_TYPE == &quot;수금&quot;">
+		    SELECT A.COMP_CODE
+		         , A.DIV_CODE
+		         , A.SALE_DATE
+		         , A.ITEM_CODE
+		         , C1.ITEM_NAME
+		         , C1.SPEC
+		         , A.SALE_UNIT
+		         , A.SALE_Q
+		         , A.SALE_P
+		         , A.SALE_AMT_O
+		         , A.TAX_AMT_O
+		         , A.SALE_AMT_O + A.TAX_AMT_O    AS SALE_TOT_O
+		         , ISNULL(A.REMARK, '')          AS REMARK
+		         , C2.CODE_NAME                  AS SALE_NAME
+				 , ''							AS PUB_YN
+
+		      FROM       SALES_V A  WITH(NOLOCK)
+			  LEFT JOIN SCO100T X WITH(NOLOCK) ON X.COMP_CODE = A.COMP_CODE
+												AND X.DIV_CODE = A.DIV_CODE
+												AND X.COLLECT_NUM = @BasisNum
+												
+		      INNER JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+		                                        AND C1.ITEM_CODE = A.ITEM_CODE
+		      LEFT  JOIN BSA100T C2 WITH(NOLOCK) ON C2.COMP_CODE = A.COMP_CODE
+		                                        AND C2.MAIN_CODE = 'S010'
+		                                        AND C2.SUB_CODE  = A.SALE_PRSN
+		     WHERE A.COMP_CODE = @CompCode
+				AND A.DIV_CODE  = @DivCode
+
+				AND X.PUB_NUM = CASE WHEN  X.REF_LOC = '1' THEN A.PUB_NUM ELSE A.BILL_NUM END 
+
+
+		</if>
+		<if test="BAL_TYPE == &quot;매입&quot;">
+		    SELECT A.COMP_CODE
+		         , A.DIV_CODE
+		         , B.CHANGE_BASIS_DATE       AS SALE_DATE
+		         , A.ITEM_CODE
+		         , C1.ITEM_NAME
+		         , C1.SPEC
+		         , A.ORDER_UNIT              AS SALE_UNIT
+		         , A.ORDER_UNIT_Q            AS SALE_Q
+		         , A.AMOUNT_P                AS SALE_P
+		         , A.AMOUNT_I                AS SALE_AMT_O
+		         , A.TAX_I                   AS TAX_AMT_O
+		         , A.AMOUNT_I + A.TAX_I      AS SALE_TOT_O
+		         , ISNULL(A.REMARK, '')      AS REMARK
+		         , ''						 AS PUB_YN
+		      FROM       MAP200T A WITH(NOLOCK)--A.CHANGE_BASIS_NUM,
+		      INNER JOIN MAP100T B WITH(NOLOCK) ON B.COMP_CODE        = A.COMP_CODE
+		                                       AND B.DIV_CODE         = A.DIV_CODE
+		                                       AND B.CHANGE_BASIS_NUM = A.CHANGE_BASIS_NUM
+		      INNER JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE      = A.COMP_CODE
+		                                        AND C1.ITEM_CODE      = A.ITEM_CODE
+		     WHERE A.COMP_CODE        = @CompCode
+		       AND A.DIV_CODE         = @DivCode
+		       AND B.BILL_DATE        = @SaleDate
+		       AND A.CHANGE_BASIS_NUM = @BasisNum
+		</if>
+		<if test="BAL_TYPE == &quot;지급&quot;">
+		    SELECT A.COMP_CODE
+		         , A.DIV_CODE
+		         , B.CHANGE_BASIS_DATE       AS SALE_DATE
+		         , A.ITEM_CODE
+		         , C1.ITEM_NAME
+		         , C1.SPEC
+		         , A.ORDER_UNIT              AS SALE_UNIT
+		         , A.ORDER_UNIT_Q            AS SALE_Q
+		         , A.AMOUNT_P                AS SALE_P
+		         , A.AMOUNT_I                AS SALE_AMT_O
+		         , A.TAX_I                   AS TAX_AMT_O
+		         , A.AMOUNT_I + A.TAX_I      AS SALE_TOT_O
+		         , ISNULL(A.REMARK, '')      AS REMARK
+		         , ''						 AS PUB_YN
+		      FROM       MAP200T A WITH(NOLOCK)--A.CHANGE_BASIS_NUM,
+		      INNER JOIN MAP100T B WITH(NOLOCK) ON B.COMP_CODE        = A.COMP_CODE
+		                                       AND B.DIV_CODE         = A.DIV_CODE
+		                                       AND B.CHANGE_BASIS_NUM = A.CHANGE_BASIS_NUM
+		      INNER JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE      = A.COMP_CODE
+		                                        AND C1.ITEM_CODE      = A.ITEM_CODE
+				LEFT JOIN AGB310T X WITH(NOLOCK) ON X.COMP_CODE = B.COMP_CODE
+												AND X.DIV_CODE = B.DIV_CODE
+												AND X.ORG_AC_DATE	= B.AC_DATE
+												AND X.ORG_SLIP_NUM	= B.AC_NUM 
+		     WHERE A.COMP_CODE        = @CompCode
+		       AND A.DIV_CODE         = @DivCode
+		       --AND B.BILL_DATE        = @SaleDate
+		       --AND A.CHANGE_BASIS_NUM = @BasisNum
+				AND X.J_DATE = SUBSTRING(@BasisNum, 1, 8)
+				AND X.J_SLIP_NUM = SUBSTRING(@BasisNum, 10, 4)
+		</if>
+	</select>
+</mapper>

@@ -1,0 +1,611 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="hep920ukrServiceImpl">
+
+<select id="hep920ukrServiceImpl.operSelect" parameterType="Map" resultType="double">
+
+BEGIN
+    DECLARE 
+        @COMP_CODE     NVARCHAR(20)  --법인
+        ,@U_DEPT_CODE  NVARCHAR(20)  --입력한 부서코드
+        ,@U_DAY        INT           --입력한 근무일수
+        ,@EVAL_YEARS   NVARCHAR(4)   --기준년도
+
+        ,@GUBUN1       NVARCHAR(1)   -- 2LV 본부장, 3LV 부서장, 4LV 팀원 구분
+    
+        ,@POINT        NUMERIC(5,2)  -- 각 구분별 점수
+
+        ,@R_TEAM_POINT NUMERIC(5,2)  -- 결과 받을점수
+        
+    SET @COMP_CODE = #{S_COMP_CODE}
+    SET @U_DEPT_CODE = #{U_DEPT_CODE}
+    SET @U_DAY = #{U_DAY}
+    SET @EVAL_YEARS = #{EVAL_YEARS}
+    SET @GUBUN1 = '';
+
+    SELECT @GUBUN1 =
+        (CASE WHEN LEN(TREE_LEVEL) = 4 THEN '2' -- 2LV 본부장
+              WHEN LEN(TREE_LEVEL) = 7 THEN '3' -- 3LV 부서장
+              WHEN LEN(TREE_LEVEL) = 10 THEN '4' -- 4LV 팀원
+        END)
+      FROM BSA210T 
+     WHERE COMP_CODE = @COMP_CODE
+       AND TREE_CODE = @U_DEPT_CODE
+  
+    IF (@GUBUN1 = '2')
+        BEGIN
+            SELECT @POINT = ROUND(SUM(TEAM_POINT * WEIGHT_POINT) / COUNT(DEPT_TEAM_CODE),2)
+              FROM HEP910T
+             WHERE COMP_CODE = @COMP_CODE
+               AND EVAL_YEARS = @EVAL_YEARS
+               AND SUBSTRING(DEPT_TEAM_CODE,1,1) = SUBSTRING(@U_DEPT_CODE,1,1)
+            GROUP BY COMP_CODE, EVAL_YEARS
+        END
+
+    IF (@GUBUN1 = '3')
+        BEGIN
+            SELECT @POINT = MAX(DEPT_POINT)
+              FROM HEP910T 
+             WHERE COMP_CODE = @COMP_CODE
+               AND EVAL_YEARS = @EVAL_YEARS
+               AND DEPT_CODE = @U_DEPT_CODE
+            GROUP BY COMP_CODE, EVAL_YEARS, DEPT_CODE
+
+        END
+
+    IF (@GUBUN1 = '4')
+        BEGIN
+            SELECT @POINT = TEAM_POINT * WEIGHT_POINT
+              FROM HEP910T
+             WHERE COMP_CODE = @COMP_CODE
+               AND EVAL_YEARS = @EVAL_YEARS
+               AND DEPT_TEAM_CODE = @U_DEPT_CODE
+
+        END
+
+    SET @R_TEAM_POINT =  ROUND(@POINT * @U_DAY / (DATEDIFF(DAY, +@EVAL_YEARS +'0101' , @EVAL_YEARS +'1231') +1),2)
+
+    SELECT @R_TEAM_POINT
+END
+</select>
+
+<select id="hep920ukrServiceImpl.beforeSelect" parameterType="Map" resultType="String">
+
+BEGIN
+
+    DECLARE  @EVALYEARS NVARCHAR (10)
+
+    SET @EVALYEARS  = #{EVAL_YEARS}
+
+    DELETE HEP920T WHERE COMP_CODE = #{S_COMP_CODE} AND  EVAL_YEARS = @EVALYEARS
+
+    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects  WHERE id=object_id('tempdb..#TEMP_HEP920T'))
+    DROP TABLE #TEMP_HEP920T
+    
+    CREATE TABLE #TEMP_HEP920T (
+        COMP_CODE     NVARCHAR(20), 
+        PERSON_NUMB     NVARCHAR(10), /* 사번 */
+        AF_DEPT_CODE    NVARCHAR(10), /* 발령부서 */
+        ANNOUNCE_DATE NVARCHAR(10) /* 발령일 */
+    )
+
+    INSERT INTO #TEMP_HEP920T(
+        COMP_CODE,
+        PERSON_NUMB,
+        AF_DEPT_CODE,
+        ANNOUNCE_DATE
+    )
+    SELECT 
+        TT.COMP_CODE
+        , TT.PERSON_NUMB
+        , TT.AF_DEPT_CODE
+        , TT.ANNOUNCE_DATE
+    FROM(
+
+        --20170101 발령추가
+        SELECT 
+            AA.COMP_CODE
+            , AA.PERSON_NUMB
+            , AA.AF_DEPT_CODE
+            , @EVALYEARS + '0101' AS ANNOUNCE_DATE
+        FROM (
+            SELECT 
+                COMP_CODE
+                ,PERSON_NUMB
+                , AF_DEPT_CODE
+                , ANNOUNCE_DATE
+                , ROW_NUMBER() OVER(PARTITION BY PERSON_NUMB ORDER BY  ANNOUNCE_DATE DESC ) AS RN 
+            FROM HUM760T
+            WHERE ANNOUNCE_DATE &lt;= @EVALYEARS +'0101'
+        ) AA
+        WHERE AA.RN = 1
+
+        UNION ALL
+
+        --2017년내 발령
+        SELECT 
+            AA.COMP_CODE
+            , AA.PERSON_NUMB
+            , AA.AF_DEPT_CODE
+            , AA.ANNOUNCE_DATE 
+        FROM HUM760T AA
+        WHERE ANNOUNCE_DATE BETWEEN @EVALYEARS +'0102' AND @EVALYEARS +'1230'
+
+        UNION ALL
+
+        --20171231 발령추가
+        SELECT 
+            AA.COMP_CODE
+            , AA.PERSON_NUMB
+            , AA.AF_DEPT_CODE
+            , CONVERT(VARCHAR(10), @EVALYEARS +1)  + '0101' AS ANNOUNCE_DATE
+        FROM (
+            SELECT 
+                COMP_CODE
+                ,PERSON_NUMB
+                , AF_DEPT_CODE
+                , ANNOUNCE_DATE
+                , ROW_NUMBER() OVER(PARTITION BY PERSON_NUMB ORDER BY  ANNOUNCE_DATE DESC ) AS RN 
+            FROM HUM760T
+            WHERE ANNOUNCE_DATE &lt;= @EVALYEARS +'1231'
+        ) AA
+        WHERE AA.RN = 1
+    ) TT 
+    INNER JOIN HUM100T M WITH(NOLOCK) ON M.COMP_CODE = TT.COMP_CODE
+                                     AND M.PERSON_NUMB = TT.PERSON_NUMB
+
+    WHERE M.RETR_DATE = '00000000' 
+       OR SUBSTRING(M.RETR_DATE,1,4) &gt;= @EVALYEARS 
+    ;
+
+    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects  WHERE id=object_id('tempdb..#TEMP_HEP920T_2'))
+    DROP TABLE #TEMP_HEP920T_2
+    
+    CREATE TABLE #TEMP_HEP920T_2 (
+        RN INT,
+        COMP_CODE     NVARCHAR(20), 
+        PERSON_NUMB     NVARCHAR(10), /* 사번 */
+        AF_DEPT_CODE    NVARCHAR(10), /* 발령부서 */
+        ANNOUNCE_DATE  NVARCHAR(10), /* 발령일 */
+
+    )
+
+    INSERT INTO #TEMP_HEP920T_2(
+        RN
+        , COMP_CODE
+        , PERSON_NUMB
+        , AF_DEPT_CODE
+        , ANNOUNCE_DATE
+    )
+
+    SELECT 
+        ROW_NUMBER() OVER(ORDER BY PERSON_NUMB, ANNOUNCE_DATE) AS RN 
+        , COMP_CODE
+        , PERSON_NUMB
+        , AF_DEPT_CODE
+        , ANNOUNCE_DATE
+    FROM #TEMP_HEP920T 
+
+    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects  WHERE id=object_id('tempdb..#TEMP_HEP920T_3'))
+    DROP TABLE #TEMP_HEP920T_3
+    
+    CREATE TABLE #TEMP_HEP920T_3 (
+        RN INT,
+        COMP_CODE     NVARCHAR(20), 
+        PERSON_NUMB     NVARCHAR(10), /* 사번 */
+        AF_DEPT_CODE    NVARCHAR(10), /* 발령부서 */
+        ANNOUNCE_DATE    NVARCHAR(10), /* 발령일 */
+        DIFF NUMERIC(3,0),
+        TEAM_POINT NUMERIC(5,2)
+    )
+
+    INSERT INTO #TEMP_HEP920T_3
+
+        SELECT 
+            ROW_NUMBER() OVER(PARTITION BY AA.PERSON_NUMB  ORDER BY AA.PERSON_NUMB, MIN(AA.ANNOUNCE_DATE)) AS RN 
+            , AA.COMP_CODE
+            , AA.PERSON_NUMB
+            , AA.AF_DEPT_CODE
+            , MIN(AA.ANNOUNCE_DATE) AS ANNOUNCE_DATE
+            , SUM(DATEDIFF(DAY, CONVERT(DATE, AA.ANNOUNCE_DATE) , CONVERT(DATE, BB.ANNOUNCE_DATE))) AS DIFF
+            , CASE WHEN AA.AF_DEPT_CODE = MIN(C.DEPT_TEAM_CODE) THEN MAX(ISNULL(C.TEAM_POINT,0.00)) * MAX(ISNULL(C.WEIGHT_POINT,0))
+                   WHEN AA.AF_DEPT_CODE = MIN(D.DEPT_CODE) THEN MAX(ISNULL(D.DEPT_POINT,0.00))
+                   WHEN AA.AF_DEPT_CODE = MIN(E.TREE_CODE) THEN 
+                        (SELECT ROUND(SUM(S1.TEAM_POINT * S1.WEIGHT_POINT)/ COUNT(S1.DEPT_TEAM_CODE),2) AS HEAD_POINT 
+                           FROM  HEP910T S1 
+                          WHERE S1.COMP_CODE = AA.COMP_CODE
+                            AND S1.EVAL_YEARS = @EVALYEARS 
+                            AND SUBSTRING(S1.DEPT_TEAM_CODE,1,1) = SUBSTRING(AA.AF_DEPT_CODE,1,1)
+                       GROUP BY S1.COMP_CODE, S1.EVAL_YEARS)
+    
+                   ELSE 0.00
+             END AS TEAM_POINT
+         FROM #TEMP_HEP920T_2 AA
+    LEFT JOIN #TEMP_HEP920T_2 BB ON AA.PERSON_NUMB = BB.PERSON_NUMB
+                                AND AA.RN = BB.RN-1
+    LEFT JOIN HEP910T C WITH(NOLOCK) ON C.COMP_CODE = AA.COMP_CODE
+                                    AND C.DEPT_TEAM_CODE = AA.AF_DEPT_CODE
+                                    AND C.EVAL_YEARS = @EVALYEARS 
+    LEFT JOIN (SELECT DISTINCT COMP_CODE, EVAL_YEARS, DEPT_CODE,DEPT_POINT FROM HEP910T WITH(NOLOCK)) D  ON D.COMP_CODE = AA.COMP_CODE
+                                    AND D.DEPT_CODE = AA.AF_DEPT_CODE
+                                    AND D.EVAL_YEARS = @EVALYEARS 
+    LEFT JOIN BSA210T E WITH(NOLOCK) ON E.COMP_CODE = AA.COMP_CODE
+                                    AND E.USE_YN = 'Y'
+                                    AND E.TREE_CODE = AA.AF_DEPT_CODE
+                                    AND LEN(E.TREE_LEVEL) = 4
+
+        WHERE BB.ANNOUNCE_DATE-1 IS NOT NULL
+        GROUP BY AA.COMP_CODE, AA.PERSON_NUMB, AA.AF_DEPT_CODE
+
+--20180205 모든 근무일 합이 해당년도 총일수와 맞지 않을시 마지막 부서 근무일 조정 관련
+UPDATE #TEMP_HEP920T_3 
+   SET DIFF = DIFF + ISNULL(TT.RE_DIFF,0)
+  FROM #TEMP_HEP920T_3 T LEFT JOIN (SELECT 
+                                    A.COMP_CODE
+                                    ,A.PERSON_NUMB
+                                    ,MAX(A.ANNOUNCE_DATE) AS MAX_ANNOUNCE_DATE
+                                    ,(DATEDIFF(DAY, +@EVALYEARS +'0101' , @EVALYEARS +'1231') +1) - SUM(A.DIFF)  AS RE_DIFF
+
+                                    FROM #TEMP_HEP920T_3 A
+                                   WHERE A.COMP_CODE = #{S_COMP_CODE}
+                                     AND A.PERSON_NUMB IN (
+                                                    SELECT S1.PERSON_NUMB  #TEMP_HEP920T_3 FROM #TEMP_HEP920T_3 S1
+                                                    GROUP BY S1.PERSON_NUMB
+                                                    HAVING SUM(S1.DIFF) != DATEDIFF(DAY, +@EVALYEARS +'0101' , @EVALYEARS +'1231') +1
+                                                )
+                                GROUP BY A.COMP_CODE,A.PERSON_NUMB
+                    ) TT ON T.COMP_CODE = TT.COMP_CODE
+                        AND T.PERSON_NUMB = TT.PERSON_NUMB
+                        AND T.ANNOUNCE_DATE = TT.MAX_ANNOUNCE_DATE
+
+    INSERT INTO HEP920T(
+        COMP_CODE
+        ,EVAL_YEARS
+        ,PERSON_NUMB
+        ,DEPT_CODE1
+        ,WORK_MMCNT1
+        ,DEPT_POINT1
+        ,DEPT_CODE2
+        ,WORK_MMCNT2
+        ,DEPT_POINT2
+        ,DEPT_CODE3
+        ,WORK_MMCNT3
+        ,DEPT_POINT3
+        ,DEPT_CODE4
+        ,WORK_MMCNT4
+        ,DEPT_POINT4
+        ,DEPT_CODE5
+        ,WORK_MMCNT5
+        ,DEPT_POINT5
+        ,LAST_POINT
+    )
+
+    SELECT
+        A.COMP_CODE,
+        @EVALYEARS AS EVAL_YEARS,
+        A.PERSON_NUMB,
+        
+        ISNULL(max(CASE WHEN A.RN = 1 THEN A.AF_DEPT_CODE
+        END),'') AS DEPT_CODE1,
+        ISNULL(max(CASE WHEN A.RN = 1 THEN A.DIFF
+        END),0) AS WORK_MMCNT1,
+        --CONVERT(numeric(5,2),ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 1 THEN A.DIFF END),0) = 0 THEN 0
+        --ELSE
+        --(CASE WHEN ISNULL(max(A.AF_DEPT_CODE),'') = (SELECT max(S1.DEPT_CODE) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS) THEN  
+        --        (SELECT max(S1.DEPT_POINT) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS)
+        --ELSE ISNULL(max(CASE WHEN A.RN = 1 THEN A.TEAM_POINT END),0) 
+        --END) * (ISNULL(max(CASE WHEN A.RN = 1 THEN A.DIFF END),0)) / (DATEDIFF(DAY, +@EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        --END),2))
+        --AS DEPT_POINT1,
+        
+        CONVERT(numeric(5,2),ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 1 THEN A.DIFF END),0) = 0 THEN 0
+        ELSE
+        ISNULL(max(CASE WHEN A.RN = 1 THEN A.TEAM_POINT END),0) * (ISNULL(max(CASE WHEN A.RN = 1 THEN A.DIFF END),0)) / (DATEDIFF(DAY, + @EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        END),2))
+        AS DEPT_POINT1,
+        
+        ISNULL(max(CASE WHEN A.RN = 2 THEN A.AF_DEPT_CODE 
+        END),'') AS DEPT_CODE2,
+        ISNULL(max(CASE WHEN A.RN = 2 THEN A.DIFF 
+        END),0) AS WORK_MMCNT2,
+        --CONVERT(numeric(5,2),ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 2 THEN A.DIFF END),0) = 0 THEN 0
+        --ELSE
+        --(CASE WHEN ISNULL(max(A.AF_DEPT_CODE),'') = (SELECT max(S1.DEPT_CODE) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS) THEN  
+        --        (SELECT max(S1.DEPT_POINT) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS)
+        --ELSE ISNULL(max(CASE WHEN A.RN = 2 THEN A.TEAM_POINT END),0) 
+        --END) * (ISNULL(max(CASE WHEN A.RN = 2 THEN A.DIFF END),0)) / (DATEDIFF(DAY, +@EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        --END),2))
+        --AS DEPT_POINT2,
+        
+        CONVERT(numeric(5,2),ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 2 THEN A.DIFF END),0) = 0 THEN 0
+        ELSE
+        ISNULL(max(CASE WHEN A.RN = 2 THEN A.TEAM_POINT END),0) * (ISNULL(max(CASE WHEN A.RN = 2 THEN A.DIFF END),0)) / (DATEDIFF(DAY, + @EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        END),2))
+        AS DEPT_POINT2,
+    
+        ISNULL(max(CASE WHEN A.RN = 3 THEN A.AF_DEPT_CODE 
+        END),'') AS DEPT_CODE3,
+        ISNULL(max(CASE WHEN A.RN = 3 THEN A.DIFF 
+        END),0) AS WORK_MMCNT3,
+        --CONVERT(numeric(5,2),ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 3 THEN A.DIFF END),0) = 0 THEN 0
+        --ELSE
+        --(CASE WHEN ISNULL(max(A.AF_DEPT_CODE),'') = (SELECT max(S1.DEPT_CODE) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS) THEN  
+        --        (SELECT max(S1.DEPT_POINT) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS)
+        --ELSE ISNULL(max(CASE WHEN A.RN = 3 THEN A.TEAM_POINT END),0) 
+        --END) * (ISNULL(max(CASE WHEN A.RN = 3 THEN A.DIFF END),0)) / (DATEDIFF(DAY, +@EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        --END),2))
+        --AS DEPT_POINT3,
+        
+        CONVERT(numeric(5,2),ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 3 THEN A.DIFF END),0) = 0 THEN 0
+        ELSE
+        ISNULL(max(CASE WHEN A.RN = 3 THEN A.TEAM_POINT END),0)  * (ISNULL(max(CASE WHEN A.RN = 3 THEN A.DIFF END),0)) / (DATEDIFF(DAY, +@EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        END),2))
+        AS DEPT_POINT3,
+    
+        ISNULL(max(CASE WHEN A.RN = 4 THEN A.AF_DEPT_CODE
+        END),'') AS DEPT_CODE4,
+        ISNULL(max(CASE WHEN A.RN = 4 THEN A.DIFF
+        END),0) AS WORK_MMCNT4,
+        --CONVERT(numeric(5,2),ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 4 THEN A.DIFF END),0) = 0 THEN 0
+        --ELSE
+        --(CASE WHEN ISNULL(max(A.AF_DEPT_CODE),'') = (SELECT max(S1.DEPT_CODE) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS) THEN  
+        --        (SELECT max(S1.DEPT_POINT) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS)
+        --ELSE ISNULL(max(CASE WHEN A.RN = 4 THEN A.TEAM_POINT END),0) 
+        --END) * (ISNULL(max(CASE WHEN A.RN = 4 THEN A.DIFF END),0)) / (DATEDIFF(DAY, +@EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        --END),2))
+        --AS DEPT_POINT4,
+        
+        CONVERT(numeric(5,2),ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 4 THEN A.DIFF END),0) = 0 THEN 0
+        ELSE
+        ISNULL(max(CASE WHEN A.RN = 4 THEN A.TEAM_POINT END),0) * (ISNULL(max(CASE WHEN A.RN = 4 THEN A.DIFF END),0)) / (DATEDIFF(DAY, +@EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        END),2))
+        AS DEPT_POINT4,
+    
+        ISNULL(max(CASE WHEN A.RN = 5 THEN A.AF_DEPT_CODE
+        END),'') AS DEPT_CODE5,
+        ISNULL(max(CASE WHEN A.RN = 5 THEN A.DIFF
+        END),0) AS WORK_MMCNT5,
+        --CONVERT(numeric(5,2),ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 5 THEN A.DIFF END),0) = 0 THEN 0
+        --ELSE
+        --(CASE WHEN ISNULL(max(A.AF_DEPT_CODE),'') = (SELECT max(S1.DEPT_CODE) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS) THEN  
+        --        (SELECT max(S1.DEPT_POINT) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS)
+        --ELSE ISNULL(max(CASE WHEN A.RN = 5 THEN A.TEAM_POINT END),0) 
+        --END) * (ISNULL(max(CASE WHEN A.RN = 5 THEN A.DIFF END),0)) / (DATEDIFF(DAY, +@EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        --END),2))
+        --AS DEPT_POINT5,
+        
+        CONVERT(numeric(5,2),ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 5 THEN A.DIFF END),0) = 0 THEN 0
+        ELSE
+        ISNULL(max(CASE WHEN A.RN = 5 THEN A.TEAM_POINT END),0) * (ISNULL(max(CASE WHEN A.RN = 5 THEN A.DIFF END),0)) / (DATEDIFF(DAY, +@EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        END),2))
+        AS DEPT_POINT5,
+    
+        --CONVERT(numeric(5,2),(
+        --ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 1 THEN A.DIFF END),0) = 0 THEN 0
+        --ELSE
+        --(CASE WHEN ISNULL(max(A.AF_DEPT_CODE),'') = (SELECT max(S1.DEPT_CODE) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS) THEN  
+        --        (SELECT max(S1.DEPT_POINT) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS)
+        --ELSE ISNULL(max(CASE WHEN A.RN = 1 THEN A.TEAM_POINT END),0) 
+        --END) * (ISNULL(max(CASE WHEN A.RN = 1 THEN A.DIFF END),0)) / (DATEDIFF(DAY, +@EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        --END),2)
+        --+
+        --ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 2 THEN A.DIFF END),0) = 0 THEN 0
+        --ELSE
+        --(CASE WHEN ISNULL(max(A.AF_DEPT_CODE),'') = (SELECT max(S1.DEPT_CODE) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS) THEN  
+        --        (SELECT max(S1.DEPT_POINT) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS)
+        --ELSE ISNULL(max(CASE WHEN A.RN = 2 THEN A.TEAM_POINT END),0) 
+        --END) * (ISNULL(max(CASE WHEN A.RN = 2 THEN A.DIFF END),0)) / (DATEDIFF(DAY, +@EVALYEARS +'0101' , @EVALYEARS +'1231') +1) 
+        --END),2)
+        --+
+        --ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 3 THEN A.DIFF END),0) = 0 THEN 0
+        --ELSE
+        --(CASE WHEN ISNULL(max(A.AF_DEPT_CODE),'') = (SELECT max(S1.DEPT_CODE) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS) THEN  
+        --        (SELECT max(S1.DEPT_POINT) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS)
+        --ELSE ISNULL(max(CASE WHEN A.RN = 3 THEN A.TEAM_POINT END),0) 
+        --END) *  (ISNULL(max(CASE WHEN A.RN = 3 THEN A.DIFF END),0)) / (DATEDIFF(DAY, +@EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        --END),2)
+        --)
+        --+
+        --ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 4 THEN A.DIFF END),0) = 0 THEN 0
+        --ELSE
+        --(CASE WHEN ISNULL(max(A.AF_DEPT_CODE),'') = (SELECT max(S1.DEPT_CODE) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS) THEN  
+        --        (SELECT max(S1.DEPT_POINT) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS)
+        --ELSE ISNULL(max(CASE WHEN A.RN = 4 THEN A.TEAM_POINT END),0) 
+        --END) * (ISNULL(max(CASE WHEN A.RN = 4 THEN A.DIFF END),0)) / (DATEDIFF(DAY, +@EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        --END),2)
+        --+
+        --ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 5 THEN A.DIFF END),0) = 0 THEN 0
+        --ELSE
+        --(CASE WHEN ISNULL(max(A.AF_DEPT_CODE),'') = (SELECT max(S1.DEPT_CODE) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS) THEN  
+        --        (SELECT max(S1.DEPT_POINT) FROM HEP910T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DEPT_CODE = ISNULL(max(A.AF_DEPT_CODE),'') AND S1.EVAL_YEARS = @EVALYEARS)
+        --ELSE ISNULL(max(CASE WHEN A.RN = 5 THEN A.TEAM_POINT END),0) 
+        --END) * (ISNULL(max(CASE WHEN A.RN = 5 THEN A.DIFF END),0)) / (DATEDIFF(DAY, +@EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        --END),2)
+        --)
+        --AS LAST_POINT
+        
+        CONVERT(numeric(5,2),(
+        ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 1 THEN A.DIFF END),0) = 0 THEN 0
+        ELSE
+        ISNULL(max(CASE WHEN A.RN = 1 THEN A.TEAM_POINT END),0) * (ISNULL(max(CASE WHEN A.RN = 1 THEN A.DIFF END),0)) / (DATEDIFF(DAY, + @EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        END),2)
+        +
+        ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 2 THEN A.DIFF END),0) = 0 THEN 0
+        ELSE
+        ISNULL(max(CASE WHEN A.RN = 2 THEN A.TEAM_POINT END),0)  * (ISNULL(max(CASE WHEN A.RN = 2 THEN A.DIFF END),0)) / (DATEDIFF(DAY, + @EVALYEARS +'0101' , @EVALYEARS +'1231') +1) 
+        END),2)
+        +
+        ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 3 THEN A.DIFF END),0) = 0 THEN 0
+        ELSE
+        ISNULL(max(CASE WHEN A.RN = 3 THEN A.TEAM_POINT END),0)  *  (ISNULL(max(CASE WHEN A.RN = 3 THEN A.DIFF END),0)) / (DATEDIFF(DAY, + @EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        END),2)
+        )
+        +
+        ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 4 THEN A.DIFF END),0) = 0 THEN 0
+        ELSE
+        ISNULL(max(CASE WHEN A.RN = 4 THEN A.TEAM_POINT END),0) * (ISNULL(max(CASE WHEN A.RN = 4 THEN A.DIFF END),0)) / (DATEDIFF(DAY, + @EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        END),2)
+        +
+        ROUND((CASE WHEN ISNULL(max(CASE WHEN A.RN = 5 THEN A.DIFF END),0) = 0 THEN 0
+        ELSE
+        ISNULL(max(CASE WHEN A.RN = 5 THEN A.TEAM_POINT END),0) * (ISNULL(max(CASE WHEN A.RN = 5 THEN A.DIFF END),0)) / (DATEDIFF(DAY, + @EVALYEARS +'0101' , @EVALYEARS +'1231') +1)
+        END),2)
+        )
+        AS LAST_POINT
+
+    FROM #TEMP_HEP920T_3 A
+    group by A.COMP_CODE,A.PERSON_NUMB
+
+END
+</select>
+
+
+<select id="hep920ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+
+SELECT 
+    A.COMP_CODE
+   ,A.EVAL_YEARS                  -- 평가기준년도
+   ,B.ABIL_CODE                   -- 직급코드  H006
+   ,M1.CODE_NAME     AS ABIL_NAME -- 직급명
+   ,B.PERSON_NUMB                   --사번
+   ,B.NAME                          --성명
+   ,B.JOB_CODE                      --담당업무코드    H008
+   ,M2.CODE_NAME     AS JOB_NAME   --담당업무명
+   ,B.JOIN_DATE                     --입사일
+   ,CASE WHEN ISNULL(B.RETR_DATE,'00000000') = '00000000' THEN ''
+         ELSE B.RETR_DATE
+    END AS RETR_DATE                --퇴사일
+   ,B.RETR_RESN                     --퇴사구분  H023
+   ,M3.CODE_NAME AS RETR_RESN_NAME  --퇴사구분명
+   ,B.DEPT_CODE                     --현부서코드
+   ,B.DEPT_NAME                     --현부서명
+   ,A.DEPT_CODE1                    -- 부서코드1
+   ,M4.TREE_NAME AS DEPT_NAME1      --부서명1
+   ,A.WORK_MMCNT1                   -- 근무개월수1
+   ,A.DEPT_POINT1                   -- 평가점수_부서1
+   ,A.DEPT_CODE2                    -- 부서코드2
+   ,M5.TREE_NAME AS DEPT_NAME2      --부서명2
+   ,A.WORK_MMCNT2                   -- 근무개월수2
+   ,A.DEPT_POINT2                   -- 평가점수_부서2
+   ,A.DEPT_CODE3                    -- 부서코드3
+   ,M6.TREE_NAME AS DEPT_NAME3      --부서명3
+   ,A.WORK_MMCNT3                   -- 근무개월수3
+   ,A.DEPT_POINT3                   -- 평가점수_부서3
+   ,A.DEPT_CODE4                    -- 부서코드4
+   ,M7.TREE_NAME AS DEPT_NAME4      --부서명4
+   ,A.WORK_MMCNT4                   -- 근무개월수4
+   ,A.DEPT_POINT4                   -- 평가점수_부서4
+   ,A.DEPT_CODE5                    -- 부서코드5
+   ,M8.TREE_NAME AS DEPT_NAME5      --부서명5
+   ,A.WORK_MMCNT5                   -- 근무개월수5
+   ,A.DEPT_POINT5                   -- 평가점수_부서5
+   
+   ,A.LAST_POINT                    -- 최종점수
+   ,A.RMK                           -- 비고
+
+    FROM   HEP920T A WITH(NOLOCK)
+INNER JOIN HUM100T B  WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                  AND B.PERSON_NUMB = A.PERSON_NUMB
+
+LEFT JOIN BSA100T M1 WITH(NOLOCK) ON M1.COMP_CODE = B.COMP_CODE
+                                 AND M1.MAIN_CODE = 'H006'
+                                 AND M1.SUB_CODE = B.ABIL_CODE
+                                      
+LEFT JOIN BSA100T M2 WITH(NOLOCK) ON M2.COMP_CODE = B.COMP_CODE
+                                 AND M2.MAIN_CODE = 'H008'
+                                 AND M2.SUB_CODE = B.JOB_CODE
+
+LEFT JOIN BSA100T M3 WITH(NOLOCK) ON M3.COMP_CODE = B.COMP_CODE
+                                 AND M3.MAIN_CODE = 'H023'
+                                 AND M3.SUB_CODE = B.RETR_RESN
+
+LEFT JOIN BSA210T M4 WITH(NOLOCK) ON M4.COMP_CODE = A.COMP_CODE
+                                 AND M4.TREE_CODE = A.DEPT_CODE1
+
+LEFT JOIN BSA210T M5 WITH(NOLOCK) ON M5.COMP_CODE = A.COMP_CODE
+                                 AND M5.TREE_CODE = A.DEPT_CODE2
+
+LEFT JOIN BSA210T M6 WITH(NOLOCK) ON M6.COMP_CODE = A.COMP_CODE
+                                 AND M6.TREE_CODE = A.DEPT_CODE3
+                                 
+LEFT JOIN BSA210T M7 WITH(NOLOCK) ON M7.COMP_CODE = A.COMP_CODE
+                                 AND M7.TREE_CODE = A.DEPT_CODE4
+                                 
+LEFT JOIN BSA210T M8 WITH(NOLOCK) ON M8.COMP_CODE = A.COMP_CODE
+                                 AND M8.TREE_CODE = A.DEPT_CODE5
+
+WHERE A.COMP_CODE = #{S_COMP_CODE}
+  AND A.EVAL_YEARS = #{EVAL_YEARS} --기준년도
+  
+  
+<if test="@foren.Ognl@isNotEmpty(DEPTS)">
+  AND B.DEPT_CODE    IN
+    <foreach collection="DEPTS" item="item" separator="," close=")" open="(">
+        #{item}
+    </foreach>
+</if>
+<if test="@foren.Ognl@isNotEmpty(JOB_CODE)">
+  AND B.JOB_CODE = #{JOB_CODE}          -- 직무구분 
+</if>
+<if test="@foren.Ognl@isNotEmpty(PERSON_NUMB)">
+  AND B.PERSON_NUMB = #{PERSON_NUMB}  -- 사번
+</if>
+<if test="@foren.Ognl@isNotEmpty(ABIL_CODE)">
+  AND B.ABIL_CODE = #{ABIL_CODE}   --직급
+</if>
+<if test="@foren.Ognl@isNotEmpty(RETR_RESN)">
+  AND B.RETR_RESN = #{RETR_RESN}  -- 퇴사구분
+</if>
+
+
+</select>
+<update id="hep920ukrServiceImpl.updateDetail" parameterType="Map">    
+IF NOT EXISTS (SELECT COMP_CODE FROM HEP910T WITH(NOLOCK) WHERE COMP_CODE = #{S_COMP_CODE}
+                                               AND EVAL_YEARS = #{EVAL_YEARS}
+                                               AND DEPT_CODE = #{DEPT_CODE}
+                                               AND DEPT_TEAM_CODE = #{DEPT_TEAM_CODE}) 
+    BEGIN
+        INSERT INTO HEP910T (
+            COMP_CODE
+            ,EVAL_YEARS
+            ,DEPT_CODE
+            ,DEPT_TEAM_CODE
+            ,TEAM_POINT
+            ,WEIGHT_POINT
+            ,DEPT_POINT
+            ,INSERT_DB_USER
+            ,INSERT_DB_TIME
+            ,UPDATE_DB_USER 
+            ,UPDATE_DB_TIME
+        )VALUES(
+            #{S_COMP_CODE}
+            ,#{EVAL_YEARS}
+            ,#{DEPT_CODE}
+            ,#{DEPT_TEAM_CODE}
+            ,#{TEAM_POINT}
+            ,#{WEIGHT_POINT}
+            ,#{DEPT_POINT}
+            ,#{S_USER_ID}  
+            ,GETDATE()     
+            ,#{S_USER_ID}  
+            ,GETDATE()     
+        )
+    END
+ELSE
+    BEGIN
+        UPDATE HEP910T SET 
+            UPDATE_DB_USER = #{S_USER_ID}
+            ,UPDATE_DB_TIME = GETDATE()
+            ,TEAM_POINT = #{TEAM_POINT}
+            ,WEIGHT_POINT = #{WEIGHT_POINT}
+            ,DEPT_POINT = #{DEPT_POINT}
+         WHERE COMP_CODE = #{S_COMP_CODE}
+           AND EVAL_YEARS = #{EVAL_YEARS}
+           AND DEPT_CODE = #{DEPT_CODE}
+           AND DEPT_TEAM_CODE = #{DEPT_TEAM_CODE}
+        
+        
+    END
+</update> 
+
+</mapper>

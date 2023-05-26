@@ -1,0 +1,1705 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mpo080ukrvServiceImpl">
+
+	<select id="mpo080ukrvServiceImpl.checkOrder" parameterType="Map" resultType="rMap">
+<!-- 20200717 수정: 발주 확정이 한 건이라도 되면 확정으로 본다고 가정하고 로직 수정 -->
+		--SELECT TOP 1 ISNULL(ORDER_YN,'N') AS ORDER_YN FROM MRP400T WHERE COMP_CODE = {S_COMP_CODE} AND DIV_CODE = {DIV_CODE} AND MRP_CONTROL_NUM = {MRP_CONTROL_NUM}
+		SELECT TOP 1 ISNULL(ORDER_YN,'N') AS ORDER_YN
+		  FROM MRP400T WITH(NOLOCK)
+		 WHERE COMP_CODE       = #{S_COMP_CODE}
+		   AND DIV_CODE        = #{DIV_CODE}
+		   AND MRP_CONTROL_NUM = #{MRP_CONTROL_NUM}
+		   AND ORDER_YN        = 'Y'
+	</select>
+	<select id="mpo080ukrvServiceImpl.selectMasterList" parameterType="Map" resultType="rMap">
+		SELECT
+				A.COMP_CODE								AS COMP_CODE
+				,A.DIV_CODE								AS DIV_CODE
+		        ,A.PROD_ITEM_CODE						AS PROD_ITEM_CODE
+		        ,B.ITEM_NAME							AS ITEM_NAME
+		        ,B.SPEC									AS SPEC
+		        ,B.STOCK_UNIT							AS STOCK_UNIT
+		        ,C.ITEM_ACCOUNT							AS ITEM_ACCOUNT
+		        ,C.SUPPLY_TYPE							AS SUPPLY_TYPE
+		        ,ISNULL(A.PL_QTY, 0)            		AS PL_QTY
+		        ,ISNULL(A.PL_COST, 0)           		AS PL_COST
+		        ,ISNULL(A.PL_AMOUNT, 0)         		AS PL_AMOUNT
+		        ,ISNULL((SELECT SUM(STOCK_Q)
+		            FROM BIV100T WITH(NOLOCK)
+		            WHERE COMP_CODE = A.COMP_CODE
+                      AND DIV_CODE = A.DIV_CODE
+                      AND ITEM_CODE = A.PROD_ITEM_CODE), 0) 	AS CSTOCK
+		        ,A.ORDER_NUM 							AS ORDER_NUM
+		        ,A.SER_NO 								AS SER_NO
+		        ,A.MRP_CONTROL_NUM 						AS MRP_CONTROL_NUM
+		        ,A.PROJECT_NO							AS PROJECT_NO
+		        ,D.PJT_NAME								AS PROJECT_NAME
+		        ,A.REMARK 								AS REMARK
+		        ,A.WK_PLAN_NUM
+		        ,A.TEMPC_01								AS PRODT_PLAN_DATE
+		        ,A.TEMPC_02								AS WEEK_NUM
+		        ,A.TEMPN_01								AS WK_PLAN_Q
+<!-- 20200716 추가: 확정여부 가져오는 로직 수정 - 발주 확정이 한 건이라도 되면 확정으로 본다고 가정하고 로직 수정  -->
+		        ,ISNULL((SELECT TOP 1 ISNULL(S1.ORDER_YN,'N')
+		                   FROM MRP400T S1 WITH(NOLOCK)
+		                  WHERE S1.COMP_CODE       = A.COMP_CODE
+		                    AND S1.DIV_CODE        = A.DIV_CODE
+		                    AND S1.MRP_CONTROL_NUM = A.MRP_CONTROL_NUM
+		                    AND S1.ORDER_YN        = 'Y'), 'N') AS ORDER_YN
+		FROM BPL120T A WITH(NOLOCK)
+			LEFT JOIN BPR100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+											AND A.PROD_ITEM_CODE = B.ITEM_CODE
+			LEFT JOIN BPR200T C WITH(NOLOCK) ON A.COMP_CODE = C.COMP_CODE
+											AND A.DIV_CODE  = C.DIV_CODE
+											AND A.PROD_ITEM_CODE = C.ITEM_CODE
+			LEFT  JOIN BCM600T D WITH(NOLOCK) ON A.COMP_CODE = D.COMP_CODE
+											AND A.PROJECT_NO = D.PJT_CODE
+
+		WHERE A.COMP_CODE = #{S_COMP_CODE}
+				AND A.DIV_CODE = #{DIV_CODE}
+				AND A.WORK_STEP = 'M'			--'T':임시,'M':소요량
+				AND A.TEMPC_02 	&gt;= #{WEEK_NUM_FR}
+				AND A.TEMPC_02  &lt;= #{WEEK_NUM_TO}
+			<if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+				AND C.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(MRP_CONTROL_NUM)">
+				AND A.MRP_CONTROL_NUM = #{MRP_CONTROL_NUM}
+			</if>
+<!-- 20200716 추가: 확정여부 조회조건 추가 - 발주 확정이 한 건이라도 되면 확정으로 본다고 가정하고 로직 수정  -->
+			<if test="@foren.Ognl@isNotEmpty(CONFIRM_YN)">
+			   AND #{CONFIRM_YN} = ISNULL((SELECT TOP 1 ISNULL(S1.ORDER_YN,'N')
+		                                     FROM MRP400T S1 WITH(NOLOCK)
+		                                    WHERE S1.COMP_CODE       = A.COMP_CODE
+		                                      AND S1.DIV_CODE        = A.DIV_CODE
+		                                      AND S1.MRP_CONTROL_NUM = A.MRP_CONTROL_NUM
+		                                      AND S1.ORDER_YN        = 'Y'), 'N')
+			</if>
+		ORDER BY A.MRP_CONTROL_NUM, A.ORDER_NUM, A.SER_NO, A.PROD_ITEM_CODE
+	</select>
+
+	<select id="mpo080ukrvServiceImpl.selectDetailList" parameterType="Map" resultType="rMap">
+		SELECT
+			COMP_CODE
+			,DIV_CODE
+			,MRP_CONTROL_NUM
+		    ,CHILD_ITEM_CODE
+		    ,ITEM_NAME
+		    ,SPEC
+		    ,STOCK_UNIT
+		    ,ITEM_ACCOUNT
+		    ,SUPPLY_TYPE
+		    ,SUM(PL_QTY)                      UNIT_Q
+		    ,MAX(ORDER_UNIT)                  ORDER_UNIT
+		    ,MAX(CHILD_PRICE)                 CHILD_PRICE
+		   -- ,(SUM(PL_QTY) * MAX(CHILD_PRICE) / MAX(TRNS_RATE) ) CHILD_AMOUNT
+		    ,MAX(CHILD_AMOUNT) AS CHILD_AMOUNT
+		    ,MAX(PURCH_LDTIME)                PURCH_LDTIME
+		    ,MAX(ORDER_REQ_Q)				 ORDER_REQ_Q		--구매요청량
+		    ,MAX(ORDER_Q)				 	 ORDER_Q
+		    ,MAX(CUSTOM_CODE)                 CUSTOM_CODE
+		    ,MAX(CUSTOM_NAME)				 CUSTOM_NAME
+		    ,MAX(REMARK)						 REMARK
+		    ,MAX(PROJECT_NO)					 PROJECT_NO
+		    ,MAX(ORDER_REQ_NUM)				 ORDER_REQ_NUM
+		    ,MAX(ORDER_NUM)				 	 ORDER_NUM
+			,MAX(SER_NO)				 	 SER_NO
+		    ,SUM(PL_QTY)                      PL_QTY			--총소요량
+		    ,MAX(TRNS_RATE) AS TRNS_RATE -- 입수
+		    ,MAX(CSTOCK)                      CSTOCK			--현재고
+			,MAX(RECEIPT_PLAN_Q)		AS RECEIPT_PLAN_Q 		-- 입고예정량
+		    ,MAX(ISSUE_PLAN_Q)			AS ISSUE_PLAN_Q 		--출고예정량
+		    ,MAX(SAFE_STOCK_Q)				 SAFE_STOCK_Q		--안전재고
+			,MAX(MINI_PURCH_Q)		AS MINI_PURCH_Q		--최소LOT
+			,MAX(MAX_PURCH_Q)		AS MAX_PURCH_Q			--최대LOT
+		    <if test="TYPE1 == &quot;on&quot; and TYPE2 != &quot;on&quot; and TYPE3 != &quot;on&quot;">
+				--옵션: 현재고 o ,안전재고 x ,MOQ x
+				,CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				,(CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1
+				     END) / MAX(TRNS_RATE) AS CALC_PLAN_QTY		--구매계획량
+
+--				CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0
+--				     ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1
+--				     END ORDER_REQ_Q		--구매요청량
+			</if>
+			<if test="TYPE1 == &quot;on&quot; and TYPE2 == &quot;on&quot; and TYPE3 != &quot;on&quot;">
+				--옵션: 현재고 o ,안전재고 o ,MOQ x
+
+				,CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				,(CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END) / MAX(TRNS_RATE) AS CALC_PLAN_QTY		--구매계획량
+
+--				CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+--				     ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+--				     END ORDER_REQ_Q		--구매요청량
+
+			</if>
+			<if test="TYPE1 == &quot;on&quot; and TYPE2 != &quot;on&quot; and TYPE3 == &quot;on&quot;">
+				--옵션: 현재고 o ,안전재고 x ,MOQ o
+
+				,CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				 ,(CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) &lt;= MAX(MINI_PURCH_Q) THEN (CASE WHEN  MAX(MINI_PURCH_Q) &gt; 0.0 THEN (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) >= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) = 0 THEN 0 ELSE MAX(MINI_PURCH_Q) END)
+										  ELSE (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) END)
+					  ELSE (CASE WHEN MAX(MAX_PURCH_Q) = 0 THEN (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END)
+								 ELSE (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) &gt; MAX(MAX_PURCH_Q) AND MAX(MAX_PURCH_Q) &gt; 0.0 THEN (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) - (MAX(MAX_PURCH_Q) * CONVERT(NUMERIC(18,6), CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)))) = 0.0 THEN MAX(MAX_PURCH_Q) * CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q))
+				                                                                          ELSE MAX(MAX_PURCH_Q) * (CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)) + 1) END)
+								  			ELSE MAX(MAX_PURCH_Q) END)
+							END)
+
+				 END) / MAX(TRNS_RATE) AS  CALC_PLAN_QTY		--구매계획량
+
+			</if>
+
+			<if test="TYPE1 == &quot;on&quot; and TYPE2 == &quot;on&quot; and TYPE3 == &quot;on&quot;">
+				--옵션: 현재고 o ,안전재고o ,MOQ o
+
+				,CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				 ,(CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) &lt;= MAX(MINI_PURCH_Q) THEN (CASE WHEN  MAX(MINI_PURCH_Q) &gt; 0.0 THEN (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) = 0 THEN 0 ELSE MAX(MINI_PURCH_Q) END)
+														  ELSE (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) END)
+					  ELSE (CASE WHEN MAX(MAX_PURCH_Q) = 0 THEN (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END)
+								 ELSE (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) &gt; MAX(MAX_PURCH_Q) AND MAX(MAX_PURCH_Q) &gt; 0.0 THEN (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) - (MAX(MAX_PURCH_Q) * CONVERT(NUMERIC(18,6), CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)))) = 0.0 THEN MAX(MAX_PURCH_Q) * CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q))
+				                                                                          ELSE MAX(MAX_PURCH_Q) * (CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)) + 1) END)
+								  			ELSE MAX(MAX_PURCH_Q) END)
+							END)
+				 END) / MAX(TRNS_RATE) AS  CALC_PLAN_QTY		--구매계획량
+			</if>
+
+			<if test="TYPE1 != &quot;on&quot; and TYPE2 == &quot;on&quot; and TYPE3 != &quot;on&quot;">
+				--옵션: 현재고 x ,안전재고o ,MOQ x
+
+				,CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				,(CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END) / MAX(TRNS_RATE) AS  CALC_PLAN_QTY		--구매계획량
+
+--				CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+--				     ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+--				     END ORDER_REQ_Q		--구매요청량
+
+			</if>
+			<if test="TYPE1 != &quot;on&quot; and TYPE2 == &quot;on&quot; and TYPE3 == &quot;on&quot;">
+				--옵션: 현재고 x ,안전재고o ,MOQ o
+
+				,CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				 ,(CASE WHEN (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) &lt;= MAX(MINI_PURCH_Q) THEN (CASE WHEN  MAX(MINI_PURCH_Q) &gt; 0.0 THEN MAX(MINI_PURCH_Q)
+														  ELSE (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) END)
+					  ELSE (CASE WHEN MAX(MAX_PURCH_Q) = 0 THEN (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END)
+								 ELSE (CASE WHEN (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) &gt; MAX(MAX_PURCH_Q) AND MAX(MAX_PURCH_Q) &gt; 0.0 THEN (CASE WHEN (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) - (MAX(MAX_PURCH_Q) * CONVERT(NUMERIC(18,6), CONVERT(INTEGER, (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)))) = 0.0 THEN MAX(MAX_PURCH_Q) * CONVERT(INTEGER, (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q))
+				                                                                          ELSE MAX(MAX_PURCH_Q) * (CONVERT(INTEGER, (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)) + 1) END)
+								  			ELSE MAX(MAX_PURCH_Q) END)
+						    END)
+				 END) / MAX(TRNS_RATE) AS  CALC_PLAN_QTY		--구매계획량
+			</if>
+			<if test="TYPE1 != &quot;on&quot; and TYPE2 != &quot;on&quot; and TYPE3 == &quot;on&quot;">
+				--옵션: 현재고 x ,안전재고x ,MOQ o
+
+				,SUM(PL_QTY) AS CALC_NET_QTY	--순소요량
+
+				 ,(CASE WHEN SUM(PL_QTY) &lt;= MAX(MINI_PURCH_Q) THEN (CASE WHEN  MAX(MINI_PURCH_Q) &gt; 0.0 THEN MAX(MINI_PURCH_Q)
+														  ELSE SUM(PL_QTY) END)
+					  ELSE (CASE WHEN MAX(MAX_PURCH_Q) = 0 THEN SUM(PL_QTY)
+								 ELSE (CASE WHEN SUM(PL_QTY) &gt; MAX(MAX_PURCH_Q) AND MAX(MAX_PURCH_Q) &gt; 0.0 THEN (CASE WHEN SUM(PL_QTY) - (MAX(MAX_PURCH_Q) * CONVERT(NUMERIC(18,6), CONVERT(INTEGER, SUM(PL_QTY) / MAX(MAX_PURCH_Q)))) = 0.0 THEN MAX(MAX_PURCH_Q) * CONVERT(INTEGER, SUM(PL_QTY) / MAX(MAX_PURCH_Q))
+				                                                                          ELSE MAX(MAX_PURCH_Q) * (CONVERT(INTEGER, SUM(PL_QTY) / MAX(MAX_PURCH_Q)) + 1) END)
+								  			ELSE MAX(MAX_PURCH_Q) END)
+						    END)
+				 END) / MAX(TRNS_RATE) AS  CALC_PLAN_QTY		--구매계획량
+			</if>
+
+
+			<if test="TYPE1 != &quot;on&quot; and TYPE2 != &quot;on&quot; and TYPE3 != &quot;on&quot;">
+				--옵션: 현재고 x ,안전재고x ,MOQ x
+
+				,SUM(PL_QTY) AS CALC_NET_QTY	--순소요량
+				,SUM(PL_QTY) / MAX(TRNS_RATE) AS CALC_PLAN_QTY	--구매계획량
+--				SUM(PL_QTY) AS ORDER_REQ_Q		--구매요청량
+			</if>
+
+		FROM
+		    (
+		        SELECT
+		        	A.COMP_CODE,
+		        	A.DIV_CODE,
+		        	A.MRP_CONTROL_NUM,
+		            A.CHILD_ITEM_CODE,
+		            B.ITEM_NAME,
+		            B.SPEC,
+		            B.STOCK_UNIT,
+		            C.ITEM_ACCOUNT,
+		            C.SUPPLY_TYPE,
+		            C.ORDER_UNIT,
+		            A.CHILD_PRICE,
+		            A.CHILD_AMOUNT,
+		            C.PURCH_LDTIME,
+		            ISNULL(D.REQ_PLAN_Q , 0) 		AS ORDER_REQ_Q,
+		    		ISNULL(F.ORDER_Q, 0) 			AS ORDER_Q,
+		            C.CUSTOM_CODE,
+		            ISNULL(E.CUSTOM_NAME, '')		AS CUSTOM_NAME,
+					A.REMARK,
+					ISNULL(D.ORDER_REQ_NUM, '') 	AS ORDER_REQ_NUM,
+		    		A.PROJECT_NO											AS PROJECT_NO,
+		    		A.ORDER_NUM												AS ORDER_NUM,
+		    		A.SER_NO,
+		            A.PL_QTY,
+		            C.TRNS_RATE,
+		            ISNULL((SELECT SUM(STOCK_Q)
+		                    FROM BIV100T WITH(NOLOCK)
+		                    WHERE COMP_CODE = A.COMP_CODE
+		                      AND DIV_CODE = A.DIV_CODE
+		                      AND ITEM_CODE = A.CHILD_ITEM_CODE
+		            ), 0)    AS CSTOCK,
+
+		    		<if test="TYPE4 != &quot;on&quot; and TYPE5 != &quot;on&quot;">
+		            --입고예정 x , 출고예정 x
+		            ISNULL((SELECT SUM(STOCK_Q)
+		                    FROM BIV100T WITH(NOLOCK)
+		                    WHERE COMP_CODE = A.COMP_CODE
+		                      AND DIV_CODE = A.DIV_CODE
+		                      AND ITEM_CODE = A.CHILD_ITEM_CODE
+		            ), 0)    AS CSTOCK_CALC,
+		    		</if>
+
+
+		    		<if test="TYPE4 == &quot;on&quot; and TYPE5 != &quot;on&quot;">
+					--입고예정 o , 출고예정 x
+
+		            ISNULL((SELECT SUM(STOCK_Q)
+		                    FROM BIV100T WITH(NOLOCK)
+		                    WHERE COMP_CODE = A.COMP_CODE
+		                      AND DIV_CODE = A.DIV_CODE
+		                      AND ITEM_CODE = A.CHILD_ITEM_CODE
+		            ), 0)
+					+ ISNULL((SELECT SUM(ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))
+						FROM                MPO200T AS S1  WITH (NOLOCK)
+								LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ, SUM(RECEIPT_Q) AS RECEIPT_Q
+											   FROM QMS100T WITH (NOLOCK)
+											   GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ) S2 ON  S2.COMP_CODE   = S1.COMP_CODE
+																								   AND  S2.DIV_CODE    = S1.DIV_CODE
+																								   AND  S2.ORDER_NUM   = S1.ORDER_NUM
+																								   AND  S2.ORDER_SEQ	  = S1.ORDER_SEQ
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))        &gt; 0				/* 미입고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE		= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0)	 AS CSTOCK_CALC,
+		    		</if>
+
+		    		<if test="TYPE4 != &quot;on&quot; and TYPE5 == &quot;on&quot;">
+					--입고예정 x , 출고예정 o
+					ISNULL((SELECT SUM(STOCK_Q)
+		                    FROM BIV100T WITH(NOLOCK)
+		                    WHERE COMP_CODE = A.COMP_CODE
+		                      AND DIV_CODE = A.DIV_CODE
+		                      AND ITEM_CODE = A.CHILD_ITEM_CODE
+		            ), 0)
+					- ISNULL((SELECT  SUM(ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0)) AS ISSUE_PLAN_Q
+						FROM                PMP300T AS S1  WITH (NOLOCK)
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0))        &gt; 0				/* 미출고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE				= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0)	 AS CSTOCK_CALC,
+		    		</if>
+
+		    		<if test="TYPE4 == &quot;on&quot; and TYPE5 == &quot;on&quot;">
+					--입고예정 o , 출고예정 o
+					ISNULL((SELECT SUM(STOCK_Q)
+		                    FROM BIV100T WITH(NOLOCK)
+		                    WHERE COMP_CODE = A.COMP_CODE
+		                      AND DIV_CODE = A.DIV_CODE
+		                      AND ITEM_CODE = A.CHILD_ITEM_CODE
+		            ), 0)
+					+ ISNULL((SELECT SUM(ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))
+						FROM                MPO200T AS S1  WITH (NOLOCK)
+								LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ, SUM(RECEIPT_Q) AS RECEIPT_Q
+											   FROM QMS100T WITH (NOLOCK)
+											   GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ) S2 ON  S2.COMP_CODE   = S1.COMP_CODE
+																								   AND  S2.DIV_CODE    = S1.DIV_CODE
+																								   AND  S2.ORDER_NUM   = S1.ORDER_NUM
+																								   AND  S2.ORDER_SEQ	  = S1.ORDER_SEQ
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))        &gt; 0				/* 미입고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE		= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0)
+					- ISNULL((SELECT  SUM(ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0)) AS ISSUE_PLAN_Q
+						FROM                PMP300T AS S1  WITH (NOLOCK)
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0))        &gt; 0				/* 미출고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE				= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0)	 AS CSTOCK_CALC,
+		    		</if>
+
+		    		<if test="TYPE4 != &quot;on&quot;">
+					--입고예정 x
+					0 AS RECEIPT_PLAN_Q,
+		    		</if>
+
+		    		<if test="TYPE4 == &quot;on&quot;">
+					--입고예정 o
+					ISNULL((SELECT SUM(ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))
+						FROM                MPO200T AS S1  WITH (NOLOCK)
+								LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ, SUM(RECEIPT_Q) AS RECEIPT_Q
+											   FROM QMS100T WITH (NOLOCK)
+											   GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ) S2 ON  S2.COMP_CODE   = S1.COMP_CODE
+																								   AND  S2.DIV_CODE    = S1.DIV_CODE
+																								   AND  S2.ORDER_NUM   = S1.ORDER_NUM
+																								   AND  S2.ORDER_SEQ	  = S1.ORDER_SEQ
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))        &gt; 0				/* 미입고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE		= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0)  AS RECEIPT_PLAN_Q,					--입고예정량
+		    		</if>
+
+		    		<if test="TYPE5 != &quot;on&quot;">
+					--출고예정 x
+					0 AS ISSUE_PLAN_Q,
+		    		</if>
+
+		    		<if test="TYPE5 == &quot;on&quot;">
+					--출고예정 o
+					ISNULL((SELECT  SUM(ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0)) AS ISSUE_PLAN_Q
+						FROM                PMP300T AS S1  WITH (NOLOCK)
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0))        &gt; 0				/* 미출고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE				= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0) AS ISSUE_PLAN_Q,
+		    		</if>
+
+
+		            C.SAFE_STOCK_Q,
+
+					C.MINI_PURCH_Q,
+					C.MAX_PURCH_Q
+
+
+		      	FROM BPL130T A WITH(NOLOCK)
+						INNER JOIN BPR100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+														 AND A.CHILD_ITEM_CODE = B.ITEM_CODE
+						INNER JOIN BPR200T C WITH(NOLOCK) ON A.COMP_CODE = C.COMP_CODE
+														 AND A.DIV_CODE  = C.DIV_CODE
+														 AND A.CHILD_ITEM_CODE = C.ITEM_CODE
+						LEFT  JOIN MRP400T D WITH(NOLOCK) ON A.COMP_CODE = D.COMP_CODE
+														 AND A.DIV_CODE  = D.DIV_CODE
+														 AND A.CHILD_ITEM_CODE = D.ITEM_CODE
+														 AND A.MRP_CONTROL_NUM = D.MRP_CONTROL_NUM
+						LEFT  JOIN BCM100T E WITH(NOLOCK) ON A.COMP_CODE = E.COMP_CODE
+														 AND C.CUSTOM_CODE = E.CUSTOM_CODE
+						LEFT  JOIN (SELECT COMP_CODE, DIV_CODE, ORDER_REQ_NUM, SUM(ORDER_Q) AS ORDER_Q FROM MPO200T WITH(NOLOCK)
+										  GROUP BY  COMP_CODE, DIV_CODE, ORDER_REQ_NUM ) F ON A.COMP_CODE = F.COMP_CODE
+																						  AND A.DIV_CODE  = F.DIV_CODE
+																						  AND D.ORDER_REQ_NUM = F.ORDER_REQ_NUM
+				WHERE A.COMP_CODE = #{S_COMP_CODE}
+					AND A.DIV_CODE = #{DIV_CODE}
+					AND A.WORK_STEP = 'M'			--'T':임시,'M':소요량
+				    AND A.MRP_CONTROL_NUM = #{MRP_CONTROL_NUM}
+		      	<if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+					AND C.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+				</if>
+		    ) AA
+		GROUP BY COMP_CODE, DIV_CODE, MRP_CONTROL_NUM, CHILD_ITEM_CODE,
+				ITEM_NAME, SPEC, STOCK_UNIT, ITEM_ACCOUNT, SUPPLY_TYPE
+	</select>
+
+
+	<select id="mpo080ukrvServiceImpl.selectDetailList1_Print" parameterType="Map" resultType="rMap">
+SELECT T.*,
+
+		R2.CODE_NAME AS ITEM_ACCOUNT_NAME,
+		R3.CODE_NAME AS SUPPLY_TYPE_NAME
+ FROM (
+	SELECT
+			 '00' AS NUM
+			,'전체' AS WK_PLAN_NUM
+			,COMP_CODE
+			,DIV_CODE
+			,MRP_CONTROL_NUM
+			,'전체' AS PROD_ITEM_CODE
+			,'전체' AS PROD_ITEM_NAME
+		    ,CHILD_ITEM_CODE
+		    ,ITEM_NAME
+		    ,SPEC
+		    ,STOCK_UNIT
+		    ,ITEM_ACCOUNT
+		    ,SUPPLY_TYPE
+		    ,SUM(PL_QTY)                      UNIT_Q
+		    ,MAX(ORDER_UNIT)                  ORDER_UNIT
+		    ,MAX(CHILD_PRICE)                 CHILD_PRICE
+		   -- ,(SUM(PL_QTY) * MAX(CHILD_PRICE) / MAX(TRNS_RATE) ) CHILD_AMOUNT
+
+		   ,MAX(CHILD_AMOUNT) AS CHILD_AMOUNT
+		    ,MAX(PURCH_LDTIME)                PURCH_LDTIME
+		    ,		MAX(ORDER_REQ_Q)				 ORDER_REQ_Q		--구매요청량
+		    ,MAX(ORDER_Q)				 	 ORDER_Q
+		    ,MAX(CUSTOM_CODE)                 CUSTOM_CODE
+		    ,MAX(CUSTOM_NAME)				 CUSTOM_NAME
+		    ,MAX(REMARK)						 REMARK
+		    ,MAX(PROJECT_NO)					 PROJECT_NO
+		    ,MAX(ORDER_REQ_NUM)				 ORDER_REQ_NUM
+		    ,MAX(ORDER_NUM)				 	 ORDER_NUM
+
+
+		    ,SUM(PL_QTY)                      PL_QTY			--총소요량
+
+		    ,MAX(TRNS_RATE) AS TRNS_RATE -- 입수
+
+		    ,MAX(CSTOCK)                      CSTOCK			--현재고
+
+			,MAX(RECEIPT_PLAN_Q)		AS RECEIPT_PLAN_Q 		-- 입고예정량
+		    ,MAX(ISSUE_PLAN_Q)			AS ISSUE_PLAN_Q 		--출고예정량
+
+		    ,MAX(SAFE_STOCK_Q)				 SAFE_STOCK_Q		--안전재고
+
+			,MAX(MINI_PURCH_Q)		AS MINI_PURCH_Q		--최소LOT
+			,MAX(MAX_PURCH_Q)		AS MAX_PURCH_Q			--최대LOT
+
+
+		    <if test="TYPE1 == &quot;on&quot; and TYPE2 != &quot;on&quot; and TYPE3 != &quot;on&quot;">
+				--옵션: 현재고 o ,안전재고 x ,MOQ x
+
+				,CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				,(CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1
+				     END) / MAX(TRNS_RATE) AS CALC_PLAN_QTY		--구매계획량
+
+--				CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0
+--				     ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1
+--				     END ORDER_REQ_Q		--구매요청량
+			</if>
+			<if test="TYPE1 == &quot;on&quot; and TYPE2 == &quot;on&quot; and TYPE3 != &quot;on&quot;">
+				--옵션: 현재고 o ,안전재고 o ,MOQ x
+
+				,CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				,(CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END) / MAX(TRNS_RATE) AS CALC_PLAN_QTY		--구매계획량
+
+--				CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+--				     ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+--				     END ORDER_REQ_Q		--구매요청량
+
+			</if>
+			<if test="TYPE1 == &quot;on&quot; and TYPE2 != &quot;on&quot; and TYPE3 == &quot;on&quot;">
+				--옵션: 현재고 o ,안전재고 x ,MOQ o
+
+				,CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				 ,(CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) &lt;= MAX(MINI_PURCH_Q) THEN (CASE WHEN  MAX(MINI_PURCH_Q) &gt; 0.0 THEN (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) >= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) = 0 THEN 0 ELSE MAX(MINI_PURCH_Q) END)
+										  ELSE (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) END)
+					  ELSE (CASE WHEN MAX(MAX_PURCH_Q) = 0 THEN (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END)
+								 ELSE (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) &gt; MAX(MAX_PURCH_Q) AND MAX(MAX_PURCH_Q) &gt; 0.0 THEN (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) - (MAX(MAX_PURCH_Q) * CONVERT(NUMERIC(18,6), CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)))) = 0.0 THEN MAX(MAX_PURCH_Q) * CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q))
+				                                                                          ELSE MAX(MAX_PURCH_Q) * (CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)) + 1) END)
+								  			ELSE MAX(MAX_PURCH_Q) END)
+							END)
+
+				 END) / MAX(TRNS_RATE) AS  CALC_PLAN_QTY		--구매계획량
+
+			</if>
+
+			<if test="TYPE1 == &quot;on&quot; and TYPE2 == &quot;on&quot; and TYPE3 == &quot;on&quot;">
+				--옵션: 현재고 o ,안전재고o ,MOQ o
+
+				,CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				 ,(CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) &lt;= MAX(MINI_PURCH_Q) THEN (CASE WHEN  MAX(MINI_PURCH_Q) &gt; 0.0 THEN (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) = 0 THEN 0 ELSE MAX(MINI_PURCH_Q) END)
+														  ELSE (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) END)
+					  ELSE (CASE WHEN MAX(MAX_PURCH_Q) = 0 THEN (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END)
+								 ELSE (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) &gt; MAX(MAX_PURCH_Q) AND MAX(MAX_PURCH_Q) &gt; 0.0 THEN (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) - (MAX(MAX_PURCH_Q) * CONVERT(NUMERIC(18,6), CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)))) = 0.0 THEN MAX(MAX_PURCH_Q) * CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q))
+				                                                                          ELSE MAX(MAX_PURCH_Q) * (CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)) + 1) END)
+								  			ELSE MAX(MAX_PURCH_Q) END)
+							END)
+				 END) / MAX(TRNS_RATE) AS  CALC_PLAN_QTY		--구매계획량
+			</if>
+
+			<if test="TYPE1 != &quot;on&quot; and TYPE2 == &quot;on&quot; and TYPE3 != &quot;on&quot;">
+				--옵션: 현재고 x ,안전재고o ,MOQ x
+
+				,CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				,(CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END) / MAX(TRNS_RATE) AS  CALC_PLAN_QTY		--구매계획량
+
+--				CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+--				     ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+--				     END ORDER_REQ_Q		--구매요청량
+
+			</if>
+			<if test="TYPE1 != &quot;on&quot; and TYPE2 == &quot;on&quot; and TYPE3 == &quot;on&quot;">
+				--옵션: 현재고 x ,안전재고o ,MOQ o
+
+				,CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				 ,(CASE WHEN (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) &lt;= MAX(MINI_PURCH_Q) THEN (CASE WHEN  MAX(MINI_PURCH_Q) &gt; 0.0 THEN MAX(MINI_PURCH_Q)
+														  ELSE (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) END)
+					  ELSE (CASE WHEN MAX(MAX_PURCH_Q) = 0 THEN (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END)
+								 ELSE (CASE WHEN (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) &gt; MAX(MAX_PURCH_Q) AND MAX(MAX_PURCH_Q) &gt; 0.0 THEN (CASE WHEN (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) - (MAX(MAX_PURCH_Q) * CONVERT(NUMERIC(18,6), CONVERT(INTEGER, (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)))) = 0.0 THEN MAX(MAX_PURCH_Q) * CONVERT(INTEGER, (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q))
+				                                                                          ELSE MAX(MAX_PURCH_Q) * (CONVERT(INTEGER, (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)) + 1) END)
+								  			ELSE MAX(MAX_PURCH_Q) END)
+						    END)
+				 END) / MAX(TRNS_RATE) AS  CALC_PLAN_QTY		--구매계획량
+			</if>
+			<if test="TYPE1 != &quot;on&quot; and TYPE2 != &quot;on&quot; and TYPE3 == &quot;on&quot;">
+				--옵션: 현재고 x ,안전재고x ,MOQ o
+
+				,SUM(PL_QTY) AS CALC_NET_QTY	--순소요량
+
+				 ,(CASE WHEN SUM(PL_QTY) &lt;= MAX(MINI_PURCH_Q) THEN (CASE WHEN  MAX(MINI_PURCH_Q) &gt; 0.0 THEN MAX(MINI_PURCH_Q)
+														  ELSE SUM(PL_QTY) END)
+					  ELSE (CASE WHEN MAX(MAX_PURCH_Q) = 0 THEN SUM(PL_QTY)
+								 ELSE (CASE WHEN SUM(PL_QTY) &gt; MAX(MAX_PURCH_Q) AND MAX(MAX_PURCH_Q) &gt; 0.0 THEN (CASE WHEN SUM(PL_QTY) - (MAX(MAX_PURCH_Q) * CONVERT(NUMERIC(18,6), CONVERT(INTEGER, SUM(PL_QTY) / MAX(MAX_PURCH_Q)))) = 0.0 THEN MAX(MAX_PURCH_Q) * CONVERT(INTEGER, SUM(PL_QTY) / MAX(MAX_PURCH_Q))
+				                                                                          ELSE MAX(MAX_PURCH_Q) * (CONVERT(INTEGER, SUM(PL_QTY) / MAX(MAX_PURCH_Q)) + 1) END)
+								  			ELSE MAX(MAX_PURCH_Q) END)
+						    END)
+				 END) / MAX(TRNS_RATE) AS  CALC_PLAN_QTY		--구매계획량
+			</if>
+
+
+			<if test="TYPE1 != &quot;on&quot; and TYPE2 != &quot;on&quot; and TYPE3 != &quot;on&quot;">
+				--옵션: 현재고 x ,안전재고x ,MOQ x
+
+				,SUM(PL_QTY) AS CALC_NET_QTY	--순소요량
+				,SUM(PL_QTY) / MAX(TRNS_RATE) AS CALC_PLAN_QTY	--구매계획량
+--				SUM(PL_QTY) AS ORDER_REQ_Q		--구매요청량
+			</if>
+
+		FROM
+		    (
+		        SELECT
+		        	A.COMP_CODE,
+		        	A.DIV_CODE,
+		        	A.WK_PLAN_NUM,
+		        	A.MRP_CONTROL_NUM,
+		        	A.PROD_ITEM_CODE,
+					R1.ITEM_NAME AS PROD_ITEM_NAME,
+		            A.CHILD_ITEM_CODE,
+		            B.ITEM_NAME,
+		            B.SPEC,
+		            B.STOCK_UNIT,
+		            C.ITEM_ACCOUNT,
+		            C.SUPPLY_TYPE,
+		            C.ORDER_UNIT,
+		            A.CHILD_PRICE,
+		            A.CHILD_AMOUNT,
+		            C.PURCH_LDTIME,
+		            ISNULL(D.REQ_PLAN_Q , 0) 		AS ORDER_REQ_Q,
+		    		ISNULL(F.ORDER_Q, 0) 			AS ORDER_Q,
+		            C.CUSTOM_CODE,
+		            ISNULL(E.CUSTOM_NAME, '')		AS CUSTOM_NAME,
+					A.REMARK,
+					ISNULL(D.ORDER_REQ_NUM, '') 	AS ORDER_REQ_NUM,
+		    		A.PROJECT_NO											AS PROJECT_NO,
+		    		A.ORDER_NUM												AS ORDER_NUM,
+		            A.PL_QTY,
+
+		            C.TRNS_RATE,
+
+		            ISNULL((SELECT SUM(STOCK_Q)
+		                    FROM BIV100T WITH(NOLOCK)
+		                    WHERE COMP_CODE = A.COMP_CODE
+		                      AND DIV_CODE = A.DIV_CODE
+		                      AND ITEM_CODE = A.CHILD_ITEM_CODE
+		            ), 0)    AS CSTOCK,
+
+		    		<if test="TYPE4 != &quot;on&quot; and TYPE5 != &quot;on&quot;">
+		            --입고예정 x , 출고예정 x
+		            ISNULL((SELECT SUM(STOCK_Q)
+		                    FROM BIV100T WITH(NOLOCK)
+		                    WHERE COMP_CODE = A.COMP_CODE
+		                      AND DIV_CODE = A.DIV_CODE
+		                      AND ITEM_CODE = A.CHILD_ITEM_CODE
+		            ), 0)    AS CSTOCK_CALC,
+		    		</if>
+
+
+		    		<if test="TYPE4 == &quot;on&quot; and TYPE5 != &quot;on&quot;">
+					--입고예정 o , 출고예정 x
+
+		            ISNULL((SELECT SUM(STOCK_Q)
+		                    FROM BIV100T WITH(NOLOCK)
+		                    WHERE COMP_CODE = A.COMP_CODE
+		                      AND DIV_CODE = A.DIV_CODE
+		                      AND ITEM_CODE = A.CHILD_ITEM_CODE
+		            ), 0)
+					+ ISNULL((SELECT SUM(ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))
+						FROM                MPO200T AS S1  WITH (NOLOCK)
+								LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ, SUM(RECEIPT_Q) AS RECEIPT_Q
+											   FROM QMS100T WITH (NOLOCK)
+											   GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ) S2 ON  S2.COMP_CODE   = S1.COMP_CODE
+																								   AND  S2.DIV_CODE    = S1.DIV_CODE
+																								   AND  S2.ORDER_NUM   = S1.ORDER_NUM
+																								   AND  S2.ORDER_SEQ	  = S1.ORDER_SEQ
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))        &gt; 0				/* 미입고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE		= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0)	 AS CSTOCK_CALC,
+		    		</if>
+
+		    		<if test="TYPE4 != &quot;on&quot; and TYPE5 == &quot;on&quot;">
+					--입고예정 x , 출고예정 o
+					ISNULL((SELECT SUM(STOCK_Q)
+		                    FROM BIV100T WITH(NOLOCK)
+		                    WHERE COMP_CODE = A.COMP_CODE
+		                      AND DIV_CODE = A.DIV_CODE
+		                      AND ITEM_CODE = A.CHILD_ITEM_CODE
+		            ), 0)
+					- ISNULL((SELECT  SUM(ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0)) AS ISSUE_PLAN_Q
+						FROM                PMP300T AS S1  WITH (NOLOCK)
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0))        &gt; 0				/* 미출고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE				= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0)	 AS CSTOCK_CALC,
+		    		</if>
+
+		    		<if test="TYPE4 == &quot;on&quot; and TYPE5 == &quot;on&quot;">
+					--입고예정 o , 출고예정 o
+					ISNULL((SELECT SUM(STOCK_Q)
+		                    FROM BIV100T WITH(NOLOCK)
+		                    WHERE COMP_CODE = A.COMP_CODE
+		                      AND DIV_CODE = A.DIV_CODE
+		                      AND ITEM_CODE = A.CHILD_ITEM_CODE
+		            ), 0)
+					+ ISNULL((SELECT SUM(ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))
+						FROM                MPO200T AS S1  WITH (NOLOCK)
+								LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ, SUM(RECEIPT_Q) AS RECEIPT_Q
+											   FROM QMS100T WITH (NOLOCK)
+											   GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ) S2 ON  S2.COMP_CODE   = S1.COMP_CODE
+																								   AND  S2.DIV_CODE    = S1.DIV_CODE
+																								   AND  S2.ORDER_NUM   = S1.ORDER_NUM
+																								   AND  S2.ORDER_SEQ	  = S1.ORDER_SEQ
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))        &gt; 0				/* 미입고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE		= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0)
+					- ISNULL((SELECT  SUM(ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0)) AS ISSUE_PLAN_Q
+						FROM                PMP300T AS S1  WITH (NOLOCK)
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0))        &gt; 0				/* 미출고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE				= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0)	 AS CSTOCK_CALC,
+		    		</if>
+
+		    		<if test="TYPE4 != &quot;on&quot;">
+					--입고예정 x
+					0 AS RECEIPT_PLAN_Q,
+		    		</if>
+
+		    		<if test="TYPE4 == &quot;on&quot;">
+					--입고예정 o
+					ISNULL((SELECT SUM(ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))
+						FROM                MPO200T AS S1  WITH (NOLOCK)
+								LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ, SUM(RECEIPT_Q) AS RECEIPT_Q
+											   FROM QMS100T WITH (NOLOCK)
+											   GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ) S2 ON  S2.COMP_CODE   = S1.COMP_CODE
+																								   AND  S2.DIV_CODE    = S1.DIV_CODE
+																								   AND  S2.ORDER_NUM   = S1.ORDER_NUM
+																								   AND  S2.ORDER_SEQ	  = S1.ORDER_SEQ
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))        &gt; 0				/* 미입고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE		= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0)  AS RECEIPT_PLAN_Q,					--입고예정량
+		    		</if>
+
+		    		<if test="TYPE5 != &quot;on&quot;">
+					--출고예정 x
+					0 AS ISSUE_PLAN_Q,
+		    		</if>
+
+		    		<if test="TYPE5 == &quot;on&quot;">
+					--출고예정 o
+					ISNULL((SELECT  SUM(ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0)) AS ISSUE_PLAN_Q
+						FROM                PMP300T AS S1  WITH (NOLOCK)
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0))        &gt; 0				/* 미출고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE				= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0) AS ISSUE_PLAN_Q,
+		    		</if>
+
+
+		            C.SAFE_STOCK_Q,
+
+					C.MINI_PURCH_Q,
+					C.MAX_PURCH_Q
+
+
+		      	FROM BPL130T A WITH(NOLOCK)
+						INNER JOIN BPR100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+														 AND A.CHILD_ITEM_CODE = B.ITEM_CODE
+						INNER JOIN BPR200T C WITH(NOLOCK) ON A.COMP_CODE = C.COMP_CODE
+														 AND A.DIV_CODE  = C.DIV_CODE
+														 AND A.CHILD_ITEM_CODE = C.ITEM_CODE
+						LEFT  JOIN MRP400T D WITH(NOLOCK) ON A.COMP_CODE = D.COMP_CODE
+														 AND A.DIV_CODE  = D.DIV_CODE
+														 AND A.CHILD_ITEM_CODE = D.ITEM_CODE
+														 AND A.MRP_CONTROL_NUM = D.MRP_CONTROL_NUM
+						LEFT  JOIN BCM100T E WITH(NOLOCK) ON A.COMP_CODE = E.COMP_CODE
+														 AND C.CUSTOM_CODE = E.CUSTOM_CODE
+						LEFT  JOIN (SELECT COMP_CODE, DIV_CODE, ORDER_REQ_NUM, SUM(ORDER_Q) AS ORDER_Q FROM MPO200T WITH(NOLOCK)
+										  GROUP BY  COMP_CODE, DIV_CODE, ORDER_REQ_NUM ) F ON A.COMP_CODE = F.COMP_CODE
+																						  AND A.DIV_CODE  = F.DIV_CODE
+																						  AND D.ORDER_REQ_NUM = F.ORDER_REQ_NUM
+						LEFT JOIN BPR100T R1 WITH(NOLOCK) ON A.COMP_CODE = R1.COMP_CODE
+														 AND A.PROD_ITEM_CODE = R1.ITEM_CODE
+				WHERE A.COMP_CODE = #{S_COMP_CODE}
+					AND A.DIV_CODE = #{DIV_CODE}
+					AND A.WORK_STEP = 'M'			--'T':임시,'M':소요량
+				    AND A.MRP_CONTROL_NUM = #{MRP_CONTROL_NUM}
+		    ) AA
+		GROUP BY COMP_CODE, DIV_CODE, MRP_CONTROL_NUM,PROD_ITEM_CODE, CHILD_ITEM_CODE,
+				ITEM_NAME, SPEC, STOCK_UNIT, ITEM_ACCOUNT, SUPPLY_TYPE
+
+
+UNION ALL
+
+	SELECT
+			 DENSE_RANK() OVER (ORDER BY   MRP_CONTROL_NUM , WK_PLAN_NUM) AS NUM
+			,WK_PLAN_NUM
+			,COMP_CODE
+			,DIV_CODE
+			,MRP_CONTROL_NUM
+			,PROD_ITEM_CODE
+			,MAX(PROD_ITEM_NAME) AS PROD_ITEM_NAME
+		    ,CHILD_ITEM_CODE
+		    ,ITEM_NAME
+		    ,SPEC
+		    ,STOCK_UNIT
+		    ,ITEM_ACCOUNT
+		    ,SUPPLY_TYPE
+		    ,SUM(PL_QTY)                      UNIT_Q
+		    ,MAX(ORDER_UNIT)                  ORDER_UNIT
+		    ,MAX(CHILD_PRICE)                 CHILD_PRICE
+		   -- ,(SUM(PL_QTY) * MAX(CHILD_PRICE) / MAX(TRNS_RATE) ) CHILD_AMOUNT
+
+		   ,MAX(CHILD_AMOUNT) AS CHILD_AMOUNT
+		    ,MAX(PURCH_LDTIME)                PURCH_LDTIME
+		    ,		MAX(ORDER_REQ_Q)				 ORDER_REQ_Q		--구매요청량
+		    ,MAX(ORDER_Q)				 	 ORDER_Q
+		    ,MAX(CUSTOM_CODE)                 CUSTOM_CODE
+		    ,MAX(CUSTOM_NAME)				 CUSTOM_NAME
+		    ,MAX(REMARK)						 REMARK
+		    ,MAX(PROJECT_NO)					 PROJECT_NO
+		    ,MAX(ORDER_REQ_NUM)				 ORDER_REQ_NUM
+		    ,MAX(ORDER_NUM)				 	 ORDER_NUM
+
+
+		    ,SUM(PL_QTY)                      PL_QTY			--총소요량
+
+		    ,MAX(TRNS_RATE) AS TRNS_RATE -- 입수
+
+		    ,MAX(CSTOCK)                      CSTOCK			--현재고
+
+			,MAX(RECEIPT_PLAN_Q)		AS RECEIPT_PLAN_Q 		-- 입고예정량
+		    ,MAX(ISSUE_PLAN_Q)			AS ISSUE_PLAN_Q 		--출고예정량
+
+		    ,MAX(SAFE_STOCK_Q)				 SAFE_STOCK_Q		--안전재고
+
+			,MAX(MINI_PURCH_Q)		AS MINI_PURCH_Q		--최소LOT
+			,MAX(MAX_PURCH_Q)		AS MAX_PURCH_Q			--최대LOT
+
+
+		    <if test="TYPE1 == &quot;on&quot; and TYPE2 != &quot;on&quot; and TYPE3 != &quot;on&quot;">
+				--옵션: 현재고 o ,안전재고 x ,MOQ x
+
+				,CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				,(CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1
+				     END) / MAX(TRNS_RATE) AS CALC_PLAN_QTY		--구매계획량
+
+--				CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0
+--				     ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1
+--				     END ORDER_REQ_Q		--구매요청량
+			</if>
+			<if test="TYPE1 == &quot;on&quot; and TYPE2 == &quot;on&quot; and TYPE3 != &quot;on&quot;">
+				--옵션: 현재고 o ,안전재고 o ,MOQ x
+
+				,CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				,(CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END) / MAX(TRNS_RATE) AS CALC_PLAN_QTY		--구매계획량
+
+--				CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+--				     ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+--				     END ORDER_REQ_Q		--구매요청량
+
+			</if>
+			<if test="TYPE1 == &quot;on&quot; and TYPE2 != &quot;on&quot; and TYPE3 == &quot;on&quot;">
+				--옵션: 현재고 o ,안전재고 x ,MOQ o
+
+				,CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				 ,(CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) &lt;= MAX(MINI_PURCH_Q) THEN (CASE WHEN  MAX(MINI_PURCH_Q) &gt; 0.0 THEN (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) >= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) = 0 THEN 0 ELSE MAX(MINI_PURCH_Q) END)
+										  ELSE (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) END)
+					  ELSE (CASE WHEN MAX(MAX_PURCH_Q) = 0 THEN (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END)
+								 ELSE (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) &gt; MAX(MAX_PURCH_Q) AND MAX(MAX_PURCH_Q) &gt; 0.0 THEN (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) - (MAX(MAX_PURCH_Q) * CONVERT(NUMERIC(18,6), CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)))) = 0.0 THEN MAX(MAX_PURCH_Q) * CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q))
+				                                                                          ELSE MAX(MAX_PURCH_Q) * (CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)) + 1) END)
+								  			ELSE MAX(MAX_PURCH_Q) END)
+							END)
+
+				 END) / MAX(TRNS_RATE) AS  CALC_PLAN_QTY		--구매계획량
+
+			</if>
+
+			<if test="TYPE1 == &quot;on&quot; and TYPE2 == &quot;on&quot; and TYPE3 == &quot;on&quot;">
+				--옵션: 현재고 o ,안전재고o ,MOQ o
+
+				,CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				 ,(CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) &lt;= MAX(MINI_PURCH_Q) THEN (CASE WHEN  MAX(MINI_PURCH_Q) &gt; 0.0 THEN (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) = 0 THEN 0 ELSE MAX(MINI_PURCH_Q) END)
+														  ELSE (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) END)
+					  ELSE (CASE WHEN MAX(MAX_PURCH_Q) = 0 THEN (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END)
+								 ELSE (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) &gt; MAX(MAX_PURCH_Q) AND MAX(MAX_PURCH_Q) &gt; 0.0 THEN (CASE WHEN (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) - (MAX(MAX_PURCH_Q) * CONVERT(NUMERIC(18,6), CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)))) = 0.0 THEN MAX(MAX_PURCH_Q) * CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q))
+				                                                                          ELSE MAX(MAX_PURCH_Q) * (CONVERT(INTEGER, (CASE WHEN MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (MAX(CSTOCK_CALC) - MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)) + 1) END)
+								  			ELSE MAX(MAX_PURCH_Q) END)
+							END)
+				 END) / MAX(TRNS_RATE) AS  CALC_PLAN_QTY		--구매계획량
+			</if>
+
+			<if test="TYPE1 != &quot;on&quot; and TYPE2 == &quot;on&quot; and TYPE3 != &quot;on&quot;">
+				--옵션: 현재고 x ,안전재고o ,MOQ x
+
+				,CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				,(CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END) / MAX(TRNS_RATE) AS  CALC_PLAN_QTY		--구매계획량
+
+--				CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+--				     ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+--				     END ORDER_REQ_Q		--구매요청량
+
+			</if>
+			<if test="TYPE1 != &quot;on&quot; and TYPE2 == &quot;on&quot; and TYPE3 == &quot;on&quot;">
+				--옵션: 현재고 x ,안전재고o ,MOQ o
+
+				,CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0
+				     ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1
+				     END CALC_NET_QTY		--순소요량
+
+				 ,(CASE WHEN (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) &lt;= MAX(MINI_PURCH_Q) THEN (CASE WHEN  MAX(MINI_PURCH_Q) &gt; 0.0 THEN MAX(MINI_PURCH_Q)
+														  ELSE (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) END)
+					  ELSE (CASE WHEN MAX(MAX_PURCH_Q) = 0 THEN (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END)
+								 ELSE (CASE WHEN (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) &gt; MAX(MAX_PURCH_Q) AND MAX(MAX_PURCH_Q) &gt; 0.0 THEN (CASE WHEN (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) - (MAX(MAX_PURCH_Q) * CONVERT(NUMERIC(18,6), CONVERT(INTEGER, (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)))) = 0.0 THEN MAX(MAX_PURCH_Q) * CONVERT(INTEGER, (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q))
+				                                                                          ELSE MAX(MAX_PURCH_Q) * (CONVERT(INTEGER, (CASE WHEN - MAX(SAFE_STOCK_Q) - SUM(PL_QTY) &gt;= 0 THEN 0 ELSE (- MAX(SAFE_STOCK_Q) - SUM(PL_QTY)) * -1 END) / MAX(MAX_PURCH_Q)) + 1) END)
+								  			ELSE MAX(MAX_PURCH_Q) END)
+						    END)
+				 END) / MAX(TRNS_RATE) AS  CALC_PLAN_QTY		--구매계획량
+			</if>
+			<if test="TYPE1 != &quot;on&quot; and TYPE2 != &quot;on&quot; and TYPE3 == &quot;on&quot;">
+				--옵션: 현재고 x ,안전재고x ,MOQ o
+
+				,SUM(PL_QTY) AS CALC_NET_QTY	--순소요량
+
+				 ,(CASE WHEN SUM(PL_QTY) &lt;= MAX(MINI_PURCH_Q) THEN (CASE WHEN  MAX(MINI_PURCH_Q) &gt; 0.0 THEN MAX(MINI_PURCH_Q)
+														  ELSE SUM(PL_QTY) END)
+					  ELSE (CASE WHEN MAX(MAX_PURCH_Q) = 0 THEN SUM(PL_QTY)
+								 ELSE (CASE WHEN SUM(PL_QTY) &gt; MAX(MAX_PURCH_Q) AND MAX(MAX_PURCH_Q) &gt; 0.0 THEN (CASE WHEN SUM(PL_QTY) - (MAX(MAX_PURCH_Q) * CONVERT(NUMERIC(18,6), CONVERT(INTEGER, SUM(PL_QTY) / MAX(MAX_PURCH_Q)))) = 0.0 THEN MAX(MAX_PURCH_Q) * CONVERT(INTEGER, SUM(PL_QTY) / MAX(MAX_PURCH_Q))
+				                                                                          ELSE MAX(MAX_PURCH_Q) * (CONVERT(INTEGER, SUM(PL_QTY) / MAX(MAX_PURCH_Q)) + 1) END)
+								  			ELSE MAX(MAX_PURCH_Q) END)
+						    END)
+				 END) / MAX(TRNS_RATE) AS  CALC_PLAN_QTY		--구매계획량
+			</if>
+
+
+			<if test="TYPE1 != &quot;on&quot; and TYPE2 != &quot;on&quot; and TYPE3 != &quot;on&quot;">
+				--옵션: 현재고 x ,안전재고x ,MOQ x
+
+				,SUM(PL_QTY) AS CALC_NET_QTY	--순소요량
+				,SUM(PL_QTY) / MAX(TRNS_RATE) AS CALC_PLAN_QTY	--구매계획량
+--				SUM(PL_QTY) AS ORDER_REQ_Q		--구매요청량
+			</if>
+
+		FROM
+		    (
+		        SELECT
+		        	A.COMP_CODE,
+		        	A.DIV_CODE,
+		        	A.WK_PLAN_NUM,
+		        	A.MRP_CONTROL_NUM,
+		        	A.PROD_ITEM_CODE,
+					R1.ITEM_NAME AS PROD_ITEM_NAME,
+		            A.CHILD_ITEM_CODE,
+		            B.ITEM_NAME,
+		            B.SPEC,
+		            B.STOCK_UNIT,
+		            C.ITEM_ACCOUNT,
+		            C.SUPPLY_TYPE,
+		            C.ORDER_UNIT,
+		            A.CHILD_PRICE,
+		            A.CHILD_AMOUNT,
+		            C.PURCH_LDTIME,
+		            ISNULL(D.REQ_PLAN_Q , 0) 		AS ORDER_REQ_Q,
+		    		ISNULL(F.ORDER_Q, 0) 			AS ORDER_Q,
+		            C.CUSTOM_CODE,
+		            ISNULL(E.CUSTOM_NAME, '')		AS CUSTOM_NAME,
+					A.REMARK,
+					ISNULL(D.ORDER_REQ_NUM, '') 	AS ORDER_REQ_NUM,
+		    		A.PROJECT_NO											AS PROJECT_NO,
+		    		A.ORDER_NUM												AS ORDER_NUM,
+		            A.PL_QTY,
+
+		            C.TRNS_RATE,
+
+		            ISNULL((SELECT SUM(STOCK_Q)
+		                    FROM BIV100T WITH(NOLOCK)
+		                    WHERE COMP_CODE = A.COMP_CODE
+		                      AND DIV_CODE = A.DIV_CODE
+		                      AND ITEM_CODE = A.CHILD_ITEM_CODE
+		            ), 0)    AS CSTOCK,
+
+		    		<if test="TYPE4 != &quot;on&quot; and TYPE5 != &quot;on&quot;">
+		            --입고예정 x , 출고예정 x
+		            ISNULL((SELECT SUM(STOCK_Q)
+		                    FROM BIV100T WITH(NOLOCK)
+		                    WHERE COMP_CODE = A.COMP_CODE
+		                      AND DIV_CODE = A.DIV_CODE
+		                      AND ITEM_CODE = A.CHILD_ITEM_CODE
+		            ), 0)    AS CSTOCK_CALC,
+		    		</if>
+
+
+		    		<if test="TYPE4 == &quot;on&quot; and TYPE5 != &quot;on&quot;">
+					--입고예정 o , 출고예정 x
+
+		            ISNULL((SELECT SUM(STOCK_Q)
+		                    FROM BIV100T WITH(NOLOCK)
+		                    WHERE COMP_CODE = A.COMP_CODE
+		                      AND DIV_CODE = A.DIV_CODE
+		                      AND ITEM_CODE = A.CHILD_ITEM_CODE
+		            ), 0)
+					+ ISNULL((SELECT SUM(ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))
+						FROM                MPO200T AS S1  WITH (NOLOCK)
+								LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ, SUM(RECEIPT_Q) AS RECEIPT_Q
+											   FROM QMS100T WITH (NOLOCK)
+											   GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ) S2 ON  S2.COMP_CODE   = S1.COMP_CODE
+																								   AND  S2.DIV_CODE    = S1.DIV_CODE
+																								   AND  S2.ORDER_NUM   = S1.ORDER_NUM
+																								   AND  S2.ORDER_SEQ	  = S1.ORDER_SEQ
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))        &gt; 0				/* 미입고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE		= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0)	 AS CSTOCK_CALC,
+		    		</if>
+
+		    		<if test="TYPE4 != &quot;on&quot; and TYPE5 == &quot;on&quot;">
+					--입고예정 x , 출고예정 o
+					ISNULL((SELECT SUM(STOCK_Q)
+		                    FROM BIV100T WITH(NOLOCK)
+		                    WHERE COMP_CODE = A.COMP_CODE
+		                      AND DIV_CODE = A.DIV_CODE
+		                      AND ITEM_CODE = A.CHILD_ITEM_CODE
+		            ), 0)
+					- ISNULL((SELECT  SUM(ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0)) AS ISSUE_PLAN_Q
+						FROM                PMP300T AS S1  WITH (NOLOCK)
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0))        &gt; 0				/* 미출고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE				= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0)	 AS CSTOCK_CALC,
+		    		</if>
+
+		    		<if test="TYPE4 == &quot;on&quot; and TYPE5 == &quot;on&quot;">
+					--입고예정 o , 출고예정 o
+					ISNULL((SELECT SUM(STOCK_Q)
+		                    FROM BIV100T WITH(NOLOCK)
+		                    WHERE COMP_CODE = A.COMP_CODE
+		                      AND DIV_CODE = A.DIV_CODE
+		                      AND ITEM_CODE = A.CHILD_ITEM_CODE
+		            ), 0)
+					+ ISNULL((SELECT SUM(ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))
+						FROM                MPO200T AS S1  WITH (NOLOCK)
+								LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ, SUM(RECEIPT_Q) AS RECEIPT_Q
+											   FROM QMS100T WITH (NOLOCK)
+											   GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ) S2 ON  S2.COMP_CODE   = S1.COMP_CODE
+																								   AND  S2.DIV_CODE    = S1.DIV_CODE
+																								   AND  S2.ORDER_NUM   = S1.ORDER_NUM
+																								   AND  S2.ORDER_SEQ	  = S1.ORDER_SEQ
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))        &gt; 0				/* 미입고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE		= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0)
+					- ISNULL((SELECT  SUM(ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0)) AS ISSUE_PLAN_Q
+						FROM                PMP300T AS S1  WITH (NOLOCK)
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0))        &gt; 0				/* 미출고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE				= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0)	 AS CSTOCK_CALC,
+		    		</if>
+
+		    		<if test="TYPE4 != &quot;on&quot;">
+					--입고예정 x
+					0 AS RECEIPT_PLAN_Q,
+		    		</if>
+
+		    		<if test="TYPE4 == &quot;on&quot;">
+					--입고예정 o
+					ISNULL((SELECT SUM(ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))
+						FROM                MPO200T AS S1  WITH (NOLOCK)
+								LEFT  JOIN  (SELECT COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ, SUM(RECEIPT_Q) AS RECEIPT_Q
+											   FROM QMS100T WITH (NOLOCK)
+											   GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, ORDER_SEQ) S2 ON  S2.COMP_CODE   = S1.COMP_CODE
+																								   AND  S2.DIV_CODE    = S1.DIV_CODE
+																								   AND  S2.ORDER_NUM   = S1.ORDER_NUM
+																								   AND  S2.ORDER_SEQ	  = S1.ORDER_SEQ
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.ORDER_Q, 0) -  ISNULL(S2.RECEIPT_Q, 0) * S1.TRNS_RATE-  ISNULL(S1.BAD_RETURN_Q, 0))        &gt; 0				/* 미입고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE		= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0)  AS RECEIPT_PLAN_Q,					--입고예정량
+		    		</if>
+
+		    		<if test="TYPE5 != &quot;on&quot;">
+					--출고예정 x
+					0 AS ISSUE_PLAN_Q,
+		    		</if>
+
+		    		<if test="TYPE5 == &quot;on&quot;">
+					--출고예정 o
+					ISNULL((SELECT  SUM(ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0)) AS ISSUE_PLAN_Q
+						FROM                PMP300T AS S1  WITH (NOLOCK)
+						WHERE   S1.COMP_CODE      = A.COMP_CODE
+						AND     S1.DIV_CODE       = A.DIV_CODE
+						AND     (ISNULL(S1.OUTSTOCK_REQ_Q, 0) -  ISNULL(S1.OUTSTOCK_Q, 0))        &gt; 0				/* 미출고량 계산 시(필수) */
+						AND     S1.CONTROL_STATUS &lt; '8'
+
+						AND		S1.ITEM_CODE				= A.CHILD_ITEM_CODE
+						GROUP BY S1.ITEM_CODE
+					),0) AS ISSUE_PLAN_Q,
+		    		</if>
+
+
+		            C.SAFE_STOCK_Q,
+
+					C.MINI_PURCH_Q,
+					C.MAX_PURCH_Q
+
+
+		      	FROM BPL130T A WITH(NOLOCK)
+						INNER JOIN BPR100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+														 AND A.CHILD_ITEM_CODE = B.ITEM_CODE
+						INNER JOIN BPR200T C WITH(NOLOCK) ON A.COMP_CODE = C.COMP_CODE
+														 AND A.DIV_CODE  = C.DIV_CODE
+														 AND A.CHILD_ITEM_CODE = C.ITEM_CODE
+						LEFT  JOIN MRP400T D WITH(NOLOCK) ON A.COMP_CODE = D.COMP_CODE
+														 AND A.DIV_CODE  = D.DIV_CODE
+														 AND A.CHILD_ITEM_CODE = D.ITEM_CODE
+														 AND A.MRP_CONTROL_NUM = D.MRP_CONTROL_NUM
+						LEFT  JOIN BCM100T E WITH(NOLOCK) ON A.COMP_CODE = E.COMP_CODE
+														 AND C.CUSTOM_CODE = E.CUSTOM_CODE
+						LEFT  JOIN (SELECT COMP_CODE, DIV_CODE, ORDER_REQ_NUM, SUM(ORDER_Q) AS ORDER_Q FROM MPO200T WITH(NOLOCK)
+										  GROUP BY  COMP_CODE, DIV_CODE, ORDER_REQ_NUM ) F ON A.COMP_CODE = F.COMP_CODE
+																						  AND A.DIV_CODE  = F.DIV_CODE
+																						  AND D.ORDER_REQ_NUM = F.ORDER_REQ_NUM
+						LEFT JOIN BPR100T R1 WITH(NOLOCK) ON A.COMP_CODE = R1.COMP_CODE
+														 AND A.PROD_ITEM_CODE = R1.ITEM_CODE
+				WHERE A.COMP_CODE = #{S_COMP_CODE}
+					AND A.DIV_CODE = #{DIV_CODE}
+					AND A.WORK_STEP = 'M'			--'T':임시,'M':소요량
+				    AND A.MRP_CONTROL_NUM = #{MRP_CONTROL_NUM}
+		    ) AA
+		GROUP BY COMP_CODE, DIV_CODE, MRP_CONTROL_NUM ,WK_PLAN_NUM,PROD_ITEM_CODE, CHILD_ITEM_CODE,
+				ITEM_NAME, SPEC, STOCK_UNIT, ITEM_ACCOUNT, SUPPLY_TYPE
+
+) T
+
+	LEFT JOIN BSA100T R2 WITH(NOLOCK) ON R2.COMP_CODE = T.COMP_CODE
+									 AND R2.MAIN_CODE = 'B020'
+									 AND R2.SUB_CODE != '$'
+									 AND R2.SUB_CODE = T.ITEM_ACCOUNT
+	LEFT JOIN BSA100T R3 WITH(NOLOCK) ON R3.COMP_CODE = T.COMP_CODE
+									 AND R3.MAIN_CODE = 'B014'
+									 AND R3.SUB_CODE != '$'
+									 AND R3.SUB_CODE = T.SUPPLY_TYPE
+	</select>
+	<select id="mpo080ukrvServiceImpl.selectDetailList2" parameterType="Map" resultType="rMap">
+	   SELECT
+		A.CHILD_ITEM_CODE,
+		B.ITEM_NAME,
+        B.SPEC,
+        B.STOCK_UNIT,
+        C.ITEM_ACCOUNT,
+        C.SUPPLY_TYPE,
+        C.ORDER_UNIT,
+        A.CHILD_PRICE,
+        A.CHILD_AMOUNT,
+        A.PL_QTY,
+        A.TEMPN_02 AS UNIT_Q,
+        A.TEMPN_03 AS LOSS_RATE
+		  FROM BPL130T A WITH(NOLOCK)
+	LEFT JOIN BPR100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+									 AND A.CHILD_ITEM_CODE = B.ITEM_CODE
+	LEFT JOIN BPR200T C WITH(NOLOCK) ON A.COMP_CODE = C.COMP_CODE
+									 AND A.DIV_CODE  = C.DIV_CODE
+									 AND A.CHILD_ITEM_CODE = C.ITEM_CODE
+		 WHERE A.COMP_CODE = #{S_COMP_CODE}
+		   AND A.DIV_CODE = #{DIV_CODE}
+		   AND A.WORK_STEP = 'M'
+
+				    AND A.MRP_CONTROL_NUM = #{MRP_CONTROL_NUM}  --선택한 mrp 번호 가져와야함
+
+		   AND A.PROD_ITEM_CODE = #{PROD_ITEM_CODE}
+		   AND (
+				(ISNULL(A.WK_PLAN_NUM, '')	= '') OR (A.WK_PLAN_NUM	!= '' AND A.WK_PLAN_NUM	= #{WK_PLAN_NUM})
+			)
+	ORDER BY  A.CHILD_ITEM_CODE
+	</select>
+
+
+
+	<select id="mpo080ukrvServiceImpl.selectDetailList3" parameterType="Map" resultType="rMap">
+
+	SELECT
+		A.CHILD_ITEM_CODE,
+		MAX(B.ITEM_NAME) AS ITEM_NAME,
+        MAX(B.SPEC) AS SPEC,
+        MAX(B.STOCK_UNIT) AS STOCK_UNIT,
+        MAX(C.ITEM_ACCOUNT) AS ITEM_ACCOUNT,
+        MAX(C.SUPPLY_TYPE) AS SUPPLY_TYPE,
+        MAX(C.ORDER_UNIT) AS ORDER_UNIT,
+        SUM(A.CHILD_PRICE) AS CHILD_PRICE,
+        SUM(A.CHILD_AMOUNT) AS CHILD_AMOUNT,
+        SUM(A.PL_QTY) AS PL_QTY,
+        SUM(A.TEMPN_02) AS UNIT_Q,
+        SUM(A.TEMPN_03) AS LOSS_RATE
+		  FROM BPL130T A WITH(NOLOCK)
+	LEFT JOIN BPR100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+									 AND A.CHILD_ITEM_CODE = B.ITEM_CODE
+	LEFT JOIN BPR200T C WITH(NOLOCK) ON A.COMP_CODE = C.COMP_CODE
+									 AND A.DIV_CODE  = C.DIV_CODE
+									 AND A.CHILD_ITEM_CODE = C.ITEM_CODE
+		 WHERE A.COMP_CODE = #{S_COMP_CODE}
+		   AND A.DIV_CODE = #{DIV_CODE}
+		   AND A.WORK_STEP = 'M'
+      	<if test="@foren.Ognl@isNotEmpty(mrpControlNumList)">
+		AND A.MRP_CONTROL_NUM IN
+		<foreach collection="mrpControlNumList" item="item" separator="," close=")" open="(">
+			'${item}'
+		</foreach>
+      	</if>
+      	<if test="@foren.Ognl@isNotEmpty(prodItemCodeList)">
+		AND A.PROD_ITEM_CODE IN
+		<foreach collection="prodItemCodeList" item="item1" separator="," close=")" open="(">
+			'${item1}'
+		</foreach>
+      	</if>
+		<if test="@foren.Ognl@isNotEmpty(wkPlanNumList)">
+		AND ISNULL(A.WK_PLAN_NUM,'') IN
+		<foreach collection="wkPlanNumList" item="item2" separator="," close=")" open="(">
+			'${item2}'
+		</foreach>
+      	</if>
+	GROUP BY A.COMP_CODE, A.DIV_CODE, A.WORK_STEP, A.CHILD_ITEM_CODE
+
+	ORDER BY  A.CHILD_ITEM_CODE
+
+	</select>
+
+
+
+
+	<select id="mpo080ukrvServiceImpl.selectDetailList3_Print" parameterType="Map" resultType="rMap">
+
+	SELECT
+		0 AS NUM,
+		'선택된 전체' AS MRP_CONTROL_NUM ,
+		'선택된 전체' AS PROD_ITEM_CODE,
+		'선택된 전체' AS WK_PLAN_NUM,
+		A.CHILD_ITEM_CODE,
+		MAX(B.ITEM_NAME) AS ITEM_NAME,
+        MAX(B.SPEC) AS SPEC,
+        MAX(B.STOCK_UNIT) AS STOCK_UNIT,
+        MAX(C.ITEM_ACCOUNT) AS ITEM_ACCOUNT,
+        MAX(C.SUPPLY_TYPE) AS SUPPLY_TYPE,
+        MAX(C.ORDER_UNIT) AS ORDER_UNIT,
+        SUM(A.CHILD_PRICE) AS CHILD_PRICE,
+        SUM(A.CHILD_AMOUNT) AS CHILD_AMOUNT,
+        SUM(A.PL_QTY) AS PL_QTY,
+        SUM(A.TEMPN_02) AS UNIT_Q,
+        SUM(A.TEMPN_03) AS LOSS_RATE,
+		'선택된 전체' AS PROD_ITEM_NAME,
+		MAX(R2.CODE_NAME) AS ITEM_ACCOUNT_NAME,
+		MAX(R3.CODE_NAME) AS SUPPLY_TYPE_NAME
+		  FROM BPL130T A WITH(NOLOCK)
+	LEFT JOIN BPR100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+									 AND A.CHILD_ITEM_CODE = B.ITEM_CODE
+	LEFT JOIN BPR200T C WITH(NOLOCK) ON A.COMP_CODE = C.COMP_CODE
+									 AND A.DIV_CODE  = C.DIV_CODE
+									 AND A.CHILD_ITEM_CODE = C.ITEM_CODE
+	LEFT JOIN BSA100T R2 WITH(NOLOCK) ON R2.COMP_CODE = A.COMP_CODE
+									 AND R2.MAIN_CODE = 'B020'
+									 AND R2.SUB_CODE != '$'
+									 AND R2.SUB_CODE = C.ITEM_ACCOUNT
+	LEFT JOIN BSA100T R3 WITH(NOLOCK) ON R3.COMP_CODE = A.COMP_CODE
+									 AND R3.MAIN_CODE = 'B014'
+									 AND R3.SUB_CODE != '$'
+									 AND R3.SUB_CODE = C.SUPPLY_TYPE
+		 WHERE A.COMP_CODE = #{S_COMP_CODE}
+		   AND A.DIV_CODE = #{DIV_CODE}
+		   AND A.WORK_STEP = 'M'
+
+		<if test="@foren.Ognl@isNotEmpty(PROD_WK_LIST)">
+
+		AND A.MRP_CONTROL_NUM IN
+		<foreach collection="PROD_WK_LIST" item="item" separator="," close=")" open="(">
+			'${item.MRP_CONTROL_NUM}'
+		</foreach>
+
+		AND A.PROD_ITEM_CODE IN
+		<foreach collection="PROD_WK_LIST" item="item" separator="," close=")" open="(">
+			'${item.PROD_ITEM_CODE}'
+		</foreach>
+		AND ISNULL(A.WK_PLAN_NUM,'') IN
+		<foreach collection="PROD_WK_LIST" item="item" separator="," close=")" open="(">
+			'${item.WK_PLAN_NUM}'
+		</foreach>
+      	</if>
+
+	GROUP BY A.COMP_CODE, A.DIV_CODE, A.WORK_STEP, A.CHILD_ITEM_CODE
+
+UNION ALL
+
+	SELECT
+		DENSE_RANK() OVER (ORDER BY   A.MRP_CONTROL_NUM ,A.PROD_ITEM_CODE, A.WK_PLAN_NUM) AS NUM,
+		A.MRP_CONTROL_NUM ,
+		A.PROD_ITEM_CODE,
+		A.WK_PLAN_NUM,
+		A.CHILD_ITEM_CODE,
+		MAX(B.ITEM_NAME) AS ITEM_NAME,
+        MAX(B.SPEC) AS SPEC,
+        MAX(B.STOCK_UNIT) AS STOCK_UNIT,
+        MAX(C.ITEM_ACCOUNT) AS ITEM_ACCOUNT,
+        MAX(C.SUPPLY_TYPE) AS SUPPLY_TYPE,
+        MAX(C.ORDER_UNIT) AS ORDER_UNIT,
+        SUM(A.CHILD_PRICE) AS CHILD_PRICE,
+        SUM(A.CHILD_AMOUNT) AS CHILD_AMOUNT,
+        SUM(A.PL_QTY) AS PL_QTY,
+        SUM(A.TEMPN_02) AS UNIT_Q,
+        SUM(A.TEMPN_03) AS LOSS_RATE,
+		MAX(R1.ITEM_NAME) AS PROD_ITEM_NAME,
+		MAX(R2.CODE_NAME) AS ITEM_ACCOUNT_NAME,
+		MAX(R3.CODE_NAME) AS SUPPLY_TYPE_NAME
+		  FROM BPL130T A WITH(NOLOCK)
+	LEFT JOIN BPR100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+									 AND A.CHILD_ITEM_CODE = B.ITEM_CODE
+	LEFT JOIN BPR200T C WITH(NOLOCK) ON A.COMP_CODE = C.COMP_CODE
+									 AND A.DIV_CODE  = C.DIV_CODE
+									 AND A.CHILD_ITEM_CODE = C.ITEM_CODE
+	LEFT JOIN BPR100T R1 WITH(NOLOCK) ON R1.COMP_CODE = A.COMP_CODE
+									 AND R1.ITEM_CODE = A.PROD_ITEM_CODE
+	LEFT JOIN BSA100T R2 WITH(NOLOCK) ON R2.COMP_CODE = A.COMP_CODE
+									 AND R2.MAIN_CODE = 'B020'
+									 AND R2.SUB_CODE != '$'
+									 AND R2.SUB_CODE = C.ITEM_ACCOUNT
+	LEFT JOIN BSA100T R3 WITH(NOLOCK) ON R3.COMP_CODE = A.COMP_CODE
+									 AND R3.MAIN_CODE = 'B014'
+									 AND R3.SUB_CODE != '$'
+									 AND R3.SUB_CODE = C.SUPPLY_TYPE
+		 WHERE A.COMP_CODE = #{S_COMP_CODE}
+		   AND A.DIV_CODE = #{DIV_CODE}
+		   AND A.WORK_STEP = 'M'
+
+		<if test="@foren.Ognl@isNotEmpty(PROD_WK_LIST)">
+
+		AND A.MRP_CONTROL_NUM IN
+		<foreach collection="PROD_WK_LIST" item="item" separator="," close=")" open="(">
+			'${item.MRP_CONTROL_NUM}'
+		</foreach>
+		AND A.PROD_ITEM_CODE IN
+		<foreach collection="PROD_WK_LIST" item="item" separator="," close=")" open="(">
+			'${item.PROD_ITEM_CODE}'
+		</foreach>
+		AND ISNULL(A.WK_PLAN_NUM,'') IN
+		<foreach collection="PROD_WK_LIST" item="item" separator="," close=")" open="(">
+			'${item.WK_PLAN_NUM}'
+		</foreach>
+      	</if>
+
+	GROUP BY A.COMP_CODE, A.DIV_CODE,A.MRP_CONTROL_NUM ,A.PROD_ITEM_CODE,  A.WK_PLAN_NUM, A.WORK_STEP, A.CHILD_ITEM_CODE
+
+
+	</select>
+
+
+
+
+
+	<select id="mpo080ukrvServiceImpl.selectProdList" parameterType="Map" resultType="rMap">
+	SELECT
+
+		A.COMP_CODE
+		,A.DIV_CODE
+		,A.ITEM_CODE
+		,R1.ITEM_NAME
+		,R1.SPEC	--규격
+		,R1.STOCK_UNIT	--단위
+		,A.WK_PLAN_Q	--계획량
+		,A.WK_PLAN_NUM	--생산계획번호
+		,A.PRODT_PLAN_DATE  --계획일자
+		,A.WEEK_NUM	--계획주차
+		,A.MRP_CONTROL_NUM	--MRP번호
+		,ISNULL((SELECT TOP 1 S1.ORDER_YN  FROM MRP400T S1 WITH(NOLOCK) WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DIV_CODE = A.DIV_CODE AND S1.MRP_CONTROL_NUM = A.MRP_CONTROL_NUM),'N') AS ORDER_YN--발주확정
+		,C.CUSTOM_CODE --거래처
+		,R2.CUSTOM_NAME --거래처
+		,A.ORDER_NUM	--수주번호
+		,A.SEQ			--수주순번
+		,R3.ITEM_ACCOUNT	--품목계정
+	  FROM PPL100T A WITH(NOLOCK)
+
+	  LEFT JOIN BPR100T R1 WITH(NOLOCK) ON R1.COMP_CODE= A.COMP_CODE
+									   AND R1.ITEM_CODE = A.ITEM_CODE
+LEFT  JOIN SOF110T B WITH(NOLOCK)   ON  B.COMP_CODE   = A.COMP_CODE
+                                    AND B.DIV_CODE    = A.DIV_CODE
+                                    AND B.ORDER_NUM   = A.ORDER_NUM
+                                    AND B.SER_NO      = A.SEQ
+LEFT  JOIN SOF100T C WITH(NOLOCK)   ON  C.COMP_CODE   = B.COMP_CODE
+                                    AND C.DIV_CODE    = B.DIV_CODE
+                                    AND C.ORDER_NUM   = B.ORDER_NUM
+LEFT JOIN BCM100T R2 WITH(NOLOCK) ON R2.COMP_CODE = C.COMP_CODE
+									AND R2.CUSTOM_CODE = C.CUSTOM_CODE
+LEFT JOIN BPR200T R3 WITH(NOLOCK) ON R3.COMP_CODE= A.COMP_CODE
+									AND R3.DIV_CODE = A.DIV_CODE
+									AND R3.ITEM_CODE = A.ITEM_CODE
+
+	  WHERE A.COMP_CODE = #{S_COMP_CODE}
+		AND A.DIV_CODE = #{DIV_CODE}
+		AND A.WEEK_NUM &gt;= #{WEEK_NUM_FR}
+		AND A.WEEK_NUM &lt;= #{WEEK_NUM_TO}
+
+		AND A.WK_PLAN_NUM  NOT IN (SELECT S1.WK_PLAN_NUM FROM BPL120T S1 WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DIV_CODE = A.DIV_CODE AND S1.WORK_STEP = 'M' AND S1.WK_PLAN_NUM = A.WK_PLAN_NUM)
+
+
+  	<if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+		AND R3.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+	</if>
+  	<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		AND A.ITEM_CODE = #{ITEM_CODE}
+	</if>
+	<if test="ORDER_YN == &quot;Y&quot;">
+		AND ISNULL((SELECT TOP 1 S1.ORDER_YN FROM MRP400T S1 WITH(NOLOCK) WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DIV_CODE = A.DIV_CODE AND S1.MRP_CONTROL_NUM = A.MRP_CONTROL_NUM),'N') = 'Y'
+	</if>
+	<if test="ORDER_YN == &quot;N&quot;">
+		AND ISNULL((SELECT TOP 1 S1.ORDER_YN FROM MRP400T S1 WITH(NOLOCK) WHERE S1.COMP_CODE = A.COMP_CODE AND S1.DIV_CODE = A.DIV_CODE AND S1.MRP_CONTROL_NUM = A.MRP_CONTROL_NUM),'N') = 'N'
+	</if>
+
+
+		ORDER BY A.COMP_CODE, A.DIV_CODE, A.WK_PLAN_NUM, A.MRP_CONTROL_NUM
+	</select>
+
+	<insert id="mpo080ukrvServiceImpl.insertLogMaster" parameterType="Map">
+		INSERT INTO L_BPL120T (
+			KEY_VALUE
+		    , OPR_FLAG
+		    , COMP_CODE
+		    , DIV_CODE
+		    , WORK_STEP
+		    , PROD_ITEM_CODE
+		    , PL_QTY
+		    , PL_COST
+		    , PL_AMOUNT
+		    , PROJECT_NO
+		    , ORDER_NUM
+		    , SER_NO
+		    , REMARK
+		    , INSERT_DB_USER
+		    , INSERT_DB_TIME
+		    , UPDATE_DB_USER
+		    , UPDATE_DB_TIME
+		    , TEMPC_01
+		    , TEMPC_02
+		    , TEMPC_03
+		    , TEMPN_01
+		    , TEMPN_02
+		    , TEMPN_03
+		    , WK_PLAN_NUM
+		)VALUES(
+			#{KEY_VALUE}
+			,#{OPR_FLAG}
+			,#{S_COMP_CODE}
+			,#{DIV_CODE}
+			,#{WORK_STEP}
+			,#{PROD_ITEM_CODE}
+			,#{WK_PLAN_Q}
+			, 0
+			, 0
+			, #{PROJECT_NO}
+		    , #{ORDER_NUM}
+		    , #{SER_NO}
+		    , #{REMARK}
+			, #{S_USER_ID}
+			, GETDATE()
+			, #{S_USER_ID}
+			, GETDATE()
+			, #{PRODT_PLAN_DATE}  --계획일자
+			, #{WEEK_NUM}	--계획주차
+			, ''
+			, 0
+			, 0
+			, 0
+			,#{WK_PLAN_NUM}
+		)
+	</insert>
+
+	<insert id="mpo080ukrvServiceImpl.insertLogDetail" parameterType="Map">
+		INSERT INTO L_MRP400T (
+			KEY_VALUE,
+			OPR_FLAG,
+			COMP_CODE,
+		    DIV_CODE,
+		    ORDER_REQ_NUM,
+		    MRP_CONTROL_NUM,
+		    ITEM_CODE,
+		    BASIS_DATE,
+		    CREATE_DATE,
+		    SUPPLY_TYPE,
+		    DOM_FORIGN,
+		    REQ_PLAN_Q,
+		    ORDER_PLAN_Q,
+		    ORDER_PLAN_DATE,
+		    CUSTOM_CODE,
+		    CUSTOM_NAME,
+		    ORDER_YN,
+		    EXCHG_YN,
+		    PROJECT_NO,
+		    MRP_YN,
+		    REMARK,
+		    INSERT_DB_USER,
+		    INSERT_DB_TIME,
+		    UPDATE_DB_USER,
+		    UPDATE_DB_TIME,
+		    PJT_CODE,
+		    IN_DIV_CODE,
+		    ORDER_NUM,
+		    ORDER_SEQ
+		)VALUES(
+			#{KEY_VALUE},
+			#{OPR_FLAG},
+			#{S_COMP_CODE},
+			#{DIV_CODE},
+			#{ORDER_REQ_NUM},
+			#{MRP_CONTROL_NUM},
+			#{CHILD_ITEM_CODE},
+			CONVERT(NVARCHAR(08), GETDATE(), 112),
+			CONVERT(NVARCHAR(08), GETDATE(), 112),
+			#{SUPPLY_TYPE},
+			1,
+			#{ORDER_REQ_Q},
+		    #{ORDER_REQ_Q},
+		    CONVERT(NVARCHAR(08), GETDATE(), 112),
+			#{CUSTOM_CODE},
+		    #{CUSTOM_NAME},
+		    'N',
+		    'N',
+		    #{PROJECT_NO},
+		    'Y',
+		    #{REMARK},
+		    #{S_USER_ID},
+			GETDATE(),
+			#{S_USER_ID},
+			GETDATE(),
+			#{ORDER_NUM},
+			#{DIV_CODE},
+			#{ORDER_NUM},
+			#{SER_NO}
+		)
+	</insert>
+
+	<update id="mpo080ukrvServiceImpl.spAutoNum" parameterType="Map" statementType="CALLABLE">
+	    {call SP_GetAutoNumComp (
+	        #{COMP_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{DIV_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{TABLE_ID, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{PREFIX, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{BASIS_DATE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{AUTO_TYPE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{KEY_NUMBER, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+	    )}
+	</update>
+
+	<update id="mpo080ukrvServiceImpl.USP_CALC_PL" parameterType="Map" statementType="CALLABLE">
+	    {call USP_CALC_PL (
+	        #{KeyValue,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{RtnMrpNum, 	mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{ErrorDesc, 	mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+	    )}
+    </update>
+
+    <update id="mpo080ukrvServiceImpl.USP_MATRL_MPO070UKRV" parameterType="Map" statementType="CALLABLE">
+	    {call USP_MATRL_MPO070UKRV (
+	        #{KeyValue,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+	        #{ErrorDesc, 	mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+	    )}
+    </update>
+
+    <update id="mpo080ukrvServiceImpl.updateBpl120T" parameterType="Map">
+    	UPDATE BPL120T
+    	SET
+    		COMP_CODE = #{S_COMP_CODE}
+    		<if test="@foren.Ognl@isNotEmpty(PJT_CODE)">
+				PROJECT_NO = #{PJT_CODE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ORDER_NUM)">
+				,ORDER_NUM = #{ORDER_NUM}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(SER_NO)">
+				,SER_NO	= #{SER_NO}
+			</if>
+    		,REMARK = #{REMARK}
+    	WHERE COMP_CODE = #{S_COMP_CODE}
+    		AND DIV_CODE = #{DIV_CODE}
+    		AND WORK_STEP = 'M'
+    		AND PROD_ITEM_CODE = #{PROD_ITEM_CODE};
+    </update>
+
+    <update id="mpo080ukrvServiceImpl.updateBpl130T" parameterType="Map">
+    	UPDATE BPL130T
+    	SET
+    		COMP_CODE = #{S_COMP_CODE}
+    		<if test="@foren.Ognl@isNotEmpty(PJT_CODE)">
+				PROJECT_NO = #{PJT_CODE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ORDER_NUM)">
+				,ORDER_NUM = #{ORDER_NUM}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(SER_NO)">
+				,SER_NO	= #{SER_NO}
+			</if>
+			,REMARK = #{REMARK}
+    	WHERE COMP_CODE = #{S_COMP_CODE}
+    		AND DIV_CODE = #{DIV_CODE}
+    		AND WORK_STEP = 'M'
+    		AND PROD_ITEM_CODE = #{PROD_ITEM_CODE}
+    </update>
+
+    <update id="mpo080ukrvServiceImpl.deleteMaster" parameterType="Map">
+    	DELETE FROM BPL120T
+    	WHERE COMP_CODE = #{S_COMP_CODE}
+    		AND DIV_CODE = #{DIV_CODE}
+    		AND WORK_STEP = 'M'
+    		AND PROD_ITEM_CODE = #{PROD_ITEM_CODE}
+    		AND MRP_CONTROL_NUM	= #{MRP_CONTROL_NUM}
+    		AND (
+				(ISNULL(WK_PLAN_NUM, '')	= '') OR (ISNULL(WK_PLAN_NUM, '')	!= '' AND WK_PLAN_NUM	= #{WK_PLAN_NUM})
+			)
+    </update>
+
+    <update id="mpo080ukrvServiceImpl.deleteDetail" parameterType="Map">
+    	DELETE FROM BPL130T
+    	WHERE COMP_CODE = #{S_COMP_CODE}
+    		AND DIV_CODE = #{DIV_CODE}
+    		AND WORK_STEP = 'M'
+    		AND PROD_ITEM_CODE = #{PROD_ITEM_CODE}
+    		AND MRP_CONTROL_NUM	= #{MRP_CONTROL_NUM}
+    		AND (
+				(ISNULL(WK_PLAN_NUM, '')	= '') OR (ISNULL(WK_PLAN_NUM, '')	!= '' AND WK_PLAN_NUM	= #{WK_PLAN_NUM})
+			)
+    </update>
+
+</mapper>

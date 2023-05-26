@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_pmr910skrv_kdService">
+	<select id="s_pmr910skrv_kdService.selectList" parameterType="Map" resultType="rMap">
+        /*  LOT관리대장 일자별조회 */
+        --1) 시트-1 : 작업지시정보
+
+        BEGIN
+
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+
+        DECLARE @COMP_CODE      NVARCHAR(08)
+               ,@DIV_CODE       NVARCHAR(08)
+               ,@WKORD_DATE_FR  NVARCHAR(08)
+               ,@WKORD_DATE_TO  NVARCHAR(08)
+               ,@LOT_NO         NVARCHAR(20)
+               ,@ITEM_CODE      NVARCHAR(20)
+               ,@ITEM_NAME      NVARCHAR(200)
+
+        SET @COMP_CODE       = #{S_COMP_CODE}   ;    --법인(필수)
+        SET @DIV_CODE        = #{DIV_CODE}      ;    --사업장(필수)
+        SET @WKORD_DATE_FR   = #{WKORD_DATE_FR} ;    --지시일-FROM(필수)
+        SET @WKORD_DATE_TO   = #{WKORD_DATE_TO} ;    --지시일-TO(필수)
+        SET @LOT_NO          = #{LOT_NO}        ;    --LOT NO(옵션)
+        SET @ITEM_CODE       = #{ITEM_CODE}     ;    --품목코드(옵션)
+        SET @ITEM_NAME       = #{ITEM_NAME}     ;    --품목명(옵션)
+
+
+
+		 WITH RECORD_SET AS  (
+
+					 SELECT   A.COMP_CODE               AS COMP_CODE         --법인
+							,A.DIV_CODE                 AS DIV_CODE          --사업장
+							,A.WKORD_NUM                AS WKORD_NUM          --작업지시번호
+							,A.PRODT_WKORD_DATE         AS PRODT_WKORD_DATE  --지시일자
+							,A.ITEM_CODE                AS ITEM_CODE         --품목코드
+							,MAX(D.ITEM_NAME)           AS ITEM_NAME         --품목명
+							,MAX(D.SPEC)                AS SPEC              --규격
+							,A.LOT_NO                   AS LOT_NO            --LOT NO
+							,MAX(ISNULL(A.WKORD_Q,0))   AS WKORD_Q           --지시량
+							,ISNULL(C.INOUT_DATE,'')    AS INOUT_DATE        --생산입고일
+							,SUM(ISNULL(C.INOUT_Q, 0))  AS INOUT_Q           --생산입고량
+							,0                          AS ACCU_INOUT_Q      --누적입고량
+							,0							AS SHORTAGE_Q        --과부족량
+							,A.REMARK                   AS REMARK            --비고
+					FROM        unilite.PMP100T A WITH(NOLOCK)
+					LEFT   JOIN unilite.BTR100T C WITH(NOLOCK) ON C.COMP_CODE  = A.COMP_CODE
+															  AND C.DIV_CODE   = A.DIV_CODE
+															  AND C.BASIS_NUM > ''
+															  AND C.INOUT_TYPE = '1'
+															  AND C.CREATE_LOC = '1'
+															  AND C.INOUT_CODE_TYPE = '3'
+															  AND C.LOT_NO     = A.LOT_NO
+															  AND A.ITEM_CODE = C.ITEM_CODE
+															 AND EXISTS (SELECT X.PRODT_NUM FROM unilite.PMR200T X WHERE X.COMP_CODE = C.COMP_CODE
+																													  AND X.DIV_CODE  = C.DIV_CODE
+																													  AND X.PRODT_NUM = ISNULL(C.BASIS_NUM, '')
+																													  AND X.WKORD_NUM = A.WKORD_NUM
+																													  AND X.COMP_CODE = A.COMP_CODE
+																													  AND X.DIV_CODE  = A.DIV_CODE)
+					INNER JOIN unilite.BPR100T D WITH(NOLOCK) ON A.COMP_CODE = D.COMP_CODE
+															 AND A.ITEM_CODE = D.ITEM_CODE
+					WHERE A.COMP_CODE         = @COMP_CODE
+					  AND A.DIV_CODE          = @DIV_CODE
+					  AND A.LINE_END_YN       = 'Y'
+					  AND A.PRODT_WKORD_DATE >= @WKORD_DATE_FR
+					  AND A.PRODT_WKORD_DATE <![CDATA[<=]]> @WKORD_DATE_TO
+					  AND (@LOT_NO    = '' OR (@LOT_NO    != '' AND A.LOT_NO    LIKE @LOT_NO + '%'))
+					  AND (@ITEM_CODE = '' OR (@ITEM_CODE != '' AND A.ITEM_CODE LIKE @ITEM_CODE + '%'))
+					  AND (@ITEM_NAME = '' OR (@ITEM_NAME != '' AND D.ITEM_NAME LIKE '%' + @ITEM_NAME + '%'))
+
+					GROUP BY A.COMP_CODE, A.DIV_CODE, A.WKORD_NUM, A.PRODT_WKORD_DATE, A.ITEM_CODE,  ISNULL(C.INOUT_DATE,''), A.LOT_NO, A.REMARK
+		)
+
+		SELECT  A.COMP_CODE
+			   ,A.DIV_CODE
+			   ,A.WKORD_NUM
+			   ,A.PRODT_WKORD_DATE
+			   ,A.ITEM_CODE
+			   ,A.ITEM_NAME
+			   ,A.SPEC
+			   ,A.LOT_NO
+			   ,A.WKORD_Q
+			   ,A.INOUT_DATE
+			   ,A.INOUT_Q
+		       , (SELECT SUM(X.INOUT_Q)
+				  FROM RECORD_SET X
+				 WHERE X.COMP_CODE   = A.COMP_CODE
+				   AND X.DIV_CODE    = A.DIV_CODE
+				   AND X.WKORD_NUM   = A.WKORD_NUM
+				   AND X.INOUT_DATE <![CDATA[<=]]> A.INOUT_DATE) AS ACCU_INOUT_Q
+		       , A.WKORD_Q - (SELECT SUM(X.INOUT_Q)
+							  FROM RECORD_SET X
+							 WHERE X.COMP_CODE   = A.COMP_CODE
+							   AND X.DIV_CODE    = A.DIV_CODE
+							   AND X.WKORD_NUM   = A.WKORD_NUM
+							   AND X.INOUT_DATE <![CDATA[<=]]> A.INOUT_DATE) AS SHORTAGE_Q
+			   ,A.REMARK
+		FROM RECORD_SET A
+        ORDER BY A.COMP_CODE, A.DIV_CODE, A.WKORD_NUM, A.PRODT_WKORD_DATE
+
+        SET ARITHABORT OFF
+        SET NOCOUNT OFF
+
+
+        END
+    </select>
+
+    <select id="s_pmr910skrv_kdService.selectList2" parameterType="Map" resultType="rMap">
+        /* LOT관리대장 일자별조회 */
+        --2) 시트-2 : 자재출고정보
+
+        BEGIN
+
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+
+        DECLARE @COMP_CODE        NVARCHAR(08)
+               ,@DIV_CODE         NVARCHAR(08)
+               ,@WKORD_NUM        NVARCHAR(20)
+
+        SET @COMP_CODE        = #{S_COMP_CODE}          --법인(필수)
+        SET @DIV_CODE         = #{DIV_CODE}             --사업장(필수)
+        SET @WKORD_NUM        = #{WKORD_NUM}            --작업지시번호(필수)
+
+        SELECT   A.INOUT_DATE           AS INOUT_DATE        --원자재출고일
+                ,A.ITEM_CODE            AS ITEM_CODE         --자재코드
+                ,B.ITEM_NAME            AS ITEM_NAME         --자재명
+                ,B.SPEC                 AS SPEC              --규격
+                ,B.STOCK_UNIT			AS STOCK_UNIT		 --단위(재고)
+                ,A.LOT_NO               AS LOT_NO            --LOT번호
+                ,ISNULL(A.INOUT_Q, 0)   AS INOUT_Q           --자재출고량
+
+        FROM        unilite.BTR100T A WITH(NOLOCK)
+        LEFT JOIN unilite.BPR100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+                                                AND A.ITEM_CODE = B.ITEM_CODE
+        WHERE A.COMP_CODE        = @COMP_CODE
+          AND A.DIV_CODE         = @DIV_CODE
+		  AND A.ORDER_NUM		 = @WKORD_NUM
+          AND A.CREATE_LOC      = '2'
+          AND A.INOUT_TYPE      = '2'
+
+        ORDER BY A.INOUT_DATE, A.ITEM_CODE
+
+        SET ARITHABORT OFF
+        SET NOCOUNT OFF
+
+        END
+    </select>
+</mapper>

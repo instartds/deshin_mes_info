@@ -1,0 +1,437 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_out210ukrv_mitServiceImpl">
+
+	<select id="s_out210ukrv_mitServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON 
+
+		    DECLARE @CompCode       NVARCHAR(08)   /* 법인코드            */
+		          , @DivCode        NVARCHAR(08)   /* 사업장코드          */
+		          , @baseYm         NVARCHAR(06)   /* 기준월            */
+				  , @workShopCode   NVARCHAR(08)   /* 작업장            */
+				  
+		          , @UserId         NVARCHAR(100)  /* 사용자ID            */
+		          , @RefItem        NVARCHAR(01)   /* 명칭 참조 유형      */
+		
+		    SET @CompCode    = #{S_COMP_CODE}
+		    SET @DivCode     = #{DIV_CODE}
+		    SET @baseYm      = #{BASIS_YYYYMM}
+		    SET @workShopCode= #{WORK_SHOP_CODE}
+		    SET @UserId      = #{S_USER_ID}
+		
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+		
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+		
+		    /* 조회 */
+		    SELECT 	  A.DIV_CODE                                                        --사업장코드
+					, A.BASIS_YYYYMM                                                    --기준월		
+					, A.PRODT_PRSN_NAME + '('+A.PRODT_PRSN+')'   AS   PRODT_PRSN_GROUP  --작업자	
+					, A.PRODT_PRSN                                                      --작업자코드		
+				    , A.PRODT_PRSN_NAME                                                 --작업자명	
+					, A.ITEM_CODE                                                       --품목코드 		
+					, CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+				           WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+				                               ELSE C1.ITEM_NAME
+				      END AS ITEM_NAME                                                  --품목명  
+				    , C1.SPEC                                                           --규격
+					, A.PRODT_PRSN                                                      --작업자코드		
+					, A.PRODT_PRSN_NAME                                                 --작업자명	
+					, A.GOOD_WORK_Q                                                     --양품생산량
+					, A.BAD_WORK_Q                                                      --불량수량
+					, (A.GOOD_WORK_Q + A.BAD_WORK_Q) AS TOT_WORK_Q                      --총계(수량)
+					, (uniLITE.fn_S_StentWorkItemPrice_MIT(@CompCode, @DivCode, @baseYm, A.ITEM_CODE)  * A.ONEDAY_Q * 1.1)   AS ONEDAY_AMT                      --긴급작업비
+					,  uniLITE.fn_S_StentWorkItemPrice_MIT(@CompCode, @DivCode, @baseYm, A.ITEM_CODE)  * A.PROD_Q            AS PROD_AMT                        --일반작업비
+					, (uniLITE.fn_S_StentWorkItemPrice_MIT(@CompCode, @DivCode, @baseYm, A.ITEM_CODE)  * A.ONEDAY_Q * 1.1) 
+					   + (uniLITE.fn_S_StentWorkItemPrice_MIT(@CompCode, @DivCode, @baseYm, A.ITEM_CODE)  * A.PROD_Q)        AS TOT_AMT  -- 총엮기비용
+		      FROM       S_OUT210T_MIT A WITH (NOLOCK)
+		      INNER JOIN BPR100T      C1 WITH(NOLOCK) ON C1.COMP_CODE	= A.COMP_CODE
+			  									     AND C1.ITEM_CODE	= A.ITEM_CODE
+		      
+		     WHERE A.COMP_CODE       = @CompCode   
+		       AND A.DIV_CODE        = @DivCode    
+		       AND A.BASIS_YYYYMM    = @baseYm
+               AND A.WORK_SHOP_CODE  = @workShopCode
+			   
+		     ORDER BY A.BASIS_YYYYMM , A.PRODT_PRSN , A.ITEM_CODE
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+	<update  id="s_out210ukrv_mitServiceImpl.excuteProduceCost" parameterType="Map">
+			DELETE FROM S_OUT211T_MIT
+			 WHERE COMP_CODE             = #{S_COMP_CODE}
+		       AND DIV_CODE              = #{DIV_CODE}
+		       AND LEFT(PRODT_DATE, 6)   = #{BASIS_YYYYMM}
+		       AND WORK_SHOP_CODE        = #{WORK_SHOP_CODE}
+		       
+		    INSERT INTO S_OUT211T_MIT
+			(
+				  COMP_CODE                               --법인
+				, DIV_CODE                                --사업장코드
+				, PRODT_DATE                            --기준월			
+				, ITEM_CODE                               --품목코드 		
+				, PRODT_PRSN                              --작업자코드		
+				, PRODT_PRSN_NAME                         --작업자명
+				, WORK_SHOP_CODE                          --작업장
+				, GOOD_WORK_Q                             --양품생산량
+				, BAD_WORK_Q                              --불량수량
+				, ONEDAY_Q                                --긴급작업수량
+				, PROD_Q								  --일반수량
+				, INPUT_PATH                              --입력경로(생산 : P 엑셀 : E)
+				, INSERT_DB_USER                          --
+				, INSERT_DB_TIME                          --
+				, UPDATE_DB_USER                          --
+				, UPDATE_DB_TIME                          --
+			)  
+			SELECT  A.COMP_CODE
+				  , A.DIV_CODE
+				  , A.PRODT_DATE
+				  , A.ITEM_CODE
+				  , A.PRODT_PRSN   
+				  , A.PRODT_PRSN_NAME      
+				  , A.WORK_SHOP_CODE                                                                     
+				  , SUM(A.GOOD_WORK_Q)                                                                                 
+				  , SUM(A.BAD_WORK_Q)  
+				  , SUM(A.ONEDAY_WORK_Q) 
+				  , SUM(A.PROD_Q) AS PROD_Q
+				  , 'P'
+				  , #{S_USER_ID}
+				  , GETDATE()
+				  , #{S_USER_ID}
+				  , GETDATE() 
+		      FROM       S_PMR100TV1_MIT A
+		     WHERE A.COMP_CODE      = #{S_COMP_CODE}
+		       AND A.DIV_CODE       = #{DIV_CODE}
+		       AND A.PRODT_DATE     &gt;= #{BASIS_YYYYMM}+'01'
+		       AND A.PRODT_DATE     &lt;= CONVERT(NVARCHAR(8), EOMONTH (CONVERT(DATETIME, #{BASIS_YYYYMM}+'01', 112)) , 112)
+		       AND A.WORK_SHOP_CODE = #{WORK_SHOP_CODE}
+		   GROUP BY A.COMP_CODE, A.DIV_CODE, A.PRODT_DATE, A.ITEM_CODE, A.PRODT_PRSN, A.PRODT_PRSN_NAME, A.WORK_SHOP_CODE
+		   
+		   DELETE FROM S_OUT210T_MIT
+			 WHERE COMP_CODE      = #{S_COMP_CODE}
+		       AND DIV_CODE       = #{DIV_CODE}
+		       AND BASIS_YYYYMM   = #{BASIS_YYYYMM}
+		       AND WORK_SHOP_CODE = #{WORK_SHOP_CODE}
+		   
+	   	   INSERT INTO S_OUT210T_MIT
+			(
+				  COMP_CODE                               --법인
+				, DIV_CODE                                --사업장코드
+				, BASIS_YYYYMM                            --기준월			
+				, ITEM_CODE                               --품목코드 		
+				, PRODT_PRSN                              --작업자코드		
+				, PRODT_PRSN_NAME                         --작업자명
+				, WORK_SHOP_CODE                          --작업장
+				, GOOD_WORK_Q                             --양품생산량
+				, BAD_WORK_Q                              --불량수량
+				, ONEDAY_Q                                --긴급작업수량
+				, PROD_Q								  --일반수량
+				, INPUT_PATH                              --입력경로(생산 : P 엑셀 : E)
+				, INSERT_DB_USER                          --
+				, INSERT_DB_TIME                          --
+				, UPDATE_DB_USER                          --
+				, UPDATE_DB_TIME                          --
+			)  
+			SELECT  A.COMP_CODE
+				  , A.DIV_CODE
+				  , LEFT(A.PRODT_DATE,6) 
+				  , A.ITEM_CODE
+				  , A.PRODT_PRSN   
+				  , A.PRODT_PRSN_NAME      
+				  , A.WORK_SHOP_CODE                                                                     
+				  , SUM(A.GOOD_WORK_Q)                                                                        
+				  , SUM(A.BAD_WORK_Q)   
+				  , SUM(A.ONEDAY_Q) 
+				  , SUM(A.PROD_Q) 
+				  , 'P'
+				  , #{S_USER_ID}
+				  , GETDATE()
+				  , #{S_USER_ID}
+				  , GETDATE() 
+		      FROM       S_OUT211T_MIT A
+		     WHERE A.COMP_CODE      = #{S_COMP_CODE}
+		       AND A.DIV_CODE       = #{DIV_CODE}
+		       AND LEFT(A.PRODT_DATE,6)  = #{BASIS_YYYYMM}
+		       AND A.WORK_SHOP_CODE = #{WORK_SHOP_CODE}
+		   GROUP BY A.COMP_CODE, A.DIV_CODE, LEFT(A.PRODT_DATE,6), A.ITEM_CODE, A.PRODT_PRSN, A.PRODT_PRSN_NAME, A.WORK_SHOP_CODE
+	</update>
+	<insert id="s_out210ukrv_mitServiceImpl.insertExcel" parameterType="Map">
+
+		INSERT INTO L_OUT210T_XLS_MIT (
+			   _EXCEL_JOBID
+		     , _EXCEL_ROWNUM
+		     , _EXCEL_HAS_ERROR
+		     , _EXCEL_ERROR_MSG
+			 , COMP_CODE
+			 , DIV_CODE
+			 , BASIS_YYYYMMDD
+			 , ITEM_CODE
+			 , PRODT_PRSN
+			 , WORK_SHOP_CODE
+			 , GOOD_WORK_Q
+			 , BAD_WORK_Q
+			 , INSERT_DB_USER                          --
+			 , INSERT_DB_TIME                          --
+		) VALUES (
+			   #{_EXCEL_JOBID}
+		     , #{_EXCEL_ROWNUM}
+		     , #{_EXCEL_HAS_ERROR,jdbcType=VARCHAR}
+		     , #{_EXCEL_ERROR_MSG,jdbcType=VARCHAR}
+			 , #{S_COMP_CODE}
+			 , #{DIV_CODE}
+			 , #{BASIS_YYYYMMDD}
+			 , #{ITEM_CODE}
+			 , #{PRODT_PRSN}
+			 , #{WORK_SHOP_CODE}
+			 , #{GOOD_WORK_Q}
+			 , #{BAD_WORK_Q}
+			 , #{S_USER_ID}
+			 , GETDATE()
+		)
+	</insert>
+	<update id="s_out210ukrv_mitServiceImpl.excelValidate" parameterType="Map">
+		UPDATE A
+		   SET  _EXCEL_HAS_ERROR = CASE WHEN ISNULL(B.ITEM_CODE, '') = '' THEN 'Y'
+		                                WHEN ISNULL(D.SUB_CODE, '') = '' THEN 'Y'
+		                                ELSE 'N'
+		                           END
+			   ,_EXCEL_ERROR_MSG = CASE WHEN ISNULL(B.ITEM_CODE, '') = '' THEN '등록된 품목이 없습니다.'
+			                            WHEN ISNULL(D.SUB_CODE, '') = ''  THEN '등록된작업자가 없습니다.'
+		                                ELSE ''
+		                           END
+		       
+		 FROM L_OUT210T_XLS_MIT A WITH (NOLOCK) 
+		      LEFT JOIN BPR200T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                       AND B.DIV_CODE  = A.DIV_CODE
+		      					               AND B.ITEM_CODE = A.ITEM_CODE   
+		      LEFT JOIN BPR100T C WITH (NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+		      					               AND C.ITEM_CODE = A.ITEM_CODE    	
+		      LEFT JOIN BSA100T D WITH (NOLOCK) ON D.COMP_CODE = A.COMP_CODE   
+                                               AND D.SUB_CODE  = A.PRODT_PRSN  
+                                               AND D.MAIN_CODE = 'P505'
+                                               AND D.REF_CODE1 = 'Y'				 
+		WHERE _EXCEL_JOBID = #{_EXCEL_JOBID}
+		
+		DELETE  A
+		  FROM S_OUT211T_MIT A
+		  INNER JOIN L_OUT210T_XLS_MIT B  ON B.COMP_CODE      = A.COMP_CODE
+									     AND B.DIV_CODE       = A.DIV_CODE
+									     AND B.BASIS_YYYYMMDD   = A.PRODT_DATE
+									     AND B.WORK_SHOP_CODE = A.WORK_SHOP_CODE
+		     WHERE _EXCEL_JOBID = #{_EXCEL_JOBID}
+		       
+		       
+	   		INSERT INTO S_OUT211T_MIT
+			(
+				  COMP_CODE                               --법인
+				, DIV_CODE                                --사업장코드
+				, PRODT_DATE                              --기준월			
+				, ITEM_CODE                               --품목코드 		
+				, PRODT_PRSN                              --작업자코드		
+				, PRODT_PRSN_NAME                         --작업자명
+				, WORK_SHOP_CODE
+				, GOOD_WORK_Q                             --양품생산량
+				, BAD_WORK_Q                              --불량수량
+				, ONEDAY_Q                                --긴급작업수량
+				, PROD_Q								  --일반수량
+				, INPUT_PATH                              --입력경로(생산 : P 엑셀 : E)
+				, INSERT_DB_USER                          --
+				, INSERT_DB_TIME                          --
+				, UPDATE_DB_USER                          --
+				, UPDATE_DB_TIME                          --
+			)  
+			SELECT  A.COMP_CODE
+				  , A.DIV_CODE
+				  , A.BASIS_YYYYMMDD
+				  , A.ITEM_CODE
+				  , A.PRODT_PRSN   
+				  , C.CODE_NAME      
+				  , A.WORK_SHOP_CODE                                                                     
+				  , SUM(A.GOOD_WORK_Q)                                                                                 
+				  , SUM(A.BAD_WORK_Q)   
+				  , 0
+				  , SUM(A.GOOD_WORK_Q) 
+				  , 'E'
+				  , #{S_USER_ID}
+				  , GETDATE()
+				  , #{S_USER_ID}
+				  , GETDATE() 
+		      FROM   L_OUT210T_XLS_MIT A
+		      LEFT JOIN BPR100T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		      					               AND B.ITEM_CODE = A.ITEM_CODE    	
+		      LEFT JOIN BSA100T C WITH (NOLOCK) ON C.COMP_CODE = A.COMP_CODE   
+                                               AND C.SUB_CODE  = A.PRODT_PRSN  
+                                               AND C.MAIN_CODE = 'P505'
+                                               AND C.REF_CODE1 = 'Y'		
+		     WHERE _EXCEL_JOBID = #{_EXCEL_JOBID}
+		       AND _EXCEL_HAS_ERROR = 'N'
+		     GROUP BY A.COMP_CODE
+				  , A.DIV_CODE
+				  , A.BASIS_YYYYMMDD
+				  , A.ITEM_CODE
+				  , A.PRODT_PRSN   
+				  , C.CODE_NAME      
+				  , A.WORK_SHOP_CODE  
+		
+		
+		DELETE  A
+		  FROM S_OUT210T_MIT A
+		  INNER JOIN L_OUT210T_XLS_MIT B  ON B.COMP_CODE                 = A.COMP_CODE
+									     AND B.DIV_CODE                  = A.DIV_CODE
+									     AND LEFT(B.BASIS_YYYYMMDD, 6)   = A.BASIS_YYYYMM
+									     AND B.WORK_SHOP_CODE            = A.WORK_SHOP_CODE
+		     WHERE _EXCEL_JOBID = #{_EXCEL_JOBID}
+		       
+		       
+	   		INSERT INTO S_OUT210T_MIT
+			(
+				  COMP_CODE                               --법인
+				, DIV_CODE                                --사업장코드
+				, BASIS_YYYYMM                            --기준월			
+				, ITEM_CODE                               --품목코드 		
+				, PRODT_PRSN                              --작업자코드		
+				, PRODT_PRSN_NAME                         --작업자명
+				, WORK_SHOP_CODE                          --작업장
+				, GOOD_WORK_Q                             --양품생산량
+				, BAD_WORK_Q                              --불량수량
+				, ONEDAY_Q                                --긴급작업수량
+				, PROD_Q								  --일반수량
+				, INPUT_PATH                              --입력경로(생산 : P 엑셀 : E)
+				, INSERT_DB_USER                          --
+				, INSERT_DB_TIME                          --
+				, UPDATE_DB_USER                          --
+				, UPDATE_DB_TIME                          --
+			)  
+			SELECT  A.COMP_CODE
+				  , A.DIV_CODE
+				  , LEFT(A.BASIS_YYYYMMDD, 6)
+				  , A.ITEM_CODE
+				  , A.PRODT_PRSN   
+				  , C.CODE_NAME      
+				  , A.WORK_SHOP_CODE                                                                     
+				  , SUM(A.GOOD_WORK_Q)                                                                                 
+				  , SUM(A.BAD_WORK_Q)   
+				  , 0
+				  , SUM(A.GOOD_WORK_Q) 
+				  , 'E'
+				  , #{S_USER_ID}
+				  , GETDATE()
+				  , #{S_USER_ID}
+				  , GETDATE() 
+		      FROM   L_OUT210T_XLS_MIT A
+		      LEFT JOIN BPR100T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		      					               AND B.ITEM_CODE = A.ITEM_CODE    	
+		      LEFT JOIN BSA100T C WITH (NOLOCK) ON C.COMP_CODE = A.COMP_CODE   
+                                               AND C.SUB_CODE  = A.PRODT_PRSN  
+                                               AND C.MAIN_CODE = 'P505'
+                                               AND C.REF_CODE1 = 'Y'		
+		     WHERE _EXCEL_JOBID = #{_EXCEL_JOBID}
+		       AND _EXCEL_HAS_ERROR = 'N'
+		     GROUP BY A.COMP_CODE
+				  , A.DIV_CODE
+				  , LEFT(A.BASIS_YYYYMMDD, 6)
+				  , A.ITEM_CODE
+				  , A.PRODT_PRSN   
+				  , C.CODE_NAME      
+				  , A.WORK_SHOP_CODE   
+	</update>
+	<select id="s_out210ukrv_mitServiceImpl.selectExcelUploadSheet1" parameterType="Map" resultType="rMap">
+		SELECT
+                _EXCEL_JOBID
+              , _EXCEL_ROWNUM
+              , _EXCEL_HAS_ERROR
+              , _EXCEL_ERROR_MSG
+              , DIV_CODE
+              , BASIS_YYYYMMDD
+			  , ITEM_CODE
+			  , PRODT_PRSN
+			  , WORK_SHOP_CODE
+			  , GOOD_WORK_Q
+			  , BAD_WORK_Q
+		FROM  L_OUT210T_XLS_MIT
+		WHERE _EXCEL_JOBID = #{_EXCEL_JOBID}  
+		 AND  _EXCEL_HAS_ERROR = 'Y'
+	</select>
+	<select id="s_out210ukrv_mitServiceImpl.selectExcelUploadSheet2" parameterType="Map" resultType="rMap">
+		DECLARE @CompCode       NVARCHAR(08)   /* 법인코드            */
+		          , @DivCode        NVARCHAR(08)   /* 사업장코드          */
+		          , @baseYm         NVARCHAR(06)   /* 기준월            */
+				  , @workShopCode   NVARCHAR(08)   /* 작업장            */
+				  
+		          , @UserId         NVARCHAR(100)  /* 사용자ID            */
+		          , @RefItem        NVARCHAR(01)   /* 명칭 참조 유형      */
+		
+		    SET @CompCode    = #{S_COMP_CODE}
+		    SET @DivCode     = #{DIV_CODE}
+		    SET @baseYm      = #{BASIS_YYYYMM}
+		    SET @workShopCode= #{WORK_SHOP_CODE}
+		    SET @UserId      = #{S_USER_ID}
+		
+		    /* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T WITH (NOLOCK)
+		     WHERE USER_ID = @UserId
+		
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+			SELECT      COMP_CODE
+					  , DIV_CODE
+					  , BASIS_YYYYMM
+					  , ITEM_CODE
+					  , ITEM_NAME                                  --품목명  
+				      , SPEC                                       --규격
+				  	  , PRODT_PRSN                                 --작업자코드		
+				  	  , PRODT_PRSN_NAME                            --작업자명	
+					  , SUM(GOOD_WORK_Q)   AS GOOD_WORK_Q          --양품생산량
+					  , SUM(BAD_WORK_Q)    AS BAD_WORK_Q           --불량수량
+					  , SUM(TOT_WORK_Q)    AS TOT_WORK_Q           --총계(수량)
+					  , SUM(ONEDAY_AMT)    AS ONEDAY_AMT           --긴급작업비
+					  , SUM(PROD_AMT)      AS PROD_AMT             --일반작업비
+					  , SUM(TOT_AMT)       AS TOT_AMT              -- 총엮기비용
+			
+			FROM (
+					SELECT      A.COMP_CODE
+							  , A.DIV_CODE
+							  , A.BASIS_YYYYMM
+							  , A.ITEM_CODE
+							  , CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+							         WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+							                               ELSE C1.ITEM_NAME
+						        END AS ITEM_NAME                                                  --품목명  
+						      , C1.SPEC                                                           --규격
+						  	  , A.PRODT_PRSN                                                      --작업자코드		
+						  	  , A.PRODT_PRSN_NAME                                                 --작업자명	
+							  , A.GOOD_WORK_Q                                                     --양품생산량
+							  , A.BAD_WORK_Q                                                      --불량수량
+							  , (A.GOOD_WORK_Q + A.BAD_WORK_Q) AS TOT_WORK_Q                      --총계(수량)
+							  , (uniLITE.fn_S_StentWorkItemPrice_MIT(A.COMP_CODE, A.DIV_CODE, A.BASIS_YYYYMM, A.ITEM_CODE)  * A.ONEDAY_Q * 1.1)   AS ONEDAY_AMT                      --긴급작업비
+							  ,  uniLITE.fn_S_StentWorkItemPrice_MIT(A.COMP_CODE, A.DIV_CODE, A.BASIS_YYYYMM, A.ITEM_CODE)  * A.PROD_Q            AS PROD_AMT                        --일반작업비
+							  , (uniLITE.fn_S_StentWorkItemPrice_MIT(A.COMP_CODE, A.DIV_CODE, A.BASIS_YYYYMM, A.ITEM_CODE)  * A.ONEDAY_Q * 1.1) 
+							    + (uniLITE.fn_S_StentWorkItemPrice_MIT(A.COMP_CODE, A.DIV_CODE, A.BASIS_YYYYMM, A.ITEM_CODE)  * A.PROD_Q)        AS TOT_AMT  -- 총엮기비용
+				      FROM   S_OUT210T_MIT A
+				      INNER JOIN L_OUT210T_XLS_MIT B	 ON  B.COMP_CODE = A.COMP_CODE
+				                                        AND  B.DIV_CODE  = A.DIV_CODE
+				                                        AND  LEFT(B.BASIS_YYYYMMDD, 6) = A.BASIS_YYYYMM
+				                                        AND  B.PRODT_PRSN   = A.PRODT_PRSN
+				                                        AND  B.ITEM_CODE    = A.ITEM_CODE
+		              INNER JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE	= A.COMP_CODE
+		                                                AND C1.ITEM_CODE	= A.ITEM_CODE
+				     WHERE B._EXCEL_JOBID = #{_EXCEL_JOBID}
+				       AND B._EXCEL_HAS_ERROR = 'N'
+		      ) AS A
+	     GROUP BY   COMP_CODE
+					  , DIV_CODE
+					  , BASIS_YYYYMM
+					  , ITEM_CODE
+					  , ITEM_NAME                                  --품목명  
+				      , SPEC                                       --규격
+				  	  , PRODT_PRSN                                 --작업자코드		
+				  	  , PRODT_PRSN_NAME                            --작업자명	
+	</select>
+</mapper>

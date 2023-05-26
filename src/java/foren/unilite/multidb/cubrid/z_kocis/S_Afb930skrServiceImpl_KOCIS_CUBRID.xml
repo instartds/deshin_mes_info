@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_afb930skrServiceImpl_KOCIS">
+	
+    <select id="s_afb930skrServiceImpl_KOCIS.selectList" parameterType="Map" resultType="rMap">
+
+        SELECT  *
+        FROM 
+                (
+                SELECT  BUDG_CODE
+                     ,  BUDG_NAME
+                     ,  SEMOK_AMT + IN_AMT  AS MONT_IN_AMT    -- 본월분 
+                     ,  BEFORE_SEMOK_AMT + BEFORE_IN_AMT  AS BEFORE_IN_AMT_I   -- 전월누계액 
+                     ,  Back_Pay_amt_i  AS AMT1 -- 본월반납액 (수정)
+                     ,  SEMOK_AMT + IN_AMT + BEFORE_SEMOK_AMT + BEFORE_IN_AMT + 0.00   IN_AMT_I  -- 차감누계액
+                     ,  Pay_amt_i AS PAY_AMT_I  -- 본월 지급액 
+                     ,  before_Pay_amt_i AS BEFORE_PAY_AMT_I  -- 전월누계액 
+                     ,  Ret_pay_amt_i   AS  AMT2-- 본월회수액 (수정)
+                     ,  Upt_pay_amt_i   AS AMT3-- 본월경정액 (수정)
+                     ,  Pay_amt_i + before_Pay_amt_i + 0.00 + 00.00   AS OUT_AMT_I -- 차감누계액 
+                     ,  SEMOK_AMT + IN_AMT + BEFORE_SEMOK_AMT + BEFORE_IN_AMT + Back_Pay_amt_i - ( Pay_amt_i + before_Pay_amt_i + Ret_pay_amt_i+ Upt_pay_amt_i) AS WON_BAL  -- 지급잔액
+                     ,  BUDG_NAME_2
+                     ,  BUDG_NAME_3
+                     ,  BUDG_NAME_4
+                     ,  BUDG_NAME_6
+                FROM 
+                        (
+                        SELECT  A.BUDG_CODE 
+                             ,  B.BUDG_NAME 
+                             --,  C1.BUDG_NAME AS BUDG_NAME_2
+                             --,  C2.BUDG_NAME AS BUDG_NAME_3
+                             --,  C3.BUDG_NAME AS BUDG_NAME_4
+                             --,  C4.BUDG_NAME AS BUDG_NAME_6
+                             , SUBSTRING(A.BUDG_CODE, 4, 4) AS BUDG_NAME_2
+                             , SUBSTRING(A.BUDG_CODE, 8, 4) AS BUDG_NAME_3
+                             , SUBSTRING(A.BUDG_CODE, 12, 3) AS BUDG_NAME_4
+                             , SUBSTRING(A.BUDG_CODE, 15, 3) + '-' + SUBSTRING(A.BUDG_CODE, 18, 2) AS BUDG_NAME_6
+                             , (SELECT  NVL(SUM(divert_budg_i), 0)
+                                FROM    afb520t 
+                                --WHERE divert_yyyymm = '201705' -- (조회조건)
+                                WHERE   DIVERT_YYYYMM = #{AC_YEAR} + #{AC_MONTH_FR}
+                                AND     dept_code = A.dept_code 
+                                AND     divert_budg_code = A.budg_code 
+                                AND     ap_sts = '9') AS SEMOK_AMT  -- 당월 세목내역
+                             , (SELECT  NVL(SUM(divert_budg_i), 0)
+                                FROM    afb520t
+                            -- WHERE divert_yyyymm BETWEEN  '201701' AND '201704' -- (조회조건)
+                                WHERE   DIVERT_YYYYMM BETWEEN #{AC_YEAR} + '01' AND REPLACE(LEFT(CAST(ADDDATE(LEFT(REPLACE(#{AC_YEAR} + #{AC_MONTH_FR}, '-', ''), 4) + '-' + RIGHT(REPLACE(#{AC_YEAR} + #{AC_MONTH_FR}, '-', ''), 2) + '-' + '01', -1) AS VARCHAR), 5), '/', '')
+                                AND     dept_code        = A.dept_code 
+                                AND     divert_budg_code = A.budg_code 
+                                AND     ap_sts           = '9') AS BEFORE_SEMOK_AMT   -- 전월 세목내역
+                             , (SELECT  NVL(SUM(won_amt), 0)
+                                FROM    afb503T
+                                --WHERE  ac_date LIKE '201705%' -- (조회조건)
+                                WHERE   AC_DATE LIKE #{AC_YEAR} + #{AC_MONTH_FR} + '%'
+                                AND     dept_code = A.dept_code 
+                                AND     ac_gubun  = a.ac_gubun  -- 회계구분
+                                AND     budg_code = A.budg_code)  AS IN_AMT -- 당월분(세출) 
+                             , (SELECT  NVL(SUM(won_amt), 0)
+                                FROM    afb503T
+                            -- WHERE  ac_date BETWEEN  '20170101' AND '20170431' -- (조회조건)
+                                WHERE   AC_DATE BETWEEN #{AC_YEAR} + '0101' AND REPLACE(LEFT(CAST(ADDDATE(LEFT(REPLACE(#{AC_YEAR} + #{AC_MONTH_FR}, '-', ''), 4) + '-' + RIGHT(REPLACE(#{AC_YEAR} + #{AC_MONTH_FR}, '-', ''), 2) + '-' + '01', -1) AS VARCHAR), 5), '/', '')
+                                AND     dept_code = A.dept_code 
+                                AND     ac_gubun  = a.ac_gubun -- 회계구분
+                                AND     budg_code = A.budg_code)  AS BEFORE_IN_AMT  -- 전월누계액(세출)
+                             , (SELECT  NVL(SUM(BB.tot_amt_i), 0)
+                                FROM    afb700t AA , afb710t BB
+                                WHERE   AA.comp_code    = BB.comp_code 
+                                AND     AA.pay_draft_no = BB.pay_draft_no 
+                                AND     BB.budg_code    = A.budg_code 
+                                AND     AA.dept_code    =  A.dept_code
+                                AND     AA.PAY_DATE BETWEEN #{AC_YEAR} + #{AC_MONTH_FR} + '01' AND #{AC_YEAR} + #{AC_MONTH_FR} + '31' 
+                                --AND AA.pay_date BETWEEN '20170501' AND '20170531' -- (조회조건) 
+                                AND     AA.status       ='9') AS Pay_amt_i   -- 당월 지급
+                             , (SELECT  NVL(SUM(BB.tot_amt_i), 0)
+                                FROM    afb700t AA , afb710t BB
+                                WHERE   AA.comp_code    = BB.comp_code 
+                                AND     AA.pay_draft_no = BB.pay_draft_no 
+                                AND     BB.budg_code    = A.budg_code 
+                                AND     AA.dept_code    =  A.dept_code 
+                                AND     AA.PAY_DATE BETWEEN #{AC_YEAR} + #{AC_MONTH_FR} + '01' AND #{AC_YEAR} + #{AC_MONTH_FR} + '31'
+                                --AND AA.pay_date BETWEEN '20170501' AND '20170531' -- (조회조건) 
+                                AND     AA.ac_gubun     = 'C0005'
+                                AND     AA.status       ='9') AS Back_Pay_amt_i  -- 본월반납액
+                             , (SELECT  NVL(SUM(BB.tot_amt_i), 0)
+                                FROM    afb700t AA , afb710t BB
+                                WHERE   AA.comp_code    = BB.comp_code 
+                                AND     AA.pay_draft_no = BB.pay_draft_no 
+                                AND     BB.budg_code    = A.budg_code 
+                                AND     AA.dept_code    = A.dept_code
+                                AND     AA.PAY_DATE BETWEEN #{AC_YEAR} + '0101' AND REPLACE(LEFT(CAST(ADDDATE(LEFT(REPLACE(#{AC_YEAR} + #{AC_MONTH_FR}, '-', ''), 4) + '-' + RIGHT(REPLACE(#{AC_YEAR} + #{AC_MONTH_FR}, '-', ''), 2) + '-' + '01', -1) AS VARCHAR), 5), '/', '')
+                                --AND AA.pay_date BETWEEN '20170101' AND '20170431'    -- (조회조건)
+                                AND     AA.status       ='9') AS Before_Pay_amt_i   -- 전월누계액 
+                             , (SELECT  NVL(SUM( ex_amt) ,0) 
+                                FROM    afb730t
+                                --WHERE ex_date BETWEEN '20170501' AND '20170531'   -- (조회조건)
+                                WHERE   EX_DATE BETWEEN #{AC_YEAR} + #{AC_MONTH_FR} + '01' AND #{AC_YEAR} + #{AC_MONTH_FR} + '31'
+                                AND     budg_code   = A.budg_code
+                                AND     dept_code   = A.dept_code
+                                AND     STATUS      = '9'
+                                AND     ac_type     = 'C0063') AS Ret_pay_amt_i     -- 본월회수액
+                             , (SELECT  NVL(SUM(ex_amt), 0)
+                                FROM    afb730t
+                                --WHERE ex_date BETWEEN '20170501' AND '20170531'   -- (조회조건)
+                                WHERE   EX_DATE BETWEEN #{AC_YEAR} + #{AC_MONTH_FR} + '01' AND #{AC_YEAR} + #{AC_MONTH_FR} + '31'
+                                AND     budg_code = A.budg_code
+                                AND     dept_code = A.dept_code
+                                AND     STATUS    = '9'
+                                AND     ac_type   = 'C0064') AS Upt_pay_amt_i  -- 본월경정액
+                        FROM               AFB510T A
+                        --FROM  afb510t A, AFB400t B 
+                                LEFT  JOIN AFB400T B  ON B.COMP_CODE  = A.COMP_CODE
+                                                     AND B.BUDG_CODE  = A.BUDG_CODE
+                                LEFT  JOIN AFB400T C1 ON C1.COMP_CODE = A.COMP_CODE 
+                                                     AND C1.AC_YYYY   = LEFT(A.BUDG_YYYYMM, 4)
+                                                     AND C1.BUDG_CODE = SUBSTRING(A.BUDG_CODE, 1, 7)
+                                LEFT  JOIN AFB400T C2 ON C2.COMP_CODE = A.COMP_CODE 
+                                                     AND C2.AC_YYYY   = LEFT(A.BUDG_YYYYMM, 4)
+                                                     AND C2.BUDG_CODE = SUBSTRING(A.BUDG_CODE, 1, 11) 
+                                LEFT  JOIN AFB400T C3 ON C3.COMP_CODE = A.COMP_CODE 
+                                                     AND C3.AC_YYYY   = LEFT(A.BUDG_YYYYMM, 4)
+                                                     AND C3.BUDG_CODE = SUBSTRING(A.BUDG_CODE, 1, 14) 
+                                LEFT  JOIN AFB400T C4 ON C3.COMP_CODE = A.COMP_CODE 
+                                                     AND C4.AC_YYYY   = LEFT(A.BUDG_YYYYMM, 4)
+                                                     AND C4.BUDG_CODE = A.BUDG_CODE  
+                        WHERE   A.comp_code = #{S_COMP_CODE}
+                        AND     A.BUDG_YYYYMM = #{AC_YEAR} + '01'
+                        --AND  A.budg_yyyymm  = '201701'    -- 해당년도 (조회조건) 
+                        <if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+                        AND     A.DEPT_CODE = #{DEPT_CODE}
+                        </if>
+             --AND A.comp_code = B.comp_code
+             --AND a.budg_code  = B.budg_code 
+                )
+                GROUP BY BUDG_CODE    , BUDG_NAME, SEMOK_AMT       , IN_AMT     , BEFORE_SEMOK_AMT
+                       , BEFORE_IN_AMT, PAY_AMT_I, BEFORE_PAY_AMT_I
+                       --, BUDG_NAME_2, BUDG_NAME_3, BUDG_NAME_4, BUDG_NAME_6             
+        )
+        WHERE won_bal > 0; 
+        
+    </select>
+
+</mapper>

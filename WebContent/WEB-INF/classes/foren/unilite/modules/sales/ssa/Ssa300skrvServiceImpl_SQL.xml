@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ssa300skrvServiceImpl">
+					
+	<select id="ssa300skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+	
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+	
+		DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+		      , @UserId			NVARCHAR(100)	/* 사용자ID		*/
+		      , @LangType		NVARCHAR(2)		/* 언어구분		*/
+	          , @RefItem		NVARCHAR(01)
+	          , @DateFormat		NVARCHAR(10)
+	
+	    SET @CompCode = #{S_COMP_CODE}
+		SET @UserId   = #{S_USER_ID}
+		SET @LangType = #{S_LANG_CODE}
+	
+		/* 명칭 참조 유형 */
+	    SELECT TOP 1 @RefItem = REF_ITEM
+	      FROM BSA300T WITH (NOLOCK)
+	     WHERE USER_ID = @UserId
+	
+	    SET @RefItem = ISNULL(@RefItem, N'0')
+	
+		/* 날짜 포맷 유형 설정 */
+	    SELECT TOP 1 @DateFormat = CODE_NAME
+	      FROM BSA100T WITH (NOLOCK)
+	     WHERE COMP_CODE = @CompCode
+	       AND MAIN_CODE = N'B044'
+	       AND REF_CODE1 = N'Y'
+	
+	    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+	
+		/* 데이터 조회 */
+	    SELECT A.COMP_CODE                                                                                          --(숨김)법인코드
+	         , A.DIV_CODE                                                                                           --(숨김)사업장
+	         , A.BILL_TOT_NUM                                                                                       --매출집계번호
+	         , (CASE WHEN ISNULL(A.BILL_DATE, '') = ''
+	                 THEN ''
+	                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.BILL_DATE, 1, 4))
+	                                                         , 'MM'  , SUBSTRING(A.BILL_DATE, 5, 2))
+	                                                         , 'DD'  , SUBSTRING(A.BILL_DATE, 7, 2))
+	             END)																				AS BILL_DATE    --집계일
+	         , (CASE WHEN ISNULL(A.EX_DATE, '') = ''
+	                 THEN ''
+	                 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.EX_DATE, 1, 4))
+	                                                         , 'MM'  , SUBSTRING(A.EX_DATE, 5, 2))
+	                                                         , 'DD'  , SUBSTRING(A.EX_DATE, 7, 2))
+	             END)																				AS EX_DATE      --결의일자
+	         , A.EX_NUM                                                                                             --결의번호    
+	         , B.BILL_TOT_SEQ
+             , B.DEPT_CODE  																						--부서코드
+             , ISNULL(F.TREE_NAME,'')																AS DEPT_NAME	--부서명
+             , B.SHOP_CLASS																							--매장구분(B134)
+	         , B.CUSTOM_CODE                                                                                        --거래처코드
+	         , (CASE WHEN @RefItem = '1' THEN C.CUSTOM_NAME1
+	                 WHEN @RefItem = '2' THEN C.CUSTOM_NAME2
+	                                     ELSE C.CUSTOM_NAME
+	             END)																				AS CUSTOM_NAME  --거래처명
+	         , B.BILL_TYPE                                                                                          --결제유형(S134)
+	         , B.PROOF_TYPE                                                                                         --증빙유형(S135)
+	         , B.ITEM_ACCOUNT                                                                                       --품목계정(B010)
+	         , B.TAX_TYPE                                                                                           --세구분(B059)
+	         , B.SALE_AMT_I + B.DISCOUNT_AMT_I               AS SALE_AMT_I                                          --매출액
+	         , B.TAX_AMT_I                                   AS TAX_AMT_I                                           --부가세액
+	         , B.SALE_AMT_I + B.DISCOUNT_AMT_I + B.TAX_AMT_I AS TOT_AMT_I                                           --매출합계
+	         , B.DISCOUNT_AMT_I                              AS DISCOUNT_AMT_I                                      --할인액
+	         , B.SALE_AMT_I + B.TAX_AMT_I                    AS NET_AMT_I                                           --순매출액
+             , B.CONSIGNMENT_FEE							 AS CONSIGNMENT_FEE										--수탁수수료
+             , B.CONSIGNMENT_GOODS                           AS CONSIGNMENT_GOODS									--수탁상품
+	         , B.REMARK                                                                                             --비고
+	      FROM            SSA300T A WITH (NOLOCK)
+	           INNER JOIN SSA310T B WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+	                                             AND B.DIV_CODE     = A.DIV_CODE
+	                                             AND B.BILL_TOT_NUM = A.BILL_TOT_NUM
+	           LEFT  JOIN BCM100T C WITH (NOLOCK) ON C.COMP_CODE    = B.COMP_CODE
+	                                             AND C.CUSTOM_CODE  = B.CUSTOM_CODE
+               LEFT  JOIN BSA210T F WITH (NOLOCK) ON F.COMP_CODE    = B.COMP_CODE
+                                                 AND F.TYPE_LEVEL   = B.DIV_CODE
+                                                 AND F.TREE_CODE    = B.DEPT_CODE
+	     WHERE A.COMP_CODE  = @CompCode
+	       AND A.DIV_CODE   = #{DIV_CODE}
+	       AND A.BILL_DATE &gt;= #{SALE_DATE_FR}
+	       AND A.BILL_DATE &lt;= #{SALE_DATE_TO}
+	
+SET @END_TIME   = GETDATE()
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'ssa300skrv', '매출집계조회', #{SALE_DATE_FR}, #{SALE_DATE_TO}, @DIFF_TIME
+	
+		SET NOCOUNT OFF
+		SET ARITHABORT OFF
+	END
+	</select>
+
+</mapper>

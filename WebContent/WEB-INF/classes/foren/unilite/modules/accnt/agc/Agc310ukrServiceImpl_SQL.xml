@@ -1,0 +1,1868 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="agc310ukrServiceImpl">
+	<select id="agc310ukrServiceImpl.fnDispYN" parameterType="Map" resultType="rMap">
+		SELECT DIS_DIVI 
+		FROM ABA120T  WITH (NOLOCK) 
+		WHERE COMP_CODE = #{S_COMP_CODE} 
+		  AND  DIVI = '20' 
+		  AND ACCNT_CD = #{sAccntCD}
+		  AND GUBUN = #{GUBUN}
+	</select>
+	
+	
+	<select id="agc310ukrServiceImpl.fnGetBaseInfo" parameterType="Map" resultType="rMap">
+		/*agc310ukr.Cagc310Ukr[fnGetBaseInfo] Query16*/
+		SELECT ISNULL(MATRL_YN,'1') MATRL_YN
+		  FROM ABA100T WITH (NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+	</select>
+	
+	<select id="agc310ukrServiceImpl.bBizrefYN" parameterType="Map" resultType="rMap">	
+			--agc310ukr.Cagc310UKR[fnagc310ini] Query3
+		SELECT SUB_CODE 
+		  FROM BSA100T WITH(NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND MAIN_CODE = 'A181'
+		   AND SUB_CODE != '$'
+		   AND REF_CODE1 = 'Y'
+	</select>
+	
+	<select id="agc310ukrServiceImpl.fnRefMatrlTbl" parameterType="Map" resultType="rMap">
+		--재고 테이블로부터 재고금액 집계하여 temp table 로 생성
+		 --agc310ukr.Cagc310UKr[fnRefMatrlTbl] Query01
+    BEGIN
+        DECLARE         @COMP_CODE          NVARCHAR(08)
+                      , @FR_AC_DATE         NVARCHAR(08)
+                      , @TO_AC_DATE         NVARCHAR(08)
+                      , @USER_ID            NVARCHAR(100)
+    
+        SET @COMP_CODE  = #{S_COMP_CODE}
+        SET @FR_AC_DATE = #{FR_DATE}
+        SET @TO_AC_DATE = #{TO_DATE}
+        
+        SET @USER_ID    = #{S_USER_ID}
+    
+    --  1. 재고단가 계산 방법 설정 --------------------------------------------------------------------------------------
+        DECLARE             @StockP             NVARCHAR(01)
+    
+        SELECT TOP 1 @StockP = SUB_CODE
+        FROM   BSA100T WITH (NOLOCK)
+        WHERE  COMP_CODE = @COMP_CODE                                             -- 단가처리 기준
+        AND    MAIN_CODE = 'B069'
+        AND    SUB_CODE  = '1'                                                     -- 기준재고단가
+        AND    REF_CODE1 = 'Y'
+    
+        SET @StockP = ISNULL(@StockP, '')
+    
+    --  2. 자국통화 자릿수 조회 -----------------------------------------------------------------------------------------
+        DECLARE             @RoundPT            INTEGER                             -- 통화별 자리수
+    
+        SELECT  TOP 1
+                @RoundPT = CASE WHEN ISNUMERIC(REF_CODE2) = 1 THEN CONVERT(INTEGER, REF_CODE2) ELSE 0 END
+        FROM    BSA100T  WITH (NOLOCK)
+        WHERE   COMP_CODE = @COMP_CODE
+        AND     MAIN_CODE = N'B004'
+        AND     REF_CODE1 = N'Y'
+        
+        SET @RoundPT = ISNULL(@RoundPT, 0)
+    
+    --  3. 가장 최근 마감월 조회 ----------------------------------------------------------------------------------------
+        DECLARE             @QryYYYYMM          NVARCHAR(06)                        -- 조회월
+                          , @ErrorDesc          NVARCHAR(1000)
+    
+        DECLARE             @LastMonth          TABLE                               -- 사업장별 최종마감월
+                            (
+                            COMP_CODE           NVARCHAR(10)
+                          , DIV_CODE            NVARCHAR(10)
+                          , LAST_YYYYMM         NVARCHAR(06)
+                            )
+    
+        SET @QryYYYYMM  = CONVERT(NVARCHAR(06), @FR_AC_DATE, 112)
+    
+        EXEC uniLITE.SP_STOCK_AdjustMonthlyColsing @COMP_CODE, '', @QryYYYYMM, '', '', @USER_ID, @ErrorDesc OUTPUT
+        
+        IF ISNULL(@ErrorDesc, '') != ''
+        BEGIN
+            RETURN
+        END
+    
+        INSERT INTO @LastMonth(COMP_CODE, DIV_CODE, LAST_YYYYMM)
+        SELECT COMP_CODE, DIV_CODE, MAX(BASIS_YYYYMM) AS LAST_YYYYMM
+        FROM   BIV200T WITH (NOLOCK)
+        WHERE  COMP_CODE    = @COMP_CODE
+	<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+       	  AND  DIV_CODE IN
+		<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+			#{item}
+		</foreach>									
+	</if>
+        AND    BASIS_YYYYMM &lt; @QryYYYYMM
+        GROUP BY COMP_CODE, DIV_CODE
+    
+    --  4. 데이터 조회 --------------------------------------------------------------------------------------------------
+        
+        IF OBJECT_ID('tempdb..##MATRL')  IS NOT NULL
+    	DROP TABLE ##MATRL
+        
+        SELECT  A.COMP_CODE, A.ITEM_ACCOUNT
+              , SUM(ISNULL(A.BASIS_I, 0.0) + ISNULL(A.STOCK_I, 0.0))  AS STOCK_I
+        INTO    ##MATRL
+        FROM                (
+                            SELECT  A.COMP_CODE, C2.ITEM_ACCOUNT
+                                  , SUM(ISNULL(A.STOCK_Q, 0))                   AS BASIS_Q
+                                  , ROUND(SUM(CASE WHEN @StockP = '1' AND LEFT(ISNULL(C2.ITEM_ACCOUNT, ''), 1) IN ('1', '2')
+                                                   THEN ISNULL(C2.BASIS_P, 0) *  ISNULL(A.STOCK_Q, 0)
+                                                   ELSE ISNULL(A.STOCK_I, 0)
+                                               END), @RoundPT)                  AS BASIS_I
+                                  , 0.0                                         AS STOCK_Q
+                                  , 0.0                                         AS STOCK_I
+                            FROM                BIV200T    A  WITH (NOLOCK)
+                                    INNER JOIN  @LastMonth B                ON  B.COMP_CODE     = A.COMP_CODE
+                                                                           AND  B.DIV_CODE      = A.DIV_CODE
+                                    INNER JOIN  BPR100T    C1 WITH (NOLOCK) ON C1.COMP_CODE     = A.COMP_CODE         -- 사업장 품목
+                                                                           AND C1.ITEM_CODE     = A.ITEM_CODE
+                                                                           AND C1.STOCK_CARE_YN = 'Y'
+                                    INNER JOIN  BPR200T    C2 WITH (NOLOCK) ON C2.COMP_CODE     = A.COMP_CODE         -- 사업장 품목
+                                                                           AND C2.DIV_CODE      = A.DIV_CODE
+                                                                           AND C2.ITEM_CODE     = A.ITEM_CODE
+                            WHERE   A.COMP_CODE       = @COMP_CODE
+                            AND     A.BASIS_YYYYMM    = B.LAST_YYYYMM
+					<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+				       	    AND  A.DIV_CODE IN
+						<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+							#{item}
+						</foreach>									
+					</if>
+                            AND    (A.BASIS_Q        != 0.0
+                            OR      A.BASIS_AMOUNT_I != 0.0
+                            OR      A.INSTOCK_Q      != 0.0
+                            OR      A.INSTOCK_I      != 0.0
+                            OR      A.OUTSTOCK_Q     != 0.0
+                            OR      A.OUTSTOCK_I     != 0.0
+                            OR      A.STOCK_Q        != 0.0
+                            OR      A.STOCK_I        != 0.0)
+                            GROUP BY A.COMP_CODE, C2.ITEM_ACCOUNT
+    
+                            UNION ALL
+                            
+                            SELECT  A.COMP_CODE, C2.ITEM_ACCOUNT
+                                  , 0.0                                         AS BASIS_Q
+                                  , 0.0                                         AS BASIS_I
+                                  , SUM(CASE WHEN A.INOUT_TYPE = '2' THEN ISNULL(A.INOUT_Q, 0.0) * -1.0
+                                             ELSE ISNULL(A.INOUT_Q, 0.0)
+                                        END)                                    AS STOCK_Q
+                                  , ROUND(SUM(CASE WHEN @StockP = '1' AND LEFT(ISNULL(C2.ITEM_ACCOUNT, ''), 1) IN ('1', '2')
+                                                   THEN CASE WHEN A.INOUT_TYPE = '2' THEN ISNULL(C2.BASIS_P, 0) * (ISNULL(A.INOUT_Q, 0) * -1.0)
+                                                             ELSE ISNULL(C2.BASIS_P, 0) * ISNULL(A.INOUT_Q, 0)
+                                                         END
+                                                   ELSE CASE WHEN A.INOUT_TYPE = '2' THEN ISNULL(A.INOUT_CAL_I, 0) * -1.0
+                                                        ELSE ISNULL(A.INOUT_CAL_I, 0)
+                                                        END
+                                              END), @RoundPT)            AS STOCK_I
+                            FROM                BTR100T A  WITH (NOLOCK, INDEX(BTR100T_IDX02))
+                                    INNER JOIN  BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE     = A.COMP_CODE         -- 사업장 품목
+                                                                        AND C1.ITEM_CODE     = A.ITEM_CODE
+                                                                        AND C1.STOCK_CARE_YN = 'Y'
+                                    INNER JOIN  BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE     = A.COMP_CODE           -- 사업장 품목
+                                                                        AND C2.DIV_CODE      = A.DIV_CODE
+                                                                        AND C2.ITEM_CODE     = A.ITEM_CODE
+                            WHERE   A.COMP_CODE   = @COMP_CODE
+                            AND     A.INOUT_DATE &gt;= @FR_AC_DATE + N'01'
+                            AND     A.INOUT_DATE &lt;= @TO_AC_DATE + N'31'
+					<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+				       	    AND     A.DIV_CODE IN
+						<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+							#{item}
+						</foreach>									
+					</if>
+                            GROUP BY A.COMP_CODE, C2.ITEM_ACCOUNT
+    
+--외주재고포함여부가 '포함'인 경우만 적용
+<if test="BIZRE == &quot;Y&quot;">
+                            UNION ALL
+    
+                            SELECT A.COMP_CODE, A.ITEM_ACCOUNT
+
+                                 , SUM(ISNULL(A.BASIS_Q, 0))                   AS BASIS_STOCK_Q
+                                 , ROUND(SUM(ISNULL(A.BASIS_I, 0)), @RoundPT)  AS BASIS_STOCK_I
+                                 , 0.0                                         AS STOCK_Q
+                                 , 0.0                                         AS STOCK_I
+                            FROM   (
+                                   SELECT A.COMP_CODE, C2.ITEM_ACCOUNT
+                                        , 0 AS BASIS_Q, 0 AS BASIS_I, 0 AS STOCK_Q, 0 AS STOCK_I
+                                   FROM               BIZ100T  A  WITH (NOLOCK)
+                                          INNER JOIN  BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE     = A.COMP_CODE         -- 사업장 품목
+                                                                               AND C1.ITEM_CODE     = A.ITEM_CODE
+                                                                               AND C1.STOCK_CARE_YN = 'Y'
+                                          INNER JOIN  BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE     = A.COMP_CODE                          -- 사업장 품목
+                                                                               AND C2.DIV_CODE      = A.DIV_CODE
+                                                                               AND C2.ITEM_CODE     = A.ITEM_CODE
+                                   WHERE  A.COMP_CODE      = @COMP_CODE
+					<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+				       	    AND  A.DIV_CODE IN
+						<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+							#{item}
+						</foreach>									
+					</if>
+                                   GROUP BY A.COMP_CODE, C2.ITEM_ACCOUNT
+                                   UNION ALL
+                                   SELECT  A.COMP_CODE, C2.ITEM_ACCOUNT
+                                         , SUM(ISNULL(A.STOCK_Q, 0))                   AS BASIS_Q
+                                         , ROUND(SUM(CASE WHEN @StockP = '1' AND LEFT(ISNULL(C2.ITEM_ACCOUNT, ''), 1) IN ('1', '2')
+                                                          THEN (ISNULL(C2.BASIS_P, 0) *  ISNULL(A.STOCK_Q, 0))
+                                                          ELSE ISNULL(A.STOCK_I, 0)
+                                                      END), @RoundPT)                  AS BASIS_I
+                                         , 0.0                                         AS STOCK_Q
+                                         , 0.0                                         AS STOCK_I
+                                   FROM              BIZ200T  A  WITH (NOLOCK)
+                                          INNER JOIN (
+                                                     SELECT A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE, A.ITEM_CODE
+                                                          , MAX(A.BASIS_YYYYMM) AS BASIS_YYYYMM
+                                                     FROM               BIZ200T    A  WITH (NOLOCK)
+                                                            INNER JOIN  @LastMonth B     ON B.COMP_CODE = A.COMP_CODE
+                                                                                        AND B.DIV_CODE  = A.DIV_CODE
+                                                     WHERE  A.COMP_CODE      = @COMP_CODE
+					<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+				       	    AND  A.DIV_CODE IN
+						<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+							#{item}
+						</foreach>									
+					</if>
+                                                     AND    A.BASIS_YYYYMM  &gt;= CONVERT(NVARCHAR(6), DATEADD(MONTH, -6, CONVERT(DATETIME, ISNULL(B.LAST_YYYYMM, '') + '01')), 112)
+                                                     AND    A.BASIS_YYYYMM  &lt;= ISNULL(B.LAST_YYYYMM, '')
+                                                     GROUP BY A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE, A.ITEM_CODE
+                                                     ) B                       ON B.COMP_CODE      = A.COMP_CODE
+                                                                              AND B.DIV_CODE       = A.DIV_CODE
+                                                                              AND B.CUSTOM_CODE    = A.CUSTOM_CODE
+                                                                              AND B.ITEM_CODE      = A.ITEM_CODE
+                                                                              AND B.BASIS_YYYYMM   = A.BASIS_YYYYMM
+                                          INNER JOIN BPR100T  C1 WITH (NOLOCK) ON C1.COMP_CODE     = A.COMP_CODE         -- 사업장 품목
+                                                                              AND C1.ITEM_CODE     = A.ITEM_CODE
+                                                                              AND C1.STOCK_CARE_YN = 'Y'
+                                          INNER JOIN BPR200T  C2 WITH (NOLOCK) ON C2.COMP_CODE     = A.COMP_CODE                  -- 사업장 품목
+                                                                              AND C2.DIV_CODE      = A.DIV_CODE
+                                                                              AND C2.ITEM_CODE     = A.ITEM_CODE
+                                   WHERE  A.COMP_CODE       = @COMP_CODE
+					<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+				       	    AND  A.DIV_CODE IN
+						<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+							#{item}
+						</foreach>									
+					</if>
+                                   GROUP BY A.COMP_CODE, C2.ITEM_ACCOUNT
+    
+                                   UNION ALL
+    
+                                   SELECT  A.COMP_CODE, C2.ITEM_ACCOUNT
+                                         , SUM(CASE WHEN A.INOUT_TYPE = '2' THEN ISNULL(A.INOUT_Q, 0.0) * -1.0
+                                                    ELSE ISNULL(A.INOUT_Q, 0.0)
+                                               END)                                    AS BASIS_Q
+                                         , ROUND(SUM(CASE WHEN @StockP = '1' AND LEFT(ISNULL(C2.ITEM_ACCOUNT, ''), 1) IN ('1', '2')
+                                                          THEN CASE WHEN A.INOUT_TYPE = '2' THEN ISNULL(C2.BASIS_P, 0) * (ISNULL(A.INOUT_Q, 0) * -1.0)
+                                                                    ELSE ISNULL(C2.BASIS_P, 0) * ISNULL(A.INOUT_Q, 0)
+                                                               END
+                                                          ELSE CASE WHEN A.INOUT_TYPE = '2' THEN (ISNULL(A.INOUT_I, 0) * -1.0)
+                                                               ELSE ISNULL(A.INOUT_I, 0)
+                                                               END
+                                                      END), @RoundPT)                  AS BASIS_I
+                                         , 0.0                                         AS STOCK_Q
+                                         , 0.0                                         AS STOCK_I
+                                   FROM                BIZ600T    A  WITH (NOLOCK, INDEX(BIZ600T_IDX02))
+                                           INNER JOIN  @LastMonth B                ON B.COMP_CODE      = A.COMP_CODE
+                                                                                  AND B.DIV_CODE       = A.DIV_CODE
+                                           INNER JOIN  BPR100T    C1 WITH (NOLOCK) ON C1.COMP_CODE     = A.COMP_CODE         -- 사업장 품목
+                                                                                  AND C1.ITEM_CODE     = A.ITEM_CODE
+                                                                                  AND C1.STOCK_CARE_YN = 'Y'
+                                           INNER JOIN  BPR200T    C2 WITH (NOLOCK) ON C2.COMP_CODE     = A.COMP_CODE                           -- 사업장 품목
+                                                                                  AND C2.DIV_CODE      = A.DIV_CODE
+                                                                                  AND C2.ITEM_CODE     = A.ITEM_CODE
+                                   WHERE   A.COMP_CODE       = @COMP_CODE
+					<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+				       	    AND  A.DIV_CODE IN
+						<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+							#{item}
+						</foreach>									
+					</if>
+                                   AND     A.INOUT_DATE     &gt;= ISNULL(B.LAST_YYYYMM, '') + '32'
+                                   AND     A.INOUT_DATE     &lt;  @FR_AC_DATE
+                                   GROUP BY A.COMP_CODE, C2.ITEM_ACCOUNT
+                                   ) A
+                            GROUP BY A.COMP_CODE, A.ITEM_ACCOUNT
+                            
+                            UNION ALL
+                            
+                            SELECT  A.COMP_CODE, C2.ITEM_ACCOUNT
+                                  , 0.0                                         AS BASIS_Q
+                                  , 0.0                                         AS BASIS_I
+                                  , SUM(CASE WHEN A.INOUT_TYPE = '2' THEN ISNULL(A.INOUT_Q, 0.0) * -1.0
+                                             ELSE ISNULL(A.INOUT_Q, 0.0)
+                                        END)                                    AS STOCK_Q
+                                  , ROUND(SUM(CASE WHEN @StockP = '1' AND LEFT(ISNULL(C2.ITEM_ACCOUNT, ''), 1) IN ('1', '2')
+                                                   THEN CASE WHEN A.INOUT_TYPE = '2' THEN ISNULL(C2.BASIS_P, 0) * (ISNULL(A.INOUT_Q, 0) * -1.0)
+                                                             ELSE ISNULL(C2.BASIS_P, 0) * ISNULL(A.INOUT_Q, 0)
+                                                        END
+                                                   ELSE CASE WHEN A.INOUT_TYPE = '2' THEN (ISNULL(A.INOUT_I, 0) * -1.0)
+                                                        ELSE ISNULL(A.INOUT_I, 0)
+                                                        END
+                                               END), @RoundPT)                                    AS STOCK_I
+                            FROM                BIZ600T A  WITH (NOLOCK)
+                                    INNER JOIN  BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE     = A.COMP_CODE         -- 사업장 품목
+                                                                        AND C1.ITEM_CODE     = A.ITEM_CODE
+                                                                        AND C1.STOCK_CARE_YN = 'Y'
+                                    INNER JOIN  BPR200T C2 WITH (NOLOCK) ON C2.COMP_CODE     = A.COMP_CODE           -- 사업장 품목
+                                                                        AND C2.DIV_CODE      = A.DIV_CODE
+                                                                        AND C2.ITEM_CODE     = A.ITEM_CODE
+                            WHERE   A.COMP_CODE   = @COMP_CODE
+                            AND     A.INOUT_DATE &gt;= @FR_AC_DATE + '01'
+                            AND     A.INOUT_DATE &lt;= @TO_AC_DATE + '31'
+					<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+				       	    AND  A.DIV_CODE IN
+						<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+							#{item}
+						</foreach>									
+					</if>
+                            GROUP BY A.COMP_CODE, C2.ITEM_ACCOUNT
+</if>
+                            ) A
+		GROUP BY A.COMP_CODE, A.ITEM_ACCOUNT
+		
+		--	사내재공 금액 추가하되 픔목계정은 반제품으로 하드코딩. (하드코딩 안할경우 제품재공은 제품금액으로 포함됨.)
+		UNION ALL
+		
+		SELECT A.COMP_CODE
+			 , '20'								AS ITEM_ACCOUNT
+			 , SUM(ISNULL(A.MAT_DAMT_ONE,0))
+			 + SUM(ISNULL(A.MAT_DAMT_TWO,0))
+			 + SUM(ISNULL(A.MAT_IAMT_ONE,0))
+			 + SUM(ISNULL(B.MAT_IAMT_TWO,0))
+			 + SUM(ISNULL(B.LABOR_DAMT  ,0))
+			 + SUM(ISNULL(B.LABOR_IAMT  ,0))
+			 + SUM(ISNULL(B.EXPENSE_DAMT,0))
+			 + SUM(ISNULL(B.EXPENSE_IAMT,0))	AS STOCK_I		-- 총계
+		  FROM -- 품목별재료비(적상전)의 JOIN TABLE
+			   (SELECT M.COMP_CODE
+					 , M.DIV_CODE
+					 , M.WORK_MONTH
+					 , M.WORK_SHOP_CD
+					 , M.WKORD_NUM
+					 , M.PROD_ITEM_CODE
+					 , SUM(ISNULL(M.MAT_DAMT_ONE,0)) AS MAT_DAMT_ONE
+					 , SUM(ISNULL(M.MAT_DAMT_TWO,0)) AS MAT_DAMT_TWO
+					 , SUM(ISNULL(M.MAT_IAMT_ONE,0)) AS MAT_IAMT_ONE
+				  FROM (SELECT A.COMP_CODE
+							 , A.DIV_CODE
+							 , A.WORK_MONTH
+							 , A.WORK_SHOP_CD
+							 , A.WKORD_NUM
+							 , A.PROD_ITEM_CODE
+							 , B.ITEM_ACCOUNT
+							 , (CASE WHEN R1.REF_CODE3 IN ('10','20') THEN A.D_AMT ELSE 0 END) AS MAT_DAMT_ONE
+							 , (CASE WHEN R1.REF_CODE3  = '40'        THEN A.D_AMT ELSE 0 END) AS MAT_DAMT_TWO
+							 , (CASE WHEN R1.REF_CODE3  = '50'        THEN A.D_AMT ELSE 0 END) AS MAT_IAMT_ONE
+						FROM			  CAM405T A  WITH (NOLOCK)
+							   LEFT  JOIN BPR200T B  WITH (NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+																  AND A.ITEM_CODE  = B.ITEM_CODE
+																  AND A.DIV_CODE   = B.DIV_CODE
+							   LEFT  JOIN BSA100T R1 WITH (NOLOCK) ON R1.COMP_CODE = B.COMP_CODE
+																  AND R1.MAIN_CODE = 'B020'
+																  AND R1.SUB_CODE  = B.ITEM_ACCOUNT) M
+				   GROUP BY M.COMP_CODE, M.DIV_CODE, M.WORK_MONTH, M.WORK_SHOP_CD, M.WKORD_NUM, M.PROD_ITEM_CODE) A
+			   LEFT  JOIN
+			   -- 품목별재료비(적상후)의 JOIN TABLE
+			   (SELECT A.COMP_CODE
+					 , A.DIV_CODE
+					 , A.WORK_MONTH
+					 , A.WORK_SHOP_CD
+					 , A.WKORD_NUM
+					 , A.PROD_ITEM_CODE
+					 , SUM(ISNULL(A.MAT_IAMT    ,0)) AS MAT_IAMT_TWO
+					 , SUM(ISNULL(A.PRODT_Q     ,0)) AS PRODT_Q
+					 , SUM(ISNULL(A.LABOR_DAMT  ,0)) AS LABOR_DAMT
+					 , SUM(ISNULL(A.LABOR_IAMT  ,0)) AS LABOR_IAMT
+					 , SUM(ISNULL(A.EXPENSE_DAMT,0)) AS EXPENSE_DAMT
+					 , SUM(ISNULL(A.EXPENSE_IAMT,0)) AS EXPENSE_IAMT
+				  FROM CAM455T A  WITH (NOLOCK)
+				 WHERE A.COMP_CODE			= @COMP_CODE
+		<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">
+				   AND A.DIV_CODE		   IN <foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">#{item}</foreach>
+		</if>
+				   AND A.WORK_MONTH   BETWEEN @FR_AC_DATE AND @TO_AC_DATE
+				 GROUP BY A.COMP_CODE, A.DIV_CODE, A.WORK_MONTH, A.WORK_SHOP_CD, A.WKORD_NUM, A.PROD_ITEM_CODE) B ON B.COMP_CODE      = A.COMP_CODE
+																												 AND B.WORK_SHOP_CD   = A.WORK_SHOP_CD
+																												 AND B.WKORD_NUM      = A.WKORD_NUM
+																												 AND B.PROD_ITEM_CODE = A.PROD_ITEM_CODE
+			   INNER JOIN BPR200T C  WITH (NOLOCK) ON C.COMP_CODE		= A.COMP_CODE
+												  AND C.DIV_CODE		= A.DIV_CODE
+												  AND C.ITEM_CODE		= A.PROD_ITEM_CODE
+			   INNER JOIN BPR100T D  WITH (NOLOCK) ON D.COMP_CODE		= A.COMP_CODE
+												  AND D.ITEM_CODE		= A.PROD_ITEM_CODE
+		 WHERE A.COMP_CODE			= @COMP_CODE
+		<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">
+		   AND A.DIV_CODE		   IN <foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">#{item}</foreach>
+		</if>
+		   AND A.WORK_MONTH   BETWEEN @FR_AC_DATE AND @TO_AC_DATE
+		GROUP BY A.COMP_CODE
+			 --, C.ITEM_ACCOUNT
+		
+		ORDER BY ITEM_ACCOUNT
+	END
+	</select>
+	
+	
+<select id="agc310ukrServiceImpl.fnCreateTable" parameterType="Map" resultType="rMap">
+	--임시테이블 생성
+	
+	--1. 작업할 데이터를 temp table 로 만든다.
+    --agc310ukr.Cagc310UKR[fnCreateTable] Query6
+    
+    
+    IF OBJECT_ID('tempdb..${sTblName}')  IS NOT NULL
+    DROP TABLE ${sTblName}
+    
+    SELECT *
+    INTO  ${sTblName}
+    FROM (
+    
+          SELECT  A.DIV_CODE,     A.ACCNT
+          		, A.AC_DATE,      A.INPUT_PATH
+			<if test="sSrcTbl == &quot;AGB200TV&quot;">	
+				, A.BOOK_DATA1,   A.BOOK_DATA2
+				, A.BOOK_CODE1,   A.BOOK_CODE2
+			</if>
+          		, A.DR_AMT_I,     A.CR_AMT_I
+          		, A.SPEC_DIVI,    A.PROFIT_DIVI,      A.JAN_DIVI
+          		
+          		
+            FROM ${sSrcTbl} A
+                INNER JOIN ABA400T AS B WITH (NOLOCK) ON  B.COMP_CODE = A.COMP_CODE
+                                                     AND B.ACCNT     = A.ACCNT
+                                                     AND ISNULL(B.SPEC_DIVI, '') != 'H'
+           WHERE A.COMP_CODE = #{S_COMP_CODE}
+           
+    
+  
+    <if test="SEARCH == &quot;SEARCH&quot;">
+             AND A.AC_DATE  &gt;= #{ST_DATE}
+             AND A.AC_DATE  &lt;= #{TO_DATE} + '31'
+    </if>
+    <if test="SEARCH != &quot;SEARCH&quot;">
+             AND A.AC_DATE  &gt;= #{ST_DATE}
+             AND A.AC_DATE  &lt;= #{TO_DATE} + '31'
+    </if>
+    
+    
+	--손익현황의 당기제품제조원가는 제조원가의 당기제품제조원가 참조한다.
+	--계정은 당기제품제조원가 계정(결산계정:profit_divi='B')을 사용한다.
+    <if test="sDivi == &quot;20&quot;">
+    	UNION ALL
+	--제품타계정입고액이 당기제품제조원가에 포함되는 경우 당기제품제조원가만 반영하기 위해 TOP1로 가져옴
+		
+        SELECT TOP 1 ${sDivCode}  AS DIV_CODE
+             , A.ACCNT
+             , ${sToDate} AS AC_DATE
+             , '' AS INPUT_PATH
+        
+        <if test="sSrcTbl == &quot;AGB200TV&quot;">	
+            
+             , CASE WHEN ISNULL(B.BOOK_CODE1,'') = 'E1' THEN #{AC_PROJECT_CODE}
+                    ELSE ''
+                END AS BOOK_DATA1
+             , CASE WHEN ISNULL(B.BOOK_CODE2,'') = 'E1' THEN #{AC_PROJECT_CODE}
+                    ELSE ''
+                END AS BOOK_DATA2
+             , ISNULL(B.BOOK_CODE1, '') AS BOOK_CODE1
+             , ISNULL(B.BOOK_CODE2, '') AS BOOK_CODE2
+        
+        </if>
+        
+             , CASE WHEN B.JAN_DIVI = '1' THEN ${dAmt7000}
+                    ELSE 0.0
+                END AS DR_AMT_I
+             , CASE WHEN B.JAN_DIVI = '1' THEN 0.0
+                    ELSE ${dAmt7000}
+                END AS CR_AMT_I
+             , ISNULL(B.SPEC_DIVI  ,'') AS SPEC_DIVI
+             , ISNULL(B.PROFIT_DIVI,'') AS PROFIT_DIVI
+             , ISNULL(B.JAN_DIVI   ,'') AS JAN_DIVI
+        
+          FROM           ABA120TV AS A  WITH (NOLOCK)
+              INNER JOIN ABA400T  AS B WITH (NOLOCK)  ON  B.COMP_CODE = A.COMP_CODE
+                                                      AND B.ACCNT     = A.ACCNT
+                                                      AND ISNULL(B.PROFIT_DIVI,'') = 'B'
+         WHERE A.COMP_CODE = #{S_COMP_CODE}
+           AND A.GUBUN     = #{GUBUN}
+           AND A.DIVI      = #{sDivi}
+           AND A.ACCNT_CD  = '2120'
+         ORDER BY A.ACCNT
+        
+    </if>
+    
+    --회계기준설정에서 "원가대체기준"이 "재고금액을 참조한다" 로 설정되어 있는 경우
+    --재고테이블을 참조하여 재고금액 계산.
+    --계정은 기말재고액 계정(결산계정:profit_divi='B')을 사용한다.
+	<if test="sMatrl_YN == &quot;1&quot;">
+		UNION ALL
+		
+         SELECT ${sDivCode}  AS DIV_CODE
+              , A.ACCNT
+              , ${sToDate} AS AC_DATE
+              , '' AS INPUT_PATH
+        
+        <if test="sSrcTbl == &quot;AGB200TV&quot;">	
+            
+              , CASE WHEN ISNULL(D.BOOK_CODE1,'') = 'E1' THEN #{AC_PROJECT_CODE}
+                     ELSE ''
+                 END AS BOOK_DATA1
+              , CASE WHEN ISNULL(D.BOOK_CODE2,'') = 'E1' THEN #{AC_PROJECT_CODE}
+                     ELSE ''
+                 END AS BOOK_DATA2
+              , ISNULL(D.BOOK_CODE1, '') AS BOOK_CODE1
+              , ISNULL(D.BOOK_CODE2, '') AS BOOK_CODE2
+        
+        </if>
+        
+              , CASE WHEN ISNULL(D.JAN_DIVI,'') = '1' THEN C.STOCK_I
+                     ELSE 0.0
+                 END AS DR_AMT_I
+              , CASE WHEN ISNULL(D.JAN_DIVI,'') = '1' THEN 0.0
+                     ELSE C.STOCK_I
+                 END AS CR_AMT_I
+              , ISNULL(D.SPEC_DIVI  ,'') AS SPEC_DIVI
+              , ISNULL(D.PROFIT_DIVI,'') AS PROFIT_DIVI
+              , ISNULL(D.JAN_DIVI   ,'') AS JAN_DIVI
+          FROM           ABA120TV A WITH (NOLOCK)
+              INNER JOIN BSA100T  B WITH (NOLOCK) ON  B.COMP_CODE    = A.COMP_CODE
+                                                  AND B.MAIN_CODE    = 'B020'
+                                                  AND B.SUB_CODE    != '$'
+                                                  AND B.REF_CODE2    = A.ACCNT_CD
+                                                  AND B.REF_CODE1    = A.DIVI
+              INNER JOIN ##MATRL   C               ON  C.COMP_CODE    = B.COMP_CODE
+                                                  AND C.ITEM_ACCOUNT = B.SUB_CODE
+              LEFT  JOIN ABA400T  D WITH (NOLOCK) ON  D.COMP_CODE    = A.COMP_CODE
+                                                  AND D.ACCNT        = A.ACCNT
+         WHERE A.COMP_CODE = #{S_COMP_CODE}
+           AND A.GUBUN     = #{GUBUN}
+           AND A.DIVI      = #{sDivi}
+           AND A.OPT_DIVI  = '8'
+           AND ISNULL(D.PROFIT_DIVI,'') = 'B'
+        
+	</if>
+	) A
+    
+</select>
+<select id="agc310ukrServiceImpl.fnGetThisTerm" parameterType="Map" resultType="rMap">
+	
+            SELECT MAX(ISNULL(SEQ,0 ))        AS SEQ
+                 , ISNULL(ACCNT_CD,'')        AS ACCNT_CD
+                 , ISNULL(ACCNT,'')           AS ACCNT
+                 , MAX(ISNULL(DIS_DIVI,''))   AS DIS_DIVI
+                 , MAX(ISNULL(OPT_DIVI,''))   AS OPT_DIVI
+                 , SUM(ISNULL(AMT_I,0.0))     AS AMT_I
+              FROM (
+                    SELECT SEQ
+                         , ACCNT_CD
+                         , ACCNT
+                         , OPT_DIVI
+                         , DIS_DIVI
+                         , (CASE DR_CR   WHEN '10' THEN ISNULL(AMT_I10,0.0)
+                                         WHEN '20' THEN ISNULL(AMT_I20,0.0)
+                                         WHEN '30' THEN ISNULL(AMT_I30,0.0)
+                                         WHEN '40' THEN ISNULL(AMT_I30,0.0) - ISNULL(AMT_I20,0.0)
+                                         WHEN '50' THEN ISNULL(AMT_I50,0.0)
+                                         WHEN '60' THEN ISNULL(AMT_I60,0.0)
+                                         WHEN '70' THEN ISNULL(AMT_I50,0.0) - ISNULL(AMT_I60,0.0)
+                                         WHEN '80' THEN ISNULL(AMT_I80,0.0)
+                             END) * (CASE CAL_DIVI WHEN '1' THEN   1 
+                                                   WHEN '2' THEN (-1)
+                                      END) AS AMT_I
+                      FROM (
+                            SELECT A.SEQ
+                                 , A.ACCNT_CD
+                                 , '' AS ACCNT
+                                 , A.DR_CR
+                                 , A.CAL_DIVI
+                                 , A.OPT_DIVI
+                                 , A.DIS_DIVI
+    -------------------------------------------------------------------------------
+    --년초
+    -------------------------------------------------------------------------------
+                                 , (SELECT SUM(CASE JAN_DIVI WHEN '1' THEN ISNULL(DR_AMT_I,0.0) - ISNULL(CR_AMT_I,0.0)
+                                                             WHEN '2' THEN ISNULL(CR_AMT_I,0.0) - ISNULL(DR_AMT_I,0.0)
+                                                             ELSE 0.0
+                                                END)
+                                      FROM ${sTblName}
+                                     WHERE AC_DATE    = #{ST_DATE}
+                                       AND INPUT_PATH IN ('A0','10','11')
+                                       
+                                       
+                                       AND COMP_CODE = A.COMP_CODE
+									   AND ACCNT     = A.ACCNT
+									   <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+								       	    AND  ISNULL(DIV_CODE,'') IN
+											<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+												#{item}
+											</foreach>									
+									   </if>
+								-- 관세환급액은 손익계산서에서 계산하므로, 원가대체에서도 반영하면 2번 빠지는 결과가 생긴다.
+							    -- 따라서 원가대체시에는 관세환급액(spec_divi='H')인 계정과목은 계산하지 않는다.
+							    -- 제조원가명세서에도 적용(2006.06.20 song)
+									  AND 'H' != ISNULL((SELECT SPEC_DIVI
+                                                           FROM ABA400T  WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT),'')
+                                      <if test="sSrcTbl == &quot;AGB200TV&quot;">	 
+                                      AND ((BOOK_CODE1 = 'E1' AND BOOK_DATA1 = #{AC_PROJECT_CODE})
+                                       OR  (BOOK_CODE2 = 'E1' AND BOOK_DATA2 = #{AC_PROJECT_CODE}))
+                                      </if>                       
+                                                            
+                                                             
+                                   ) AS AMT_I10
+    -------------------------------------------------------------------------------
+    --기초잔액
+    -------------------------------------------------------------------------------
+                                 , (SELECT SUM(CASE JAN_DIVI WHEN '1' THEN ISNULL(DR_AMT_I,0.0) - ISNULL(CR_AMT_I,0.0)
+                                                             WHEN '2' THEN ISNULL(CR_AMT_I,0.0) - ISNULL(DR_AMT_I,0.0)
+                                                             ELSE 0.0
+                                                END)
+                                      FROM ${sTblName}
+    
+    <if test="sFrDate == ST_DATE + &quot;01&quot;">	
+                                         WHERE AC_DATE    = #{ST_DATE}
+                                           AND INPUT_PATH IN ('A0','10','11')
+    </if>
+    <if test="sFrDate != ST_DATE + &quot;01&quot;">	
+                                         WHERE AC_DATE   &gt;= #{ST_DATE}
+                                           AND AC_DATE   &lt;  #{sFrDate}
+    </if>
+    
+    									   AND COMP_CODE = A.COMP_CODE
+									       AND ACCNT     = A.ACCNT
+									   <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+								       	   AND  ISNULL(DIV_CODE,'') IN
+											<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+												#{item}
+											</foreach>									
+									   </if>
+								-- 관세환급액은 손익계산서에서 계산하므로, 원가대체에서도 반영하면 2번 빠지는 결과가 생긴다.
+							    -- 따라서 원가대체시에는 관세환급액(spec_divi='H')인 계정과목은 계산하지 않는다.
+							    -- 제조원가명세서에도 적용(2006.06.20 song)
+									  AND 'H' != ISNULL((SELECT SPEC_DIVI
+                                                           FROM ABA400T  WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT),'')
+                                      <if test="sSrcTbl == &quot;AGB200TV&quot;">	 
+                                      AND ((BOOK_CODE1 = 'E1' AND BOOK_DATA1 = #{AC_PROJECT_CODE})
+                                       OR  (BOOK_CODE2 = 'E1' AND BOOK_DATA2 = #{AC_PROJECT_CODE}))
+                                      </if>
+                                      
+                                      
+                                   ) AS AMT_I20
+    -------------------------------------------------------------------------------
+    --기말잔액
+    -------------------------------------------------------------------------------
+                                 , (SELECT SUM(CASE JAN_DIVI WHEN '1' THEN ISNULL(DR_AMT_I,0.0) - ISNULL(CR_AMT_I,0.0)
+                                                             WHEN '2' THEN ISNULL(CR_AMT_I,0.0) - ISNULL(DR_AMT_I,0.0)
+                                                             ELSE 0.0
+                                                END)
+                                      FROM ${sTblName}
+                                     WHERE AC_DATE   &gt;= #{ST_DATE}
+                                       AND AC_DATE   &lt;= #{sToDate}
+                                       
+                                       
+                                       AND COMP_CODE = A.COMP_CODE
+									   AND ACCNT     = A.ACCNT
+									   <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+								       AND  ISNULL(DIV_CODE,'') IN
+											<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+												#{item}
+											</foreach>									
+									   </if>
+								-- 관세환급액은 손익계산서에서 계산하므로, 원가대체에서도 반영하면 2번 빠지는 결과가 생긴다.
+							    -- 따라서 원가대체시에는 관세환급액(spec_divi='H')인 계정과목은 계산하지 않는다.
+							    -- 제조원가명세서에도 적용(2006.06.20 song)
+									  AND 'H' != ISNULL((SELECT SPEC_DIVI
+                                                           FROM ABA400T  WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT),'')
+                                      <if test="sSrcTbl == &quot;AGB200TV&quot;">	 
+                                      AND ((BOOK_CODE1 = 'E1' AND BOOK_DATA1 = #{AC_PROJECT_CODE})
+                                       OR  (BOOK_CODE2 = 'E1' AND BOOK_DATA2 = #{AC_PROJECT_CODE}))
+                                      </if>     
+                                      
+                                      
+                                   ) AS AMT_I30
+    -------------------------------------------------------------------------------
+    --차변발생
+    -------------------------------------------------------------------------------
+                                 , (SELECT SUM(DR_AMT_I)
+                                      FROM ${sTblName}
+                                     WHERE ((AC_DATE    &gt;= #{sFrDate}
+                                       AND   AC_DATE    &lt;= #{sToDate}
+                                       AND   INPUT_PATH != 'A1')
+    
+    <if test="FR_DATE == ST_DATE">	 
+                                            OR  (AC_DATE   &gt;= #{ST_DATE}
+                                           AND   AC_DATE   &lt;= #{sToDate}
+                                           AND   INPUT_PATH = 'A1')
+    </if>
+                                           )
+    
+
+									   AND COMP_CODE = A.COMP_CODE
+									   AND ACCNT     = A.ACCNT
+									   <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+								       AND  ISNULL(DIV_CODE,'') IN
+											<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+												#{item}
+											</foreach>									
+									   </if>
+								-- 관세환급액은 손익계산서에서 계산하므로, 원가대체에서도 반영하면 2번 빠지는 결과가 생긴다.
+							    -- 따라서 원가대체시에는 관세환급액(spec_divi='H')인 계정과목은 계산하지 않는다.
+							    -- 제조원가명세서에도 적용(2006.06.20 song)
+									  AND 'H' != ISNULL((SELECT SPEC_DIVI
+                                                           FROM ABA400T  WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT),'')
+                                      <if test="sSrcTbl == &quot;AGB200TV&quot;">	 
+                                      AND ((BOOK_CODE1 = 'E1' AND BOOK_DATA1 = #{AC_PROJECT_CODE})
+                                       OR  (BOOK_CODE2 = 'E1' AND BOOK_DATA2 = #{AC_PROJECT_CODE}))
+                                      </if>
+                                      
+    
+    --경비 대체할 때 차변발생이더라도 원가대체 조회할 경우는 나오지 않도록 하기 위해(검색인 경우는 제외)
+    <if test="SEARCH != &quot;SEARCH&quot;">
+                                       AND ACCNT NOT IN (SELECT ACCNT
+                                                           FROM ABA120TV WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT
+                                                            AND GUBUN     = A.GUBUN
+                                                            AND DIVI      = '30'
+                                                            AND ACCNT_CD IN ('2000', '3000'))
+    </if>
+                                   ) AS AMT_I50
+    -------------------------------------------------------------------------------
+    --대변발생
+    -------------------------------------------------------------------------------
+                                 , (SELECT SUM(CR_AMT_I)
+                                      FROM ${sTblName}
+                                     WHERE ((AC_DATE   &gt;= #{sFrDate}
+                                       AND   AC_DATE   &lt;= #{sToDate}
+                                       AND   INPUT_PATH != 'A1')
+    
+    <if test="FR_DATE == ST_DATE">	
+                                            OR  (AC_DATE   &gt;= #{sFrDate}
+                                           AND   AC_DATE   &lt;= #{sToDate}
+                                           AND   INPUT_PATH = 'A1')
+    </if>
+    
+                                           )
+                                           
+                                           
+    								AND COMP_CODE = A.COMP_CODE
+									AND ACCNT     = A.ACCNT
+								   <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+							        AND  ISNULL(DIV_CODE,'') IN
+										<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+											#{item}
+										</foreach>									
+								   </if>
+								-- 관세환급액은 손익계산서에서 계산하므로, 원가대체에서도 반영하면 2번 빠지는 결과가 생긴다.
+							    -- 따라서 원가대체시에는 관세환급액(spec_divi='H')인 계정과목은 계산하지 않는다.
+							    -- 제조원가명세서에도 적용(2006.06.20 song)
+									  AND 'H' != ISNULL((SELECT SPEC_DIVI
+                                                           FROM ABA400T  WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT),'')
+                                      <if test="sSrcTbl == &quot;AGB200TV&quot;">	 
+                                      AND ((BOOK_CODE1 = 'E1' AND BOOK_DATA1 = #{AC_PROJECT_CODE})
+                                       OR  (BOOK_CODE2 = 'E1' AND BOOK_DATA2 = #{AC_PROJECT_CODE}))
+                                      </if>
+    
+    
+    --경비 대체할 때 차변발생이더라도 원가대체 조회할 경우는 나오지 않도록 하기 위해(검색인 경우는 제외)
+    <if test="SEARCH != &quot;SEARCH&quot;">
+                                       AND ACCNT NOT IN (SELECT ACCNT
+                                                           FROM ABA120TV WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT
+                                                            AND GUBUN     = A.GUBUN
+                                                            AND DIVI      = '30'
+                                                            AND ACCNT_CD IN ('2000', '3000'))
+    </if>
+                                   ) AS AMT_I60
+    -------------------------------------------------------------------------------
+    --대체대변
+    -------------------------------------------------------------------------------
+                                 , (SELECT SUM(CR_AMT_I)
+                                      FROM ${sTblName}
+                                     WHERE AC_DATE   &gt;= #{sFrDate}
+                                       AND AC_DATE   &lt;= #{sToDate}
+                                       AND INPUT_PATH = '52'
+    
+									
+									   AND COMP_CODE = A.COMP_CODE
+									   AND ACCNT     = A.ACCNT
+								       <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+							           AND  ISNULL(DIV_CODE,'') IN
+										<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+											#{item}
+										</foreach>									
+								       </if>
+								-- 관세환급액은 손익계산서에서 계산하므로, 원가대체에서도 반영하면 2번 빠지는 결과가 생긴다.
+							    -- 따라서 원가대체시에는 관세환급액(spec_divi='H')인 계정과목은 계산하지 않는다.
+							    -- 제조원가명세서에도 적용(2006.06.20 song)
+									  AND 'H' != ISNULL((SELECT SPEC_DIVI
+                                                           FROM ABA400T  WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT),'')
+                                      <if test="sSrcTbl == &quot;AGB200TV&quot;">	 
+                                      AND ((BOOK_CODE1 = 'E1' AND BOOK_DATA1 = #{AC_PROJECT_CODE})
+                                       OR  (BOOK_CODE2 = 'E1' AND BOOK_DATA2 = #{AC_PROJECT_CODE}))
+                                      </if>	
+
+
+                                  ) AS AMT_I80
+    
+                              FROM ABA120TV A WITH (NOLOCK)
+                             WHERE A.COMP_CODE = #{S_COMP_CODE}
+                               AND A.GUBUN     = #{GUBUN}
+                               AND A.DIVI      = #{sDivi}
+                               AND ISNULL(A.DR_CR,'') != '90'
+                               AND ISNULL(A.DIS_DIVI,'') != '4'
+    
+    						<if test="@foren.Ognl@isNotEmpty(sAccntCd)">
+                               AND ISNULL(A.ACCNT_CD,'') = #{sAccntCd}
+    						</if>
+    
+    -------------------------------------------------------------------------------
+    -- 2005.06.08 jeong
+    -- 손익현황에서
+    -- 당기제품제조원가 항목에 해당하는 계정은 집계대상 계정에서 제외한다.
+    
+    -- 단, profit_divi = 'B'인 계정을 포함하는 이유는
+    --     제조원가의 당기제품제조원가의 금액을 profit_divi = 'B'인 계정을 사용하여
+    --     손익현황의 당기제품제조원가 항목에 반영하기 위해
+    -------------------------------------------------------------------------------
+    <if test="sDivi == &quot;20&quot;">
+        
+                                   AND A.ACCNT+'::'+A.DR_CR NOT IN (SELECT ACCNT+'::'+DR_CR
+                                                                      FROM ABA120TV T WITH (NOLOCK)
+                                                                     WHERE COMP_CODE = #{S_COMP_CODE}
+										                               AND GUBUN     = #{GUBUN}
+										                               AND DIVI      = #{sDivi}
+                                                                       AND ACCNT_CD  = '2120'
+                                                                       AND 'B' != (SELECT PROFIT_DIVI
+                                                                                     FROM ABA400T  WITH (NOLOCK)
+                                                                                    WHERE COMP_CODE = T.COMP_CODE
+                                                                                      AND ACCNT     = T.ACCNT))
+    
+                                   AND A.ACCNT+'::'+A.DR_CR NOT IN (SELECT ACCNT+'::'+DR_CR
+                                                                      FROM ABA120TV T WITH (NOLOCK)
+                                                                     WHERE COMP_CODE = #{S_COMP_CODE}
+										                               AND GUBUN     = #{GUBUN}
+										                               AND DIVI      = #{sDivi}
+                                                                       AND ISNULL(A.DIS_DIVI,'') = '1'
+                                                                       AND ISNULL(A.DR_CR,'')   IN ('50','60')
+                                                                       AND 'M' = (SELECT PROFIT_DIVI
+                                                                                     FROM ABA400T  WITH (NOLOCK)
+                                                                                    WHERE COMP_CODE = T.COMP_CODE
+                                                                                      AND ACCNT     = T.ACCNT))
+    </if>
+    
+    -------------------------------------------------------------------------------
+    -- 2005.06.08 jeong
+    -- 재고 테이블을 참조하여 재고금액을 집계할 경우
+    -- 각 기말재고액 항목에 해당하는 계정은 집계대상 계정에서 제외한다.
+    
+    -- 단, profit_divi = 'B'인 계정을 포함하는 이유는
+    --     재고테이블을 참조하여 집계한 재고금액을 profit_divi = 'B'인 계정을 사용하여
+    --     각 기말재고액 항목에 반영하기 위해
+    -------------------------------------------------------------------------------
+    <if test="sMatrl_YN == &quot;1&quot;">
+    
+                                   AND A.ACCNT+'::'+A.DR_CR NOT IN (SELECT ACCNT+'::'+DR_CR
+                                                                      FROM ABA120TV T WITH (NOLOCK)
+                                                                     WHERE COMP_CODE = #{S_COMP_CODE}
+										                               AND GUBUN     = #{GUBUN}
+										                               AND DIVI      = #{sDivi}
+                                                                       AND ISNULL(OPT_DIVI,'') = '8'
+                                                                       AND 'B' != (SELECT PROFIT_DIVI
+                                                                                     FROM ABA400T  WITH (NOLOCK)
+                                                                                    WHERE COMP_CODE = T.COMP_CODE
+                                                                                      AND ACCNT     = T.ACCNT))
+    
+    </if>
+                           ) Z
+    
+    -------------------------------------------------------------------------------
+    -- 인쇄여부:"제목+우"
+    -- 집계구분:"기말재고액"인 항목은 데이터가 없더라도 표시하기 위해 쿼리 삽입
+    -------------------------------------------------------------------------------
+    
+                     UNION ALL
+    
+                    SELECT A.SEQ
+                         , A.ACCNT_CD
+                         , ''   AS ACCNT
+                         , A.OPT_DIVI
+                         , A.DIS_DIVI
+                         , NULL AS AMT_I
+                      FROM ABA120T A WITH (NOLOCK)
+                     WHERE A.COMP_CODE = #{S_COMP_CODE}
+                       AND A.GUBUN     = #{GUBUN}
+                       AND A.DIVI      = #{sDivi}
+                       AND (ISNULL(A.DIS_DIVI,'') = '3' OR ISNULL(A.OPT_DIVI,'') = '8')
+                       AND ISNULL(A.DIS_DIVI,'') != '4'
+                       AND ISNULL(A.OPT_DIVI,'') != '2'
+					<if test="@foren.Ognl@isNotEmpty(sAccntCd)">
+                       AND ISNULL(A.ACCNT_CD,'') = #{sAccntCd}
+					</if>
+        
+    -------------------------------------------------------------------------------
+    -- 손익현황의 "당기제품제조원가" 항목은 데이터가 없더라도 표시하기 위해 쿼리 삽입
+    -------------------------------------------------------------------------------
+    <if test="sDivi == &quot;20&quot;">
+    
+                         UNION ALL
+                        SELECT A.SEQ
+                             , A.ACCNT_CD
+                             , ''   AS ACCNT
+                             , A.OPT_DIVI
+                             , A.DIS_DIVI
+                             , NULL AS AMT_I
+                          FROM ABA120T A WITH (NOLOCK)
+                         WHERE A.COMP_CODE = #{S_COMP_CODE}
+	                       AND A.GUBUN     = #{GUBUN}
+	                       AND A.DIVI      = #{sDivi}
+                           AND ISNULL(A.ACCNT_CD,'') = '2120'
+        
+    </if>
+    
+                   ) Z
+             GROUP BY Z.ACCNT_CD, Z.ACCNT
+             HAVING ISNULL(MAX(Z.DIS_DIVI),'') != '4'
+    			<if test="@foren.Ognl@isEmpty(FR_DATE)">
+                    AND ISNULL(Z.ACCNT_CD,'') = ''
+    			</if>
+</select>
+
+<select id="agc310ukrServiceImpl.fnMakeSQL" parameterType="Map" resultType="rMap">
+--agc310ukr.Cagc310UKR[fnMakeSQL] Query7
+    DECLARE @COMP_CODE  NVARCHAR(8)
+          , @GUBUN      NVARCHAR(2)
+          , @DIVI       NVARCHAR(2)
+    
+    SET @COMP_CODE = #{S_COMP_CODE}
+    SET @GUBUN     = #{GUBUN}
+    SET @DIVI      = #{sDivi}
+    
+    SELECT ISNULL(ACCNT_CD,'') AS ACCNT_CD
+         , CASE ISNULL(ACCNT,'')
+                WHEN '' THEN  CASE ISNULL(MAX(OPT_DIVI),'')
+                                   WHEN '1' THEN CASE WHEN ISNULL(SUM(AMT_I),0.0) &gt;= 0 
+                                                      THEN (SELECT ${sItemNm}
+                                                              FROM ABA120T  WITH (NOLOCK)
+                                                             WHERE COMP_CODE = @COMP_CODE
+                                                               AND GUBUN     = @GUBUN
+                                                               AND DIVI      = @DIVI
+                                                               AND ACCNT_CD  = Z.ACCNT_CD)
+                                                      ELSE (SELECT ${sItemNm}
+                                                              FROM ABA120T  WITH (NOLOCK)
+                                                             WHERE COMP_CODE = @COMP_CODE
+                                                               AND GUBUN     = @GUBUN
+                                                               AND DIVI      = @DIVI
+                                                               AND ACCNT_CD  = (SELECT MIN(ACCNT_CD)
+                                                                                  FROM ABA120T  WITH (NOLOCK)
+                                                                                 WHERE COMP_CODE = @COMP_CODE
+                                                                                   AND GUBUN     = @GUBUN
+                                                                                   AND DIVI      = @DIVI
+                                                                                   AND ACCNT_CD &gt;= Z.ACCNT_CD
+                                                                                   AND OPT_DIVI  = '2'))
+                                                  END
+                                   ELSE (SELECT ${sItemNm}
+                                           FROM ABA120T  WITH (NOLOCK)
+                                          WHERE COMP_CODE = @COMP_CODE
+                                            AND GUBUN = @GUBUN
+                                            AND DIVI = @DIVI
+                                            AND ACCNT_CD = Z.ACCNT_CD)
+                               END
+                ELSE (SELECT SPACE(4) + ${sAccntNm}
+                        FROM ABA400T  WITH (NOLOCK)
+                       WHERE COMP_CODE = @COMP_CODE
+                         AND ACCNT     = Z.ACCNT)
+            END AS ACCNT_NAME
+         , ISNULL(SUM(AMT_I),0.0)    AS AMT_I
+         , ISNULL(MAX(OPT_DIVI),'')  AS OPT_DIVI
+         , ISNULL((SELECT CAL_DIVI
+                     FROM ABA130T  WITH (NOLOCK)
+                    WHERE COMP_CODE = @COMP_CODE
+                      AND GUBUN     = @GUBUN
+                      AND DIVI      = @DIVI
+                      AND ACCNT     = Z.ACCNT_CD
+                      AND ISNULL(REFER,'') = ''),'') AS CAL_DIVI
+         , CASE ISNULL(ACCNT,'')
+                WHEN '' THEN (SELECT ACCNT_CD
+                                FROM ABA130T  WITH (NOLOCK)
+                               WHERE COMP_CODE = @COMP_CODE
+                                 AND GUBUN = @GUBUN
+                                 AND DIVI  = @DIVI
+                                 AND ACCNT = Z.ACCNT_CD
+                                 AND ISNULL(REFER,'') = '')
+                ELSE ''
+            END AS UPPER_ACCNT
+      FROM (
+      
+      
+-- fnGetThisTerm begine
+      
+
+			SELECT MAX(ISNULL(SEQ,0 ))        AS SEQ
+                 , ISNULL(ACCNT_CD,'')        AS ACCNT_CD
+                 , ISNULL(ACCNT,'')           AS ACCNT
+                 , MAX(ISNULL(DIS_DIVI,''))   AS DIS_DIVI
+                 , MAX(ISNULL(OPT_DIVI,''))   AS OPT_DIVI
+                 , SUM(ISNULL(AMT_I,0.0))     AS AMT_I
+              FROM (
+                    SELECT SEQ
+                         , ACCNT_CD
+                         , ACCNT
+                         , OPT_DIVI
+                         , DIS_DIVI
+                         , (CASE DR_CR   WHEN '10' THEN ISNULL(AMT_I10,0.0)
+                                         WHEN '20' THEN ISNULL(AMT_I20,0.0)
+                                         WHEN '30' THEN ISNULL(AMT_I30,0.0)
+                                         WHEN '40' THEN ISNULL(AMT_I30,0.0) - ISNULL(AMT_I20,0.0)
+                                         WHEN '50' THEN ISNULL(AMT_I50,0.0)
+                                         WHEN '60' THEN ISNULL(AMT_I60,0.0)
+                                         WHEN '70' THEN ISNULL(AMT_I50,0.0) - ISNULL(AMT_I60,0.0)
+                                         WHEN '80' THEN ISNULL(AMT_I80,0.0)
+                             END) * (CASE CAL_DIVI WHEN '1' THEN   1 
+                                                   WHEN '2' THEN (-1)
+                                      END) AS AMT_I
+                      FROM (
+                            SELECT A.SEQ
+                                 , A.ACCNT_CD
+                                 , '' AS ACCNT
+                                 , A.DR_CR
+                                 , A.CAL_DIVI
+                                 , A.OPT_DIVI
+                                 , A.DIS_DIVI
+    -------------------------------------------------------------------------------
+    --년초
+    -------------------------------------------------------------------------------
+                                 , (SELECT SUM(CASE JAN_DIVI WHEN '1' THEN ISNULL(DR_AMT_I,0.0) - ISNULL(CR_AMT_I,0.0)
+                                                             WHEN '2' THEN ISNULL(CR_AMT_I,0.0) - ISNULL(DR_AMT_I,0.0)
+                                                             ELSE 0.0
+                                                END)
+                                      FROM ${sTblName}
+                                     WHERE AC_DATE    = #{ST_DATE}
+                                       AND INPUT_PATH IN ('A0','10','11')
+                                       
+                                       
+                                       AND COMP_CODE = A.COMP_CODE
+									   AND ACCNT     = A.ACCNT
+									   <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+								       	    AND  ISNULL(DIV_CODE,'') IN
+											<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+												#{item}
+											</foreach>									
+									   </if>
+								-- 관세환급액은 손익계산서에서 계산하므로, 원가대체에서도 반영하면 2번 빠지는 결과가 생긴다.
+							    -- 따라서 원가대체시에는 관세환급액(spec_divi='H')인 계정과목은 계산하지 않는다.
+							    -- 제조원가명세서에도 적용(2006.06.20 song)
+									  AND 'H' != ISNULL((SELECT SPEC_DIVI
+                                                           FROM ABA400T WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT),'')
+                                      <if test="sSrcTbl == &quot;AGB200TV&quot;">	 
+                                      AND ((BOOK_CODE1 = 'E1' AND BOOK_DATA1 = #{AC_PROJECT_CODE})
+                                       OR  (BOOK_CODE2 = 'E1' AND BOOK_DATA2 = #{AC_PROJECT_CODE}))
+                                      </if>                       
+                                                            
+                                                             
+                                   ) AS AMT_I10
+    -------------------------------------------------------------------------------
+    --기초잔액
+    -------------------------------------------------------------------------------
+                                 , (SELECT SUM(CASE JAN_DIVI WHEN '1' THEN ISNULL(DR_AMT_I,0.0) - ISNULL(CR_AMT_I,0.0)
+                                                             WHEN '2' THEN ISNULL(CR_AMT_I,0.0) - ISNULL(DR_AMT_I,0.0)
+                                                             ELSE 0.0
+                                                END)
+                                      FROM ${sTblName}
+    
+    <if test="sFrDate == ST_DATE + &quot;01&quot;">	
+                                         WHERE AC_DATE    = #{ST_DATE}
+                                           AND INPUT_PATH IN ('A0','10','11')
+    </if>
+    <if test="sFrDate != ST_DATE + &quot;01&quot;">	
+                                         WHERE AC_DATE   &gt;= #{ST_DATE}
+                                           AND AC_DATE   &lt;  #{sFrDate}
+    </if>
+    
+    									   AND COMP_CODE = A.COMP_CODE
+									       AND ACCNT     = A.ACCNT
+									   <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+								       	   AND  ISNULL(DIV_CODE,'') IN
+											<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+												#{item}
+											</foreach>									
+									   </if>
+								-- 관세환급액은 손익계산서에서 계산하므로, 원가대체에서도 반영하면 2번 빠지는 결과가 생긴다.
+							    -- 따라서 원가대체시에는 관세환급액(spec_divi='H')인 계정과목은 계산하지 않는다.
+							    -- 제조원가명세서에도 적용(2006.06.20 song)
+									  AND 'H' != ISNULL((SELECT SPEC_DIVI
+                                                           FROM ABA400T WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT),'')
+                                      <if test="sSrcTbl == &quot;AGB200TV&quot;">	 
+                                      AND ((BOOK_CODE1 = 'E1' AND BOOK_DATA1 = #{AC_PROJECT_CODE})
+                                       OR  (BOOK_CODE2 = 'E1' AND BOOK_DATA2 = #{AC_PROJECT_CODE}))
+                                      </if>
+                                      
+                                      
+                                   ) AS AMT_I20
+    -------------------------------------------------------------------------------
+    --기말잔액
+    -------------------------------------------------------------------------------
+                                 , (SELECT SUM(CASE JAN_DIVI WHEN '1' THEN ISNULL(DR_AMT_I,0.0) - ISNULL(CR_AMT_I,0.0)
+                                                             WHEN '2' THEN ISNULL(CR_AMT_I,0.0) - ISNULL(DR_AMT_I,0.0)
+                                                             ELSE 0.0
+                                                END)
+                                      FROM ${sTblName}
+                                     WHERE AC_DATE   &gt;= #{ST_DATE}
+                                       AND AC_DATE   &lt;= #{sToDate}
+                                       
+                                       
+                                       AND COMP_CODE = A.COMP_CODE
+									   AND ACCNT     = A.ACCNT
+									   <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+								       AND  ISNULL(DIV_CODE,'') IN
+											<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+												#{item}
+											</foreach>									
+									   </if>
+								-- 관세환급액은 손익계산서에서 계산하므로, 원가대체에서도 반영하면 2번 빠지는 결과가 생긴다.
+							    -- 따라서 원가대체시에는 관세환급액(spec_divi='H')인 계정과목은 계산하지 않는다.
+							    -- 제조원가명세서에도 적용(2006.06.20 song)
+									  AND 'H' != ISNULL((SELECT SPEC_DIVI
+                                                           FROM ABA400T WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT),'')
+                                      <if test="sSrcTbl == &quot;AGB200TV&quot;">	 
+                                      AND ((BOOK_CODE1 = 'E1' AND BOOK_DATA1 = #{AC_PROJECT_CODE})
+                                       OR  (BOOK_CODE2 = 'E1' AND BOOK_DATA2 = #{AC_PROJECT_CODE}))
+                                      </if>     
+                                      
+                                      
+                                   ) AS AMT_I30
+    -------------------------------------------------------------------------------
+    --차변발생
+    -------------------------------------------------------------------------------
+                                 , (SELECT SUM(DR_AMT_I)
+                                      FROM ${sTblName}
+                                     WHERE ((AC_DATE    &gt;= #{sFrDate}
+                                       AND   AC_DATE    &lt;= #{sToDate}
+                                       AND   INPUT_PATH != 'A1')
+    
+    <if test="FR_DATE == ST_DATE">	 
+                                            OR  (AC_DATE   &gt;= #{ST_DATE}
+                                           AND   AC_DATE   &lt;= #{sToDate}
+                                           AND   INPUT_PATH = 'A1')
+    </if>
+                                           )
+    
+
+									   AND COMP_CODE = A.COMP_CODE
+									   AND ACCNT     = A.ACCNT
+									   <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+								       AND  ISNULL(DIV_CODE,'') IN
+											<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+												#{item}
+											</foreach>									
+									   </if>
+								-- 관세환급액은 손익계산서에서 계산하므로, 원가대체에서도 반영하면 2번 빠지는 결과가 생긴다.
+							    -- 따라서 원가대체시에는 관세환급액(spec_divi='H')인 계정과목은 계산하지 않는다.
+							    -- 제조원가명세서에도 적용(2006.06.20 song)
+									  AND 'H' != ISNULL((SELECT SPEC_DIVI
+                                                           FROM ABA400T WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT),'')
+							    -- 원가대체제외계정 적용 (2020.04.30)
+									  AND 'M' != ISNULL((SELECT PROFIT_DIVI
+                                                           FROM ABA400T WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT),'')
+                                      <if test="sSrcTbl == &quot;AGB200TV&quot;">	 
+                                      AND ((BOOK_CODE1 = 'E1' AND BOOK_DATA1 = #{AC_PROJECT_CODE})
+                                       OR  (BOOK_CODE2 = 'E1' AND BOOK_DATA2 = #{AC_PROJECT_CODE}))
+                                      </if>
+                                      
+    
+    --경비 대체할 때 차변발생이더라도 원가대체 조회할 경우는 나오지 않도록 하기 위해(검색인 경우는 제외)
+    <if test="SEARCH != &quot;SEARCH&quot;">
+                                       AND ACCNT NOT IN (SELECT ACCNT
+                                                           FROM ABA120TV WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT
+                                                            AND GUBUN     = A.GUBUN
+                                                            AND DIVI      = '30'
+                                                            AND ACCNT_CD IN ('2000', '3000'))
+    </if>
+                                   ) AS AMT_I50
+    -------------------------------------------------------------------------------
+    --대변발생
+    -------------------------------------------------------------------------------
+                                 , (SELECT SUM(CR_AMT_I)
+                                      FROM ${sTblName}
+                                     WHERE ((AC_DATE   &gt;= #{sFrDate}
+                                       AND   AC_DATE   &lt;= #{sToDate}
+                                       AND   INPUT_PATH != 'A1')
+    
+    <if test="FR_DATE == ST_DATE">	
+                                            OR  (AC_DATE   &gt;= #{sFrDate}
+                                           AND   AC_DATE   &lt;= #{sToDate}
+                                           AND   INPUT_PATH = 'A1')
+    </if>
+    
+                                           )
+                                           
+                                           
+    								AND COMP_CODE = A.COMP_CODE
+									AND ACCNT     = A.ACCNT
+								   <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+							        AND  ISNULL(DIV_CODE,'') IN
+										<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+											#{item}
+										</foreach>									
+								   </if>
+								-- 관세환급액은 손익계산서에서 계산하므로, 원가대체에서도 반영하면 2번 빠지는 결과가 생긴다.
+							    -- 따라서 원가대체시에는 관세환급액(spec_divi='H')인 계정과목은 계산하지 않는다.
+							    -- 제조원가명세서에도 적용(2006.06.20 song)
+									  AND 'H' != ISNULL((SELECT SPEC_DIVI
+                                                           FROM ABA400T WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT),'')
+							    -- 원가대체제외계정 적용 (2020.04.30)
+									  AND 'M' != ISNULL((SELECT PROFIT_DIVI
+                                                           FROM ABA400T WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT),'')
+                                      <if test="sSrcTbl == &quot;AGB200TV&quot;">	 
+                                      AND ((BOOK_CODE1 = 'E1' AND BOOK_DATA1 = #{AC_PROJECT_CODE})
+                                       OR  (BOOK_CODE2 = 'E1' AND BOOK_DATA2 = #{AC_PROJECT_CODE}))
+                                      </if>
+    
+    
+    --경비 대체할 때 차변발생이더라도 원가대체 조회할 경우는 나오지 않도록 하기 위해(검색인 경우는 제외)
+    <if test="SEARCH != &quot;SEARCH&quot;">
+                                       AND ACCNT NOT IN (SELECT ACCNT
+                                                           FROM ABA120TV WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT
+                                                            AND GUBUN     = A.GUBUN
+                                                            AND DIVI      = '30'
+                                                            AND ACCNT_CD IN ('2000', '3000'))
+    </if>
+                                   ) AS AMT_I60
+    -------------------------------------------------------------------------------
+    --대체대변
+    -------------------------------------------------------------------------------
+                                 , (SELECT SUM(CR_AMT_I)
+                                      FROM ${sTblName}
+                                     WHERE AC_DATE   &gt;= #{sFrDate}
+                                       AND AC_DATE   &lt;= #{sToDate}
+                                       AND INPUT_PATH = '52'
+    
+									
+									   AND COMP_CODE = A.COMP_CODE
+									   AND ACCNT     = A.ACCNT
+								       <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+							           AND  ISNULL(DIV_CODE,'') IN
+										<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+											#{item}
+										</foreach>									
+								       </if>
+								-- 관세환급액은 손익계산서에서 계산하므로, 원가대체에서도 반영하면 2번 빠지는 결과가 생긴다.
+							    -- 따라서 원가대체시에는 관세환급액(spec_divi='H')인 계정과목은 계산하지 않는다.
+							    -- 제조원가명세서에도 적용(2006.06.20 song)
+									  AND 'H' != ISNULL((SELECT SPEC_DIVI
+                                                           FROM ABA400T WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT),'')
+							    -- 원가대체제외계정 적용 (2020.04.30)
+									  AND 'M' != ISNULL((SELECT PROFIT_DIVI
+                                                           FROM ABA400T WITH (NOLOCK)
+                                                          WHERE COMP_CODE = A.COMP_CODE
+                                                            AND ACCNT     = A.ACCNT),'')
+                                      <if test="sSrcTbl == &quot;AGB200TV&quot;">	 
+                                      AND ((BOOK_CODE1 = 'E1' AND BOOK_DATA1 = #{AC_PROJECT_CODE})
+                                       OR  (BOOK_CODE2 = 'E1' AND BOOK_DATA2 = #{AC_PROJECT_CODE}))
+                                      </if>	
+
+
+                                  ) AS AMT_I80
+    
+                              FROM ABA120TV A WITH (NOLOCK)
+                             WHERE A.COMP_CODE = #{S_COMP_CODE}
+                               AND A.GUBUN     = #{GUBUN}
+                               AND A.DIVI      = #{sDivi}
+                               AND ISNULL(A.DR_CR,'') != '90'
+                               AND ISNULL(A.DIS_DIVI,'') != '4'
+    
+    						<if test="@foren.Ognl@isNotEmpty(sAccntCd)">
+                               AND ISNULL(A.ACCNT_CD,'') = #{sAccntCd}
+    						</if>
+    
+    -------------------------------------------------------------------------------
+    -- 2005.06.08 jeong
+    -- 손익현황에서
+    -- 당기제품제조원가 항목에 해당하는 계정은 집계대상 계정에서 제외한다.
+    
+    -- 단, profit_divi = 'B'인 계정을 포함하는 이유는
+    --     제조원가의 당기제품제조원가의 금액을 profit_divi = 'B'인 계정을 사용하여
+    --     손익현황의 당기제품제조원가 항목에 반영하기 위해
+    -------------------------------------------------------------------------------
+    <if test="sDivi == &quot;20&quot;">
+        
+                                   AND A.ACCNT+'::'+A.DR_CR NOT IN (SELECT ACCNT+'::'+DR_CR
+                                                                      FROM ABA120TV T WITH (NOLOCK)
+                                                                     WHERE COMP_CODE = #{S_COMP_CODE}
+										                               AND GUBUN     = #{GUBUN}
+										                               AND DIVI      = #{sDivi}
+                                                                       AND ACCNT_CD  = '2120'
+                                                                       AND 'B' != (SELECT PROFIT_DIVI
+                                                                                     FROM ABA400T
+                                                                                    WHERE COMP_CODE = T.COMP_CODE
+                                                                                      AND ACCNT     = T.ACCNT))
+    
+                                   AND A.ACCNT+'::'+A.DR_CR NOT IN (SELECT ACCNT+'::'+DR_CR
+                                                                      FROM ABA120TV T WITH (NOLOCK)
+                                                                     WHERE COMP_CODE = #{S_COMP_CODE}
+										                               AND GUBUN     = #{GUBUN}
+										                               AND DIVI      = #{sDivi}
+                                                                       AND ISNULL(A.DIS_DIVI,'') = '1'
+                                                                       AND ISNULL(A.DR_CR,'')   IN ('50','60')
+                                                                       AND 'M' = (SELECT PROFIT_DIVI
+                                                                                     FROM ABA400T  WITH (NOLOCK)
+                                                                                    WHERE COMP_CODE = T.COMP_CODE
+                                                                                      AND ACCNT     = T.ACCNT))
+    </if>
+    
+    -------------------------------------------------------------------------------
+    -- 2005.06.08 jeong
+    -- 재고 테이블을 참조하여 재고금액을 집계할 경우
+    -- 각 기말재고액 항목에 해당하는 계정은 집계대상 계정에서 제외한다.
+    
+    -- 단, profit_divi = 'B'인 계정을 포함하는 이유는
+    --     재고테이블을 참조하여 집계한 재고금액을 profit_divi = 'B'인 계정을 사용하여
+    --     각 기말재고액 항목에 반영하기 위해
+    -------------------------------------------------------------------------------
+    <if test="sMatrl_YN == &quot;1&quot;">
+    
+                                   AND A.ACCNT+'::'+A.DR_CR NOT IN (SELECT ACCNT+'::'+DR_CR
+                                                                      FROM ABA120TV T WITH (NOLOCK)
+                                                                     WHERE COMP_CODE = #{S_COMP_CODE}
+										                               AND GUBUN     = #{GUBUN}
+										                               AND DIVI      = #{sDivi}
+                                                                       AND ISNULL(OPT_DIVI,'') = '8'
+                                                                       AND 'B' != (SELECT PROFIT_DIVI
+                                                                                     FROM ABA400T
+                                                                                    WHERE COMP_CODE = T.COMP_CODE
+                                                                                      AND ACCNT     = T.ACCNT))
+    
+    </if>
+                           ) Z
+    
+    -------------------------------------------------------------------------------
+    -- 인쇄여부:"제목+우"
+    -- 집계구분:"기말재고액"인 항목은 데이터가 없더라도 표시하기 위해 쿼리 삽입
+    -------------------------------------------------------------------------------
+    
+                     UNION ALL
+    
+                    SELECT A.SEQ
+                         , A.ACCNT_CD
+                         , ''   AS ACCNT
+                         , A.OPT_DIVI
+                         , A.DIS_DIVI
+                         , NULL AS AMT_I
+                      FROM ABA120T A WITH (NOLOCK)
+                     WHERE A.COMP_CODE = #{S_COMP_CODE}
+                       AND A.GUBUN     = #{GUBUN}
+                       AND A.DIVI      = #{sDivi}
+                       AND (ISNULL(A.DIS_DIVI,'') = '3' OR ISNULL(A.OPT_DIVI,'') = '8')
+                       AND ISNULL(A.DIS_DIVI,'') != '4'
+                       AND ISNULL(A.OPT_DIVI,'') != '2'
+					<if test="@foren.Ognl@isNotEmpty(sAccntCd)">
+                       AND ISNULL(A.ACCNT_CD,'') = #{sAccntCd}
+					</if>
+        
+    -------------------------------------------------------------------------------
+    -- 손익현황의 "당기제품제조원가" 항목은 데이터가 없더라도 표시하기 위해 쿼리 삽입
+    -------------------------------------------------------------------------------
+    <if test="sDivi == &quot;20&quot;">
+    
+                         UNION ALL
+                        SELECT A.SEQ
+                             , A.ACCNT_CD
+                             , ''   AS ACCNT
+                             , A.OPT_DIVI
+                             , A.DIS_DIVI
+                             , NULL AS AMT_I
+                          FROM ABA120T A WITH (NOLOCK)
+                         WHERE A.COMP_CODE = #{S_COMP_CODE}
+	                       AND A.GUBUN     = #{GUBUN}
+	                       AND A.DIVI      = #{sDivi}
+                           AND ISNULL(A.ACCNT_CD,'') = '2120'
+        
+    </if>
+    
+                   ) Z
+             GROUP BY Z.ACCNT_CD, Z.ACCNT
+             HAVING ISNULL(MAX(Z.DIS_DIVI),'') != '4'
+    			<if test="@foren.Ognl@isEmpty(FR_DATE)">
+                    AND ISNULL(Z.ACCNT_CD,'') = ''
+    			</if>
+    			
+    			
+--fnGetThisTerm end
+
+
+           ) Z
+     GROUP BY Z.SEQ, Z.ACCNT_CD, Z.ACCNT
+     HAVING     (ISNULL(MAX(Z.DIS_DIVI),'') = '3'
+             OR  ISNULL(MAX(Z.OPT_DIVI),'') = '5'
+             OR  ISNULL(MAX(Z.OPT_DIVI),'') = '8'
+    
+    <if test="sDivi == &quot;30&quot;">
+                 OR  (SELECT ACCNT_CD
+                        FROM ABA130T 
+                       WHERE COMP_CODE = @COMP_CODE
+                         AND GUBUN     = @GUBUN
+                         AND DIVI      = @DIVI
+                         AND ACCNT     = Z.ACCNT_CD) IN ('2000','3000')
+    </if>
+    
+             OR  ISNULL(SUM(Z.AMT_I),0) != 0)
+    
+     ORDER BY Z.SEQ, Z.ACCNT_CD, Z.ACCNT
+</select>
+	
+	<select id="agc310ukrServiceImpl.produceBudget" parameterType="Map" resultType="rMap">
+		--agc310ukr.Cagc310UKR[fnagc310q1] Query3
+    SELECT CONVERT(NVARCHAR(16), A.ACCNT) AS ACCNT
+         , CONVERT(BIT, 0) AS CHK
+         , CONVERT(NVARCHAR(30)  , ISNULL(N1.ACCNT_NAME, '')) AS ACCNT_NAME
+         , CONVERT(NUMERIC(30, 6), SUM(CASE B.JAN_DIVI
+                                            WHEN '1' THEN ISNULL(B.DR_AMT_I,0.0) - ISNULL(B.CR_AMT_I,0.0)
+                                            WHEN '2' THEN ISNULL(B.CR_AMT_I,0.0) - ISNULL(B.DR_AMT_I,0.0)
+                                       END)) AS OCCU_AMT_I
+         , CONVERT(NUMERIC(30, 6), 0) AS RPLC_AMT_I
+         , CONVERT(NVARCHAR(16)  , ISNULL(N2.ACCNT_CD, '')) AS ACCNT_CD
+      FROM           ABA120TV A
+          INNER JOIN ${sSrcTbl} B    ON  B.COMP_CODE = A.COMP_CODE
+                                          AND B.ACCNT     = A.ACCNT
+          LEFT  JOIN ABA400T  AS N1 WITH (NOLOCK) ON  N1.COMP_CODE = A.COMP_CODE
+                                                  AND N1.ACCNT     = A.ACCNT
+          LEFT  JOIN ABA130T  AS N2 WITH (NOLOCK) ON  N2.COMP_CODE = A.COMP_CODE
+                                                  AND N2.GUBUN     = A.GUBUN 
+                                                  AND N2.DIVI      = A.DIVI 
+                                                  AND N2.ACCNT     = A.ACCNT
+     WHERE A.COMP_CODE = #{S_COMP_CODE}
+       AND A.GUBUN     = #{GUBUN}
+       AND A.DIVI      = '30'
+       AND A.ACCNT_CD IN ('2000','3000')
+       AND B.AC_DATE  &gt;= #{sFrDate}
+       AND B.AC_DATE  &lt;= #{sToDate}
+       AND B.INPUT_PATH NOT IN ('52', '67')
+    
+    <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">					
+       AND  B.DIV_CODE IN
+			<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+				#{item}
+			</foreach>									
+	   </if>
+    
+    <if test="sSrcTbl == &quot;AGB200TV&quot;">
+            AND   ((B.BOOK_CODE1 = 'E1' AND B.BOOK_DATA1 = #{AC_PROJECT_CODE})
+             OR    (B.BOOK_CODE2 = 'E1' AND B.BOOK_DATA2 = #{AC_PROJECT_CODE}))
+    </if>
+    
+      GROUP   BY A.ACCNT_CD, A.ACCNT, N1.ACCNT_NAME, N2.ACCNT_CD
+      HAVING  SUM(CASE B.JAN_DIVI
+                       WHEN '1' THEN ISNULL(B.DR_AMT_I,0.0) - ISNULL(B.CR_AMT_I,0.0)
+                       WHEN '2' THEN ISNULL(B.CR_AMT_I,0.0) - ISNULL(B.DR_AMT_I,0.0)
+                   END) != 0
+      ORDER   BY A.ACCNT_CD, A.ACCNT
+	</select>
+	
+	<select id="agc310ukrServiceImpl.produceBudgetSearch" parameterType="Map" resultType="rMap">
+		--agc310ukr.Cagc310UKR[fnagc310q2] Query4
+    SELECT CONVERT(NVARCHAR(16), A.ACCNT)                     AS ACCNT
+         , CONVERT(BIT, 1)                                    AS CHK
+         , CONVERT(NVARCHAR(30)  , ISNULL(N1.ACCNT_NAME, ''))  AS ACCNT_NAME
+         , CONVERT(NUMERIC(30, 6), 0)                          AS OCCU_AMT_I
+         , CONVERT(NUMERIC(30, 6), B.COST_AMT)                 AS RPLC_AMT_I
+         , CONVERT(NVARCHAR(16)  , ISNULL(N2.ACCNT_CD, ''))    AS ACCNT_CD
+      FROM           ABA120TV A WITH (NOLOCK)
+          INNER JOIN AGC311T  B WITH (NOLOCK) ON  B.COMP_CODE  = A.COMP_CODE
+                                              AND B.ACCNT      = A.ACCNT
+                                              AND B.AC_YYYYMM  = #{ST_DATE}
+                                              AND B.FR_AC_DATE = #{FR_DATE}
+                                              AND B.TO_AC_DATE = #{TO_DATE}
+                                              AND B.DIV_CODE   = #{ACCNT_DIV_CODE}
+                                              AND B.PJT_CODE   = #{AC_PROJECT_CODE}
+          LEFT  JOIN ABA400T N1 WITH (NOLOCK) ON  N1.COMP_CODE = A.COMP_CODE
+                                              AND N1.ACCNT     = A.ACCNT
+          LEFT  JOIN ABA130T N2 WITH (NOLOCK) ON  N2.COMP_CODE = A.COMP_CODE
+                                              AND N2.GUBUN     = A.GUBUN 
+                                              AND N2.DIVI      = A.DIVI 
+                                              AND N2.ACCNT     = A.ACCNT
+     WHERE A.COMP_CODE = #{S_COMP_CODE}
+       AND A.GUBUN     = #{GUBUN}
+       AND A.DIVI      = '30'
+       AND A.ACCNT_CD IN ('2000','3000')
+     ORDER BY A.SEQ, A.ACCNT_CD, A.ACCNT
+	</select>
+	
+	<select id="agc310ukrServiceImpl.selectRef1" parameterType="Map" resultType="rMap">
+	--agc310ukr.Cagc310UKR[fnagc310Pnq] Query14
+    DECLARE @COMP_CODE  NVARCHAR(8)
+          , @AC_YYYYMM  NVARCHAR(6)
+          , @FR_AC_DATE NVARCHAR(6)
+          , @TO_AC_DATE NVARCHAR(6)
+          , @DIV_CODE   NVARCHAR(255)
+          , @PJT_CODE   NVARCHAR(20)
+    
+    SET @COMP_CODE  = #{S_COMP_CODE}
+    SET @AC_YYYYMM  = #{ST_AC_DATE}
+    SET @FR_AC_DATE = #{FR_AC_DATE}
+    SET @TO_AC_DATE = #{TO_AC_DATE}
+    SET @DIV_CODE   = #{DIV_CODE}
+    SET @PJT_CODE   = #{AC_PROJECT_CODE}
+    
+    SELECT uniLITE.fnGetUserDateComp(A.COMP_CODE, A.AC_YYYYMM)  AS AC_YYYYMM
+         , uniLITE.fnGetUserDateComp(A.COMP_CODE, A.FR_AC_DATE) AS FR_AC_DATE
+         , uniLITE.fnGetUserDateComp(A.COMP_CODE, A.TO_AC_DATE) AS TO_AC_DATE
+         , A.DIV_CODE
+         , A.PJT_CODE
+         , uniLITE.fnGetUserDateComp(A.COMP_CODE, A.EX_DATE)    AS EX_DATE
+         , MAX(A.EX_NUM)                                        AS EX_NUM
+         , MAX(B.DIV_CODE)                                      AS EX_DIV_CODE
+         , MAX(M1.CODE_NAME)                                    AS INPUT_USER_ID
+         , uniLITE.fnGetUserDateComp(A.COMP_CODE, B.INPUT_DATE) AS INPUT_DATE
+         , MAX(M2.CODE_NAME)                                    AS AP_STS
+         , A.J_EX_DATE											AS J_EX_DATE
+      FROM             AGC310T A  WITH (NOLOCK)
+            LEFT  JOIN AGJ110T B  WITH (NOLOCK) ON  B.COMP_CODE  = A.COMP_CODE
+                                                AND B.EX_DATE    = A.EX_DATE
+                                                AND B.EX_NUM     = A.EX_NUM
+                                                AND (B.MOD_DIVI IS NULL OR B.MOD_DIVI = '')
+            LEFT  JOIN BSA100T M1 WITH (NOLOCK) ON  M1.COMP_CODE = B.COMP_CODE
+                                                AND M1.MAIN_CODE = 'A009'
+                                                AND M1.REF_CODE1 = B.INPUT_USER_ID
+            LEFT  JOIN BSA100T M2 WITH (NOLOCK) ON  M2.COMP_CODE = B.COMP_CODE
+                                                AND M2.MAIN_CODE = 'A014' 
+                                                AND M2.SUB_CODE  = B.AP_STS
+     WHERE A.COMP_CODE = @COMP_CODE
+       AND A.AC_YYYYMM = @AC_YYYYMM
+    <if test="DATE_OPT == &quot;FR_DATE&quot;"> 
+           AND  A.FR_AC_DATE &gt;= @FR_AC_DATE
+           AND  A.FR_AC_DATE &lt;= @TO_AC_DATE
+    </if>
+    <if test="DATE_OPT != &quot;FR_DATE&quot;">  
+           AND  A.TO_AC_DATE &gt;= @FR_AC_DATE
+           AND  A.TO_AC_DATE &lt;= @TO_AC_DATE
+    </if>
+    
+    <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">	
+           AND  A.DIV_CODE = #{DIV_CODE}
+    </if>
+    
+       AND  ((A.PJT_CODE = @PJT_CODE AND @PJT_CODE != '') OR (@PJT_CODE = ''))
+     GROUP BY A.COMP_CODE, A.AC_YYYYMM, A.FR_AC_DATE, A.TO_AC_DATE, A.DIV_CODE, A.PJT_CODE
+            , A.EX_DATE  , B.INPUT_DATE, A.J_EX_DATE
+	</select>
+	
+	<select id="agc310ukrServiceImpl.costInformation" parameterType="Map" resultType="rMap">
+		--agc310ukr.Cagc310UKR[fnagc310q2] Query5
+    SELECT ISNULL(COST_MT,0.0)    AS COST_MT
+         , ISNULL(COST_SMT,0.0)   AS COST_SMT
+         , ISNULL(COST_ETCMT,0.0) AS COST_ETCMT
+         , ISNULL(COST_HR,0.0)    AS COST_HR
+         , ISNULL(COST_EX,0.0)    AS COST_EX
+         , ISNULL(COST_PRPD,0.0)  AS COST_PRPD
+         , ISNULL(COST_PD,0.0)    AS COST_PD
+         , ISNULL(COST_GD,0.0)    AS COST_GD
+         , ISNULL(EX_DATE,'')     AS EX_DATE
+         , ISNULL(J_EX_DATE,'')   AS J_EX_DATE
+         , ISNULL(AGREE_YN,'N')   AS AGREE_YN
+      FROM AGC310T WITH (NOLOCK)
+     WHERE COMP_CODE  = #{S_COMP_CODE}
+       AND AC_YYYYMM  = #{ST_DATE}
+       AND FR_AC_DATE = #{FR_DATE}
+       AND TO_AC_DATE = #{TO_DATE}
+       AND DIV_CODE   = #{DIV_CODE}
+      <if test="@foren.Ognl@isNotEmpty(AC_PROJECT_CODE)">	
+       AND PJT_CODE   = #{AC_PROJECT_CODE}
+      </if>
+	</select>
+	
+	<select id="agc310ukrServiceImpl.cancSlipCheck1" parameterType="Map" resultType="rMap">
+		--UAgd01Krv.Cagd052UKR[fnagd052Canc] Query5
+    SELECT *
+      FROM BSA500TV WITH (NOLOCK)
+     WHERE COMP_CODE = #{S_COMP_CODE}
+       AND USER_ID   = #{S_USER_ID}
+       AND PGM_ID    = 'AGJ260UKR'
+	</select>
+	
+	<select id="agc310ukrServiceImpl.cancSlipCheck2" parameterType="Map" resultType="rMap">
+	--UAgd01Krv.Cagd052UKR[fnagd052Canc] Query6
+    SELECT COMP_CODE
+         , ISNULL(EX_DATE,'')   AS EX_DATE
+         , ISNULL(EX_NUM,0)     AS EX_NUM
+         , ISNULL(AGREE_YN,'N') AS AGREE_YN
+         , ISNULL((SELECT TOP 1 DRAFT_YN 
+                     FROM AGJ110T 
+                    WHERE COMP_CODE = #{S_COMP_CODE}
+                      AND EX_DATE   = A.EX_DATE
+                      AND EX_NUM    = A.EX_NUM
+                      AND ISNULL(MOD_DIVI,'') = ''),'N') DRAFT_YN
+      FROM AGC310T A WITH (NOLOCK)
+     WHERE COMP_CODE  = #{S_COMP_CODE}
+       AND AC_YYYYMM  = #{ST_DATE}
+       AND FR_AC_DATE = #{FR_DATE}
+       AND TO_AC_DATE = #{TO_DATE}
+       AND DIV_CODE   = #{ACCNT_DIV_CODE}
+       AND PJT_CODE   = #{AC_PROJECT_CODE}
+       AND EX_DATE    = #{AC_DATE}
+    
+	</select>
+	
+	<select id="agc310ukrServiceImpl.cancSlipCheck3" parameterType="Map" resultType="rMap">	
+	--UAgd01Krv.Cagd052UKR[fnCheckCloseDate] Query13
+    SELECT EX_CLOSE_FG
+         , EX_CLOSE_DATE
+      FROM ABA160T
+     WHERE COMP_CODE  = #{rsCost_COMP_CODE}
+       AND CLOSE_DATE = #{rsCost_CLOSE_DATE}
+	</select>
+	
+	<select id="agc310ukrServiceImpl.cancSlipCheck4" parameterType="Map" resultType="rMap">	
+		--UAgd01Krv.Cagd052UKR[fnagd052Canc] Query7
+    SELECT *
+      FROM AGJ110T WITH (NOLOCK)
+     WHERE COMP_CODE  = #{rsCost_COMP_CODE}
+       AND EX_DATE    = #{rsCost_EX_DATE}
+       AND EX_NUM     = #{rsCost_EX_NUM}
+       AND INPUT_PATH = '52'
+       AND ISNULL(MOD_DIVI,'') = ''
+	</select>
+	
+	<update id="agc310ukrServiceImpl.UpdateAGJ110T" parameterType="Map">	
+		--UAgd01Krv.Cagd052UKR[fnagd052Canc] Query8
+    UPDATE AGJ110T
+       SET MOD_DIVI    = 'D'
+         , MOD_DATE    = GETDATE()
+         , MOD_USER_ID = #{S_USER_ID}
+     WHERE COMP_CODE   = #{rsCost_COMP_CODE}
+       AND EX_DATE     = #{rsCost_EX_DATE}
+       AND EX_NUM      = #{rsCost_EX_NUM}
+       AND AP_STS     != '2'
+       AND INPUT_PATH  = '52'
+       AND ISNULL(MOD_DATE,'') = ''
+	</update>
+	
+	<update id="agc310ukrServiceImpl.UpdateAGC310T" parameterType="Map">
+		--UAgd01Krv.Cagd052UKR[fnagd052Canc] Query9 
+    UPDATE AGC310T
+       SET EX_DATE    = NULL
+         , EX_NUM     = NULL
+         , AGREE_YN   = 'N'
+     WHERE COMP_CODE  = #{S_COMP_CODE}
+       AND AC_YYYYMM  = #{ST_DATE}
+       AND FR_AC_DATE = #{FR_DATE}
+       AND TO_AC_DATE = #{TO_DATE}
+       AND DIV_CODE   = #{ACCNT_DIV_CODE}
+       AND PJT_CODE   = #{AC_PROJECT_CODE}
+       AND EX_DATE    = #{AC_DATE}
+	</update>
+	
+	
+	<select id="agc310ukrServiceImpl.beforeSaveCheck" parameterType="Map" resultType="rMap">
+		--agc310ukrv.Cagc310UKR[fnagc310set] SSQL8
+		SELECT ISNULL(EX_DATE,'')   AS EX_DATE
+		     , ISNULL(EX_NUM,0)     AS EX_NUM
+		     , ISNULL(AGREE_YN,'N') AS AGREE_YN
+		     , ISNULL((SELECT TOP 1 DRAFT_YN 
+		                 FROM AGJ110T 
+		                WHERE COMP_CODE = A.COMP_CODE
+		                  AND EX_DATE = A.EX_DATE
+		                  AND EX_NUM = A.EX_NUM
+		                  AND ISNULL(MOD_DIVI,'') = ''),'N') DRAFT_YN
+		  FROM AGC310T A WITH (NOLOCK)
+		 WHERE COMP_CODE  = #{S_COMP_CODE}
+		   AND AC_YYYYMM  = #{ST_DATE}
+		   AND FR_AC_DATE = #{FR_DATE}
+		   AND TO_AC_DATE = #{TO_DATE}
+		   AND DIV_CODE   = #{ACCNT_DIV_CODE}
+	</select>
+	
+	<insert id="agc310ukrServiceImpl.insertDetail1" parameterType="Map">
+		--agc310ukr.Cagc310UKR[fnagc310set] Query11
+            IF (SELECT COUNT(*) 
+                  FROM AGC310T  WITH (NOLOCK)
+                 WHERE COMP_CODE  = #{S_COMP_CODE}
+                   AND AC_YYYYMM  = #{ST_DATE}
+                   AND FR_AC_DATE = #{FR_DATE}
+                   AND TO_AC_DATE = #{TO_DATE}
+                   AND DIV_CODE   = #{ACCNT_DIV_CODE}
+                   AND PJT_CODE   = #{AC_PROJECT_CODE}) != 0
+            
+                UPDATE AGC310T
+                   SET COST_PD        =  ${COST_PD}
+                     , COST_GD        =  ${COST_GD}
+                     , UPDATE_DB_USER = #{S_USER_ID}
+                     , UPDATE_DB_TIME = GETDATE()
+                 WHERE COMP_CODE      = #{S_COMP_CODE}             
+                   AND AC_YYYYMM      = #{ST_DATE}                 
+                   AND FR_AC_DATE     = #{FR_DATE}                 
+                   AND TO_AC_DATE     = #{TO_DATE}                 
+                   AND DIV_CODE       = #{ACCNT_DIV_CODE}          
+                   AND PJT_CODE       = #{AC_PROJECT_CODE}
+            ELSE
+                INSERT INTO AGC310T ( COMP_CODE
+                                    , AC_YYYYMM
+                                    , FR_AC_DATE
+                                    , TO_AC_DATE
+                                    , DIV_CODE
+                                    , PJT_CODE
+                                    , COST_PD
+                                    , COST_GD
+                                    , UPDATE_DB_USER
+                                    , UPDATE_DB_TIME )
+                             VALUES ( #{S_COMP_CODE}             
+                                    , #{ST_DATE}                 
+                                    , #{FR_DATE}                 
+                                    , #{TO_DATE}                 
+                                    , #{ACCNT_DIV_CODE}          
+                                    , #{AC_PROJECT_CODE}   
+                                    , ${COST_PD}
+                                    , ${COST_GD}
+                                    , #{S_USER_ID}
+                                    , GETDATE() )
+	</insert>
+	
+	<update id="agc310ukrServiceImpl.updateDetail1" parameterType="Map">		
+	</update>
+	
+	<update id="agc310ukrServiceImpl.deleteMaster" parameterType="Map">
+	    --agc310ukrv.Cagc310UKR[fnagc310set] Query9
+	    DELETE FROM AGC310T
+	    WHERE COMP_CODE  = #{S_COMP_CODE}
+			   AND AC_YYYYMM  = #{ST_DATE}
+			   AND FR_AC_DATE = #{FR_DATE}
+			   AND TO_AC_DATE = #{TO_DATE}
+			   AND DIV_CODE   = #{ACCNT_DIV_CODE}
+			   AND PJT_CODE   = #{AC_PROJECT_CODE}
+	</update>
+	<update id="agc310ukrServiceImpl.deleteDetail" parameterType="Map">
+		--agc310ukrv.Cagc310UKR[fnagc310set] Query10
+	    DELETE FROM AGC311T
+	    WHERE COMP_CODE  = #{S_COMP_CODE}
+			   AND AC_YYYYMM  = #{ST_DATE}
+			   AND FR_AC_DATE = #{FR_DATE}
+			   AND TO_AC_DATE = #{TO_DATE}
+			   AND DIV_CODE   = #{ACCNT_DIV_CODE}
+			   AND PJT_CODE   = #{AC_PROJECT_CODE}
+	</update>
+	
+	<insert id="agc310ukrServiceImpl.insertDetail2" parameterType="Map">
+		--agc310ukr.Cagc310UKR[fnagc310set] Query12
+            IF (SELECT COUNT(*) 
+                  FROM AGC310T WITH (NOLOCK)
+                 WHERE COMP_CODE  = #{S_COMP_CODE}     
+                   AND AC_YYYYMM  = #{ST_DATE}         
+                   AND FR_AC_DATE = #{FR_DATE}         
+                   AND TO_AC_DATE = #{TO_DATE}         
+                   AND DIV_CODE   = #{ACCNT_DIV_CODE}  
+                   AND PJT_CODE   = #{AC_PROJECT_CODE}) != 0
+            
+                UPDATE AGC310T
+                   SET COST_MT        =  ${COST_MT}
+                     , COST_SMT       =  ${COST_SMT}
+                     , COST_ETCMT     =  ${COST_ETCMT}
+                     , COST_HR        =  ${COST_HR}
+                     , COST_EX        =  ${COST_EX}
+                     , COST_PRPD      =  ${COST_PRPD}
+                     , UPDATE_DB_USER = #{S_USER_ID}
+                     , UPDATE_DB_TIME = GETDATE()
+                 WHERE COMP_CODE      = #{S_COMP_CODE}      
+                   AND AC_YYYYMM      = #{ST_DATE}          
+                   AND FR_AC_DATE     = #{FR_DATE}          
+                   AND TO_AC_DATE     = #{TO_DATE}          
+                   AND DIV_CODE       = #{ACCNT_DIV_CODE}   
+                   AND PJT_CODE       = #{AC_PROJECT_CODE}
+            ELSE
+                INSERT INTO AGC310T ( COMP_CODE
+                                    , AC_YYYYMM
+                                    , FR_AC_DATE
+                                    , TO_AC_DATE
+                                    , DIV_CODE
+                                    , PJT_CODE
+                                    , COST_MT
+                                    , COST_SMT
+                                    , COST_ETCMT
+                                    , COST_HR
+                                    , COST_EX
+                                    , COST_PRPD
+                                    , UPDATE_DB_USER
+                                    , UPDATE_DB_TIME )
+                             VALUES ( #{S_COMP_CODE}      
+                                    , #{ST_DATE}          
+                                    , #{FR_DATE}          
+                                    , #{TO_DATE}          
+                                    , #{ACCNT_DIV_CODE}   
+                                    , #{AC_PROJECT_CODE}
+                                    , ${COST_MT}   
+                                    , ${COST_SMT}  
+                                    , ${COST_ETCMT}
+                                    , ${COST_HR}   
+                                    , ${COST_EX}   
+                                    , ${COST_PRPD} 
+                                    , #{S_USER_ID}
+                                    , GETDATE() )
+	</insert>
+	
+	<update id="agc310ukrServiceImpl.updateDetail2" parameterType="Map">		
+	</update>
+	
+	<insert id="agc310ukrServiceImpl.insertDetail3" parameterType="Map">
+	</insert>
+	
+	<update id="agc310ukrServiceImpl.updateDetail3" parameterType="Map">		
+		--agc310ukr.Cagc310UKR[fnagc310set] Query13
+        INSERT INTO AGC311T ( COMP_CODE
+                            , AC_YYYYMM
+                            , FR_AC_DATE
+                            , TO_AC_DATE
+                            , DIV_CODE
+                            , PJT_CODE
+                            , ACCNT
+                            , COST_AMT
+                            , UPDATE_DB_USER
+                            , UPDATE_DB_TIME )
+                     VALUES ( #{S_COMP_CODE}
+                            , #{ST_DATE}        
+                            , #{FR_DATE}        
+                            , #{TO_DATE}        
+                            , #{ACCNT_DIV_CODE} 
+                            , #{AC_PROJECT_CODE}
+                            , #{ACCNT}
+                            , #{RPLC_AMT_I}
+                            , #{S_USER_ID}
+                            , GETDATE() )
+	</update>
+</mapper>

@@ -1,0 +1,466 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_ssa450rkrv_ypServiceImpl">
+	<select id="s_ssa450rkrv_ypServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+			SET NOCOUNT ON 
+			SET ARITHABORT ON
+			
+				DECLARE @CompCode	NVARCHAR(08)	/* 법인코드		*/
+					  , @UserId		NVARCHAR(100)	/* 사용자ID	*/
+	
+				SET @CompCode	= #{S_COMP_CODE}
+				SET @UserId		= #{S_USER_ID}
+	
+				 SELECT A.COMP_CODE
+					  , A.DIV_CODE
+					  , A.SALE_CUSTOM_CODE
+					  , C.CUSTOM_NAME							AS SALE_CUSTOM_NAME
+					  , SUM(B.SALE_AMT_O) + SUM(B.TAX_AMT_O)	AS SALE_AMT_TOT				 --매출총금액
+				   FROM		 SSA100T A  WITH (NOLOCK)
+				  INNER JOIN SSA110T B  WITH (NOLOCK) ON B.COMP_CODE	= A.COMP_CODE
+													 AND B.DIV_CODE		= A.DIV_CODE
+													 AND B.BILL_NUM		= A.BILL_NUM
+				  LEFT  JOIN BCM100T C  WITH (NOLOCK) ON C.COMP_CODE	= A.COMP_CODE
+													 AND C.CUSTOM_CODE	= A.SALE_CUSTOM_CODE
+				 WHERE A.COMP_CODE				= @CompCode
+				   AND A.DIV_CODE				= #{DIV_CODE}
+				   AND A.SALE_DATE			&gt;= #{SALE_FR_DATE}
+				   AND A.SALE_DATE			&lt;= #{SALE_TO_DATE}
+				   <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+					   AND A.SALE_CUSTOM_CODE	= #{CUSTOM_CODE}
+				   </if>
+				   <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+					   AND C.CUSTOM_NAME LIKE #{CUSTOM_NAME} + '%'
+				   </if>
+				   <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+					   AND B.ITEM_CODE			= #{ITEM_CODE}
+				   </if>
+				   <if test="@foren.Ognl@isNotEmpty(SALE_PRSN)">
+					   AND A.SALE_PRSN			= #{SALE_PRSN}
+				   </if>
+				GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, C.CUSTOM_NAME
+				ORDER BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE
+	
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+	</select>
+
+
+
+
+
+    <select id="s_ssa450rkrv_ypServiceImpl.printList1" parameterType="Map" resultType="rMap">
+        BEGIN
+            SET NOCOUNT ON 
+            SET ARITHABORT ON
+        
+        DECLARE @START_TIME DATETIME
+              , @END_TIME   DATETIME
+              , @DIFF_TIME  NUMERIC(10, 0)
+        
+        SET @START_TIME = GETDATE()
+
+        
+            DECLARE @CompCode       NVARCHAR(08)    /* 법인코드     */
+                  , @UserId         NVARCHAR(100)    /* 사용자ID        */
+                  , @RefItem        NVARCHAR(01)
+                  , @DateFormat     NVARCHAR(10)
+                  , @PRINT_USER          NVARCHAR(100)            --(선택) 출력자
+                  , @VIEW_PRINT_INFO_YN  NVARCHAR(01)             --인쇄출력정보 여부
+        
+            SET @CompCode = #{S_COMP_CODE}
+            SET @UserId   = #{S_USER_ID}
+        
+            /* 명칭 참조 유형 */
+            SELECT TOP 1 @RefItem = REF_ITEM
+              FROM BSA300T WITH (NOLOCK)
+             WHERE USER_ID = @UserId
+        
+            SET @RefItem = ISNULL(@RefItem, N'0')
+            
+            SELECT @PRINT_USER = USER_NAME 
+                FROM BSA300T WITH(NOLOCK)
+                WHERE COMP_CODE = @CompCode
+                AND USER_ID = @UserId
+                
+            SELECT @VIEW_PRINT_INFO_YN = SUB_CODE
+                FROM BSA100T WITH(NOLOCK)
+                WHERE COMP_CODE = @CompCode
+                AND MAIN_CODE = 'B249'
+                AND SUB_CODE != '$'
+                AND REF_CODE1 = 'Y'
+        
+            /* 데이터 조회 */
+            
+            /* 생성경로가 영업일 경우 */
+            SELECT ROW_NUMBER () OVER (PARTITION BY A.SALE_CUSTOM_CODE ORDER BY B.ITEM_CODE) AS PRINT_SEQ
+                 , A.COMP_CODE
+                 , A.DIV_CODE                                                                                       AS DIV_CODE
+                 , (CASE WHEN ISNULL(#{SALE_FR_DATE}, '') = ''
+                        THEN ''
+                        ELSE REPLACE(REPLACE(REPLACE('YYYY.MM.DD', 'YYYY', SUBSTRING(#{SALE_FR_DATE}, 1, 4))
+                                                                    , 'MM'  , SUBSTRING(#{SALE_FR_DATE}, 5, 2))
+                                                                    , 'DD'  , SUBSTRING(#{SALE_FR_DATE}, 7, 2))
+                        END)                                                AS SALE_FR_DATE   
+                , (CASE WHEN ISNULL(#{SALE_TO_DATE}, '') = ''
+                        THEN ''
+                        ELSE REPLACE(REPLACE(REPLACE('YYYY.MM.DD', 'YYYY', SUBSTRING(#{SALE_TO_DATE}, 1, 4))
+                                                                    , 'MM'  , SUBSTRING(#{SALE_TO_DATE}, 5, 2))
+                                                                    , 'DD'  , SUBSTRING(#{SALE_TO_DATE}, 7, 2))
+                    END)                                                AS SALE_TO_DATE
+                 , A.SALE_CUSTOM_CODE                                                                               AS SALE_CUSTOM_CODE
+                 , C.CUSTOM_NAME                                                                                    AS SALE_CUSTOM_NAME
+                --, B.ITEM_CODE                                                                                     AS ITEM_CODE
+                , D.ITEM_NAME                                                                                       AS ITEM_NAME
+                , E2.CODE_NAME                                                                                      AS SALE_UNIT     --판매단위
+                , E1.CODE_NAME                                                                                      AS TAX_TYPE      --과세구분
+                , SUM(B.SALE_Q)                                                                                     AS SALE_Q        --수량               
+                , ROUND(SUM(B.SALE_AMT_O + B.TAX_AMT_O) / SUM(B.SALE_Q), -1, 1)                                     AS SALE_P        --단가
+                --, ROUND(SUM(B.SALE_AMT_O + B.TAX_AMT_O), -1)                                                        AS SALE_AMT_O --매출액      
+                , ROUND(SUM(B.SALE_Q) * ROUND(SUM(B.SALE_AMT_O + B.TAX_AMT_O) / SUM(B.SALE_Q), -1, 1), 0)           AS SALE_AMT_O --매출액      
+                , SUM(B.TAX_AMT_O)                                                                                  AS TAX_AMT_O      --세액
+                , SUM(ISNULL(B.SALE_AMT_O, 0) + ISNULL(B.TAX_AMT_O, 0))                                         AS SUM_SALE_AMT   --매출계
+                , B.REMARK                                                                                          AS REMARK         --비고
+                , MAX(Z.SALE_Q_SUM)                                                                                 AS SALE_Q_SUM           --토탈수량
+                , MAX(Z.SALE_AMT_O_SUM)                                                                         AS SALE_AMT_O_SUM   --토탈매출액
+                , MAX(Z.TAX_AMT_O_SUM)                                                                              AS TAX_AMT_O_SUM        --토탈세액
+                , MAX(Z.SUM_SALE_AMT_TOT)                                                                           AS SUM_SALE_AMT_TOT --토탈매출계
+                , replace(unilite.fnConvertToAmt(MAX(Z.SUM_SALE_AMT_TOT)), ' ', '') + '원정'                      AS SUM_SALE_AMT_TOT_KO  --토탈매출계(한글)
+                , F.DIV_CODE    AS MY_CUSTOM_CODE      --사업장코드                                                                 
+                , F.DIV_NAME    AS MY_CUSTOM_NAME      --상호 
+                , F.REPRE_NAME  AS MY_TOP_NAME         --대표자   
+                , F.COMP_TYPE                       --업태       
+                , F.COMP_CLASS                      --종목                                                       
+                , CASE ISNULL(F.COMPANY_NUM,'')                                                                         
+                        WHEN '' THEN ''                                                                                  
+                        ELSE         SUBSTRING(F.COMPANY_NUM,1,3) + '-'                                                  
+                                    + SUBSTRING(F.COMPANY_NUM,4,2) + '-'                                                  
+                                    + SUBSTRING(F.COMPANY_NUM,6,5)                                                        
+                  END          AS MY_COMPANY_NUM          --등록번호                                                                  
+                , F.ZIP_CODE    AS MY_ZIP_CODE          --우편번호                                                                
+                , F.ADDR AS  MY_ADDR              --주소                                                      
+                , F.TELEPHON                            --전화번호
+                , F.FAX_NUM                             --팩스
+                , @PRINT_USER           AS PRINT_USER                   --출력자 이름
+                , @VIEW_PRINT_INFO_YN   AS VIEW_PRINT_INFO_YN           --인쇄출력정보 표시여부 
+            FROM           SSA100T A  WITH (NOLOCK)
+                INNER JOIN SSA110T B  WITH (NOLOCK) ON  B.COMP_CODE    = A.COMP_CODE
+                                                    AND B.DIV_CODE     = A.DIV_CODE
+                                                    AND B.BILL_NUM     = A.BILL_NUM
+                LEFT  JOIN BCM100T C  WITH (NOLOCK) ON  C.COMP_CODE    = A.COMP_CODE
+                                                    AND C.CUSTOM_CODE  = A.SALE_CUSTOM_CODE
+                LEFT  JOIN BPR100T D  WITH (NOLOCK) ON  D.COMP_CODE    = B.COMP_CODE
+                                                    AND D.ITEM_CODE    = B.ITEM_CODE
+                LEFT  JOIN BSA100T E1 WITH (NOLOCK) ON  E1.COMP_CODE   = B.COMP_CODE
+                                                    AND E1.MAIN_CODE   = 'B059'
+                                                    AND E1.SUB_CODE    = B.TAX_TYPE
+                LEFT  JOIN BSA100T E2 WITH (NOLOCK) ON  E2.COMP_CODE   = B.COMP_CODE
+                                                    AND E2.MAIN_CODE   = 'B013'
+                                                    AND E2.SUB_CODE    = B.SALE_UNIT
+                INNER JOIN BOR120T F  WITH (NOLOCK) ON F.COMP_CODE   = A.COMP_CODE                                    
+                                                   AND F.DIV_CODE    = A.DIV_CODE 
+                LEFT JOIN(
+                    SELECT  A.COMP_CODE,
+                            A.DIV_CODE,
+                            A.SALE_CUSTOM_CODE,
+                            SUM(B.SALE_Q)       AS SALE_Q_SUM, 
+                            --SUM(B.SALE_P)     AS SALE_P_SUM, 
+                            SUM(B.SALE_AMT_O)   AS SALE_AMT_O_SUM, 
+                            SUM(B.TAX_AMT_O)    AS TAX_AMT_O_SUM, 
+                            SUM(B.SALE_AMT_O) + SUM(B.TAX_AMT_O) AS SUM_SALE_AMT_TOT
+                      FROM          SSA100T A WITH (NOLOCK)
+                        INNER JOIN  SSA110T B WITH (NOLOCK) ON  B.COMP_CODE    = A.COMP_CODE
+                                                            AND B.DIV_CODE     = A.DIV_CODE
+                                                            AND B.BILL_NUM     = A.BILL_NUM
+                     WHERE A.COMP_CODE           = #{S_COMP_CODE}                     
+                       AND A.DIV_CODE            = #{DIV_CODE}                           
+                       AND A.SALE_DATE          &gt;= #{SALE_FR_DATE}
+                       AND A.SALE_DATE          &lt;= #{SALE_TO_DATE}
+                     GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE
+                ) Z ON Z.COMP_CODE        = A.COMP_CODE
+                   AND Z.DIV_CODE         = A.DIV_CODE
+                   AND Z.SALE_CUSTOM_CODE = A.SALE_CUSTOM_CODE
+                <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODES)">
+                INNER JOIN uniLITE.fnSplit(#{CUSTOM_CODES}, ',') AS ZZ ON ZZ.VALUE = A.SALE_CUSTOM_CODE
+                </if>
+            WHERE A.COMP_CODE           = @CompCode                        
+            AND A.DIV_CODE            = #{DIV_CODE}                              
+            AND A.SALE_DATE          &gt;= #{SALE_FR_DATE}
+            AND A.SALE_DATE          &lt;= #{SALE_TO_DATE}
+            <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+                AND A.SALE_CUSTOM_CODE         = #{CUSTOM_CODE}
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                AND C.CUSTOM_NAME   LIKE #{CUSTOM_NAME} + '%'
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+                AND B.ITEM_CODE           = #{ITEM_CODE}
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+                AND D.ITEM_NAME     LIKE #{ITEM_NAME} + '%'
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(SALE_PRSN)">
+                AND A.SALE_PRSN           = #{SALE_PRSN}
+            </if>
+           GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, B.ITEM_CODE, C.CUSTOM_NAME, D.ITEM_NAME, E1.CODE_NAME,
+                    F.DIV_CODE, F.DIV_NAME, F.REPRE_NAME, F.COMP_TYPE, F.COMP_CLASS, F.COMPANY_NUM, F.ZIP_CODE, F.ADDR,
+                    F.TELEPHON, F.FAX_NUM, E2.CODE_NAME, B.REMARK
+           
+           ORDER BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, B.ITEM_CODE
+           SET NOCOUNT OFF
+           SET ARITHABORT OFF
+        END 
+    </select>
+    <select id="s_ssa450rkrv_ypServiceImpl.printList2" parameterType="Map" resultType="rMap">
+    	BEGIN
+            SET NOCOUNT ON 
+            SET ARITHABORT ON
+            
+                DECLARE @CompCode            NVARCHAR(08)   /* 법인코드     */
+                      , @UserId              NVARCHAR(100)   /* 사용자ID        */
+                      , @PRINT_USER          NVARCHAR(100)            --(선택) 출력자
+                      , @VIEW_PRINT_INFO_YN  NVARCHAR(01)             --인쇄출력정보 여부
+    
+                SET @CompCode = #{S_COMP_CODE}
+                SET @UserId   = #{S_USER_ID}
+    
+                SELECT @PRINT_USER = USER_NAME 
+                  FROM BSA300T WITH(NOLOCK)
+                 WHERE COMP_CODE = @CompCode
+                   AND USER_ID = @UserId
+                    
+                SELECT @VIEW_PRINT_INFO_YN = SUB_CODE
+                  FROM BSA100T WITH(NOLOCK)
+                 WHERE COMP_CODE = @CompCode
+                   AND MAIN_CODE = 'B249'
+                   AND SUB_CODE != '$'
+                   AND REF_CODE1 = 'Y'
+            
+                IF OBJECT_ID('tempdb..##s_ssa450rkrv2') IS NOT NULL
+                DROP TABLE ##s_ssa450rkrv2
+    
+    
+                SELECT ROW_NUMBER() OVER(ORDER BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE) AS SEQ
+                      , D.DIV_NAME
+                      , A.SALE_CUSTOM_CODE
+                      , C.CUSTOM_NAME
+                      , (CASE WHEN ISNULL(#{SALE_FR_DATE}, '') = ''
+                              THEN ''
+                              ELSE REPLACE(REPLACE(REPLACE('YYYY.MM.DD', 'YYYY', SUBSTRING(#{SALE_FR_DATE}, 1, 4))
+                                                                       , 'MM'  , SUBSTRING(#{SALE_FR_DATE}, 5, 2))
+                                                                       , 'DD'  , SUBSTRING(#{SALE_FR_DATE}, 7, 2))
+                        END)                                                            AS SALE_FR_DATE   
+                      , (CASE WHEN ISNULL(#{SALE_TO_DATE}, '') = ''
+                              THEN ''
+                               ELSE REPLACE(REPLACE(REPLACE('YYYY.MM.DD', 'YYYY', SUBSTRING(#{SALE_TO_DATE}, 1, 4))
+                                                                        , 'MM'  , SUBSTRING(#{SALE_TO_DATE}, 5, 2))
+                                                                        , 'DD'  , SUBSTRING(#{SALE_TO_DATE}, 7, 2))
+                        END)                                                            AS SALE_TO_DATE
+                      , SUM(B.SALE_AMT_O) + SUM(B.TAX_AMT_O)    AS SALE_AMT_TOT                 --매출총금액
+                      , @PRINT_USER                             AS PRINT_USER                   --출력자 이름
+                      , @VIEW_PRINT_INFO_YN                     AS VIEW_PRINT_INFO_YN           --인쇄출력정보 표시여부 
+                  --INTO ##s_ssa450rkrv2
+                  FROM           SSA100T A  WITH (NOLOCK)
+                      INNER JOIN SSA110T B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                         AND B.DIV_CODE    = A.DIV_CODE
+                                                         AND B.BILL_NUM    = A.BILL_NUM
+                      LEFT  JOIN BCM100T C  WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                         AND C.CUSTOM_CODE = A.SALE_CUSTOM_CODE
+                      INNER JOIN BOR120T D  WITH (NOLOCK) ON D.COMP_CODE   = A.COMP_CODE
+                                                         AND D.DIV_CODE    = A.DIV_CODE
+	                <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODES)">
+	                INNER JOIN uniLITE.fnSplit(#{CUSTOM_CODES}, ',') AS ZZ ON ZZ.VALUE = A.SALE_CUSTOM_CODE
+	                </if>
+                 WHERE A.COMP_CODE           = @CompCode                        
+                   AND A.DIV_CODE            = #{DIV_CODE}                              
+                   AND A.SALE_DATE          &gt;= #{SALE_FR_DATE}
+                   AND A.SALE_DATE          &lt;= #{SALE_TO_DATE}
+                   <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+                       AND A.SALE_CUSTOM_CODE         = #{CUSTOM_CODE}
+                   </if>
+                   <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                       AND C.CUSTOM_NAME   LIKE #{CUSTOM_NAME} + '%'
+                   </if>
+                   <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+                       AND B.ITEM_CODE           = #{ITEM_CODE}
+                   </if>
+                   <if test="@foren.Ognl@isNotEmpty(SALE_PRSN)">
+                       AND A.SALE_PRSN           = #{SALE_PRSN}
+                   </if>
+    
+                GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, C.CUSTOM_NAME, D.DIV_NAME     
+                   
+                ORDER BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE
+    
+    
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END
+    </select>
+    <select id="s_ssa450rkrv_ypServiceImpl.printList3" parameterType="Map" resultType="rMap">
+        BEGIN
+            SET NOCOUNT ON 
+            SET ARITHABORT ON
+        
+        DECLARE @START_TIME DATETIME
+              , @END_TIME   DATETIME
+              , @DIFF_TIME  NUMERIC(10, 0)
+        
+        SET @START_TIME = GETDATE()
+
+         
+            DECLARE @CompCode       NVARCHAR(08)    /* 법인코드     */
+                  , @UserId         NVARCHAR(100)    /* 사용자ID        */
+                  , @RefItem        NVARCHAR(01)
+                  , @DateFormat     NVARCHAR(10)
+                  , @PRINT_USER          NVARCHAR(100)            --(선택) 출력자
+                  , @VIEW_PRINT_INFO_YN  NVARCHAR(01)             --인쇄출력정보 여부
+        
+            SET @CompCode = #{S_COMP_CODE}
+            SET @UserId   = #{S_USER_ID}
+        
+            /* 명칭 참조 유형 */
+            SELECT TOP 1 @RefItem = REF_ITEM
+              FROM BSA300T WITH (NOLOCK)
+             WHERE USER_ID = @UserId
+        
+            SET @RefItem = ISNULL(@RefItem, N'0')
+            
+            SELECT @PRINT_USER = USER_NAME 
+                FROM BSA300T WITH(NOLOCK)
+                WHERE COMP_CODE = @CompCode
+                AND USER_ID = @UserId
+                
+            SELECT @VIEW_PRINT_INFO_YN = SUB_CODE
+                FROM BSA100T WITH(NOLOCK)
+                WHERE COMP_CODE = @CompCode
+                AND MAIN_CODE = 'B249'
+                AND SUB_CODE != '$'
+                AND REF_CODE1 = 'Y'
+        
+            /* 데이터 조회 */
+            
+            /* 생성경로가 영업일 경우 */
+            SELECT ROW_NUMBER () OVER (PARTITION BY A.SALE_CUSTOM_CODE ORDER BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, A.SALE_DATE, B.ITEM_CODE) AS PRINT_SEQ
+                 , A.COMP_CODE
+                 , A.DIV_CODE                                                                                       AS DIV_CODE
+                 , uniLITE.fnGetUserDate(A.COMP_CODE, A.SALE_DATE)                     AS SALE_DATE
+                 , SUBSTRING(uniLITE.fnGetUserDate(A.COMP_CODE, A.SALE_DATE), 1, 7)    AS SALE_MONTH
+                 , (CASE WHEN ISNULL(#{SALE_FR_DATE}, '') = ''
+                        THEN ''
+                        ELSE REPLACE(REPLACE(REPLACE('YYYY.MM.DD', 'YYYY', SUBSTRING(#{SALE_FR_DATE}, 1, 4))
+                                                                    , 'MM'  , SUBSTRING(#{SALE_FR_DATE}, 5, 2))
+                                                                    , 'DD'  , SUBSTRING(#{SALE_FR_DATE}, 7, 2))
+                        END)                                                AS SALE_FR_DATE   
+                , (CASE WHEN ISNULL(#{SALE_TO_DATE}, '') = ''
+                        THEN ''
+                        ELSE REPLACE(REPLACE(REPLACE('YYYY.MM.DD', 'YYYY', SUBSTRING(#{SALE_TO_DATE}, 1, 4))
+                                                                    , 'MM'  , SUBSTRING(#{SALE_TO_DATE}, 5, 2))
+                                                                    , 'DD'  , SUBSTRING(#{SALE_TO_DATE}, 7, 2))
+                    END)                                                AS SALE_TO_DATE
+                 , A.SALE_CUSTOM_CODE                                                                               AS SALE_CUSTOM_CODE
+                 , C.CUSTOM_NAME                                                                                    AS SALE_CUSTOM_NAME
+                --, B.ITEM_CODE                                                                                     AS ITEM_CODE
+                , D.ITEM_NAME                                                                                       AS ITEM_NAME
+                , E2.CODE_NAME                                                                                      AS SALE_UNIT     --판매단위
+                , E1.CODE_NAME                                                                                      AS TAX_TYPE      --과세구분
+                , SUM(B.SALE_Q)                                                                                     AS SALE_Q        --수량               
+                , ROUND(SUM(B.SALE_AMT_O + B.TAX_AMT_O) / SUM(B.SALE_Q), -1, 1)                                     AS SALE_P        --단가
+                -- , ROUND(SUM(B.SALE_AMT_O + B.TAX_AMT_O), -1)                                                        AS SALE_AMT_O --매출액
+                , ROUND(SUM(B.SALE_Q) * ROUND(SUM(B.SALE_AMT_O + B.TAX_AMT_O) / SUM(B.SALE_Q), -1, 1), 0)           AS SALE_AMT_O --매출액                   
+                , SUM(B.TAX_AMT_O)                                                                                  AS TAX_AMT_O      --세액
+                , SUM(ISNULL(B.SALE_AMT_O, 0) + ISNULL(B.TAX_AMT_O, 0))                                         AS SUM_SALE_AMT   --매출계
+                , B.REMARK                                                                                          AS REMARK         --비고
+                , MAX(Z.SALE_Q_SUM)                                                                                 AS SALE_Q_SUM           --토탈수량
+                , MAX(Z.SALE_AMT_O_SUM)                                                                         AS SALE_AMT_O_SUM   --토탈매출액
+                , MAX(Z.TAX_AMT_O_SUM)                                                                              AS TAX_AMT_O_SUM        --토탈세액
+                , MAX(Z.SUM_SALE_AMT_TOT)                                                                           AS SUM_SALE_AMT_TOT --토탈매출계
+                , replace(unilite.fnConvertToAmt(MAX(Z.SUM_SALE_AMT_TOT)), ' ', '') + '원정'                      AS SUM_SALE_AMT_TOT_KO  --토탈매출계(한글)
+                , F.DIV_CODE    AS MY_CUSTOM_CODE      --사업장코드                                                                 
+                , F.DIV_NAME    AS MY_CUSTOM_NAME      --상호 
+                , F.REPRE_NAME  AS MY_TOP_NAME         --대표자   
+                , F.COMP_TYPE                       --업태       
+                , F.COMP_CLASS                      --종목                                                       
+                , CASE ISNULL(F.COMPANY_NUM,'')                                                                         
+                        WHEN '' THEN ''                                                                                  
+                        ELSE         SUBSTRING(F.COMPANY_NUM,1,3) + '-'                                                  
+                                    + SUBSTRING(F.COMPANY_NUM,4,2) + '-'                                                  
+                                    + SUBSTRING(F.COMPANY_NUM,6,5)                                                        
+                  END          AS MY_COMPANY_NUM          --등록번호                                                                  
+                , F.ZIP_CODE    AS MY_ZIP_CODE          --우편번호                                                                
+                , F.ADDR AS  MY_ADDR              --주소                                                      
+                , F.TELEPHON                            --전화번호
+                , F.FAX_NUM                             --팩스
+                , @PRINT_USER           AS PRINT_USER                   --출력자 이름
+                , @VIEW_PRINT_INFO_YN   AS VIEW_PRINT_INFO_YN           --인쇄출력정보 표시여부 
+            FROM           SSA100T A  WITH (NOLOCK)
+                INNER JOIN SSA110T B  WITH (NOLOCK) ON  B.COMP_CODE    = A.COMP_CODE
+                                                    AND B.DIV_CODE     = A.DIV_CODE
+                                                    AND B.BILL_NUM     = A.BILL_NUM
+                LEFT  JOIN BCM100T C  WITH (NOLOCK) ON  C.COMP_CODE    = A.COMP_CODE
+                                                    AND C.CUSTOM_CODE  = A.SALE_CUSTOM_CODE
+                LEFT  JOIN BPR100T D  WITH (NOLOCK) ON  D.COMP_CODE    = B.COMP_CODE
+                                                    AND D.ITEM_CODE    = B.ITEM_CODE
+                LEFT  JOIN BSA100T E1 WITH (NOLOCK) ON  E1.COMP_CODE   = B.COMP_CODE
+                                                    AND E1.MAIN_CODE   = 'B059'
+                                                    AND E1.SUB_CODE    = B.TAX_TYPE
+                LEFT  JOIN BSA100T E2 WITH (NOLOCK) ON  E2.COMP_CODE   = B.COMP_CODE
+                                                    AND E2.MAIN_CODE   = 'B013'
+                                                    AND E2.SUB_CODE    = B.SALE_UNIT
+                INNER JOIN BOR120T F  WITH (NOLOCK) ON F.COMP_CODE   = A.COMP_CODE                                    
+                                                   AND F.DIV_CODE    = A.DIV_CODE 
+                LEFT JOIN(
+                    SELECT  A.COMP_CODE,
+                            A.DIV_CODE,
+                            A.SALE_CUSTOM_CODE,
+                            SUM(B.SALE_Q)       AS SALE_Q_SUM, 
+                            --SUM(B.SALE_P)     AS SALE_P_SUM, 
+                            SUM(B.SALE_AMT_O)   AS SALE_AMT_O_SUM, 
+                            SUM(B.TAX_AMT_O)    AS TAX_AMT_O_SUM, 
+                            SUM(B.SALE_AMT_O) + SUM(B.TAX_AMT_O) AS SUM_SALE_AMT_TOT
+                      FROM          SSA100T A WITH (NOLOCK)
+                        INNER JOIN  SSA110T B WITH (NOLOCK) ON  B.COMP_CODE    = A.COMP_CODE
+                                                            AND B.DIV_CODE     = A.DIV_CODE
+                                                            AND B.BILL_NUM     = A.BILL_NUM
+                     WHERE A.COMP_CODE           = #{S_COMP_CODE}                     
+                       AND A.DIV_CODE            = #{DIV_CODE}                           
+                       AND A.SALE_DATE          &gt;= #{SALE_FR_DATE}
+                       AND A.SALE_DATE          &lt;= #{SALE_TO_DATE}
+                     GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE
+                ) Z ON Z.COMP_CODE        = A.COMP_CODE
+                   AND Z.DIV_CODE         = A.DIV_CODE
+                   AND Z.SALE_CUSTOM_CODE = A.SALE_CUSTOM_CODE
+                <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODES)">
+                INNER JOIN uniLITE.fnSplit(#{CUSTOM_CODES}, ',') AS ZZ ON ZZ.VALUE = A.SALE_CUSTOM_CODE
+                </if>
+            WHERE A.COMP_CODE           = @CompCode                        
+            AND A.DIV_CODE            = #{DIV_CODE}                              
+            AND A.SALE_DATE          &gt;= #{SALE_FR_DATE}
+            AND A.SALE_DATE          &lt;= #{SALE_TO_DATE}
+            <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+                AND A.SALE_CUSTOM_CODE         = #{CUSTOM_CODE}
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+                AND C.CUSTOM_NAME   LIKE #{CUSTOM_NAME} + '%'
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+                AND B.ITEM_CODE           = #{ITEM_CODE}
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+                AND D.ITEM_NAME     LIKE #{ITEM_NAME} + '%'
+            </if>
+            <if test="@foren.Ognl@isNotEmpty(SALE_PRSN)">
+                AND A.SALE_PRSN           = #{SALE_PRSN}
+            </if>
+           GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, B.ITEM_CODE, C.CUSTOM_NAME, D.ITEM_NAME, E1.CODE_NAME,
+                    F.DIV_CODE, F.DIV_NAME, F.REPRE_NAME, F.COMP_TYPE, F.COMP_CLASS, F.COMPANY_NUM, F.ZIP_CODE, F.ADDR,
+                    F.TELEPHON, F.FAX_NUM, E2.CODE_NAME, B.REMARK, A.SALE_DATE
+           
+           ORDER BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, A.SALE_DATE, B.ITEM_CODE
+           SET NOCOUNT OFF
+           SET ARITHABORT OFF
+        END 
+    </select>
+</mapper>

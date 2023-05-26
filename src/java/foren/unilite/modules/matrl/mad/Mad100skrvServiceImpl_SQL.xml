@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mad100skrvServiceImpl">
+	
+	<select id="mad100skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+			SET NOCOUNT ON
+		    SET ARITHABORT ON
+			
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+
+			
+			DECLARE @CompCode   NVARCHAR(08) /* 법인코드				*/
+			    SET @CompCode = #{S_COMP_CODE}
+
+		/* 조회  */ 
+			SELECT 
+				A.COMP_CODE
+			   ,A.DIV_CODE
+			   ,A.INOUT_CODE			/* 거래처   */
+			   ,C.CUSTOM_NAME			/* 거래처명 */
+			   ,A.ITEM_CODE				/* 품목 	*/
+			   ,B.ITEM_NAME				/* 품명 	*/
+			   ,B.SPEC					/* 규격	*/
+			   ,A.ORDER_UNIT			/* 단위 	*/
+			    -- ,(CASE WHEN ISNULL(A.PURCHASE_RATE,0) = 0
+				--THEN 0 
+				--ELSE ISNULL(ISNULL(A.ORDER_UNIT_FOR_P,0) / ISNULL(A.PURCHASE_RATE,0) *100,0) END)	AS	SALE_BASIS_P   /* 정가	*/
+			   , B.SALE_BASIS_P
+			   ,A.ORDER_UNIT_P			/* 입고단가 */
+			   ,A.PURCHASE_RATE			/* 매입율	*/
+			   ,A.INOUT_TYPE 			/* 수불유형 */
+			   ,SUM(CASE WHEN A.INOUT_TYPE = '1' THEN ISNULL(A.INOUT_Q,0) ELSE ISNULL(A.INOUT_Q,0)*(-1) END) AS INOUT_Q	/* 수량	*/
+			   ,SUM(CASE WHEN A.INOUT_TYPE = '1' THEN ISNULL(A.INOUT_I,0) ELSE ISNULL(A.INOUT_I,0)*(-1) END) AS INOUT_I	/* 금액	*/
+	
+			   ,SUM(CASE WHEN A.INOUT_TYPE = '1' THEN ISNULL(A.INOUT_TAX_AMT,0) ELSE ISNULL(A.INOUT_TAX_AMT,0)*(-1) END) AS SUM_TAX_AMT	/* 부가세	*/
+			   ,SUM(CASE WHEN A.INOUT_TYPE = '1' THEN ISNULL(A.INOUT_I,0) + ISNULL(A.INOUT_TAX_AMT,0) 
+			                                     ELSE (ISNULL(A.INOUT_I,0) + ISNULL(A.INOUT_TAX_AMT,0))*(-1) END) AS TOTAL_SUM_I	/* 합계	*/
+ 
+			FROM	   BTR100T A WITH (NOLOCK)
+			INNER JOIN BPR100T B WITH (NOLOCK)  ON	A.COMP_CODE	 = B.COMP_CODE
+												AND A.ITEM_CODE  = B.ITEM_CODE
+			INNER JOIN BCM100T C WITH (NOLOCK)  ON	A.COMP_CODE  = C.COMP_CODE
+											    AND A.INOUT_CODE = C.CUSTOM_CODE	   
+			INNER JOIN BPR200T D WITH (NOLOCK)  ON  A.COMP_CODE  = D.COMP_CODE
+												AND A.DIV_CODE   = D.DIV_CODE
+												AND A.ITEM_CODE  = D.ITEM_CODE								   
+			INNER JOIN BSA210T E WITH (NOLOCK)  ON  A.COMP_CODE  = E.COMP_CODE
+				 								AND A.DIV_CODE   = E.TYPE_LEVEL
+				 								AND A.DEPT_CODE  = E.TREE_CODE    		
+			
+			WHERE A.COMP_CODE = @CompCode
+			<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+			   AND A.DIV_CODE 	= #{DIV_CODE}
+			</if>
+    		<if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">     
+		       AND    E.TREE_LEVEL  LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =E.COMP_CODE AND TYPE_LEVEL=E.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'
+		    </if>
+    		<if test="@foren.Ognl@isNotEmpty(WH_CODE)">   
+			   AND A.WH_CODE 	= 	#{WH_CODE}
+			</if>
+    		<if test="@foren.Ognl@isNotEmpty(INOUT_DATE_FR)">   
+			   AND A.INOUT_DATE &gt;= #{INOUT_DATE_FR}
+			</if>
+    		<if test="@foren.Ognl@isNotEmpty(INOUT_DATE_TO)">   
+			   AND A.INOUT_DATE &lt;= #{INOUT_DATE_TO}
+			</if>
+    		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_FR)">   
+			   AND A.INOUT_CODE &gt;= #{CUSTOM_CODE_FR}
+			</if>
+    		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_TO)">   
+			   AND A.INOUT_CODE &lt;= #{CUSTOM_CODE_TO}
+			</if>
+    		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">   
+			   AND A.ITEM_CODE 	= #{ITEM_CODE}
+    		</if>
+    		<if test="INOUT_TYPE == &quot;A&quot;">
+    			AND A.INOUT_TYPE IN ('1' , '4')
+    			AND A.CREATE_LOC = '2'
+    			AND A.INOUT_CODE_TYPE = '4'
+    		</if>
+    		<if test="INOUT_TYPE == &quot;1&quot;">
+    			AND A.INOUT_TYPE = '1'
+    			AND A.CREATE_LOC = '2'
+    			AND A.INOUT_CODE_TYPE = '4'
+    		</if>
+    		<if test="INOUT_TYPE == &quot;4&quot;">
+    			AND A.INOUT_TYPE = '4'
+    			AND A.CREATE_LOC = '2'
+    			AND A.INOUT_CODE_TYPE = '4'
+    		</if>	
+	      GROUP BY  A.COMP_CODE, A.DIV_CODE, A.INOUT_CODE, C.CUSTOM_NAME,  A.ITEM_CODE, B.ITEM_NAME, B.SPEC, A.ORDER_UNIT,
+	       			D.PURCHASE_BASE_P, A.ORDER_UNIT_P, A.PURCHASE_RATE, A.INOUT_TYPE, B.SALE_BASIS_P-- A.ORDER_UNIT_FOR_P
+
+SET @END_TIME   = GETDATE()
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'mad100skrv', '매입처별 품목별 입고현황 조회', #{INOUT_DATE_FR}, #{INOUT_DATE_TO}, @DIFF_TIME
+
+
+		  SET ARITHABORT OFF
+	      SET NOCOUNT OFF
+	END 
+    </select>
+    <select id="mad100skrvServiceImpl.userWhcode" parameterType="Map" resultType="rMap">
+		SELECT
+			A.WH_CODE
+		FROM BSA210T A WITH(NOLOCK)
+			LEFT JOIN BSA300T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+											AND B.DEPT_CODE = A.TREE_CODE
+		WHERE A.COMP_CODE = #{S_COMP_CODE}
+		AND B.USER_ID = #{S_USER_ID}
+	</select>	
+	
+</mapper>

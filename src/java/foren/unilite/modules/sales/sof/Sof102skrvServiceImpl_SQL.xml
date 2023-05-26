@@ -1,0 +1,334 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sof102skrvServiceImpl">
+	<select id="sof102skrvServiceImpl.selectList1" parameterType="Map" resultType="rMap">
+		/* sof102skrvServiceImpl.selectList1 */
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+		
+		   DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+		         , @UserId			NVARCHAR(100)	/* 사용자ID */
+		         , @LangType		NVARCHAR(02)	/* 언어구분 */
+		         , @RefItem			NVARCHAR(01)
+		         , @DateFormat		NVARCHAR(10)
+		         , @exchgBase		NVARCHAR(01)
+		         , @exchgMoneyUnit	NVARCHAR(03)
+
+		   
+		      SET @CompCode = #{S_COMP_CODE}
+		      SET @UserId   = #{S_USER_ID}
+		      SET @LangType = #{S_LANG_CODE}
+		   
+		      /* 명칭 참조 유형 */
+		      SELECT TOP 1 @RefItem = REF_ITEM
+		        FROM BSA300T WITH (NOLOCK)
+		       WHERE USER_ID = @UserId
+		   
+		      SET @RefItem = ISNULL(@RefItem, N'0')
+		      
+		      /* 환율 기준 */
+			  SELECT @exchgBase = EXCHG_BASE
+			    FROM ABA100T WITH(NOLOCK)
+			   WHERE COMP_CODE = @CompCode
+
+		      /* 환산 화폐 */
+			   SET @exchgMoneyUnit = #{EXCHG_MONEY_UNIT}
+			   SET @exchgMoneyUnit = ISNULL(@exchgMoneyUnit, 'KRW')
+
+		      /* 날짜 포맷 유형 설정 */
+		      SELECT TOP 1 @DateFormat = CODE_NAME
+		        FROM BSA100T WITH (NOLOCK)
+		       WHERE COMP_CODE = @CompCode
+		         AND MAIN_CODE = N'B044'
+		         AND REF_CODE1 = N'Y'
+		   
+		      SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		   
+		      /* 데이터 조회 */ 
+		      /* 영업 - 무역이 아닐경우 실행 */
+			   SELECT  
+		              Z.CUSTOM_CODE			AS CUSTOM_CODE1
+		            , Z.CUSTOM_NAME			AS CUSTOM_NAME1			/* 거래처별 */ 
+		            , Z.ITEM_CODE 
+		            , Z.ITEM_NAME
+		            , Z.SPEC
+		            , Z.ORDER_UNIT
+		            --, B.PRICE_TYPE		/* 공통코드 'B116' 과세여부*/	
+		            , Z.TRANS_RATE
+		            , SUM(Z.ORDER_UNIT_Q)	AS ORDER_UNIT_Q
+		            , Z.MONEY_UNIT
+		            , Z.ORDER_P
+		            , SUM(Z.ORDER_O)		AS ORDER_O
+		            , SUM(Z.OUTSTOCK_Q)		AS OUTSTOCK_Q			--출고량
+		            , SUM(Z.ORDER_REM_Q)	AS ORDER_REM_Q			--미납량
+		            , SUM(Z.ORDER_REM_O)	AS ORDER_REM_O			--미납액
+		            , Z.ORDER_PRSN			/* 공통코드 'S010' */
+		            , Z.ORDER_TYPE			/* 공통코드 'S002' */
+		            , Z.ORDER_STATUS
+		            , Z.STOCK_UNIT
+		            , Z.STOCK_Q				AS STOCK_Q				--재고량
+		            --, Z.ORDER_DATE
+		
+		            , SUM(Z.SALES_QTY)		AS SALES_QTY			--매출수량 ssa110t
+		            , SUM(Z.SALES_AMT)		AS SALES_AMT			--매출금액
+		            , SUM(Z.PUB_QTY)		AS PUB_QTY				--세금계산서
+		            , SUM(Z.PUB_AMT)		AS PUB_AMT				--세금계산서 금액
+		            
+		            --20181101 추가
+		            , @exchgMoneyUnit						AS EXCHG_MONEY_UNIT
+		            , Z.BASE_EXCHG							AS ORI_EXCHG_RATE
+		            , SUM(Z.ORDER_O)		* Z.BASE_EXCHG / CASE WHEN Z.EXCHG_BASE_EXCHG = 0 THEN 1
+																  ELSE Z.EXCHG_BASE_EXCHG
+															 END					AS EXCHG_ORDER_O
+		            , SUM(Z.ORDER_REM_O)	* Z.BASE_EXCHG / CASE WHEN Z.EXCHG_BASE_EXCHG = 0 THEN 1
+																  ELSE Z.EXCHG_BASE_EXCHG
+															 END					AS EXCHG_ORDER_REM_O
+		            , SUM(Z.SALES_AMT)		* Z.BASE_EXCHG / CASE WHEN Z.EXCHG_BASE_EXCHG = 0 THEN 1
+																  ELSE Z.EXCHG_BASE_EXCHG
+															 END					AS EXCHG_SALES_AMT
+		            --, Z.MONEY_UNIT							AS EXCHG_MONEY_UNIT
+		            --, SUM(Z.ORDER_O)						AS EXCHG_ORDER_O
+		            --, SUM(Z.ORDER_REM_O)					AS EXCHG_ORDER_REM_O
+		            --, SUM(Z.SALES_AMT)						AS EXCHG_SALES_AMT
+				 FROM (
+				       SELECT  
+				              A.CUSTOM_CODE													AS CUSTOM_CODE 
+				            , (CASE WHEN @RefItem = '1' THEN C.CUSTOM_NAME1
+				                    WHEN @RefItem = '2' THEN C.CUSTOM_NAME2
+				                                        ELSE C.CUSTOM_NAME
+				                END)														AS CUSTOM_NAME		/* 거래처별 */ 
+				            , B.ITEM_CODE 
+				            , (CASE WHEN @RefItem = '1' THEN D.ITEM_NAME1
+				                    WHEN @RefItem = '2' THEN D.ITEM_NAME2
+				                                        ELSE D.ITEM_NAME
+				                END)														AS ITEM_NAME
+				            , D.SPEC
+				            , B.ORDER_UNIT
+				            --, B.PRICE_TYPE												/* 공통코드 'B116' 과세여부*/	
+				            , B.TRANS_RATE
+				            , B.ORDER_Q														AS ORDER_UNIT_Q
+				            , A.MONEY_UNIT
+				            , B.ORDER_P
+				            , B.ORDER_O
+				            , B.OUTSTOCK_Q													AS OUTSTOCK_Q	--출고량 
+				            --, (B.ORDER_Q - B.OUTSTOCK_Q + B.RETURN_Q)						AS ORDER_REM_Q	--미납량 
+				            --, ((B.ORDER_Q - B.OUTSTOCK_Q + B.RETURN_Q) * ORDER_P)			AS ORDER_REM_O	--미납액 
+				            , CASE WHEN ISNULL(B.ORDER_STATUS, 'N') = 'N' THEN  
+								CASE WHEN (B.ORDER_Q - B.OUTSTOCK_Q + B.RETURN_Q) > 0 THEN (B.ORDER_Q - B.OUTSTOCK_Q + B.RETURN_Q)  ELSE 0 END
+									ELSE 0 END						AS ORDER_REM_Q	--미납량 
+				            , CASE WHEN ISNULL(B.ORDER_STATUS, 'N') = 'N' THEN  
+								CASE WHEN (B.ORDER_Q - B.OUTSTOCK_Q + B.RETURN_Q) > 0 THEN ((B.ORDER_Q - B.OUTSTOCK_Q + B.RETURN_Q) * ORDER_P) ELSE 0 END
+									ELSE 0 END						AS ORDER_REM_O	--미납액 
+
+				            , A.ORDER_PRSN													/* 공통코드 'S010' */
+				            , A.ORDER_TYPE													/* 공통코드 'S002' */ 
+				            , B.ORDER_STATUS 
+				            , D.STOCK_UNIT
+				            , ISNULL((SELECT ISNULL(SUM(ISNULL(Z.GOOD_STOCK_Q,  0)), 0)
+				                       FROM BIV100T Z WITH (NOLOCK)
+				                      WHERE Z.ITEM_CODE = B.ITEM_CODE
+				                        AND Z.COMP_CODE = @CompCode
+				                      GROUP BY Z.ITEM_CODE),0)								AS STOCK_Q		--재고량   
+				
+				            , I.SALE_Q														AS SALES_QTY	--매출수량 ssa110t
+				            , I.SALE_AMT_O													AS SALES_AMT	--매출금액 
+				            --, CASE WHEN J.COMP_CODE IS NULL THEN 0
+				            --	   ELSE I.SALE_Q
+				            --  END															AS PUB_QTY		--세금계산서 
+				            --, J.SALE_AMT_O												AS PUB_AMT		--세금계산서 금액 
+				            , 0 															AS PUB_QTY		--세금계산서 
+				            , 0																AS PUB_AMT		--세금계산서 금액 
+							--20181101 추가
+							, A.ORDER_DATE
+							, CASE WHEN @exchgBase = '1' THEN ISNULL(Z1.BASE_EXCHG, 1)
+								   ELSE ISNULL(Z2.BASE_EXCHG, 1)
+							  END															AS BASE_EXCHG
+							, CASE WHEN @exchgBase = '1' THEN ISNULL(Z3.BASE_EXCHG, 1)
+								   ELSE ISNULL(Z4.BASE_EXCHG, 1)
+							  END															AS EXCHG_BASE_EXCHG
+
+				
+				         FROM            SOF100T A  WITH (NOLOCK)
+				              INNER JOIN SOF110T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+				                                                 AND B.DIV_CODE     = A.DIV_CODE
+				                                                 AND B.ORDER_NUM    = A.ORDER_NUM
+				                                                 AND B.COMP_CODE    = A.COMP_CODE
+				              INNER JOIN BCM100T C  WITH (NOLOCK) ON C.COMP_CODE    = A.COMP_CODE
+				                                                 AND C.CUSTOM_CODE  = A.CUSTOM_CODE
+				              INNER JOIN BPR100T D  WITH (NOLOCK) ON D.COMP_CODE    = B.COMP_CODE
+				                                                 AND D.ITEM_CODE    = B.ITEM_CODE
+				              LEFT  JOIN BPR100T F  WITH (NOLOCK) ON F.COMP_CODE    = D.COMP_CODE
+				                                                 AND F.ITEM_CODE    = D.ITEM_GROUP
+				             -- LEFT  JOIN SCM100T E  WITH (NOLOCK) ON A.COMP_CODE    = E.COMP_CODE
+				             --                                    AND A.CUSTOM_CODE  = E.CUSTOM_CODE
+				             --                                    AND B.DVRY_CUST_CD = CONVERT(NVARCHAR, E.DVRY_CUST_SEQ)
+				              LEFT  JOIN BCM600T H WITH (NOLOCK)  ON H.COMP_CODE    = A.COMP_CODE 
+				                                                 AND H.PJT_CODE     = A.PROJECT_NO
+				              --LEFT  JOIN SSA110T I WITH (NOLOCK)  ON I.COMP_CODE    = B.COMP_CODE 
+				              --                                   AND I.DIV_CODE     = B.DIV_CODE
+				              --                                   AND I.ORDER_NUM    = B.ORDER_NUM
+				              --                                   AND I.SER_NO       = B.SER_NO
+				              LEFT JOIN ( SELECT COMP_CODE, DIV_CODE, ORDER_NUM, SER_NO, SUM(SALE_Q) AS SALE_Q, SUM(SALE_AMT_O) AS SALE_AMT_O 
+											FROM SSA110T WITH(NOLOCK)
+											GROUP BY COMP_CODE, DIV_CODE, ORDER_NUM, SER_NO ) I ON I.COMP_CODE    = B.COMP_CODE 
+				                                                 AND I.DIV_CODE     = B.DIV_CODE
+				                                                 AND I.ORDER_NUM    = B.ORDER_NUM
+				                                                 AND I.SER_NO       = B.SER_NO
+				             -- LEFT  JOIN STB100T J WITH (NOLOCK)  ON J.COMP_CODE    = I.COMP_CODE 
+				             --                                    AND J.DIV_CODE     = I.DIV_CODE
+				             --                                    AND J.PUB_NUM      = I.PUB_NUM
+				             -- 수주 화폐 관련 환율
+				              LEFT JOIN (
+				                            SELECT B.COMP_CODE
+				                                 , B.BASE_EXCHG
+				                                 , B.AC_DATE
+				                                 , B.MONEY_UNIT
+				                              FROM BCM510T AS B WITH (NOLOCK)
+				                             WHERE B.COMP_CODE  = @CompCode
+				                        ) Z1									 ON Z1.COMP_CODE  = A.COMP_CODE
+				                            									AND Z1.AC_DATE    = A.ORDER_DATE
+				                            									AND Z1.MONEY_UNIT = A.MONEY_UNIT
+				              LEFT JOIN (
+				                            SELECT B.COMP_CODE
+				                                 , B.BASE_EXCHG
+				                                 , B.AC_DATE
+				                                 , B.MONEY_UNIT
+				                              FROM BCM510T AS B WITH (NOLOCK)
+				                             WHERE B.COMP_CODE  = @CompCode
+				                        ) Z2									 ON Z2.COMP_CODE = A.COMP_CODE
+				                            									AND Z2.AC_DATE   = SUBSTRING(A.ORDER_DATE, 1, 6)
+				                            									AND Z2.MONEY_UNIT = A.MONEY_UNIT
+				             -- 환산 화폐 관련 환율
+				              LEFT JOIN (
+				                            SELECT B.COMP_CODE
+				                                 , B.BASE_EXCHG
+				                                 , B.AC_DATE
+				                                 , B.MONEY_UNIT
+				                              FROM BCM510T AS B WITH (NOLOCK)
+				                             WHERE B.COMP_CODE  = @CompCode
+				                        ) Z3									 ON Z3.COMP_CODE  = A.COMP_CODE
+				                            									AND Z3.AC_DATE    = CONVERT(NVARCHAR(08), GETDATE(), 112)
+				                            									AND Z3.MONEY_UNIT = @exchgMoneyUnit
+				              LEFT JOIN (
+				                            SELECT B.COMP_CODE
+				                                 , B.BASE_EXCHG
+				                                 , B.AC_DATE
+				                                 , B.MONEY_UNIT
+				                              FROM BCM510T AS B WITH (NOLOCK)
+				                             WHERE B.COMP_CODE  = @CompCode
+				                        ) Z4									 ON Z4.COMP_CODE = A.COMP_CODE
+				                            									AND Z4.AC_DATE   = CONVERT(NVARCHAR(06), GETDATE(), 112)
+				                            									AND Z4.MONEY_UNIT = @exchgMoneyUnit
+
+				        WHERE A.COMP_CODE       = @CompCode
+				       <if test="STATUS == &quot;2&quot;">
+				          AND (B.ORDER_Q - B.OUTSTOCK_Q + B.RETURN_Q) &gt; 0 --조회조건에 따라 적용 ( 1:전체,  2:미납, 3:납품완료 ) 
+				       </if>
+				       <if test="STATUS == &quot;3&quot;">
+				          AND (B.ORDER_Q - B.OUTSTOCK_Q + B.RETURN_Q) &lt;= 0 --조회조건에 따라 적용 ( 1:전체,  2:미납, 3:납품완료 ) 
+				       </if>
+					       <if test="ORDER_STATUS == &quot;Y&quot;">
+					       AND ORDER_STATUS = 'Y'
+					       </if>
+					       <if test="ORDER_STATUS == &quot;N&quot;">
+					       AND ORDER_STATUS = 'N'
+					       </if>	       
+					       <if test="@foren.Ognl@isNotEmpty(DVRY_DATE_FR)">
+					       AND B.DVRY_DATE   &gt;= #{DVRY_DATE_FR}				/* 납기일(FR) */
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(DVRY_DATE_TO)">
+					       AND B.DVRY_DATE   &lt;= #{DVRY_DATE_TO}				/* 납기일(TO) */
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(ORDER_PRSN)">					
+					       AND A.ORDER_PRSN IN
+								 <foreach collection="ORDER_PRSN" item="item" separator="," close=")" open="(">
+					              		 #{item}
+					        	</foreach>										/* 담당자 */
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+					       AND A.CUSTOM_CODE LIKE  #{CUSTOM_CODE} + '%'      	/* 거래처코드 */
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+		                   AND C.CUSTOM_NAME LIKE  #{CUSTOM_NAME} + '%'         /* 거래처명 */
+		                   </if>
+					       <if test="@foren.Ognl@isNotEmpty(ORDER_DATE_FR)">
+					       AND A.ORDER_DATE  &gt;= #{ORDER_DATE_FR}          	/* 시작 수주일 */
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(ORDER_DATE_TO)">
+					       AND A.ORDER_DATE  &lt;= #{ORDER_DATE_TO}          	/* 종료 수주일 */
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+					       AND B.ITEM_CODE   LIKE #{ITEM_CODE} + '%'				/* 품목*/
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+		                   AND D.ITEM_NAME   LIKE #{ITEM_NAME} + '%'                /* 품목명*/
+		                   </if>
+					       <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+					       AND A.DIV_CODE       = #{DIV_CODE}					/* 사업장(권한체크필수)	*/
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+					       AND C.AGENT_TYPE     = #{AGENT_TYPE}					/* 거래처분류	*/
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(AREA_TYPE)">
+					       AND C.AREA_TYPE      = #{AREA_TYPE}					/* 지역 */
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+					       AND A.ORDER_TYPE     = #{ORDER_TYPE}					/* 판매유형 */
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(TXTLV_L1)">
+					       AND D.ITEM_LEVEL1    = #{TXTLV_L1}					/* 대분류 */
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(TXTLV_L2)">
+					       AND D.ITEM_LEVEL2    = #{TXTLV_L2}					/* 중분류 */
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(TXTLV_L3)">
+					       AND D.ITEM_LEVEL3    = #{TXTLV_L3}					/* 소분류 */
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(ITEM_GROUP)">
+					       AND D.ITEM_GROUP     = #{ITEM_GROUP}					/* 대표모델 */
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(ITEM_GROUP_NAME)">
+					       AND (CASE WHEN @RefItem = '1' THEN F.ITEM_NAME1
+					                 WHEN @RefItem = '2' THEN F.ITEM_NAME2
+					                                     ELSE F.ITEM_NAME
+					             END)        LIKE #{ITEM_GROUP_NAME} + '%'			/* 대표모델명 */
+					       </if>      
+					       <if test="@foren.Ognl@isNotEmpty(FR_ORDER_QTY)">      
+					       AND B.ORDER_Q       &gt;= #{FR_ORDER_QTY}				/* 시작 수주량 */
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(TO_ORDER_QTY)">
+					       AND B.ORDER_Q       &lt;= #{TO_ORDER_QTY}				/* 종료 수주량 */
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(FR_ORDER_NUM)">
+					       AND A.ORDER_NUM     &gt;= #{FR_ORDER_NUM}			    /* 수주번호(Fr) */
+					       </if>
+					       <if test="@foren.Ognl@isNotEmpty(TO_ORDER_NUM)">
+					       AND A.ORDER_NUM     &lt;= #{TO_ORDER_NUM}			    /* 수주번호(TO) */
+					       </if>
+					       
+						   <if test="rdoSelect2 == &quot;6&quot;">
+				           AND A.STATUS = '6'		/*승인*/
+				           </if>
+				           <if test="rdoSelect2 == &quot;5&quot;">
+				           AND A.STATUS = '5'		/*반려*/
+				           </if>
+				           <if test="rdoSelect2 == &quot;N&quot;">
+				           AND A.STATUS IN ('1', '2', '3', '4')	/*미승인*/
+				           </if>
+				           <if test="@foren.Ognl@isNotEmpty(PJT_CODE)">		/*프로젝트번호*/
+							    AND    A.PROJECT_NO  LIKE #{PJT_CODE} + '%'
+						   </if>
+					) Z
+					GROUP BY
+							Z.CUSTOM_CODE, Z.CUSTOM_NAME, Z.ITEM_CODE, Z.ITEM_NAME, Z.SPEC, Z.ORDER_UNIT, Z.TRANS_RATE
+						  , Z.MONEY_UNIT, Z.ORDER_P, Z.ORDER_PRSN, Z.ORDER_TYPE, Z.ORDER_STATUS, Z.STOCK_UNIT, Z.STOCK_Q
+						  --, Z.ORDER_DATE
+						  , Z.BASE_EXCHG, Z.EXCHG_BASE_EXCHG
+						--, Z.ORDER_UNIT_Q, Z.ORDER_O, Z.OUTSTOCK_Q, Z.ORDER_REM_Q, Z.ORDER_REM_O
+						--, Z.SALES_QTY, Z.SALES_AMT, Z.PUB_QTY, Z.PUB_AMT
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+    </select>
+</mapper>

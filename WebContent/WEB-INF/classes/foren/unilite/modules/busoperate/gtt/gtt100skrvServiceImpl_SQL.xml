@@ -1,0 +1,1020 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="gtt100skrvServiceImpl">
+	<select id="gtt100skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		DECLARE @SDATE NVARCHAR(10)
+		      , @EDATE NVARCHAR(10)
+			  , @VEHICLE_CODE NVARCHAR(10)
+		
+		SELECT @SDATE=CONVERT(NVARCHAR(10), CONVERT(DATETIME,#{ATT_DATE_FR},112),120 ),@EDATE=CONVERT(NVARCHAR(10), CONVERT(DATETIME,#{ATT_DATE_TO},112),120 )
+		
+		<if test="@foren.Ognl@isNotEmpty(VEHICLE_NAME)">
+			SELECT @VEHICLE_CODE = VEHICLE_CODE
+			FROM GVE100T
+			 WHERE COMP_CODE         = #{S_COMP_CODE}
+		       AND DIV_CODE          = #{DIV_CODE} 
+			   AND VEHICLE_NAME 	 = #{VEHICLE_NAME}
+	    </if>
+		        
+		SELECT PERSON_NUMB
+		     , REPLACE(ATT_DATE,'-','') AS ATT_DATE
+		     , IN_TIME
+		     , OUT_TIME 
+		     , CARD_IN_TIME
+		     , CARD_OUT_TIME
+		     , FP_IN_TIME
+		     , FP_OUT_TIME
+		  INTO #AttTimeBusV
+		  FROM AttTimeBusV
+		 WHERE ATT_DATE BETWEEN @SDATE AND @EDATE
+		
+		SELECT A.COMP_CODE
+		     , A.DIV_CODE
+		     , A.OPERATION_DATE
+		     , A.DRIVER_CODE
+		     , SUM(A.RUN_COUNT)  AS RUN_COUNT
+		     , SUM(A.COMP_COUNT) AS COMP_COUNT
+		  INTO #CountT
+		  FROM (SELECT A.COMP_CODE
+		             , A.DIV_CODE
+		             , A.OPERATION_DATE
+		             , A.DRIVER_CODE
+		             , A.VEHICLE_CODE AS CARD_USE_VEHICLE_CODE
+		             , B.VEHICLE_CODE AS OPERATION_VEHICLE_CODE
+		             , (CASE WHEN ISNULL(A.VEHICLE_CODE,'') != ''                        THEN 1 ELSE 0 END) AS RUN_COUNT
+		             , (CASE WHEN ISNULL(A.VEHICLE_CODE,'') != ISNULL(B.VEHICLE_CODE,'') THEN 1 ELSE 0 END) AS COMP_COUNT
+		          FROM (SELECT COMP_CODE
+		                     , DIV_CODE
+		                     , PAYMENT_DATE AS OPERATION_DATE
+		                     , DRIVER_CODE
+		                     , VEHICLE_CODE
+		                  FROM GCD100T WITH (NOLOCK)
+		                 WHERE COMP_CODE       = #{S_COMP_CODE}
+		                   AND DIV_CODE        = #{DIV_CODE}
+		                   AND PAYMENT_DATE   &gt;= #{ATT_DATE_FR}
+		                   AND PAYMENT_DATE   &lt;= #{ATT_DATE_TO}
+		                   AND DRIVER_CODE    != '') A
+		               LEFT JOIN   
+		               (SELECT A.COMP_CODE
+		                     , A.DIV_CODE
+		                     , A.OPERATION_DATE
+		                     , A.DRIVER_CODE
+		                     , A.VEHICLE_CODE
+		                  FROM GOP300T A WITH (NOLOCK)
+		                       INNER JOIN (SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT, RUN_COUNT
+		                                     FROM (SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT, RUN_COUNT, NOTINSERVICE_YN
+		                                                , RANK() OVER(PARTITION BY COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT ORDER BY CONVERT(NUMERIC(10,0),RUN_COUNT) DESC) AS RNK
+		                                             FROM GOP300T WITH (NOLOCK)
+		                                            WHERE COMP_CODE         = #{S_COMP_CODE}
+		                                              AND DIV_CODE          = #{DIV_CODE}
+		                                              AND OPERATION_DATE   &gt;= #{ATT_DATE_FR}
+		                                              AND OPERATION_DATE   &lt;= #{ATT_DATE_TO}
+		                                              AND OTHER_VEHICLE_YN != 'Y') L
+		                                    WHERE RNK = 1
+		                                      AND NOTINSERVICE_YN != 'Y') B ON B.COMP_CODE       = A.COMP_CODE
+		                                                                   AND B.DIV_CODE        = A.DIV_CODE
+		                                                                   AND B.OPERATION_DATE  = A.OPERATION_DATE
+		                                                                   AND B.ROUTE_CODE      = A.ROUTE_CODE
+		                                                                   AND B.OPERATION_COUNT = A.OPERATION_COUNT
+		                                                                   AND B.RUN_COUNT       = A.RUN_COUNT
+		                 WHERE A.COMP_CODE         = #{S_COMP_CODE}
+		                   AND A.DIV_CODE          = #{DIV_CODE}
+		                   AND A.OPERATION_DATE   &gt;= #{ATT_DATE_FR}
+		                   AND A.OPERATION_DATE   &lt;= #{ATT_DATE_TO}
+		                   AND A.OTHER_VEHICLE_YN != 'Y'
+		                   AND A.NOTINSERVICE_YN  != 'Y') B ON B.COMP_CODE      = A.COMP_CODE
+		                                                   AND B.DIV_CODE       = A.DIV_CODE
+		                                                   AND B.OPERATION_DATE = A.OPERATION_DATE
+		                                                   AND B.DRIVER_CODE    = A.DRIVER_CODE
+		                                                   AND B.VEHICLE_CODE   = A.VEHICLE_CODE
+		        UNION ALL
+		        SELECT A.COMP_CODE
+		             , A.DIV_CODE
+		             , A.OPERATION_DATE
+		             , A.DRIVER_CODE
+		             , B.VEHICLE_CODE AS CARD_USE_VEHICLE_CODE
+		             , A.VEHICLE_CODE AS OPERATION_VEHICLE_CODE
+		             , (CASE WHEN ISNULL(B.VEHICLE_CODE,'') != ''                        THEN 1 ELSE 0 END) AS RUN_COUNT
+		             , (CASE WHEN ISNULL(B.VEHICLE_CODE,'') != ISNULL(A.VEHICLE_CODE,'') THEN 1 ELSE 0 END) AS COMP_COUNT
+		          FROM (SELECT A.COMP_CODE
+		                     , A.DIV_CODE
+		                     , A.OPERATION_DATE
+		                     , A.DRIVER_CODE
+		                     , A.VEHICLE_CODE
+		                  FROM GOP300T A WITH (NOLOCK)
+		                       INNER JOIN (SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT, RUN_COUNT
+		                                     FROM (SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT, RUN_COUNT, NOTINSERVICE_YN
+		                                                , RANK() OVER(PARTITION BY COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT ORDER BY CONVERT(NUMERIC(10,0),RUN_COUNT) DESC) AS RNK
+		                                             FROM GOP300T WITH (NOLOCK)
+		                                            WHERE COMP_CODE         = #{S_COMP_CODE}
+		                                              AND DIV_CODE          = #{DIV_CODE}
+		                                              AND OPERATION_DATE   &gt;= #{ATT_DATE_FR}
+		                                              AND OPERATION_DATE   &lt;= #{ATT_DATE_TO}
+		                                              AND OTHER_VEHICLE_YN != 'Y') L
+		                                    WHERE RNK = 1
+		                                      AND NOTINSERVICE_YN != 'Y') B ON B.COMP_CODE       = A.COMP_CODE
+		                                                                   AND B.DIV_CODE        = A.DIV_CODE
+		                                                                   AND B.OPERATION_DATE  = A.OPERATION_DATE
+		                                                                   AND B.ROUTE_CODE      = A.ROUTE_CODE
+		                                                                   AND B.OPERATION_COUNT = A.OPERATION_COUNT
+		                                                                   AND B.RUN_COUNT       = A.RUN_COUNT
+		                 WHERE A.COMP_CODE         = #{S_COMP_CODE}
+		                   AND A.DIV_CODE          = #{DIV_CODE}
+		                   AND A.OPERATION_DATE   &gt;= #{ATT_DATE_FR}
+		                   AND A.OPERATION_DATE   &lt;= #{ATT_DATE_TO}
+		                   AND A.OTHER_VEHICLE_YN != 'Y'
+		                   AND A.NOTINSERVICE_YN  != 'Y') A
+		               LEFT JOIN   
+		               (SELECT COMP_CODE
+		                     , DIV_CODE
+		                     , PAYMENT_DATE AS OPERATION_DATE
+		                     , DRIVER_CODE
+		                     , VEHICLE_CODE
+		                  FROM GCD100T WITH (NOLOCK)
+		                 WHERE COMP_CODE       = #{S_COMP_CODE}
+		                   AND DIV_CODE        = #{DIV_CODE}
+		                   AND PAYMENT_DATE   &gt;= #{ATT_DATE_FR}
+		                   AND PAYMENT_DATE   &lt;= #{ATT_DATE_TO}
+		                   AND DRIVER_CODE    != '') B ON B.COMP_CODE      = A.COMP_CODE
+		                                              AND B.DIV_CODE       = A.DIV_CODE
+		                                              AND B.OPERATION_DATE = A.OPERATION_DATE
+		                                              AND B.DRIVER_CODE    = A.DRIVER_CODE
+		                                              AND B.VEHICLE_CODE   = A.VEHICLE_CODE
+		         WHERE B.COMP_CODE IS NULL) A
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.OPERATION_DATE, A.DRIVER_CODE
+		
+		SELECT O.OPERATION_DATE
+		     , O.OPERATION_COUNT
+		     , O.RUN_COUNT
+		     , O.ROUTE_CODE
+		     , R.ROUTE_NUM
+		     , O.VEHICLE_CODE
+		     , V.VEHICLE_NAME
+		     , V.VEHICLE_REGIST_NO
+		     , O.DRIVER_CODE
+		     , H1.NAME AS DRIVER_NAME
+		     , O.ORG_DRIVER_CODE
+		     , H2.NAME AS ORG_DRIVER_NAME
+		     , O.WORK_TEAM_CODE
+		     , REPLACE(G.ATT_DATE, '-','') AS ATT_DATE
+		     , CONVERT(NVARCHAR(8), G.IN_TIME , 114) AS IN_TIME
+		     , CONVERT(NVARCHAR(8), G.OUT_TIME, 114) AS OUT_TIME
+		     , O.RUN_COUNT_CNT
+		     , CASE WHEN G.IN_TIME IS NULL OR G.OUT_TIME IS NULL THEN 0 ELSE  1 END AS DATE_CNT
+		     , O.DUTY_FR_TIME
+		     , O.DUTY_TO_TIME
+		     , DATEDIFF(MINUTE, G.IN_TIME, CONVERT(DATETIME, ISNULL(O.DUTY_FR_DATE, O.OPERATION_DATE)+' '+O.DUTY_FR_TIME, 114)) AS DIFF_FR 
+		     , DATEDIFF(MINUTE, CONVERT(DATETIME, ISNULL(O.DUTY_TO_DATE, O.OPERATION_DATE)+' '+O.DUTY_TO_TIME, 114),G.OUT_TIME) AS DIFF_TO
+		     , CONVERT(NVARCHAR(8), G.CARD_IN_TIME, 114) AS CARD_IN_TIME
+		     , CONVERT(NVARCHAR(8), G.CARD_OUT_TIME, 114) AS CARD_OUT_TIME
+		     , CONVERT(NVARCHAR(8), G.FP_IN_TIME, 114) AS FP_IN_TIME
+		     , CONVERT(NVARCHAR(8), G.FP_OUT_TIME, 114) AS FP_OUT_TIME
+		     , S.DRIVER_CNT
+		     , S.ROUTE_CNT
+		     , S.VEHICLE_CNT
+		     , S.OPERATION_DATE_CNT
+		     , SUM(CASE WHEN DATEDIFF(MINUTE, G.IN_TIME, CONVERT(DATETIME, ISNULL(O.DUTY_FR_DATE, O.OPERATION_DATE)+' '+O.DUTY_FR_TIME, 114)) &lt; 0 THEN 1 ELSE 0 END ) OVER() AS LATE_CNT
+		     , SUM(CASE WHEN DATEDIFF(MINUTE, CONVERT(DATETIME, ISNULL(O.DUTY_TO_DATE, O.OPERATION_DATE)+' '+O.DUTY_TO_TIME, 114),G.OUT_TIME) &lt; 0 THEN 1 ELSE 0 END ) OVER() AS EARLY_CNT
+		     , O.CONFIRM_YN
+		     , (S.DRIVER_CNT - S.NO_DRIVER_CNT) AS ASSIGNED_DRIVER_CNT
+		     , S.NO_DRIVER_CNT
+		     , S.NO_TAG_IN_CNT
+		     , S.NO_TAG_OUT_CNT
+		     , S.NO_TAG_CNT
+		     , (S.DRIVER_CNT - S.NO_DRIVER_CNT - S.NO_TAG_CNT)  AS TAG_CNT
+		     , (S.DRIVER_CNT - S.NO_DRIVER_CNT - S.NO_TAG_IN_CNT )  AS TAG_IN_CNT
+		     , (S.DRIVER_CNT - S.NO_DRIVER_CNT - S.NO_TAG_OUT_CNT)  AS TAG_OUT_CNT
+		     , CASE WHEN S.DRIVER_CNT > 0 THEN ROUND((S.DRIVER_CNT - S.NO_DRIVER_CNT - S.NO_TAG_CNT)/CONVERT(NUMERIC(10,2),S.DRIVER_CNT)*100,0) ELSE 0 END AS TAG_RATE
+		     , CASE WHEN S.DRIVER_CNT > 0 THEN ROUND((S.DRIVER_CNT - S.NO_DRIVER_CNT)/CONVERT(NUMERIC(10,2),S.DRIVER_CNT)*100,0) ELSE 0 END AS DRIVER_RATE
+		     , P.VEHICLE_CODE   AS ORDER_VEHICLE_CODE                                                               --운행차량(현금) 승무지시 차량코드
+		     , V2.VEHICLE_NAME  AS ORDER_VEHICLE_NAME                                                               --운행차량(현금) 승무지시 차량명(빨간색 표시)
+		     , CONVERT(NVARCHAR(1),T.RUN_COUNT) + '(' + CONVERT(NVARCHAR(1),T.COMP_COUNT) + ')' AS CARD_BASE_COUNT  --운행대수(카드)
+		  FROM (SELECT GOP.COMP_CODE
+		             , GOP.DIV_CODE
+		             , GOP.OPERATION_DATE
+		             , GOP.OPERATION_COUNT
+		             , MIN(GOP.RUN_COUNT) AS RUN_COUNT
+		             , COUNT(GOP.RUN_COUNT) AS RUN_COUNT_CNT
+		             , GOP.ROUTE_CODE
+		             , VEHICLE_CODE
+		             , DRIVER_CODE
+		             , WORK_TEAM_CODE
+		             , CASE WHEN DRIVER_CODE != PLAN_DRIVER_CODE THEN PLAN_DRIVER_CODE ELSE '' END ORG_DRIVER_CODE
+		             , MIN(DUTY_FR_DATE) AS DUTY_FR_DATE
+		             , CASE WHEN ISNULL(MIN(DUTY_FR_TIME),'') != ''	THEN left(MIN(DUTY_FR_TIME), 2)+':'+SUBSTRING(MIN(DUTY_FR_TIME),3,2)+':'+ (CASE WHEN LEN(MIN(DUTY_FR_TIME))= 6 THEN SUBSTRING(MIN(DUTY_FR_TIME),5,2) ELSE '00' END)  ELSE '' END AS DUTY_FR_TIME
+		             , MAX(DUTY_TO_DATE) AS DUTY_TO_DATE
+		             , CASE WHEN ISNULL(MAX(DUTY_TO_TIME),'') != ''	THEN left(MAX(DUTY_TO_TIME), 2)+':'+SUBSTRING(MAX(DUTY_TO_TIME),3,2)+':'+ (CASE WHEN LEN(MAX(DUTY_TO_TIME))= 6 THEN SUBSTRING(MAX(DUTY_TO_TIME),5,2) ELSE '00' END)  ELSE '' END AS DUTY_TO_TIME
+		             , GOP.CONFIRM_YN
+		          FROM GOP300T GOP
+		               INNER JOIN (SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT, RUN_COUNT
+		                             FROM (SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT, RUN_COUNT, NOTINSERVICE_YN
+		                                        , RANK() OVER(PARTITION BY COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT ORDER BY CONVERT(NUMERIC(10,0),RUN_COUNT) DESC) AS RNK
+		                                     FROM GOP300T
+		                                    WHERE COMP_CODE = #{S_COMP_CODE}
+		                                      AND DIV_CODE  = #{DIV_CODE}
+		                                      AND OPERATION_DATE &gt;= #{ATT_DATE_FR}
+		                                      AND OPERATION_DATE &lt;= #{ATT_DATE_TO}
+		                                      AND OTHER_VEHICLE_YN != 'Y'
+		
+		                                      <if test="@foren.Ognl@isNotEmpty(DRIVER_CODE)">
+		                                      AND DRIVER_CODE = #{DRIVER_CODE}
+		                                      </if>
+		                                      <if test="@foren.Ognl@isNotEmpty(WORK_TEAM_CODE)">
+		                                      AND WORK_TEAM_CODE = #{WORK_TEAM_CODE}
+		                                      </if>	
+		                                      <if test="@foren.Ognl@isNotEmpty(ROUTE_GROUP)">
+		                                      AND ROUTE_GROUP = #{ROUTE_GROUP}
+		                                      </if>
+		                                      <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+		                                      AND ROUTE_CODE = #{ROUTE_CODE}
+		                                      </if>	
+		                                      <if test="@foren.Ognl@isNotEmpty(VEHICLE_NAME)">
+		                                      AND VEHICLE_CODE = @VEHICLE_CODE
+		                                      </if>
+		                                      <if test="SEARCH_KIND == '02'">
+		                                      AND ISNULL(DRIVER_CODE, '') != ''
+		                                      </if>	  
+		
+		                                  ) L
+		                            WHERE RNK = 1
+		                              AND NOTINSERVICE_YN != 'Y') MO ON GOP.COMP_CODE       = MO.COMP_CODE
+		                                                            AND GOP.DIV_CODE        = MO.DIV_CODE
+		                                                            AND GOP.OPERATION_DATE  = MO.OPERATION_DATE
+		                                                            AND GOP.ROUTE_CODE      = MO.ROUTE_CODE
+		                                                            AND GOP.OPERATION_COUNT = MO.OPERATION_COUNT
+		                                                            AND GOP.RUN_COUNT       = MO.RUN_COUNT
+		         WHERE GOP.COMP_CODE = #{S_COMP_CODE}
+		           AND GOP.DIV_CODE  = #{DIV_CODE}
+		           AND GOP.OPERATION_DATE &gt;= #{ATT_DATE_FR}
+		           AND GOP.OPERATION_DATE &lt;= #{ATT_DATE_TO}
+		           AND GOP.OTHER_VEHICLE_YN != 'Y'
+		           AND GOP.NOTINSERVICE_YN  != 'Y'
+		
+		           <if test="@foren.Ognl@isNotEmpty(DRIVER_CODE)">
+		           AND GOP.DRIVER_CODE = #{DRIVER_CODE}
+		           </if>
+		           <if test="@foren.Ognl@isNotEmpty(WORK_TEAM_CODE)">
+		           AND GOP.WORK_TEAM_CODE = #{WORK_TEAM_CODE}
+		           </if>	
+		           <if test="@foren.Ognl@isNotEmpty(ROUTE_GROUP)">
+		           AND GOP.ROUTE_GROUP = #{ROUTE_GROUP}
+		           </if>
+		           <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+		           AND GOP.ROUTE_CODE = #{ROUTE_CODE}
+		           </if>	
+		           <if test="@foren.Ognl@isNotEmpty(VEHICLE_NAME)">
+		           AND GOP.VEHICLE_CODE = @VEHICLE_CODE
+		           </if>
+		           <if test="SEARCH_KIND == '02'">
+		           AND ISNULL(GOP.DRIVER_CODE, '') != ''
+		           </if>	  
+		
+		         GROUP BY GOP.COMP_CODE     , GOP.DIV_CODE      , GOP.OPERATION_DATE, GOP.OPERATION_COUNT   , GOP.ROUTE_CODE
+		                , GOP.VEHICLE_CODE  , GOP.DRIVER_CODE   , GOP.WORK_TEAM_CODE, GOP.PLAN_DRIVER_CODE  , GOP.CONFIRM_YN) O 
+		       LEFT JOIN #AttTimeBusV G  ON O.DRIVER_CODE     = G.PERSON_NUMB
+		                                AND O.OPERATION_DATE  = G.ATT_DATE
+		       LEFT JOIN HUM100T      H1 ON O.COMP_CODE       = H1.COMP_CODE
+		                                AND O.DIV_CODE        = H1.DIV_CODE
+		                                AND O.DRIVER_CODE     = H1.PERSON_NUMB
+		       LEFT JOIN HUM100T      H2 ON O.COMP_CODE       = H2.COMP_CODE
+		                                AND O.DIV_CODE        = H2.DIV_CODE
+		                                AND O.ORG_DRIVER_CODE = H2.PERSON_NUMB
+		       LEFT JOIN GRT100T      R  ON O.COMP_CODE       = R.COMP_CODE
+		                                AND O.DIV_CODE        = R.DIV_CODE
+		                                AND O.ROUTE_CODE      = R.ROUTE_CODE
+		       LEFT JOIN GVE100T      V  ON O.COMP_CODE       = V.COMP_CODE
+		                                AND O.DIV_CODE        = V.DIV_CODE
+		                                AND O.VEHICLE_CODE    = V.VEHICLE_CODE
+		       LEFT JOIN (SELECT S1.COMP_CODE
+		                       , S1.DIV_CODE
+		                       , COUNT(S1.DRIVER_CODE) AS DRIVER_CNT
+		                       , COUNT(S1.ROUTE_CODE) AS ROUTE_CNT
+		                       , COUNT(S1.VEHICLE_CODE) AS VEHICLE_CNT
+		                       , COUNT(S1.OPERATION_DATE) AS OPERATION_DATE_CNT
+		                       , SUM(CASE WHEN ISNULL(S1.DRIVER_CODE,'') = ''                                     THEN 1 ELSE 0 END) AS NO_DRIVER_CNT
+		                       , SUM(CASE WHEN ISNULL(S2.NO_TAG_IN  ,'') = '' AND ISNULL(S1.DRIVER_CODE,'') != '' THEN 1 ELSE 0 END) AS NO_TAG_IN_CNT
+		                       , SUM(CASE WHEN ISNULL(S2.NO_TAG_OUT ,'') = '' AND ISNULL(S1.DRIVER_CODE,'') != '' THEN 1 ELSE 0 END) AS NO_TAG_OUT_CNT
+		                       , SUM(CASE WHEN ISNULL(S2.NO_TAG     ,'') = '' AND ISNULL(S1.DRIVER_CODE,'') != '' THEN 1 ELSE 0 END) AS NO_TAG_CNT
+		                    FROM GOP300T S1
+		                         INNER JOIN (SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT, RUN_COUNT
+		                                       FROM (SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT, RUN_COUNT, NOTINSERVICE_YN
+		                                                  , RANK() OVER(PARTITION BY COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT ORDER BY CONVERT(NUMERIC(10,0),RUN_COUNT) DESC) AS RNK
+		                                               FROM GOP300T
+		                                              WHERE COMP_CODE = #{S_COMP_CODE}
+		                                                AND DIV_CODE  = #{DIV_CODE}
+		                                                AND OPERATION_DATE &gt;= #{ATT_DATE_FR}
+		                                                AND OPERATION_DATE &lt;= #{ATT_DATE_TO}
+		                                                AND OTHER_VEHICLE_YN != 'Y'
+		
+		                                                <if test="@foren.Ognl@isNotEmpty(DRIVER_CODE)">
+		                                                AND DRIVER_CODE = #{DRIVER_CODE}
+		                                                </if>
+		                                                <if test="@foren.Ognl@isNotEmpty(WORK_TEAM_CODE)">
+		                                                AND WORK_TEAM_CODE = #{WORK_TEAM_CODE}
+		                                                </if>	
+		                                                <if test="@foren.Ognl@isNotEmpty(ROUTE_GROUP)">
+		                                                AND ROUTE_GROUP = #{ROUTE_GROUP}
+		                                                </if>
+		                                                <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+		                                                AND ROUTE_CODE = #{ROUTE_CODE}
+		                                                </if>	
+		                                                <if test="@foren.Ognl@isNotEmpty(VEHICLE_NAME)">
+		                                                AND VEHICLE_CODE = @VEHICLE_CODE
+		                                                </if>
+		                                                <if test="SEARCH_KIND == '02'">
+		                                                AND ISNULL(DRIVER_CODE, '') != ''
+		                                                </if>	  
+		
+		                                            ) L
+		                                      WHERE RNK = 1
+		                                        AND NOTINSERVICE_YN != 'Y') MO ON S1.COMP_CODE       = MO.COMP_CODE
+		                                                                      AND S1.DIV_CODE        = MO.DIV_CODE
+		                                                                      AND S1.OPERATION_DATE  = MO.OPERATION_DATE
+		                                                                      AND S1.ROUTE_CODE      = MO.ROUTE_CODE
+		                                                                      AND S1.OPERATION_COUNT = MO.OPERATION_COUNT
+		                                                                      AND S1.RUN_COUNT       = MO.RUN_COUNT
+		                         LEFT JOIN (SELECT PERSON_NUMB,ATT_DATE,IN_TIME,OUT_TIME
+		                                         , CASE WHEN IN_TIME  IS NOT NULL                          THEN PERSON_NUMB ELSE '' END AS NO_TAG_IN
+		                                         , CASE WHEN OUT_TIME IS NOT NULL                          THEN PERSON_NUMB ELSE '' END AS NO_TAG_OUT
+		                                         , CASE WHEN IN_TIME  IS NOT NULL AND OUT_TIME IS NOT NULL THEN PERSON_NUMB ELSE '' END AS NO_TAG
+		                                      FROM #AttTimeBusV) S2 ON S1.DRIVER_CODE    = S2.PERSON_NUMB
+		                                                           AND S1.OPERATION_DATE = S2.ATT_DATE
+		                         LEFT JOIN HUM100T H1 ON S1.COMP_CODE   = H1.COMP_CODE
+		                                             AND S1.DIV_CODE    = H1.DIV_CODE
+		                                             AND S1.DRIVER_CODE = H1.PERSON_NUMB
+		                   WHERE S1.COMP_CODE = #{S_COMP_CODE}
+		                     AND S1.DIV_CODE = #{DIV_CODE}
+		                     AND S1.OPERATION_DATE &gt;= #{ATT_DATE_FR}
+		                     AND S1.OPERATION_DATE &lt;= #{ATT_DATE_TO}
+		                     AND S1.OTHER_VEHICLE_YN != 'Y'
+		                     AND S1.NOTINSERVICE_YN  != 'Y'				  
+		
+		                     <if test="@foren.Ognl@isNotEmpty(DRIVER_CODE)">
+		                     AND S1.DRIVER_CODE = #{DRIVER_CODE}
+		                     </if>
+		                     <if test="@foren.Ognl@isNotEmpty(WORK_TEAM_CODE)">
+		                     AND S1.WORK_TEAM_CODE = #{WORK_TEAM_CODE}
+		                     </if>	
+		                     <if test="@foren.Ognl@isNotEmpty(ROUTE_GROUP)">
+		                     AND S1.ROUTE_GROUP = #{ROUTE_GROUP}
+		                     </if>
+		                     <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+		                     AND S1.ROUTE_CODE = #{ROUTE_CODE}
+		                     </if>	
+		                     <if test="@foren.Ognl@isNotEmpty(VEHICLE_NAME)">
+		                     AND S1.VEHICLE_CODE = @VEHICLE_CODE
+		                     </if>
+		                     <if test="SEARCH_KIND == '02'">
+		                     AND S2.IN_TIME IS NULL
+		                     AND ISNULL(S1.DRIVER_CODE,'') != ''
+		                     </if>
+		                     <if test="@foren.Ognl@isNotEmpty(CONFIRM_YN)">
+		                     AND S1.CONFIRM_YN = #{CONFIRM_YN}
+		                     </if>  
+		                     <if test="@foren.Ognl@isNotEmpty(DRIVER_NAME)">
+		                     AND H1.NAME LIKE '%' + #{DRIVER_NAME} +'%'
+		                     </if>
+		                     <if test="@foren.Ognl@isNotEmpty(EMPLOY_TYPE)">
+		                     AND H1.EMPLOY_TYPE IN  
+		                         <foreach collection="EMPLOY_TYPE" item="item" separator="," close=")" open="(">
+		                             #{item}
+		                         </foreach>
+		                     </if>
+		
+		                   GROUP BY S1.COMP_CODE, S1.DIV_CODE) S ON O.COMP_CODE = S.COMP_CODE
+		                                                        AND O.DIV_CODE  = S.DIV_CODE
+		       LEFT JOIN GOP200T P  WITH (NOLOCK) ON P.COMP_CODE       = O.COMP_CODE
+		                                         AND P.DIV_CODE        = O.DIV_CODE
+		                                         AND P.OPERATION_DATE  = O.OPERATION_DATE
+		                                         AND P.ROUTE_CODE      = O.ROUTE_CODE
+		                                         AND P.OPERATION_COUNT = O.OPERATION_COUNT
+		       LEFT JOIN GVE100T V2 WITH (NOLOCK) ON V2.COMP_CODE      = P.COMP_CODE
+		                                         AND V2.DIV_CODE       = P.DIV_CODE
+		                                         AND V2.VEHICLE_CODE   = P.VEHICLE_CODE
+		       LEFT JOIN #CountT T                ON T.COMP_CODE       = O.COMP_CODE
+		                                         AND T.DIV_CODE        = O.DIV_CODE
+		                                         AND T.OPERATION_DATE  = O.OPERATION_DATE
+		                                         AND T.DRIVER_CODE     = O.DRIVER_CODE
+		 WHERE O.COMP_CODE = #{S_COMP_CODE}
+		   AND O.DIV_CODE = #{DIV_CODE}		
+		   <if test="@foren.Ognl@isNotEmpty(DRIVER_NAME)">
+		   AND H1.NAME LIKE '%' + #{DRIVER_NAME} +'%'
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(EMPLOY_TYPE)">
+		   AND H1.EMPLOY_TYPE IN  
+		       <foreach collection="EMPLOY_TYPE" item="item" separator="," close=")" open="(">
+		           #{item}
+		       </foreach>
+		   </if>
+		   <if test="SEARCH_KIND == '02'">
+		   AND G.IN_TIME IS NULL
+		   AND ISNULL(O.DRIVER_CODE, '') != ''
+		   </if>
+		   <if test="SEARCH_KIND == '01'">
+		   AND DATEDIFF(MINUTE,G.IN_TIME,CONVERT(DATETIME, ISNULL(O.DUTY_FR_DATE, O.OPERATION_DATE)+' '+O.DUTY_FR_TIME, 114)) &lt; 0 
+		   </if>
+		   <if test="@foren.Ognl@isNotEmpty(CONFIRM_YN)">
+		   AND O.CONFIRM_YN = #{CONFIRM_YN}
+		   </if>
+		
+		 ORDER BY O.OPERATION_DATE, R.ROUTE_NUM, CONVERT(NUMERIC(3,0), O.OPERATION_COUNT)
+
+	</select>
+	<select id="gtt100skrvServiceImpl.opDriver" parameterType="Map" resultType="rMap">
+		SELECT A.COMP_CODE
+             , A.DIV_CODE
+             , A.OPERATION_DATE
+             , A.VEHICLE_CODE
+             , V.VEHICLE_NAME
+		     , V.VEHICLE_REGIST_NO
+          FROM GOP300T A WITH (NOLOCK)
+               INNER JOIN (SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT, RUN_COUNT
+                             FROM (SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT, RUN_COUNT, NOTINSERVICE_YN
+                                        , RANK() OVER(PARTITION BY COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT ORDER BY CONVERT(NUMERIC(10,0),RUN_COUNT) DESC) AS RNK
+                                     FROM GOP300T WITH (NOLOCK)
+                                    WHERE COMP_CODE         = #{S_COMP_CODE}
+                                      AND DIV_CODE          = #{DIV_CODE}
+                                      AND OPERATION_DATE   =  #{OPERATION_DATE}
+                                      AND OTHER_VEHICLE_YN != 'Y') L
+                            WHERE RNK = 1
+                              AND NOTINSERVICE_YN != 'Y') B ON B.COMP_CODE       = A.COMP_CODE
+                                                           AND B.DIV_CODE        = A.DIV_CODE
+                                                           AND B.OPERATION_DATE  = A.OPERATION_DATE
+                                                           AND B.ROUTE_CODE      = A.ROUTE_CODE
+                                                           AND B.OPERATION_COUNT = A.OPERATION_COUNT
+                                                           AND B.RUN_COUNT       = A.RUN_COUNT
+               LEFT JOIN GVE100T      V  ON A.COMP_CODE       = V.COMP_CODE
+		                                AND A.DIV_CODE        = V.DIV_CODE
+		                                AND A.VEHICLE_CODE    = V.VEHICLE_CODE
+         WHERE A.COMP_CODE         = #{S_COMP_CODE}
+           AND A.DIV_CODE          = #{DIV_CODE}
+           AND A.OPERATION_DATE    = #{OPERATION_DATE}
+           AND A.DRIVER_CODE 	   = #{DRIVER_CODE}
+           AND A.OTHER_VEHICLE_YN != 'Y'
+           AND A.NOTINSERVICE_YN  != 'Y'
+	</select>
+	<select id="gtt100skrvServiceImpl.gcdDriver" parameterType="Map" resultType="rMap">
+		SELECT A.COMP_CODE
+             , A.DIV_CODE
+             , A.DRIVER_CODE
+             , A.VEHICLE_CODE
+             , A.TOTAL_AMOUNT
+             , V.VEHICLE_NAME
+		     , V.VEHICLE_REGIST_NO
+          FROM GCD100T A WITH (NOLOCK)
+          LEFT JOIN GVE100T      V  ON  A.COMP_CODE       = V.COMP_CODE
+		                            AND A.DIV_CODE        = V.DIV_CODE
+		                            AND A.VEHICLE_CODE    = V.VEHICLE_CODE
+         WHERE A.COMP_CODE       = #{S_COMP_CODE}
+           AND A.DIV_CODE        = #{DIV_CODE}
+           AND A.PAYMENT_DATE    = #{OPERATION_DATE}
+           AND A.DRIVER_CODE 	   = #{DRIVER_CODE}
+           AND A.DRIVER_CODE    != ''
+	</select>
+	<select id="gtt100skrvServiceImpl.selectListX" parameterType="Map" resultType="rMap">
+		/* gtt100skrvServiceImpl.selectList */
+		DECLARE @SDATE NVARCHAR(10),
+				@EDATE NVARCHAR(10)
+		SELECT @SDATE=CONVERT(NVARCHAR(10), CONVERT(DATETIME,#{ATT_DATE_FR},112),120 ),@EDATE=CONVERT(NVARCHAR(10), CONVERT(DATETIME,#{ATT_DATE_TO},112),120 )
+		
+		SELECT 
+		       PERSON_NUMB
+		     , REPLACE(ATT_DATE,'-','') AS ATT_DATE
+		     , IN_TIME
+		     , OUT_TIME 
+		     , CARD_IN_TIME
+		     , CARD_OUT_TIME
+		     , FP_IN_TIME
+		     , FP_OUT_TIME
+		  INTO #AttTimeBusV
+		  FROM AttTimeBusV
+		 WHERE ATT_DATE BETWEEN @SDATE AND @EDATE
+
+
+		SELECT			
+				O.OPERATION_DATE, 
+				O.OPERATION_COUNT, 
+				O.RUN_COUNT,
+				O.ROUTE_CODE, 
+				R.ROUTE_NUM,
+				O.VEHICLE_CODE,
+				V.VEHICLE_NAME,
+				V.VEHICLE_REGIST_NO,
+				O.DRIVER_CODE,
+				H1.NAME AS DRIVER_NAME,
+				O.ORG_DRIVER_CODE, 
+				H2.NAME AS ORG_DRIVER_NAME,
+				O.WORK_TEAM_CODE, 
+				REPLACE(G.ATT_DATE, '-','') AS ATT_DATE, 
+				CONVERT(NVARCHAR(8), G.IN_TIME, 114) AS IN_TIME,
+				CONVERT(NVARCHAR(8), G.OUT_TIME, 114) AS OUT_TIME,
+				O.RUN_COUNT_CNT,
+				CASE WHEN G.IN_TIME IS NULL OR G.OUT_TIME IS NULL THEN 0 ELSE  1 END AS DATE_CNT,
+				O.DUTY_FR_TIME,
+				O.DUTY_TO_TIME,
+				DATEDIFF(MINUTE,
+						 G.IN_TIME,
+						 CONVERT(DATETIME, ISNULL(DUTY_FR_DATE, O.OPERATION_DATE)+' '+DUTY_FR_TIME, 114)
+						 ) AS DIFF_FR 
+						 ,
+				DATEDIFF(MINUTE,
+						 CONVERT(DATETIME, ISNULL(DUTY_TO_DATE, O.OPERATION_DATE)+' '+DUTY_TO_TIME, 114),
+						 G.OUT_TIME
+						 ) AS DIFF_TO,
+				 
+				CONVERT(NVARCHAR(8), G.CARD_IN_TIME, 114) AS CARD_IN_TIME, 
+				CONVERT(NVARCHAR(8), G.CARD_OUT_TIME, 114) AS CARD_OUT_TIME, 
+				CONVERT(NVARCHAR(8), G.FP_IN_TIME, 114) AS FP_IN_TIME, 
+				CONVERT(NVARCHAR(8), G.FP_OUT_TIME, 114) AS FP_OUT_TIME,
+				S.DRIVER_CNT,
+				S.ROUTE_CNT,
+				S.VEHICLE_CNT,
+				S.OPERATION_DATE_CNT,
+				SUM(CASE WHEN DATEDIFF(MINUTE,
+						 G.IN_TIME,
+						 CONVERT(DATETIME, ISNULL(DUTY_FR_DATE, O.OPERATION_DATE)+' '+DUTY_FR_TIME, 114)
+						 ) &lt; 0 THEN 1 ELSE 0 END ) OVER() AS LATE_CNT,
+				SUM(CASE WHEN DATEDIFF(MINUTE,
+						 CONVERT(DATETIME, ISNULL(DUTY_TO_DATE, O.OPERATION_DATE)+' '+DUTY_TO_TIME, 114),
+						 G.OUT_TIME
+						 ) &lt; 0 THEN 1 ELSE 0 END ) OVER() AS EARLY_CNT  ,
+				O.CONFIRM_YN, 
+				(S.DRIVER_CNT - S.NO_DRIVER_CNT) AS ASSIGNED_DRIVER_CNT,
+				S.NO_DRIVER_CNT,
+				S.NO_TAG_IN_CNT,
+				S.NO_TAG_OUT_CNT,
+				S.NO_TAG_CNT,
+				(S.DRIVER_CNT - S.NO_DRIVER_CNT - S.NO_TAG_CNT)  AS TAG_CNT,
+				(S.DRIVER_CNT - S.NO_DRIVER_CNT - S.NO_TAG_IN_CNT )  AS TAG_IN_CNT,
+				(S.DRIVER_CNT - S.NO_DRIVER_CNT - S.NO_TAG_OUT_CNT)  AS TAG_OUT_CNT,
+				CASE WHEN S.DRIVER_CNT > 0 THEN ROUND((S.DRIVER_CNT - S.NO_DRIVER_CNT - S.NO_TAG_CNT)/CONVERT(NUMERIC(10,2),S.DRIVER_CNT)*100,0) ELSE 0 END AS TAG_RATE,
+				CASE WHEN S.DRIVER_CNT > 0 THEN ROUND((S.DRIVER_CNT - S.NO_DRIVER_CNT)/CONVERT(NUMERIC(10,2),S.DRIVER_CNT)*100,0) ELSE 0 END AS DRIVER_RATE
+		FROM (SELECT GOP.COMP_CODE,
+					 GOP.DIV_CODE,
+					 GOP.OPERATION_DATE, 
+					 GOP.OPERATION_COUNT, 
+					 MIN(GOP.RUN_COUNT) AS RUN_COUNT,
+					 COUNT(GOP.RUN_COUNT) AS RUN_COUNT_CNT,
+					 GOP.ROUTE_CODE, 
+					 VEHICLE_CODE,
+					 DRIVER_CODE,   
+					 WORK_TEAM_CODE,
+					 CASE WHEN DRIVER_CODE != PLAN_DRIVER_CODE THEN PLAN_DRIVER_CODE ELSE '' END ORG_DRIVER_CODE,
+					  MIN(DUTY_FR_DATE) AS DUTY_FR_DATE,
+					 CASE WHEN ISNULL(MIN(DUTY_FR_TIME),'') != '' 	THEN left(MIN(DUTY_FR_TIME), 2)+':'+SUBSTRING(MIN(DUTY_FR_TIME),3,2)+':'+ (CASE WHEN LEN(MIN(DUTY_FR_TIME))= 6 THEN SUBSTRING(MIN(DUTY_FR_TIME),5,2) ELSE '00' END)  ELSE '' END AS DUTY_FR_TIME, 
+							  
+					 MAX(DUTY_TO_DATE) AS DUTY_TO_DATE,
+					 CASE WHEN ISNULL(MAX(DUTY_TO_TIME),'') != '' 	THEN left(MAX(DUTY_TO_TIME), 2)+':'+SUBSTRING(MAX(DUTY_TO_TIME),3,2)+':'+ (CASE WHEN LEN(MAX(DUTY_TO_TIME))= 6 THEN SUBSTRING(MAX(DUTY_TO_TIME),5,2) ELSE '00' END)  ELSE '' END AS DUTY_TO_TIME ,
+					 GOP.CONFIRM_YN
+				FROM GOP300T GOP
+				INNER JOIN (
+					SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT,  RUN_COUNT
+					FROM (
+					SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT, RUN_COUNT,NOTINSERVICE_YN,
+						RANK() OVER(PARTITION BY COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT ORDER BY CONVERT(NUMERIC(10,0),RUN_COUNT) DESC )  AS RNK
+					FROM GOP300T
+					WHERE COMP_CODE = #{S_COMP_CODE}
+					  AND DIV_CODE = #{DIV_CODE}
+					  AND OPERATION_DATE &gt;= #{ATT_DATE_FR}
+					  AND OPERATION_DATE &lt;= #{ATT_DATE_TO}
+					  AND OTHER_VEHICLE_YN != 'Y'
+					  <if test="@foren.Ognl@isNotEmpty(DRIVER_CODE)">
+					  AND DRIVER_CODE = #{DRIVER_CODE}
+					  </if>
+					  <if test="@foren.Ognl@isNotEmpty(WORK_TEAM_CODE)">
+					  AND WORK_TEAM_CODE = #{WORK_TEAM_CODE}
+					  </if>	
+					  <if test="@foren.Ognl@isNotEmpty(ROUTE_GROUP)">
+					  AND ROUTE_GROUP = #{ROUTE_GROUP}
+					  </if>
+					  <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+					  AND ROUTE_CODE = #{ROUTE_CODE}
+					  </if>	
+					  <if test="@foren.Ognl@isNotEmpty(VEHICLE_CODE)">
+					  AND VEHICLE_CODE = #{VEHICLE_CODE}
+					  </if>
+					  <if test="SEARCH_KIND == '02'">
+					  AND ISNULL(DRIVER_CODE, '') != ''
+					  </if>	  
+					  ) L
+					WHERE RNK =1
+					  AND NOTINSERVICE_YN != 'Y'
+				) MO  ON GOP.COMP_CODE = MO.COMP_CODE
+					 AND GOP.DIV_CODE = MO.DIV_CODE
+					 AND GOP.OPERATION_DATE = MO.OPERATION_DATE
+					 AND GOP.ROUTE_CODE = MO.ROUTE_CODE
+					 AND GOP.OPERATION_COUNT = MO.OPERATION_COUNT
+					 AND GOP.RUN_COUNT = MO.RUN_COUNT
+				WHERE GOP.COMP_CODE = #{S_COMP_CODE}
+				  AND GOP.DIV_CODE = #{DIV_CODE}
+				  AND GOP.OPERATION_DATE &gt;= #{ATT_DATE_FR}
+				  AND GOP.OPERATION_DATE &lt;= #{ATT_DATE_TO}
+				  AND GOP.OTHER_VEHICLE_YN != 'Y'
+				  AND GOP.NOTINSERVICE_YN != 'Y'
+				  
+				  <if test="@foren.Ognl@isNotEmpty(DRIVER_CODE)">
+				  AND GOP.DRIVER_CODE = #{DRIVER_CODE}
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(WORK_TEAM_CODE)">
+				  AND GOP.WORK_TEAM_CODE = #{WORK_TEAM_CODE}
+				  </if>	
+				  <if test="@foren.Ognl@isNotEmpty(ROUTE_GROUP)">
+				  AND GOP.ROUTE_GROUP = #{ROUTE_GROUP}
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+				  AND GOP.ROUTE_CODE = #{ROUTE_CODE}
+				  </if>	
+				  <if test="@foren.Ognl@isNotEmpty(VEHICLE_CODE)">
+				  AND GOP.VEHICLE_CODE = #{VEHICLE_CODE}
+				  </if>
+				  <if test="SEARCH_KIND == '02'">
+				  AND ISNULL(GOP.DRIVER_CODE, '') != ''
+				  </if>	  
+				GROUP BY GOP.COMP_CODE,
+					 GOP.DIV_CODE,
+					 GOP.OPERATION_DATE, 
+					 GOP.OPERATION_COUNT, 
+					 GOP.ROUTE_CODE, 
+					 GOP.VEHICLE_CODE,
+					 GOP.DRIVER_CODE,   
+					 GOP.WORK_TEAM_CODE,
+					 GOP.PLAN_DRIVER_CODE,
+					 GOP.CONFIRM_YN
+			 ) O 
+		LEFT JOIN #AttTimeBusV G ON O.DRIVER_CODE = G.PERSON_NUMB
+								 AND O.OPERATION_DATE = G.ATT_DATE
+		LEFT JOIN HUM100T H1 ON  O.COMP_CODE = H1.COMP_CODE
+							 AND O.DIV_CODE = H1.DIV_CODE
+							 AND O.DRIVER_CODE = H1.PERSON_NUMB
+		LEFT JOIN HUM100T H2 ON  O.COMP_CODE = H2.COMP_CODE
+							 AND O.DIV_CODE = H2.DIV_CODE
+							 AND O.ORG_DRIVER_CODE = H2.PERSON_NUMB
+		LEFT JOIN GRT100T R 
+							  ON O.COMP_CODE = R.COMP_CODE
+							 AND O.DIV_CODE = R.DIV_CODE
+							 AND O.ROUTE_CODE = R.ROUTE_CODE
+		LEFT JOIN GVE100T V   ON  O.COMP_CODE = V.COMP_CODE
+							 AND O.DIV_CODE = V.DIV_CODE
+							 AND O.VEHICLE_CODE = V.VEHICLE_CODE
+		LEFT JOIN (
+				SELECT 	S1.COMP_CODE,
+					 	S1.DIV_CODE,
+					 	COUNT(S1.DRIVER_CODE) AS DRIVER_CNT,
+						COUNT(S1.ROUTE_CODE) AS ROUTE_CNT,
+						COUNT(S1.VEHICLE_CODE) AS VEHICLE_CNT,
+						COUNT(S1.OPERATION_DATE) AS OPERATION_DATE_CNT,
+						SUM(CASE WHEN ISNULL(S1.DRIVER_CODE, '') = '' 	THEN 1 ELSE 0 END) AS NO_DRIVER_CNT,
+						
+						SUM(CASE WHEN ISNULL(S2.NO_TAG_IN,'') = ''  AND ISNULL(S1.DRIVER_CODE,'') != ''		THEN 1 ELSE 0 END)  AS NO_TAG_IN_CNT,
+						SUM(CASE WHEN ISNULL(S2.NO_TAG_OUT,'') = '' AND ISNULL(S1.DRIVER_CODE,'') != '' 		THEN 1 ELSE 0 END)  AS NO_TAG_OUT_CNT,
+						SUM(CASE WHEN ISNULL(S2.NO_TAG,'') = ''  AND ISNULL(S1.DRIVER_CODE,'') != ''			THEN 1 ELSE 0 END)  AS NO_TAG_CNT
+				FROM GOP300T S1
+				INNER JOIN (
+					SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT,  RUN_COUNT
+					FROM (
+					SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT, RUN_COUNT,NOTINSERVICE_YN,
+						RANK() OVER(PARTITION BY COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT ORDER BY CONVERT(NUMERIC(10,0),RUN_COUNT) DESC )  AS RNK
+					FROM GOP300T
+					WHERE COMP_CODE = #{S_COMP_CODE}
+					  AND DIV_CODE = #{DIV_CODE}
+					  AND OPERATION_DATE &gt;= #{ATT_DATE_FR}
+					  AND OPERATION_DATE &lt;= #{ATT_DATE_TO}
+					  AND OTHER_VEHICLE_YN != 'Y'
+					  <if test="@foren.Ognl@isNotEmpty(DRIVER_CODE)">
+					  AND DRIVER_CODE = #{DRIVER_CODE}
+					  </if>
+					  <if test="@foren.Ognl@isNotEmpty(WORK_TEAM_CODE)">
+					  AND WORK_TEAM_CODE = #{WORK_TEAM_CODE}
+					  </if>	
+					  <if test="@foren.Ognl@isNotEmpty(ROUTE_GROUP)">
+					  AND ROUTE_GROUP = #{ROUTE_GROUP}
+					  </if>
+					  <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+					  AND ROUTE_CODE = #{ROUTE_CODE}
+					  </if>	
+					  <if test="@foren.Ognl@isNotEmpty(VEHICLE_CODE)">
+					  AND VEHICLE_CODE = #{VEHICLE_CODE}
+					  </if>
+					  <if test="SEARCH_KIND == '02'">
+					  AND ISNULL(DRIVER_CODE, '') != ''
+					  </if>	  
+					  ) L
+					WHERE RNK =1
+					  AND NOTINSERVICE_YN != 'Y'
+				) MO  ON S1.COMP_CODE = MO.COMP_CODE
+					 AND S1.DIV_CODE = MO.DIV_CODE
+					 AND S1.OPERATION_DATE = MO.OPERATION_DATE
+					 AND S1.ROUTE_CODE = MO.ROUTE_CODE
+					 AND S1.OPERATION_COUNT = MO.OPERATION_COUNT
+					 AND S1.RUN_COUNT = MO.RUN_COUNT
+				LEFT JOIN (
+				SELECT PERSON_NUMB,ATT_DATE,IN_TIME,OUT_TIME ,
+					   CASE WHEN IN_TIME IS NOT NULL  THEN PERSON_NUMB ELSE '' END AS NO_TAG_IN,
+					   CASE WHEN OUT_TIME IS NOT NULL THEN PERSON_NUMB ELSE '' END AS NO_TAG_OUT,
+					   CASE WHEN IN_TIME IS NOT NULL AND OUT_TIME IS NOT NULL THEN PERSON_NUMB ELSE '' END AS NO_TAG
+				  FROM #AttTimeBusV
+							 ) S2 ON S1.DRIVER_CODE = S2.PERSON_NUMB
+								 AND S1.OPERATION_DATE = S2.ATT_DATE
+				LEFT JOIN HUM100T H1 ON  S1.COMP_CODE = H1.COMP_CODE
+							 AND S1.DIV_CODE = H1.DIV_CODE
+							 AND S1.DRIVER_CODE = H1.PERSON_NUMB
+				WHERE S1.COMP_CODE = #{S_COMP_CODE}
+				  AND S1.DIV_CODE = #{DIV_CODE}
+				  AND S1.OPERATION_DATE &gt;= #{ATT_DATE_FR}
+				  AND S1.OPERATION_DATE &lt;= #{ATT_DATE_TO}
+				  AND S1.OTHER_VEHICLE_YN != 'Y'
+				  AND S1.NOTINSERVICE_YN != 'Y'				  
+				  <if test="@foren.Ognl@isNotEmpty(DRIVER_CODE)">
+				  AND S1.DRIVER_CODE = #{DRIVER_CODE}
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(WORK_TEAM_CODE)">
+				  AND S1.WORK_TEAM_CODE = #{WORK_TEAM_CODE}
+				  </if>	
+				  <if test="@foren.Ognl@isNotEmpty(ROUTE_GROUP)">
+				  AND S1.ROUTE_GROUP = #{ROUTE_GROUP}
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(ROUTE_CODE)">
+				  AND S1.ROUTE_CODE = #{ROUTE_CODE}
+				  </if>	
+				  <if test="@foren.Ognl@isNotEmpty(VEHICLE_CODE)">
+				  AND S1.VEHICLE_CODE = #{VEHICLE_CODE}
+				  </if>
+				  <if test="SEARCH_KIND == '02'">
+				   AND S2.IN_TIME IS NULL
+				   AND ISNULL(S1.DRIVER_CODE,'') != ''
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(CONFIRM_YN)">
+				   AND S1.CONFIRM_YN = #{CONFIRM_YN}
+				  </if>  
+				  <if test="@foren.Ognl@isNotEmpty(DRIVER_NAME)">
+				   AND H1.NAME LIKE '%' + #{DRIVER_NAME} +'%'
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(EMPLOY_TYPE)">
+		           AND H1.EMPLOY_TYPE IN  
+			           <foreach collection="EMPLOY_TYPE" item="item" separator="," close=")" open="(">
+			               #{item}
+			           </foreach>
+		      	  </if>
+				  GROUP BY S1.COMP_CODE,S1.DIV_CODE
+				  ) S ON O.COMP_CODE =S.COMP_CODE
+				      AND O.DIV_CODE=S.DIV_CODE
+		WHERE O.COMP_CODE = #{S_COMP_CODE}
+		  AND O.DIV_CODE = #{DIV_CODE}
+		  
+		  <if test="@foren.Ognl@isNotEmpty(DRIVER_NAME)">
+		  AND H1.NAME LIKE '%' + #{DRIVER_NAME} +'%'
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(EMPLOY_TYPE)">
+           AND H1.EMPLOY_TYPE IN  
+	           <foreach collection="EMPLOY_TYPE" item="item" separator="," close=")" open="(">
+	               #{item}
+	           </foreach>
+      	   </if>
+		  <if test="SEARCH_KIND == '02'">
+		  AND G.IN_TIME IS NULL
+		  AND ISNULL(O.DRIVER_CODE, '') != ''
+		  </if>
+		  <if test="SEARCH_KIND == '01'">
+		  AND DATEDIFF(MINUTE,
+					   G.IN_TIME,
+					   CONVERT(DATETIME, ISNULL(O.DUTY_FR_DATE, O.OPERATION_DATE)+' '+O.DUTY_FR_TIME, 114)
+					  )  &lt; 0 
+		  </if>
+		  <if test="@foren.Ognl@isNotEmpty(CONFIRM_YN)">
+		  AND O.CONFIRM_YN = #{CONFIRM_YN}
+		  </if>
+		  ORDER BY O.OPERATION_DATE, R.ROUTE_NUM, CONVERT(NUMERIC(3,0), O.OPERATION_COUNT)
+	</select>
+	 <insert id="gtt100skrvServiceImpl.saveSummary" parameterType="Map">
+		INSERT INTO GWR300T
+		     (	 KEY_VALUE
+           		,COMP_CODE           ,DIV_CODE           ,OPERATION_START_DATE           ,OPERATION_END_DATE
+           		,WORK_USER			 )
+		VALUES
+		     ( #{KEY_VALUE}
+		     , #{S_COMP_CODE} 		, #{DIV_CODE}   	 , #{OPERATION_START_DATE}  	 ,#{OPERATION_END_DATE}  
+			 , #{S_USER_ID}  )
+	</insert>
+	<update id="gtt100skrvServiceImpl.operationWorkingSummary" parameterType="Map" statementType="CALLABLE">
+		{call SP_OPERATION_WorkingSummary  (
+			#{KEY_VALUE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ErrorDesc, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String} 
+		)}
+	 </update>
+	 <select id="gtt100skrvServiceImpl.groupSummary" parameterType="Map" resultType="rMap">
+		
+	</select>
+	<select id="gtt100skrvServiceImpl.summary" parameterType="Map" resultType="rMap">
+		DECLARE @SDATE NVARCHAR(10),
+				@EDATE NVARCHAR(10)
+		SELECT @SDATE=CONVERT(NVARCHAR(10), CONVERT(DATETIME,#{ATT_DATE_FR},112),120 )
+			  ,@EDATE=CONVERT(NVARCHAR(10), CONVERT(DATETIME,#{ATT_DATE_TO},112),120 )
+		
+		
+		SELECT 
+		       PERSON_NUMB
+		     , REPLACE(ATT_DATE,'-','') AS ATT_DATE
+		     , IN_TIME
+		     , OUT_TIME 
+		     , CARD_IN_TIME
+		     , CARD_OUT_TIME
+		     , FP_IN_TIME
+		     , FP_OUT_TIME
+		  INTO #AttTimeBusV
+		  FROM AttTimeBusV
+		 WHERE ATT_DATE BETWEEN @SDATE AND @EDATE
+		
+		
+		SELECT	  OP.DIV_CODE
+				, C.DIV_NAME 
+				, OP.ROUTE_GROUP
+				, B.CODE_NAME AS ROUTE_GROUP_NAME
+				, OP2.OPERATION_COUNT_CNT
+				, OP.RUN_OPERATION_CNT 
+				, OP3.NOTINSERVICE_CNT
+				, OP.DRIVER_CNT
+				, OP.LATE_CNT
+				, OP.EARLY_CNT  
+				, OP.ASSIGNED_DRIVER_CNT
+				, OP.NO_DRIVER_CNT
+				, OP.NO_TAG_IN_CNT
+				, OP.NO_TAG_OUT_CNT
+				, OP.TAG_IN_CNT
+				, OP.TAG_OUT_CNT
+				, OP.NO_TAG_CNT
+				, OP.TAG_CNT
+				, CASE WHEN OP2.OPERATION_COUNT_CNT != 0 
+					   THEN OP.RUN_OPERATION_CNT /CONVERT(FLOAT, OP2.OPERATION_COUNT_CNT) *100 
+					   ELSE 0 
+				  END RUN_OPERATION_RATE				/* 운행율 */
+				, CASE WHEN SUM(OP2.OPERATION_COUNT_CNT)OVER() != 0 
+					   THEN SUM(OP.RUN_OPERATION_CNT)OVER()/CONVERT(FLOAT, SUM(OP2.OPERATION_COUNT_CNT)OVER()) *100 
+					   ELSE 0 
+				  END TOT_RUN_OPERATION_RATE			/* 총운행율 */
+				, CASE WHEN OP.RUN_OPERATION_CNT != 0 
+					   THEN OP.ASSIGNED_DRIVER_CNT/CONVERT(FLOAT, OP.RUN_OPERATION_CNT) *100 
+					   ELSE 0 
+				  END ASSIGNED_DRIVER_RATE				/* 기사배정율 */
+				, CASE WHEN SUM(OP.RUN_OPERATION_CNT)OVER() != 0 
+					   THEN SUM(OP.ASSIGNED_DRIVER_CNT)OVER()/CONVERT(FLOAT, SUM(OP.RUN_OPERATION_CNT)OVER()) *100 
+					   ELSE 0 
+				  END TOT_ASSIGNED_DRIVER_RATE			/* 총기사배정율 */
+				, CASE WHEN OP.RUN_OPERATION_CNT != 0 
+					   THEN OP.TAG_IN_CNT/CONVERT(FLOAT, OP.RUN_OPERATION_CNT) *100 
+					   ELSE 0 
+				  END TAG_IN_RATE						/* 출근등록율 */
+				, CASE WHEN SUM(OP.RUN_OPERATION_CNT)OVER() != 0 
+					   THEN SUM(OP.TAG_IN_CNT)OVER()/CONVERT(FLOAT, SUM(OP.RUN_OPERATION_CNT)OVER()) *100 
+					   ELSE 0 
+				  END TOT_TAG_IN_RATE					/* 총출근등록율 */
+				, CASE WHEN OP.RUN_OPERATION_CNT != 0 
+					   THEN OP.TAG_OUT_CNT/CONVERT(FLOAT, OP.RUN_OPERATION_CNT) *100 
+					   ELSE 0 
+				  END TAG_OUT_RATE						/* 퇴근등록율 */
+				, CASE WHEN SUM(OP.RUN_OPERATION_CNT)OVER() != 0 
+					   THEN SUM(OP.TAG_OUT_CNT)OVER()/CONVERT(FLOAT, SUM(OP.RUN_OPERATION_CNT)OVER()) *100 
+					   ELSE 0 
+				  END TOT_TAG_OUT_RATE					/* 총퇴근등록율 */
+		FROM 
+		/*  노선별 기사 근태 */
+		(
+		SELECT	 O.DIV_CODE
+				, O.ROUTE_GROUP
+				, COUNT(O.OPERATION_COUNT) AS RUN_OPERATION_CNT
+				, COUNT(O.DRIVER_CODE) AS DRIVER_CNT
+				, SUM(CASE WHEN DATEDIFF(MINUTE,
+						 G.IN_TIME,
+						 CONVERT(DATETIME, ISNULL(DUTY_FR_DATE, O.OPERATION_DATE)+' '+DUTY_FR_TIME, 114)
+						 ) &lt; 0 THEN 1 ELSE 0 END )  AS LATE_CNT
+				, SUM(CASE WHEN DATEDIFF(MINUTE,
+						 CONVERT(DATETIME, ISNULL(DUTY_TO_DATE, O.OPERATION_DATE)+' '+DUTY_TO_TIME, 114),
+						 G.OUT_TIME
+						 ) &lt; 0 THEN 1 ELSE 0 END ) AS EARLY_CNT  
+				, SUM(CASE WHEN ISNULL(O.DRIVER_CODE,'')	!='' THEN 1 ELSE 0 END) AS ASSIGNED_DRIVER_CNT
+				, SUM(CASE WHEN ISNULL(O.DRIVER_CODE,'')	 ='' THEN 1 ELSE 0 END) AS NO_DRIVER_CNT
+				, SUM(CASE WHEN ISNULL(G.IN_TIME,'')		 ='' AND  ISNULL(O.DRIVER_CODE,'')	!='' THEN 1 ELSE 0 END) AS NO_TAG_IN_CNT
+				, SUM(CASE WHEN ISNULL(G.OUT_TIME,'')		 ='' AND  ISNULL(O.DRIVER_CODE,'')	!='' THEN 1 ELSE 0 END) AS NO_TAG_OUT_CNT
+				, SUM(CASE WHEN ISNULL(G.IN_TIME,'')		!='' AND  ISNULL(O.DRIVER_CODE,'')	!='' THEN 1 ELSE 0 END) AS TAG_IN_CNT
+				, SUM(CASE WHEN ISNULL(G.OUT_TIME,'')		!='' AND  ISNULL(O.DRIVER_CODE,'')	!='' THEN 1 ELSE 0 END) AS TAG_OUT_CNT
+				, SUM(CASE WHEN	  (ISNULL(G.IN_TIME,'')		 ='' AND  ISNULL(O.DRIVER_CODE,'')	!='' )
+							  OR  (ISNULL(G.OUT_TIME,'')	 ='' AND  ISNULL(O.DRIVER_CODE,'')	!='' )
+						 THEN 0 ELSE 1 END)										AS NO_TAG_CNT
+				, SUM(CASE WHEN	  ISNULL(G.IN_TIME,'')		!='' 
+							  AND ISNULL(G.OUT_TIME,'')		!=''
+							  AND ISNULL(O.DRIVER_CODE,'')	!='' 
+						 THEN 0 ELSE 1 END)										AS TAG_CNT
+			
+		FROM (SELECT   GOP.COMP_CODE
+					 , GOP.DIV_CODE
+					 , GOP.OPERATION_DATE
+					 , GOP.OPERATION_COUNT
+					 , GOP.ROUTE_CODE
+					 , GOP.ROUTE_GROUP
+					 , DRIVER_CODE
+					 
+					 , DUTY_FR_DATE 
+					 , CASE WHEN ISNULL(DUTY_FR_TIME,'') != '' 	THEN left(DUTY_FR_TIME, 2)+':'+SUBSTRING(DUTY_FR_TIME,3,2)+':'+ (CASE WHEN LEN(DUTY_FR_TIME)= 6 THEN SUBSTRING(DUTY_FR_TIME,5,2) ELSE '00' END)  ELSE '' END AS DUTY_FR_TIME
+							  
+					 , DUTY_TO_DATE 
+					 , CASE WHEN ISNULL(DUTY_TO_TIME,'') != '' 	THEN left(DUTY_TO_TIME, 2)+':'+SUBSTRING(DUTY_TO_TIME,3,2)+':'+ (CASE WHEN LEN(DUTY_TO_TIME)= 6 THEN SUBSTRING(DUTY_TO_TIME,5,2) ELSE '00' END)  ELSE '' END AS DUTY_TO_TIME 
+					
+				FROM GOP300T GOP
+				INNER JOIN (
+					/* 기사의 근태는 마지막 운행한 운전자 기준이므로 마지만 회차의 기사정보만 이용한다. */
+					SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT,  CONVERT(NVARCHAR(20), MAX(CONVERT(NUMERIC(10,0), RUN_COUNT ))) AS RUN_COUNT
+					FROM GOP300T
+					WHERE COMP_CODE = #{S_COMP_CODE}
+					  AND DIV_CODE = #{S_DIV_CODE}
+					  AND OPERATION_DATE &gt;= #{ATT_DATE_FR}
+					  AND OPERATION_DATE &lt;= #{ATT_DATE_TO}
+					  --AND NOTINSERVICE_YN != 'Y'
+					  AND OTHER_VEHICLE_YN != 'Y'
+					  GROUP BY COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT
+				) MO  ON GOP.COMP_CODE = MO.COMP_CODE
+					 AND GOP.DIV_CODE = MO.DIV_CODE
+					 AND GOP.OPERATION_DATE = MO.OPERATION_DATE
+					 AND GOP.ROUTE_CODE = MO.ROUTE_CODE
+					 AND GOP.OPERATION_COUNT = MO.OPERATION_COUNT
+					 AND GOP.RUN_COUNT = MO.RUN_COUNT
+				
+				WHERE GOP.COMP_CODE = #{S_COMP_CODE}
+				  AND GOP.DIV_CODE = #{S_DIV_CODE}
+				  AND GOP.OPERATION_DATE &gt;= #{ATT_DATE_FR}
+				  AND GOP.OPERATION_DATE &lt;= #{ATT_DATE_TO}
+				  AND GOP.NOTINSERVICE_YN != 'Y'
+				  AND GOP.OTHER_VEHICLE_YN != 'Y'
+ 
+		) O 
+		LEFT JOIN #AttTimeBusV G ON O.DRIVER_CODE = G.PERSON_NUMB
+							AND O.OPERATION_DATE = G.ATT_DATE
+		LEFT JOIN GRT100T R 
+							  ON O.COMP_CODE = R.COMP_CODE
+							 AND O.DIV_CODE = R.DIV_CODE
+							 AND O.ROUTE_CODE = R.ROUTE_CODE
+		
+		WHERE O.COMP_CODE = #{S_COMP_CODE}
+		  AND O.DIV_CODE = #{S_DIV_CODE}
+		GROUP BY O.ROUTE_GROUP,  O.DIV_CODE
+		) AS OP
+		/* 계획운행 수( 승무지시) */
+		LEFT JOIN (
+			SELECT 
+				  COMP_CODE
+				, DIV_CODE
+				, ROUTE_GROUP
+				, COUNT(OPERATION_COUNT) AS OPERATION_COUNT_CNT
+			FROM GOP200T
+			WHERE COMP_CODE = #{S_COMP_CODE}
+			  AND DIV_CODE = #{S_DIV_CODE}
+			  AND OPERATION_DATE &gt;= #{ATT_DATE_FR}
+			  AND OPERATION_DATE &lt;= #{ATT_DATE_TO}
+			  AND OTHER_VEHICLE_YN != 'Y'
+			GROUP BY COMP_CODE, DIV_CODE,  ROUTE_GROUP
+		) OP2  ON  OP2.ROUTE_GROUP 		= OP.ROUTE_GROUP
+		/* 운휴 수 */
+		LEFT JOIN (
+			SELECT 
+				  COMP_CODE
+				, DIV_CODE
+				, ROUTE_GROUP
+				, COUNT(OPERATION_COUNT) AS NOTINSERVICE_CNT
+			FROM (SELECT  O.COMP_CODE
+						, O.DIV_CODE
+						, O.OPERATION_DATE
+						, O.ROUTE_CODE
+						, O.ROUTE_GROUP
+						, O.OPERATION_COUNT
+				   FROM GOP300T  O
+				   INNER JOIN (
+				   		SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT,  CONVERT(NVARCHAR(20), MAX(CONVERT(NUMERIC(10,0), RUN_COUNT ))) AS RUN_COUNT
+						  FROM GOP300T
+						WHERE COMP_CODE = #{S_COMP_CODE}
+					      AND DIV_CODE = #{S_DIV_CODE}
+					      AND OPERATION_DATE &gt;= #{ATT_DATE_FR}
+					      AND OPERATION_DATE &lt;= #{ATT_DATE_TO}
+					      AND OTHER_VEHICLE_YN != 'Y'
+					    GROUP BY COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT
+				  )  MO 		ON O.COMP_CODE = MO.COMP_CODE
+								AND O.DIV_CODE = MO.DIV_CODE
+								AND O.OPERATION_DATE = MO.OPERATION_DATE
+								AND O.ROUTE_CODE = MO.ROUTE_CODE
+								AND O.OPERATION_COUNT = MO.OPERATION_COUNT
+								AND O.RUN_COUNT = MO.RUN_COUNT
+				  WHERE O.COMP_CODE = #{S_COMP_CODE}
+					AND O.DIV_CODE = #{S_DIV_CODE}
+					AND O.OPERATION_DATE &gt;= #{ATT_DATE_FR}
+					AND O.OPERATION_DATE &lt;= #{ATT_DATE_TO}
+					AND O.OTHER_VEHICLE_YN != 'Y'
+					AND O.NOTINSERVICE_YN = 'Y'
+				  GROUP BY O.COMP_CODE, O.DIV_CODE, O.OPERATION_DATE, O.ROUTE_CODE, O.ROUTE_GROUP , O.OPERATION_COUNT
+			) AS A
+			GROUP BY COMP_CODE, DIV_CODE,  ROUTE_GROUP
+		) OP3  ON  OP3.ROUTE_GROUP 		= OP.ROUTE_GROUP
+		LEFT JOIN BSA100T B  ON B.COMP_CODE = #{S_COMP_CODE}
+							AND B.MAIN_CODE = 'GO16'
+							AND B.SUB_CODE = OP.ROUTE_GROUP
+		LEFT JOIN BOR120T C  ON C.COMP_CODE = #{S_COMP_CODE}
+							AND C.DIV_CODE = OP.DIV_CODE
+		ORDER BY OP.ROUTE_GROUP
+	</select>
+</mapper>

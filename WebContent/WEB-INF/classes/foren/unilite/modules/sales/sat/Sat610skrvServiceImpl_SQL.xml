@@ -1,0 +1,427 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sat610skrvServiceImpl">
+	<select id="sat610skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		    DECLARE @CompCode       NVARCHAR(08)    /* (필수)법인코드          */
+		          , @DivCode        NVARCHAR(08)    /* (필수)사업장코드        */
+		          , @InoutDateFr    NVARCHAR(08)    /* (필수)입출고일Fr        */
+		          , @InoutDateTo    NVARCHAR(08)    /* (필수)입출고일To        */
+		          , @CustomName     NVARCHAR(100)   /* (선택)납품처명          */
+		          , @AsstCode       NVARCHAR(500)   /* (선택)자산코드 or 명    */
+		          , @UserId         NVARCHAR(100)   /* (필수)사용자ID          */
+		
+		    SET @CompCode    = #{S_COMP_CODE}
+		    SET @DivCode     = #{DIV_CODE}     
+		    SET @InoutDateFr = #{INOUT_DATE_FR} 
+		    SET @InoutDateTo = #{INOUT_DATE_TO}
+		    SET @CustomName  = '%'
+		    SET @AsstCode    = '%'
+		    SET @UserId      = 'OMEGA+'
+			
+			-- 반납예정일 정보
+			BEGIN
+		        IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#OMEGA202104231210')) 
+		            DROP TABLE #OMEGA202104231210
+		    	     
+		        CREATE TABLE #OMEGA202104231210
+		             ( COMP_CODE            NVARCHAR(08)
+		             , DIV_CODE             NVARCHAR(08)
+		             , LAST_REQ_NO_SEQ      NVARCHAR(20)
+		             , REQ_NO               NVARCHAR(20)
+		             , REQ_SEQ              NUMERIC(5, 0)
+		             , ASST_CODE            NVARCHAR(20)
+		             , USE_FR_DATE          NVARCHAR(08)
+		             , USE_TO_DATE          NVARCHAR(08)
+		             , LAST_CHANGE_NO       NVARCHAR(20)
+		             , LAST_CHANGE_SEQ      NUMERIC(5, 0)
+		             , LAST_USE_FR_DATE     NVARCHAR(08)
+		             , LAST_USE_TO_DATE     NVARCHAR(08)
+		             , RETURN_DATE          NVARCHAR(08) 
+		             , USE_GUBUN            NVARCHAR(10))
+		
+		        INSERT #OMEGA202104231210
+		             ( COMP_CODE    , DIV_CODE  , LAST_REQ_NO_SEQ, ASST_CODE )
+		        SELECT A.COMP_CODE
+		             , A.DIV_CODE
+		             , MAX(B.REQ_NO + RIGHT('00000' + CONVERT(NVARCHAR,B.REQ_SEQ), 5)) AS LAST_REQ_NO_SEQ
+		             , B.ASST_CODE
+		          FROM            SAT200T A WITH (NOLOCK)
+		               INNER JOIN SAT210T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                 AND B.DIV_CODE  = A.DIV_CODE
+		                                                 AND B.REQ_NO    = A.REQ_NO
+		         WHERE A.COMP_CODE = @CompCode
+		           AND A.DIV_CODE  = @DivCode
+		         GROUP BY A.COMP_CODE, A.DIV_CODE, B.ASST_CODE
+		
+		        UPDATE A
+		           SET REQ_NO  = LEFT(A.LAST_REQ_NO_SEQ,14)
+		             , REQ_SEQ = CONVERT(NUMERIC(5,0),RIGHT(A.LAST_REQ_NO_SEQ,5))
+		          FROM #OMEGA202104231210 A 
+		
+		        UPDATE A
+		           SET USE_FR_DATE = B.USE_FR_DATE
+		             , USE_TO_DATE = B.USE_TO_DATE
+		             , USE_GUBUN   = B.USE_GUBUN
+		          FROM #OMEGA202104231210 A 
+		               INNER JOIN SAT200T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                 AND B.DIV_CODE  = A.DIV_CODE
+		                                                 AND B.REQ_NO    = A.REQ_NO
+		
+		        UPDATE A
+		           SET LAST_CHANGE_NO   = LEFT(B.LAST_CHANGE_NO_SEQ ,14)
+		             , LAST_CHANGE_SEQ  = CONVERT(NUMERIC(5,0),RIGHT(B.LAST_CHANGE_NO_SEQ,5))
+		          FROM #OMEGA202104231210 A 
+		               INNER JOIN 
+		               (SELECT A.COMP_CODE
+		                     , A.DIV_CODE
+		                     , A.REQ_NO
+		                     , A.REQ_SEQ
+		                     , MAX(B.CHANGE_NO + RIGHT('00000' + CONVERT(NVARCHAR,B.CHANGE_SEQ), 5)) AS LAST_CHANGE_NO_SEQ
+		                  FROM #OMEGA202104231210 A
+		                       INNER JOIN SAT410T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                         AND B.DIV_CODE  = A.DIV_CODE
+		                                                         AND B.REQ_NO    = A.REQ_NO
+		                                                         AND B.REQ_SEQ   = A.REQ_SEQ
+		                       INNER JOIN SAT400T C WITH (NOLOCK) ON C.COMP_CODE = B.COMP_CODE
+		                                                         AND C.DIV_CODE  = B.DIV_CODE
+		                                                         AND C.CHANGE_NO = B.CHANGE_NO
+		                 GROUP BY A.COMP_CODE, A.DIV_CODE, A.REQ_NO, A.REQ_SEQ) B ON B.COMP_CODE = A.COMP_CODE
+		                                                                         AND B.DIV_CODE  = A.DIV_CODE
+		                                                                         AND B.REQ_NO    = A.REQ_NO
+		                                                                         AND B.REQ_SEQ   = A.REQ_SEQ
+		
+		        UPDATE A
+		           SET LAST_USE_FR_DATE = B.USE_FR_DATE
+		             , LAST_USE_TO_DATE = B.USE_TO_DATE
+		          FROM #OMEGA202104231210 A 
+		               INNER JOIN SAT400T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                 AND B.DIV_CODE  = A.DIV_CODE
+		                                                 AND B.CHANGE_NO = A.LAST_CHANGE_NO
+		
+		        UPDATE A
+		           SET RETURN_DATE = (CASE WHEN ISNULL(LAST_USE_TO_DATE,'') = ''
+		                                   THEN CONVERT(NVARCHAR(8),DATEADD(D, 1, USE_TO_DATE     ),112)
+		                                   ELSE CONVERT(NVARCHAR(8),DATEADD(D, 1, LAST_USE_TO_DATE),112)
+		                               END)
+		          FROM #OMEGA202104231210 A 
+		    END
+		    
+		    -- 최초 연장이동, 최종 연장이동 정보
+		    BEGIN
+		        IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#OMEGA202104220357')) 
+		            DROP TABLE #OMEGA202104220357
+		    	     
+		        CREATE TABLE #OMEGA202104220357
+		             ( COMP_CODE            NVARCHAR(08)
+		             , DIV_CODE             NVARCHAR(08)
+		             , REQ_NO               NVARCHAR(20)
+		             , REQ_SEQ              NUMERIC(5, 0)
+		             , ASST_CODE            NVARCHAR(20)
+		             , OUT_DATE             NVARCHAR(08)
+		             , REQ_USER             NVARCHAR(100)
+		             , FIRST_CHANGE_NO      NVARCHAR(20)
+		             , FIRST_CHANGE_SEQ     NUMERIC(5, 0)
+		             , FIRST_RESERVE_DATE   NVARCHAR(08)
+		             , FIRST_MOVE_CUST_NM   NVARCHAR(100)
+		             , LAST_CHANGE_NO       NVARCHAR(20)
+		             , LAST_CHANGE_SEQ      NUMERIC(5, 0)
+		             , LAST_RESERVE_DATE    NVARCHAR(08)
+		             , LAST_MOVE_CUST_NM    NVARCHAR(100) )
+		
+		        INSERT #OMEGA202104220357
+		             ( COMP_CODE    , DIV_CODE  , REQ_NO    , REQ_SEQ   , ASST_CODE
+		             , OUT_DATE     , REQ_USER )
+		        SELECT A.COMP_CODE
+		             , A.DIV_CODE
+		             , A.REQ_NO
+		             , B.REQ_SEQ
+		             , B.ASST_CODE
+		             , A.OUT_DATE
+		             , A.REQ_USER
+		          FROM            SAT200T A WITH (NOLOCK)
+		               INNER JOIN SAT210T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                 AND B.DIV_CODE  = A.DIV_CODE
+		                                                 AND B.REQ_NO    = A.REQ_NO
+		         WHERE A.COMP_CODE = @CompCode
+		           AND A.DIV_CODE  = @DivCode
+		
+		        UPDATE A
+		           SET FIRST_CHANGE_NO  = LEFT(B.FIRST_CHANGE_NO_SEQ,15)
+		             , FIRST_CHANGE_SEQ = CONVERT(NUMERIC(5,0),RIGHT(B.FIRST_CHANGE_NO_SEQ,5))
+		             , LAST_CHANGE_NO   = CASE WHEN B.FIRST_CHANGE_NO_SEQ = B.LAST_CHANGE_NO_SEQ THEN NULL ELSE LEFT(B.LAST_CHANGE_NO_SEQ ,15)                      END
+		             , LAST_CHANGE_SEQ  = CASE WHEN B.FIRST_CHANGE_NO_SEQ = B.LAST_CHANGE_NO_SEQ THEN NULL ELSE CONVERT(NUMERIC(5,0),RIGHT(B.LAST_CHANGE_NO_SEQ,5)) END
+		          FROM #OMEGA202104220357 A 
+		               INNER JOIN 
+		               (SELECT A.COMP_CODE
+		                     , A.DIV_CODE
+		                     , A.REQ_NO
+		                     , A.REQ_SEQ
+		                     , MIN(B.CHANGE_NO + RIGHT('00000' + CONVERT(NVARCHAR,B.CHANGE_SEQ), 5)) AS FIRST_CHANGE_NO_SEQ
+		                     , MAX(B.CHANGE_NO + RIGHT('00000' + CONVERT(NVARCHAR,B.CHANGE_SEQ), 5)) AS LAST_CHANGE_NO_SEQ
+		                  FROM #OMEGA202104220357 A
+		                       INNER JOIN SAT410T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                         AND B.DIV_CODE  = A.DIV_CODE
+		                                                         AND B.REQ_NO    = A.REQ_NO
+		                                                         AND B.REQ_SEQ   = A.REQ_SEQ
+		                       INNER JOIN SAT400T C WITH (NOLOCK) ON C.COMP_CODE = B.COMP_CODE
+		                                                         AND C.DIV_CODE  = B.DIV_CODE
+		                                                         AND C.CHANGE_NO = B.CHANGE_NO
+		                                                         AND C.GUBUN     ='2'
+		                 GROUP BY A.COMP_CODE, A.DIV_CODE, A.REQ_NO, A.REQ_SEQ) B ON B.COMP_CODE = A.COMP_CODE
+		                                                                         AND B.DIV_CODE  = A.DIV_CODE
+		                                                                         AND B.REQ_NO    = A.REQ_NO
+		                                                                         AND B.REQ_SEQ   = A.REQ_SEQ
+		
+		        UPDATE A
+		           SET FIRST_RESERVE_DATE = B.RESERVE_DATE
+		             , FIRST_MOVE_CUST_NM = B.MOVE_CUST_NM
+		          FROM #OMEGA202104220357 A 
+		               INNER JOIN SAT400T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                 AND B.DIV_CODE  = A.DIV_CODE
+		                                                 AND B.CHANGE_NO = A.FIRST_CHANGE_NO
+		
+		        UPDATE A
+		           SET LAST_RESERVE_DATE = B.RESERVE_DATE
+		             , LAST_MOVE_CUST_NM = B.MOVE_CUST_NM
+		          FROM #OMEGA202104220357 A 
+		               INNER JOIN SAT400T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                 AND B.DIV_CODE  = A.DIV_CODE
+		                                                 AND B.CHANGE_NO = A.LAST_CHANGE_NO
+		    END
+		
+		    -- 최종 예약정보
+		    BEGIN
+		        IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#OMEGA202104220441')) 
+		            DROP TABLE #OMEGA202104220441
+		    	     
+		        CREATE TABLE #OMEGA202104220441
+		             ( COMP_CODE            NVARCHAR(08)
+		             , DIV_CODE             NVARCHAR(08)
+		             , ASST_CODE            NVARCHAR(20)
+		             , LAST_RESERVE_NO_SEQ  NVARCHAR(25)
+		             , RESERVE_DATE         NVARCHAR(08)
+		             , RESERVE_USER_NAME    NVARCHAR(100) )
+		
+		        INSERT #OMEGA202104220441
+		             ( COMP_CODE    , DIV_CODE  , ASST_CODE    , LAST_RESERVE_NO_SEQ )
+		        SELECT A.COMP_CODE
+		             , A.DIV_CODE
+		             , B.ASST_CODE
+		             , MAX(B.RESERVE_NO + RIGHT('00000' + CONVERT(NVARCHAR,B.RESERVE_SEQ), 5)) AS LAST_RESERVE_NO_SEQ
+		          FROM            SAT300T A WITH (NOLOCK)
+		               INNER JOIN SAT310T B WITH (NOLOCK) ON B.COMP_CODE  = A.COMP_CODE
+		                                                 AND B.DIV_CODE   = A.DIV_CODE
+		                                                 AND B.RESERVE_NO = A.RESERVE_NO
+		         WHERE A.COMP_CODE = @CompCode
+		           AND A.DIV_CODE  = @DivCode
+		         GROUP BY A.COMP_CODE, A.DIV_CODE, B.ASST_CODE
+		
+		        UPDATE A
+		           SET RESERVE_DATE      = B.RESERVE_DATE
+		             , RESERVE_USER_NAME = C.USER_NAME
+		          FROM #OMEGA202104220441 A 
+		               INNER JOIN SAT300T B WITH (NOLOCK) ON B.COMP_CODE  = A.COMP_CODE
+		                                                 AND B.DIV_CODE   = A.DIV_CODE
+		                                                 AND B.RESERVE_NO = LEFT(A.LAST_RESERVE_NO_SEQ,14)
+		               LEFT  JOIN BSA300T C WITH (NOLOCK) ON C.COMP_CODE  = B.COMP_CODE
+		                                                 AND C.USER_ID    = B.REQ_USER
+		    END
+		
+		    -- 최종 출고예약정보
+		    BEGIN
+		        IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id = OBJECT_ID('tempdb..#OMEGA202104271042')) 
+		            DROP TABLE #OMEGA202104271042
+		    	     
+		        CREATE TABLE #OMEGA202104271042
+		             ( COMP_CODE            NVARCHAR(08)
+		             , DIV_CODE             NVARCHAR(08)
+		             , ASST_CODE            NVARCHAR(20)
+		             , REQ_NO               NVARCHAR(20)
+		             , REQ_SEQ              NUMERIC(5, 0)
+		             , LAST_REQ_NO_SEQ      NVARCHAR(25) )
+		
+		        INSERT #OMEGA202104271042
+		             ( COMP_CODE    , DIV_CODE  , ASST_CODE    , LAST_REQ_NO_SEQ )
+		        SELECT A.COMP_CODE
+		             , A.DIV_CODE
+		             , B.ASST_CODE
+		             , MAX(B.REQ_NO + RIGHT('00000' + CONVERT(NVARCHAR,B.REQ_SEQ), 5)) AS LAST_REQ_NO_SEQ
+		          FROM            SAT200T A WITH (NOLOCK)
+		               INNER JOIN SAT210T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                                 AND B.DIV_CODE  = A.DIV_CODE
+		                                                 AND B.REQ_NO    = A.REQ_NO
+		         WHERE A.COMP_CODE = @CompCode
+		           AND A.DIV_CODE  = @DivCode
+		         GROUP BY A.COMP_CODE, A.DIV_CODE, B.ASST_CODE
+		
+		        UPDATE A
+		           SET REQ_NO  = LEFT(A.LAST_REQ_NO_SEQ,14)
+		             , REQ_SEQ = CONVERT(NUMERIC(5,0),RIGHT(A.LAST_REQ_NO_SEQ,5))
+		          FROM #OMEGA202104271042 A 
+		    END
+		
+			/* 데이터 조회 */
+		    SELECT A.DIV_CODE                                           -- (숨김)사업장코드
+		         , B.ASST_CODE                                          -- 자산코드
+		         , C.ASST_NAME                                          -- 자산명(모델명)
+		         , C.SERIAL_NO                                          -- S/N
+		    	 , C.ASST_INFO                                          -- 자산정보(S178)  
+		    	 , C.ASST_GUBUN                                         -- 자산구분(S179)  
+		    	 , (CASE WHEN ISNULL(C.NOW_LOC,'') = ''
+		                 THEN '창고'
+		                 ELSE ISNULL(C.NOW_LOC,'')
+		             END) AS NOW_LOC                                    -- 현위치          
+		    	 , C.ASST_STATUS                                        -- 현재상태(S177)
+		         , B.REQ_NO                                             -- 출고요청번호
+		         , B.REQ_SEQ                                            -- 출고요청순번
+		         , A.REQ_DATE                                           -- 출고요청일
+		         , H.USER_NAME AS REQ_USER_NAME                         -- 출고요청자
+		         , A.CUSTOM_NAME                                        -- 발송처
+		         , ISNULL(D.INOUT_DATE,'') AS OUT_DATE                  -- 출고일
+		         , ISNULL(E.INOUT_DATE,'') AS IN_DATE                   -- 창고입고일
+		         , ISNULL(F.FIRST_MOVE_CUST_NM,'') AS MOVE_CUST_NM1     -- 이동병원1
+		         , ISNULL(F.FIRST_RESERVE_DATE,'') AS MOVE_REQ_DATE1    -- 이동일1
+		         , ISNULL(F.LAST_MOVE_CUST_NM ,'') AS MOVE_CUST_NM2     -- 이동병원2
+		         , ISNULL(F.LAST_RESERVE_DATE ,'') AS MOVE_REQ_DATE2    -- 이동일2
+		         , A.USE_GUBUN                                          -- 사용구분
+		         , (CASE WHEN C.ASST_STATUS = 'O'
+		                 THEN ISNULL(J.RETURN_DATE,'')
+		                 ELSE ''
+		             END) AS RETURN_DATE                                -- 반납예정일
+		         , (CASE WHEN ISNULL(I.COMP_CODE,'') = ''
+		                 THEN 'N'
+		                 ELSE ISNULL(C.RESERVE_YN,'N')
+		             END) AS RESERVE_YN                                 -- 예약상태
+		         , (CASE WHEN ISNULL(I.COMP_CODE,'') = ''
+		                 THEN ''
+		                 ELSE (CASE WHEN ISNULL(C.RESERVE_YN,'N') = 'N'
+		                            THEN ''
+		                            ELSE G.RESERVE_DATE
+		                        END)
+		             END) AS RESERVE_DATE                               -- 사용예정일
+		         , (CASE WHEN ISNULL(I.COMP_CODE,'') = ''
+		                 THEN ''
+		                 ELSE (CASE WHEN ISNULL(C.RESERVE_YN,'N') = 'N'
+		                            THEN ''
+		            		        ELSE G.RESERVE_USER_NAME
+		            		    END)
+		             END) AS RESERVE_USER_NAME                          -- 예약담당자
+		      FROM            SAT200T A WITH (NOLOCK)
+		           INNER JOIN SAT210T B WITH (NOLOCK) ON B.COMP_CODE  = A.COMP_CODE
+		                                             AND B.DIV_CODE   = A.DIV_CODE
+		                                             AND B.REQ_NO     = A.REQ_NO
+		           INNER JOIN SAT100T C WITH (NOLOCK) ON C.COMP_CODE  = B.COMP_CODE
+		                                             AND C.DIV_CODE   = B.DIV_CODE
+		                                             AND C.ASST_CODE  = B.ASST_CODE
+		           LEFT  JOIN SAT600T D WITH (NOLOCK) ON D.COMP_CODE  = B.COMP_CODE
+		                                             AND D.DIV_CODE   = B.DIV_CODE
+		                                             AND D.REQ_NO     = B.REQ_NO
+		                                             AND D.REQ_SEQ    = B.REQ_SEQ
+		                                             AND D.ASST_CODE  = B.ASST_CODE
+		                                             AND D.INOUT_TYPE = '2'
+		           LEFT  JOIN SAT600T E WITH (NOLOCK) ON E.COMP_CODE  = B.COMP_CODE
+		                                             AND E.DIV_CODE   = B.DIV_CODE
+		                                             AND E.REQ_NO     = B.REQ_NO
+		                                             AND E.REQ_SEQ    = B.REQ_SEQ
+		                                             AND E.ASST_CODE  = B.ASST_CODE
+		                                             AND E.INOUT_TYPE = '1'
+		           LEFT  JOIN #OMEGA202104220357 F    ON F.COMP_CODE  = B.COMP_CODE
+		                                             AND F.DIV_CODE   = B.DIV_CODE
+		                                             AND F.REQ_NO     = B.REQ_NO
+		                                             AND F.REQ_SEQ    = B.REQ_SEQ
+		                                             AND F.ASST_CODE  = B.ASST_CODE
+		           LEFT  JOIN #OMEGA202104220441 G    ON G.COMP_CODE  = B.COMP_CODE
+		                                             AND G.DIV_CODE   = B.DIV_CODE
+		                                             AND G.ASST_CODE  = B.ASST_CODE
+		           LEFT  JOIN BSA300T H WITH (NOLOCK) ON H.COMP_CODE  = A.COMP_CODE
+		                                             AND H.USER_ID    = A.REQ_USER
+		           LEFT  JOIN #OMEGA202104271042 I    ON I.COMP_CODE  = B.COMP_CODE
+		                                             AND I.DIV_CODE   = B.DIV_CODE
+		                                             AND I.REQ_NO     = B.REQ_NO
+		                                             AND I.REQ_SEQ    = B.REQ_SEQ
+		                                             AND I.ASST_CODE  = B.ASST_CODE
+		           LEFT  JOIN #OMEGA202104231210 J    ON J.COMP_CODE  = C.COMP_CODE
+		                                             AND J.DIV_CODE   = C.DIV_CODE
+		                                             AND J.ASST_CODE  = C.ASST_CODE                                  
+		     WHERE A.COMP_CODE   = @CompCode
+		       AND A.DIV_CODE    = @DivCode
+		       AND ((ISNULL(D.INOUT_DATE,'') = '' OR (ISNULL(D.INOUT_DATE,'') &gt;= @InoutDateFr AND ISNULL(D.INOUT_DATE,'') &lt;= @InoutDateTo))
+		         OR (ISNULL(E.INOUT_DATE,'') = '' OR (ISNULL(E.INOUT_DATE,'') &gt;= @InoutDateFr AND ISNULL(E.INOUT_DATE,'') &lt;= @InoutDateTo)))
+			   <if test="@foren.Ognl@isNotEmpty(ASST_STATUS)">
+			   AND C.ASST_STATUS IN
+			   <foreach collection="ASST_STATUS" item="item" separator="," close=")" open="(">
+					  #{item}
+			   </foreach>
+		       </if>
+		       <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+		       AND A.CUSTOM_NAME LIKE '%'+#{CUSTOM_NAME}+'%'
+		       </if>
+		       <if test="@foren.Ognl@isNotEmpty(ASST)">
+		       AND (C.ASST_CODE LIKE #{ASST}+'%' OR C.ASST_NAME LIKE '%'+#{ASST}+'%')
+		       </if>
+		
+		    UNION ALL
+		    SELECT C.DIV_CODE                                   -- (숨김)사업장코드
+		         , C.ASST_CODE                                  -- 자산코드
+		         , C.ASST_NAME                                  -- 자산명(모델명)
+		         , C.SERIAL_NO                                  -- S/N
+		    	 , C.ASST_INFO                                  -- 자산정보(S178)  
+		    	 , C.ASST_GUBUN                                 -- 자산구분(S179)  
+		    	 , (CASE WHEN ISNULL(C.NOW_LOC,'') = ''
+		                 THEN '창고'
+		                 ELSE ISNULL(C.NOW_LOC,'')
+		             END) AS NOW_LOC                            -- 현위치          
+		    	 , C.ASST_STATUS                                -- 현재상태(S177)
+		         , '' AS REQ_NO                                 -- 출고/예약요청번호
+		         , NULL AS REQ_SEQ                              -- 출고/예약요청순번
+		         , '' AS REQ_DATE                               -- 출고요청일
+		         , '' AS REQ_USER                               -- 출고요청자
+		         , '' AS CUSTOM_NAME                            -- 발송처
+		         , '' AS OUT_DATE                               -- 출고일
+		         , '' AS IN_DATE                                -- 창고입고일
+		         , '' AS MOVE_CUST_NM1                          -- 이동병원1
+		         , '' AS MOVE_REQ_DATE1                         -- 이동일1
+		         , '' AS MOVE_CUST_NM2                          -- 이동병원2
+		         , '' AS MOVE_REQ_DATE2                         -- 이동일2
+		         , '' AS USE_GUBUN                              -- 사용구분
+		         , '' AS RETURN_DATE                            -- 반납예정일
+		         , (CASE WHEN ISNULL(C.RESERVE_YN,'N') = 'N'
+		                 THEN ''
+		                 ELSE ISNULL(C.RESERVE_YN,'N')
+		             END) AS RESERVE_YN   					    -- 예약상태
+		         , (CASE WHEN ISNULL(C.RESERVE_YN,'N') = 'N'
+		                 THEN ''
+		                 ELSE G.RESERVE_DATE
+		             END) AS RESERVE_DATE                       -- 사용예정일
+		         , (CASE WHEN ISNULL(C.RESERVE_YN,'N') = 'N'
+		                 THEN ''
+		                 ELSE G.RESERVE_USER_NAME
+		             END) AS RESERVE_USER_NAME                  -- 예약담당자
+		       FROM           SAT100T C WITH (NOLOCK)
+		           LEFT  JOIN SAT210T B WITH (NOLOCK) ON B.COMP_CODE  = C.COMP_CODE
+		                                             AND B.DIV_CODE   = C.DIV_CODE
+		                                             AND B.ASST_CODE  = C.ASST_CODE
+		           LEFT  JOIN #OMEGA202104220441 G    ON G.COMP_CODE  = C.COMP_CODE
+		                                             AND G.DIV_CODE   = C.DIV_CODE
+		                                             AND G.ASST_CODE  = C.ASST_CODE
+		     WHERE ISNULL(B.COMP_CODE,'') = ''
+			   <if test="@foren.Ognl@isNotEmpty(ASST_STATUS)">
+			   AND C.ASST_STATUS IN
+			   <foreach collection="ASST_STATUS" item="item" separator="," close=")" open="(">
+					  #{item}
+			   </foreach>
+		       </if>
+		       <if test="@foren.Ognl@isNotEmpty(ASST)">
+		       AND (C.ASST_CODE LIKE #{ASST}+'%' OR C.ASST_NAME LIKE '%'+#{ASST}+'%')
+		       </if>
+		     ORDER BY ASST_CODE, REQ_DATE
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+</mapper>

@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mrp510skrvServiceImpl">
+
+	<select id="mrp510skrvServiceImpl.selectMaster" parameterType="Map" resultType="rMap">
+	--mrp510skrvServiceImpl.selectMaster
+	BEGIN
+		DECLARE	@CompCode	NVARCHAR(08)
+			  , @DivCode	NVARCHAR(08)
+			  , @ItemAcct	NVARCHAR(10)
+			  , @ItemCode	NVARCHAR(20)
+			  , @Spec		NVARCHAR(160)
+			  , @UserId		NVARCHAR(100)
+			  , @RefItem	NVARCHAR(01)
+	
+		SET @CompCode	= #{S_COMP_CODE}
+		SET @DivCode	= #{DIV_CODE}
+		SET @ItemAcct	= #{ITEM_ACCOUNT}
+		SET @ItemCode	= #{ITEM_CODE}
+		SET @Spec		= #{SPEC}
+		SET @UserId		= #{S_USER_ID}
+		
+		SELECT @RefItem		= ISNULL(NULLIF(REF_ITEM, ''), 0)
+		  FROM BSA300T
+		 WHERE COMP_CODE	= @CompCode
+		   AND USER_ID		= @UserId
+	
+		SELECT A.COMP_CODE
+			 , A.ITEM_CODE
+			 , CASE WHEN @RefItem = '0' THEN A.ITEM_NAME
+					WHEN @RefItem = '1' THEN A.ITEM_NAME1
+					WHEN @RefItem = '2' THEN A.ITEM_NAME2
+					ELSE A.ITEM_NAME
+			   END	AS ITEM_NAME
+			 , A.SPEC
+			 , A.SPEC_NUM
+			 , B.ITEM_ACCOUNT
+			 , B.DIV_CODE
+		  FROM BPR100T A
+				LEFT OUTER JOIN BPR200T B
+							 ON A.COMP_CODE	= B.COMP_CODE
+							AND A.ITEM_CODE	= B.ITEM_CODE
+		 WHERE A.COMP_CODE		= @CompCode
+		   AND B.DIV_CODE		= @DivCode
+		   AND B.ITEM_ACCOUNT	= @ItemAcct
+		   AND ((@ItemCode		= NULL) OR (@ItemCode	= '') OR (A.ITEM_CODE	= @ItemCode))
+		   AND A.SPEC		 LIKE '%' + @Spec + '%'
+		 ORDER BY A.ITEM_CODE
+	END
+	</select>
+
+	<select id="mrp510skrvServiceImpl.selectDetail" parameterType="Map" resultType="rMap">
+	--mrp510skrvServiceImpl.selectDetail
+	BEGIN
+		DECLARE	@COMP_CODE	NVARCHAR(08)
+			  , @DIV_CODE	NVARCHAR(08)
+			  , @ITEM_CODE	NVARCHAR(20)
+			  , @STOCK_Q	NUMERIC(30, 6)
+	
+		SET @COMP_CODE	= #{S_COMP_CODE}
+		SET @DIV_CODE	= #{DIV_CODE}
+		SET @ITEM_CODE	= #{ITEM_CODE}
+	
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE ID=OBJECT_ID('tempdb..#TMP_DATA'))
+			DROP TABLE #TMP_DATA
+	
+		SELECT X.GUBUN
+			 , X.GUBUN_NAME
+			 , Y.ORDER_DATE
+			 , Y.ORDER_NUM
+			 , CASE WHEN X.GUBUN = '10' THEN ''
+			 		ELSE Y.ORDER_NUM + (CASE WHEN ISNULL(Y.CUSTOM_CODE, '') != '' THEN ' / ' + Y.CUSTOM_CODE + ' ' + Z.CUSTOM_NAME
+			 								 ELSE ''
+			 							END)
+			   END	AS SRC_DATA
+			 , Y.INOUT_Q
+			 , CONVERT(NUMERIC(30, 6), Y.USEABLE_Q)	AS USEABLE_Q
+		  INTO #TMP_DATA
+		  FROM (
+				VALUES
+					('10',	'재고'),
+					('20',	'구매입고예정'),
+					('21',	'생산입고예정'),
+					('30',	'출고예정(생산)'),
+					('31',	'출고예정(영업)')
+			   ) X(GUBUN, GUBUN_NAME)
+				INNER JOIN	(
+								--재고
+								SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, '' ORDER_DATE, '10' AS GUBUN, '' ORDER_NUM , '' CUSTOM_CODE, SUM(A.GOOD_STOCK_Q) AS INOUT_Q, 0.00 AS USEABLE_Q
+								FROM BIV100T A WITH (NOLOCK)
+										INNER JOIN BSA220T B WITH (NOLOCK) ON A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE=B.TYPE_LEVEL AND A.WH_CODE=B.TREE_CODE
+								WHERE A.COMP_CODE	= @COMP_CODE
+								AND	  A.DIV_CODE	= @DIV_CODE
+								AND   A.ITEM_CODE	= @ITEM_CODE
+								AND B.PABSTOCK_YN = 'Y'
+								GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE
+	
+								UNION
+								
+								--PO 입고예정
+								SELECT A.COMP_CODE, A.DIV_CODE, B.ITEM_CODE, B.DVRY_DATE AS ORDER_DATE, '20' AS GUBUN, A.ORDER_NUM , A.CUSTOM_CODE, SUM(B.ORDER_UNIT_Q - B.INSTOCK_Q) AS INOUT_Q, 0.00 AS USEABLE_Q
+								FROM MPO100T A WITH (NOLOCK)
+										INNER JOIN MPO200T B  WITH (NOLOCK) ON A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE=B.DIV_CODE AND A.ORDER_NUM=B.ORDER_NUM
+								WHERE A.COMP_CODE	 = @COMP_CODE
+								AND   A.DIV_CODE	 = @DIV_CODE
+								AND   B.ORDER_UNIT_Q - (B.INSTOCK_Q+B.RECEIPT_Q) > 0
+								AND   B.CONTROL_STATUS NOT IN ('8','9')
+								AND   A.AGREE_STATUS = '2'
+								AND   B.ITEM_CODE	 = @ITEM_CODE
+								GROUP BY A.COMP_CODE, A.DIV_CODE, B.ITEM_CODE, B.DVRY_DATE, A.ORDER_NUM , A.CUSTOM_CODE
+	
+								UNION
+								
+								--작지(생산입고)
+								SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.PRODT_END_DATE, '21' AS GUBUN, A.WKORD_NUM , A.CUSTOM_CODE, SUM(A.WKORD_Q) AS INOUT_Q, 0.00 AS USEABLE_Q
+								FROM PMP100T A WITH (NOLOCK)
+								WHERE A.COMP_CODE	 = @COMP_CODE
+								AND   A.DIV_CODE	 = @DIV_CODE
+								AND   A.ITEM_CODE	 = @ITEM_CODE
+								AND	  A.LINE_END_YN  ='Y'
+								AND	  A.WKORD_STATUS NOT IN ('8','9')
+								GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.PRODT_END_DATE,  A.WKORD_NUM , A.CUSTOM_CODE
+								
+								UNION
+	
+								--출고예정(생산)
+								SELECT A.COMP_CODE, A.DIV_CODE, B.ITEM_CODE, A.PRODT_WKORD_DATE, '30' AS GUBUN, A.WKORD_NUM, ISNULL(A.CUSTOM_CODE,'') AS CUSTOM_CODE, B.ALLOCK_Q AS INOUT_Q, 0.00 AS USEABLE_Q
+								FROM PMP100T A  WITH (NOLOCK)
+										INNER JOIN PMP200T B WITH (NOLOCK) ON A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE=B.DIV_CODE AND A.WKORD_NUM=B.WKORD_NUM
+								WHERE A.COMP_CODE	= @COMP_CODE
+								AND   A.DIV_CODE	= @DIV_CODE
+								AND   A.WKORD_STATUS NOT IN ('8','9')
+								AND   A.LINE_END_YN = 'Y'
+								AND   B.ITEM_CODE	= @ITEM_CODE
+
+								UNION
+								
+								--출고예정(영업)
+								SELECT A.COMP_CODE, A.DIV_CODE, B.ITEM_CODE, B.DVRY_DATE, '31' AS GUBUN, A.ORDER_NUM, ISNULL(A.CUSTOM_CODE,'') AS CUSTOM_CODE, SUM(B.ORDER_Q-B.OUTSTOCK_Q) AS INOUT_Q, 0.00 AS USEABLE_Q
+								FROM SOF100T A WITH (NOLOCK)
+									 INNER JOIN SOF110T B WITH (NOLOCK) ON A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE=B.DIV_CODE AND A.ORDER_NUM=B.ORDER_NUM
+								WHERE A.COMP_CODE	= @COMP_CODE
+								AND   A.DIV_CODE	= @DIV_CODE
+								AND	  B.ORDER_STATUS = 'N'
+								AND   B.ITEM_CODE	= @ITEM_CODE
+								AND   B.ORDER_Q-B.OUTSTOCK_Q > 0
+								GROUP BY A.COMP_CODE, A.DIV_CODE, B.ITEM_CODE, B.DVRY_DATE, A.ORDER_NUM, ISNULL(A.CUSTOM_CODE,'')
+								
+							) Y
+							 ON X.GUBUN	= Y.GUBUN
+				LEFT JOIN	BCM100T Z WITH (NOLOCK)
+							 ON Y.COMP_CODE		= Z.COMP_CODE
+							AND Y.CUSTOM_CODE	= Z.CUSTOM_CODE
+	
+							
+		SET @STOCK_Q = 0.00
+		UPDATE #TMP_DATA
+		   SET @STOCK_Q		= @STOCK_Q + (CASE LEFT(GUBUN,1) WHEN '3' THEN INOUT_Q * -1
+															 ELSE  INOUT_Q * 1
+										  END)
+			 , USEABLE_Q	= ISNULL(@STOCK_Q, 0.00)
+		
+		SELECT *
+		  FROM #TMP_DATA
+		 ORDER BY ORDER_DATE, GUBUN
+	
+	END
+	</select>
+
+</mapper>

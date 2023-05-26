@@ -1,0 +1,602 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="atx530ukrServiceImpl">
+					
+	<select id="atx530ukrServiceImpl.tableView" parameterType="Map" resultType="rMap">
+		<if test="FR_PUB_DATE == &quot;&quot;">
+		  --atx530ukr.Catx530ukr[fnatx530q] Query1
+            SELECT FR_PUB_DATE
+                 , TO_PUB_DATE
+                 , BILL_DIV_CODE
+                 , TOT_CNT
+                 , TOT_AMT
+                 , BILL_CNT
+                 , BILL_AMT
+                 , CREDIT_CNT
+                 , CREDIT_AMT
+                 , CASH_CNT
+                 , CASH_AMT
+                 , CASHSALE_CNT
+                 , CASHSALE_AMT
+                 , INSERT_DB_USER
+                 , INSERT_DB_TIME
+                 , UPDATE_DB_USER
+                 , UPDATE_DB_TIME
+                 , COMP_CODE
+                 , 'N' DATA_YN
+              FROM ATX530T  WITH (NOLOCK)
+             WHERE COMP_CODE   = #{S_COMP_CODE}
+               AND FR_PUB_DATE = #{FR_PUB_DATE}
+               AND TO_PUB_DATE = #{TO_PUB_DATE}
+               AND BILL_DIV_CODE = #{BILL_DIV_CODE}
+		</if> 
+		<if test="FR_PUB_DATE != &quot;&quot;">         
+         --atx530ukr.Catx530ukr[fnatx530q] Query1
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+            DECLARE   @BILL_CNT     NUMERIC(30,6)
+                    , @BILL_AMT     NUMERIC(30,6)
+                    , @CREDIT_CNT   NUMERIC(30,6)
+                    , @CREDIT_AMT   NUMERIC(30,6)
+                    , @CASH_CNT     NUMERIC(30,6)
+                    , @CASH_AMT     NUMERIC(30,6)
+                    , @CASHSALE_CNT NUMERIC(30,6)
+                    , @CASHSALE_AMT NUMERIC(30,6)
+        
+            IF NOT EXISTS (SELECT TOP 1 1
+                             FROM ATX530T WITH (NOLOCK)
+                            WHERE COMP_CODE   = #{S_COMP_CODE}
+				              AND FR_PUB_DATE = #{FR_PUB_DATE}
+				              AND TO_PUB_DATE = #{TO_PUB_DATE}
+				              AND BILL_DIV_CODE = #{BILL_DIV_CODE}
+                           )
+            BEGIN
+            --1. 세금계산서 건수,금액
+            SELECT  @CREDIT_CNT = SUM(A.NUM) , @CREDIT_AMT = SUM(A.SUPPLY_AMT_I)
+              FROM (
+        
+                SELECT  S1.COMP_CODE    , S1.CUSTOM_CODE        , ISNULL(S2.CUSTOM_NAME, '')    AS CUSTOM_NAME
+                      , CASE WHEN ISNULL(S1.COMPANY_NUM, '') = '' THEN ''
+                             ELSE SUBSTRING(S1.COMPANY_NUM, 1, 3) + '-' +
+                                  SUBSTRING(S1.COMPANY_NUM, 4, 2) + '-' +
+                                  SUBSTRING(S1.COMPANY_NUM, 6, 5)
+                        END                                                                     AS COMPANY_NUM
+                      , NULL                                                                    AS CUST_COUNT
+                      , S1.NUM          , S2.COMP_TYPE          , S2.COMP_CLASS
+                      , S1.SUPPLY_AMT_I , S1.TAX_AMT_I          , S1.EB_YN
+                FROM                (
+                                    SELECT  A.COMP_CODE, MIN(A.CUSTOM_CODE) CUSTOM_CODE, A.COMPANY_NUM
+                                          , SUM(CASE WHEN A.TAXNO_YN = 'Y' THEN 1 ELSE 0 END)   AS NUM
+                                          , SUM(A.SUPPLY_AMT_I)                                 AS SUPPLY_AMT_I
+                                          , SUM(A.TAX_AMT_I)                                    AS TAX_AMT_I
+                                          , A.EB_YN
+                                    FROM                ATX100T A  WITH (NOLOCK)
+                                            INNER JOIN  BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE    = A.COMP_CODE
+                                                                                AND M1.MAIN_CODE    = 'A022'
+                                                                                AND M1.SUB_CODE     = A.PROOF_KIND
+                                                                                AND M1.REF_CODE1    = 'A' --세금계산서
+                                                                                AND M1.REF_CODE3    = '2' --매출
+                                                                                AND M1.REF_CODE6    = '1' --과세
+                                    WHERE   A.COMP_CODE           = #{S_COMP_CODE}
+                                    AND     A.PUB_DATE        &gt;= #{FR_PUB_DATE}
+                                    AND     A.PUB_DATE        &lt;= #{TO_PUB_DATE}
+               AND     A.BILL_DIVI_CODE   = #{BILL_DIV_CODE}
+                                    --AND     A.EB_YN            = N'' --전자발행여부 Y:발행 N:미발행
+                
+                                    GROUP   BY A.COMP_CODE, A.COMPANY_NUM, A.EB_YN
+                                    ) S1
+                        LEFT  JOIN  BCM100T   S2 WITH (NOLOCK) ON S2.COMP_CODE    = S1.COMP_CODE
+                                                              AND S2.CUSTOM_CODE  = S1.CUSTOM_CODE
+                    ) A
+                    
+            --2.신용카드
+            SELECT @CASH_CNT = COUNT(A.COMP_CODE), @CASH_AMT = ISNULL(SUM(A.SUPPLY_AMT_I),0)
+              FROM ATX100T A WITH (NOLOCK)
+                   LEFT  JOIN BSA100T B WITH (NOLOCK) ON B.MAIN_CODE = 'A022'
+                                                     AND B.SUB_CODE  = A.PROOF_KIND
+                                                     AND B.REF_CODE1 = 'E' --신용카드
+                                                     AND B.REF_CODE3 = '2' --매출
+                                                     AND B.REF_CODE6 = '1' --과세
+             WHERE   A.COMP_CODE             = #{S_COMP_CODE}
+               AND     A.PUB_DATE        &gt;= #{FR_PUB_DATE}
+               AND     A.PUB_DATE        &lt;= #{TO_PUB_DATE}
+               AND     A.BILL_DIVI_CODE   = #{BILL_DIV_CODE}
+               AND     ISNULL(B.COMP_CODE,'') != N''
+        
+            --3.현금영수증
+            SELECT @CASHSALE_CNT = COUNT(A.COMP_CODE), @CASHSALE_AMT = ISNULL(SUM(A.SUPPLY_AMT_I),0)
+              FROM ATX100T A WITH (NOLOCK)
+                   LEFT  JOIN BSA100T B WITH (NOLOCK) ON B.MAIN_CODE = 'A022'
+                                                     AND B.SUB_CODE  = A.PROOF_KIND
+                                                     AND B.REF_CODE1 = 'F' --현금영수증
+                                                     AND B.REF_CODE3 = '2' --매출
+                                                     AND B.REF_CODE6 = '1' --과세
+             WHERE   A.COMP_CODE             = #{S_COMP_CODE}
+               AND     A.PUB_DATE        &gt;= #{FR_PUB_DATE}
+               AND     A.PUB_DATE        &lt;= #{TO_PUB_DATE}
+               AND     A.BILL_DIVI_CODE   = #{BILL_DIV_CODE}
+               AND     ISNULL(B.COMP_CODE,'') != N''
+        
+            --4.현금매출
+            SELECT @BILL_CNT = COUNT(A.COMP_CODE), @BILL_AMT = ISNULL(SUM(A.SUPPLY_AMT_I),0)
+              FROM ATX531T A WITH (NOLOCK)
+             WHERE   A.COMP_CODE       		    = #{S_COMP_CODE}
+               AND     A.FR_PUB_DATE        &gt;= #{FR_PUB_DATE}
+               AND     A.TO_PUB_DATE        &lt;= #{TO_PUB_DATE}
+               AND     A.BILL_DIV_CODE   		= #{BILL_DIV_CODE}
+        
+            SELECT #{FR_PUB_DATE}				     AS FR_PUB_DATE
+                 , #{TO_PUB_DATE}					 AS TO_PUB_DATE
+                 , #{BILL_DIV_CODE}					 AS BILL_DIV_CODE
+                 , ISNULL(@BILL_CNT,0) + ISNULL(@CREDIT_CNT,0) + ISNULL(@CASH_CNT,0) + ISNULL(@CASHSALE_CNT,0) TOT_CNT
+                 , ISNULL(@BILL_AMT,0) + ISNULL(@CREDIT_AMT,0) + ISNULL(@CASH_AMT,0) + ISNULL(@CASHSALE_AMT,0) TOT_AMT
+                 , ISNULL(@BILL_CNT,0) BILL_CNT
+                 , ISNULL(@BILL_AMT,0) BILL_AMT
+                 , ISNULL(@CREDIT_CNT,0) CREDIT_CNT
+                 , ISNULL(@CREDIT_AMT,0) CREDIT_AMT
+                 , ISNULL(@CASH_CNT,0) CASH_CNT
+                 , ISNULL(@CASH_AMT,0) CASH_AMT
+                 , ISNULL(@CASHSALE_CNT,0) CASHSALE_CNT
+                 , ISNULL(@CASHSALE_AMT,0) CASHSALE_AMT
+                 , '' INSERT_DB_USER
+                 , GETDATE() INSERT_DB_TIME
+                 , '' UPDATE_DB_USER
+                 , GETDATE() AS UPDATE_DB_TIME
+                 , #{S_COMP_CODE}					 AS COMP_CODE
+                 , 'N' DATA_YN
+        
+            END
+            ELSE
+            BEGIN
+            SELECT FR_PUB_DATE
+                 , TO_PUB_DATE
+                 , BILL_DIV_CODE
+                 , TOT_CNT
+                 , TOT_AMT
+                 , BILL_CNT
+                 , BILL_AMT
+                 , CREDIT_CNT
+                 , CREDIT_AMT
+                 , CASH_CNT
+                 , CASH_AMT
+                 , CASHSALE_CNT
+                 , CASHSALE_AMT
+                 , INSERT_DB_USER
+                 , INSERT_DB_TIME
+                 , UPDATE_DB_USER
+                 , UPDATE_DB_TIME
+                 , COMP_CODE
+                 , 'Y' DATA_YN
+              FROM ATX530T  WITH (NOLOCK)
+             WHERE COMP_CODE   = #{S_COMP_CODE}
+               AND FR_PUB_DATE = #{FR_PUB_DATE}
+               AND TO_PUB_DATE = #{TO_PUB_DATE}
+               AND BILL_DIV_CODE = #{BILL_DIV_CODE}
+            END
+		</if>
+	</select>
+	
+	<select id="atx530ukrServiceImpl.atx530recal" parameterType="Map" resultType="rMap">
+	--atx530ukr.Catx530ukr[fnatx530q] Query1
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+        DECLARE   @BILL_CNT     NUMERIC(30,6)
+                , @BILL_AMT     NUMERIC(30,6)
+                , @CREDIT_CNT   NUMERIC(30,6)
+                , @CREDIT_AMT   NUMERIC(30,6)
+                , @CASH_CNT     NUMERIC(30,6)
+                , @CASH_AMT     NUMERIC(30,6)
+                , @CASHSALE_CNT NUMERIC(30,6)
+                , @CASHSALE_AMT NUMERIC(30,6)
+    
+        --1. 세금계산서 건수,금액
+        SELECT  @CREDIT_CNT = SUM(A.NUM) , @CREDIT_AMT = SUM(A.SUPPLY_AMT_I)
+          FROM (
+    
+            SELECT  S1.COMP_CODE    , S1.CUSTOM_CODE        , ISNULL(S2.CUSTOM_NAME, '')    AS CUSTOM_NAME
+                  , CASE WHEN ISNULL(S1.COMPANY_NUM, '') = '' THEN ''
+                         ELSE SUBSTRING(S1.COMPANY_NUM, 1, 3) + '-' +
+                              SUBSTRING(S1.COMPANY_NUM, 4, 2) + '-' +
+                              SUBSTRING(S1.COMPANY_NUM, 6, 5)
+                    END                                                                     AS COMPANY_NUM
+                  , NULL                                                                    AS CUST_COUNT
+                  , S1.NUM          , S2.COMP_TYPE          , S2.COMP_CLASS
+                  , S1.SUPPLY_AMT_I , S1.TAX_AMT_I          , S1.EB_YN
+            FROM                (
+                                SELECT  A.COMP_CODE, MIN(A.CUSTOM_CODE) CUSTOM_CODE, A.COMPANY_NUM
+                                      , SUM(CASE WHEN A.TAXNO_YN = 'Y' THEN 1 ELSE 0 END)   AS NUM
+                                      , SUM(A.SUPPLY_AMT_I)                                 AS SUPPLY_AMT_I
+                                      , SUM(A.TAX_AMT_I)                                    AS TAX_AMT_I
+                                      , A.EB_YN
+                                FROM                ATX100T A  WITH (NOLOCK)
+                                        INNER JOIN  BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE    = A.COMP_CODE
+                                                                            AND M1.MAIN_CODE    = 'A022'
+                                                                            AND M1.SUB_CODE     = A.PROOF_KIND
+                                                                            AND M1.REF_CODE1    = 'A' --세금계산서
+                                                                            AND M1.REF_CODE3    = '2' --매출
+                                                                            AND M1.REF_CODE6    = '1' --과세
+                                WHERE   A.COMP_CODE        = #{S_COMP_CODE}
+                                AND     A.PUB_DATE        &gt;= #{FR_PUB_DATE}
+                                AND     A.PUB_DATE        &lt;= #{TO_PUB_DATE}
+           AND     A.BILL_DIVI_CODE   = #{BILL_DIV_CODE}
+                                --AND     A.EB_YN            = N'' --전자발행여부 Y:발행 N:미발행
+            
+                                GROUP   BY A.COMP_CODE, A.COMPANY_NUM, A.EB_YN
+                                ) S1
+                    LEFT  JOIN  BCM100T   S2 WITH (NOLOCK) ON S2.COMP_CODE    = S1.COMP_CODE
+                                                          AND S2.CUSTOM_CODE  = S1.CUSTOM_CODE
+                ) A
+                
+        --2.신용카드
+        SELECT @CASH_CNT = COUNT(A.COMP_CODE), @CASH_AMT = ISNULL(SUM(A.SUPPLY_AMT_I),0)
+          FROM ATX100T A WITH (NOLOCK)
+               LEFT  JOIN BSA100T B WITH (NOLOCK) ON B.MAIN_CODE = 'A022'
+                                                 AND B.SUB_CODE  = A.PROOF_KIND
+                                                 AND B.REF_CODE1 = 'E' --신용카드
+                                                 AND B.REF_CODE3 = '2' --매출
+                                                 AND B.REF_CODE6 = '1' --과세
+         WHERE   A.COMP_CODE             = #{S_COMP_CODE}
+           AND     A.PUB_DATE        &gt;= #{FR_PUB_DATE}
+           AND     A.PUB_DATE        &lt;= #{TO_PUB_DATE}
+           AND     A.BILL_DIVI_CODE      = #{BILL_DIV_CODE}
+           AND     ISNULL(B.COMP_CODE,'') != N''
+    
+        --3.현금영수증
+        SELECT @CASHSALE_CNT = COUNT(A.COMP_CODE), @CASHSALE_AMT = ISNULL(SUM(A.SUPPLY_AMT_I),0)
+          FROM ATX100T A WITH (NOLOCK)
+               LEFT  JOIN BSA100T B WITH (NOLOCK) ON B.MAIN_CODE = 'A022'
+                                                 AND B.SUB_CODE  = A.PROOF_KIND
+                                                 AND B.REF_CODE1 = 'F' --현금영수증
+                                                 AND B.REF_CODE3 = '2' --매출
+                                                 AND B.REF_CODE6 = '1' --과세
+         WHERE   A.COMP_CODE             = #{S_COMP_CODE}
+           AND     A.PUB_DATE        &gt;= #{FR_PUB_DATE}
+           AND     A.PUB_DATE        &lt;= #{TO_PUB_DATE}
+           AND     A.BILL_DIVI_CODE      = #{BILL_DIV_CODE}
+           AND     ISNULL(B.COMP_CODE,'') != N''
+    
+        --4.현금매출
+        SELECT @BILL_CNT = COUNT(A.COMP_CODE), @BILL_AMT = ISNULL(SUM(A.SUPPLY_AMT_I),0)
+          FROM ATX531T A WITH (NOLOCK)
+         WHERE   A.COMP_CODE                = #{S_COMP_CODE}
+           AND     A.FR_PUB_DATE        &gt;= #{FR_PUB_DATE}
+           AND     A.TO_PUB_DATE        &lt;= #{TO_PUB_DATE}
+           AND     A.BILL_DIV_CODE          = #{BILL_DIV_CODE}
+    
+        IF NOT EXISTS (SELECT TOP 1 1
+                         FROM ATX530T WITH (NOLOCK)
+                        WHERE  COMP_CODE      = #{S_COMP_CODE}
+                        AND    FR_PUB_DATE    = #{FR_PUB_DATE}
+                        AND    TO_PUB_DATE    = #{TO_PUB_DATE}
+                        AND    BILL_DIV_CODE  = #{BILL_DIV_CODE}
+                       )
+        BEGIN
+        SELECT #{FR_PUB_DATE} FR_PUB_DATE
+             , #{TO_PUB_DATE} TO_PUB_DATE
+             , #{BILL_DIV_CODE} BILL_DIV_CODE
+             , ISNULL(@BILL_CNT,0) + ISNULL(@CREDIT_CNT,0) + ISNULL(@CASH_CNT,0) + ISNULL(@CASHSALE_CNT,0) TOT_CNT
+             , ISNULL(@BILL_AMT,0) + ISNULL(@CREDIT_AMT,0) + ISNULL(@CASH_AMT,0) + ISNULL(@CASHSALE_AMT,0) TOT_AMT
+             , ISNULL(@BILL_CNT,0) BILL_CNT
+             , ISNULL(@BILL_AMT,0) BILL_AMT
+             , ISNULL(@CREDIT_CNT,0) CREDIT_CNT
+             , ISNULL(@CREDIT_AMT,0) CREDIT_AMT
+             , ISNULL(@CASH_CNT,0) CASH_CNT
+             , ISNULL(@CASH_AMT,0) CASH_AMT
+             , ISNULL(@CASHSALE_CNT,0) CASHSALE_CNT
+             , ISNULL(@CASHSALE_AMT,0) CASHSALE_AMT
+             , '' INSERT_DB_USER
+             , GETDATE() INSERT_DB_TIME
+             , '' UPDATE_DB_USER
+             , GETDATE() AS UPDATE_DB_TIME
+             , #{S_COMP_CODE} AS COMP_CODE
+             , 'N' DATA_YN
+    
+        END
+        ELSE
+        BEGIN
+        SELECT FR_PUB_DATE
+             , TO_PUB_DATE
+             , BILL_DIV_CODE
+             , TOT_CNT
+             , TOT_AMT
+             , BILL_CNT
+             , BILL_AMT
+             , ISNULL(@CREDIT_CNT,0) CREDIT_CNT
+             , ISNULL(@CREDIT_AMT,0) CREDIT_AMT
+             , ISNULL(@CASH_CNT,0) CASH_CNT
+             , ISNULL(@CASH_AMT,0) CASH_AMT
+             , ISNULL(@CASHSALE_CNT,0) CASHSALE_CNT
+             , ISNULL(@CASHSALE_AMT,0) CASHSALE_AMT
+             , INSERT_DB_USER
+             , INSERT_DB_TIME
+             , UPDATE_DB_USER
+             , UPDATE_DB_TIME
+             , COMP_CODE
+             , 'Y' DATA_YN
+          FROM ATX530T  WITH (NOLOCK)
+         WHERE COMP_CODE     = #{S_COMP_CODE}
+           AND FR_PUB_DATE   = #{FR_PUB_DATE}
+           AND TO_PUB_DATE   = #{TO_PUB_DATE}
+           AND BILL_DIV_CODE = #{BILL_DIV_CODE}
+        END
+	</select>
+	
+	<select id="atx530ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		 --atx530ukr.Catx530ukr[fnatx530q] Query2
+    SELECT FR_PUB_DATE
+         , TO_PUB_DATE
+         , BILL_DIV_CODE
+         , SEQ
+         , CASE WHEN ISNULL(COMPANY_NUM, '') = '' THEN ''
+                WHEN LEN(COMPANY_NUM) = 13 THEN 
+                     SUBSTRING(COMPANY_NUM, 1, 6) + '-' +
+                     SUBSTRING(COMPANY_NUM, 7, 7)
+                WHEN LEN(COMPANY_NUM) = 10 THEN 
+                     SUBSTRING(COMPANY_NUM, 1, 3) + '-' +
+                     SUBSTRING(COMPANY_NUM, 4, 2) + '-' +
+                     SUBSTRING(COMPANY_NUM, 6, 5)
+                ELSE COMPANY_NUM
+                    END                                                                     AS COMPANY_NUM
+         , CUSTOM_NAME
+         , uniLITE.fnGetUserDate(COMP_CODE,BILL_DATE) AS BILL_DATE
+         , TOT_AMT_I
+         , SUPPLY_AMT_I
+         , TAX_AMT_I
+         , INSERT_DB_USER
+         , INSERT_DB_TIME
+         , UPDATE_DB_USER
+         , UPDATE_DB_TIME
+         , COMP_CODE
+      FROM ATX531T WITH (NOLOCK)
+     WHERE COMP_CODE   = #{S_COMP_CODE}
+       AND FR_PUB_DATE = #{FR_PUB_DATE}
+       AND TO_PUB_DATE = #{TO_PUB_DATE}
+    <if test="BILL_DIV_CODE != &quot;00&quot;">
+    	AND BILL_DIV_CODE = #{BILL_DIV_CODE}
+    </if>
+     ORDER BY SEQ
+	</select>	
+	
+	
+	<insert id="atx530ukrServiceImpl.insert" parameterType="Map">	
+	/* master 저장 */
+		--atx530ukr.Catx530ukr[fnatx530set]Query11
+		INSERT INTO ATX530T
+		     ( FR_PUB_DATE
+		     , TO_PUB_DATE
+		     , BILL_DIV_CODE
+		     , TOT_CNT
+		     , TOT_AMT
+		     , BILL_CNT
+		     , BILL_AMT
+		     , CREDIT_CNT
+		     , CREDIT_AMT
+		     , CASH_CNT
+		     , CASH_AMT
+		     , CASHSALE_CNT
+		     , CASHSALE_AMT
+		     , INSERT_DB_USER
+		     , INSERT_DB_TIME
+		     , UPDATE_DB_USER
+		     , UPDATE_DB_TIME
+		     , COMP_CODE
+		     ) 
+		VALUES
+		     ( #{FR_PUB_DATE}
+		     , #{TO_PUB_DATE}
+		     , #{BILL_DIV_CODE}
+		     , #{TOT_CNT}
+		     , #{TOT_AMT}        
+		     , #{BILL_CNT}       
+		     , #{BILL_AMT}       
+		     , #{CREDIT_CNT}     
+		     , #{CREDIT_AMT}     
+		     , #{CASH_CNT}       
+		     , #{CASH_AMT}       
+		     , #{CASHSALE_CNT}   
+		     , #{CASHSALE_AMT}   
+		     , #{S_USER_ID}
+		     , GETDATE()
+		     , #{S_USER_ID}
+		     , GETDATE()
+		     , #{S_COMP_CODE}      
+		     )
+	</insert>
+	
+	<update id="atx530ukrServiceImpl.update" parameterType="Map">	
+	/* master 수정 */
+		UPDATE ATX530T
+		   SET TOT_CNT        = #{TOT_CNT}
+		     , TOT_AMT        = #{TOT_AMT}
+		     , BILL_CNT       = #{BILL_CNT}
+		     , BILL_AMT       = #{BILL_AMT}
+		     , CREDIT_CNT     = #{CREDIT_CNT}
+		     , CREDIT_AMT     = #{CREDIT_AMT}
+		     , CASH_CNT       = #{CASH_CNT}
+		     , CASH_AMT       = #{CASH_AMT}
+		     , CASHSALE_CNT   = #{CASHSALE_CNT}
+		     , CASHSALE_AMT   = #{CASHSALE_AMT}
+		     , INSERT_DB_USER = #{S_USER_ID}
+		     , INSERT_DB_TIME = GETDATE()
+		     , UPDATE_DB_USER = #{S_USER_ID}
+		     , UPDATE_DB_TIME = GETDATE()
+		     
+		 WHERE FR_PUB_DATE    = #{FR_PUB_DATE}
+		   AND TO_PUB_DATE    = #{TO_PUB_DATE}
+		   AND BILL_DIV_CODE  = #{BILL_DIV_CODE}
+		   AND COMP_CODE      = #{S_COMP_CODE}
+	</update>
+	
+	<delete id="atx530ukrServiceImpl.delete" parameterType="Map"> 
+	/* master 삭제 */
+		DELETE FROM ATX530T 
+		 WHERE FR_PUB_DATE   = #{FR_PUB_DATE}
+		   AND TO_PUB_DATE   = #{TO_PUB_DATE}
+		   AND BILL_DIV_CODE = #{BILL_DIV_CODE}
+		   AND COMP_CODE     = #{S_COMP_CODE}
+	</delete>
+
+	<insert id="atx530ukrServiceImpl.insertDetail" parameterType="Map">    	
+	/* detail 저장*/
+	--atx530ukr.Catx530ukr[fnatx530set]Query14
+	INSERT INTO ATX531T
+	     ( FR_PUB_DATE
+	     , TO_PUB_DATE
+	     , BILL_DIV_CODE
+	     , SEQ
+	     , COMPANY_NUM
+	     , CUSTOM_NAME
+	     , BILL_DATE
+	     , TOT_AMT_I
+	     , SUPPLY_AMT_I
+	     , TAX_AMT_I
+	     , INSERT_DB_USER
+	     , INSERT_DB_TIME
+	     , UPDATE_DB_USER
+	     , UPDATE_DB_TIME
+	     , COMP_CODE
+	     ) 
+	VALUES
+	     ( #{FR_PUB_DATE}
+	     , #{TO_PUB_DATE}
+	     , #{BILL_DIV_CODE}
+	     , #{SEQ}
+	     , #{COMPANY_NUM}
+	     , #{CUSTOM_NAME}
+	     , #{BILL_DATE}
+	     , #{TOT_AMT_I}
+	     , #{SUPPLY_AMT_I}
+	     , #{TAX_AMT_I}
+	     , #{S_USER_ID}
+	     , GETDATE()
+	     , #{S_USER_ID}
+	     , GETDATE()
+	     , #{S_COMP_CODE}
+	     )
+	</insert>
+		
+	<update id="atx530ukrServiceImpl.updateDetail" parameterType="Map">	
+	/* detail 수정*/	
+	--atx530ukr.Catx530ukr[fnatx530set]Query14
+		UPDATE ATX531T
+		   SET COMPANY_NUM    = #{COMPANY_NUM}
+		     , CUSTOM_NAME    = #{CUSTOM_NAME}
+		     , BILL_DATE      = #{BILL_DATE}
+		     , TOT_AMT_I      = #{TOT_AMT_I}
+		     , SUPPLY_AMT_I   = #{SUPPLY_AMT_I}
+		     , TAX_AMT_I      = #{TAX_AMT_I}
+		     , INSERT_DB_USER = #{S_USER_ID}
+		     , UPDATE_DB_USER = #{S_USER_ID}
+		     , UPDATE_DB_TIME = GETDATE()
+		     
+		 WHERE FR_PUB_DATE    = #{FR_PUB_DATE}
+		   AND TO_PUB_DATE    = #{TO_PUB_DATE}
+		   AND BILL_DIV_CODE  = #{BILL_DIV_CODE}
+		   AND SEQ            = #{SEQ}
+		   AND COMP_CODE      = #{S_COMP_CODE}
+	</update>
+	
+	<update id="atx530ukrServiceImpl.deleteDetail" parameterType="Map">
+		/* detail 삭제 */
+		--atx530ukr.Catx530ukr[fnatx530set]Query12
+	 	DELETE FROM ATX531T 
+		 WHERE FR_PUB_DATE   = #{FR_PUB_DATE}
+		   AND TO_PUB_DATE   = #{TO_PUB_DATE}
+		   AND BILL_DIV_CODE = #{BILL_DIV_CODE}
+		   AND SEQ           = #{SEQ}
+		   AND COMP_CODE     = #{S_COMP_CODE}
+	</update>
+	<select id="atx530ukrServiceImpl.fnGetDivCodeInfo" parameterType="Map" resultType="rMap">
+		--atx530ukr.Catx530ukr[fnGetDivCodeInfo]Query7
+		SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+		SELECT ISNULL(DIV_FULL_NAME,'') COMP_NAME
+		     , ISNULL(COMPANY_NUM, '') COMPANY_NUM
+		     , ISNULL(REPRE_NAME,'') REPRE_NAME
+		     , ISNULL(COMP_CLASS, '') COMP_CLASS
+		     , ISNULL(COMP_TYPE, '') COMP_TYPE
+		     , ISNULL(ADDR,'') ADDR
+		     , (SELECT SUB_CODE
+		          FROM BSA100T  WITH (NOLOCK)
+		         WHERE COMP_CODE = #{S_COMP_CODE}
+		           AND MAIN_CODE = 'A065'
+		           AND ISNULL(REF_CODE1,'') &lt;= RIGHT(#{FR_PUB_DATE},4)
+		           AND ISNULL(REF_CODE2,'') &gt;= RIGHT(#{FR_PUB_DATE},4)) TERM_CODE
+		  FROM BOR120T  WITH (NOLOCK)
+		 WHERE COMP_CODE =  #{S_COMP_CODE}
+		   AND DIV_CODE  =  #{BILL_DIV_CODE}
+	</select>
+	<select id="atx530ukrServiceImpl.selectListToPrint" parameterType="Map" resultType="rMap">
+	--atx530ukr.Catx530ukr[fnatx530q] Query2
+	SELECT A.FR_PUB_DATE
+	     , A.TO_PUB_DATE
+	     , A.BILL_DIV_CODE
+	     , CONVERT(VARCHAR,A.SEQ) AS SEQ
+	     , CASE WHEN ISNULL(A.COMPANY_NUM, '') = '' THEN ''
+	            WHEN LEN(A.COMPANY_NUM) = 13 THEN 
+	                 SUBSTRING(A.COMPANY_NUM, 1, 6) + '-' +
+	                 SUBSTRING(A.COMPANY_NUM, 7, 7)
+	            WHEN LEN(A.COMPANY_NUM) = 10 THEN 
+	                 SUBSTRING(A.COMPANY_NUM, 1, 3) + '-' +
+	                 SUBSTRING(A.COMPANY_NUM, 4, 2) + '-' +
+	                 SUBSTRING(A.COMPANY_NUM, 6, 5)
+	            ELSE A.COMPANY_NUM
+	            END                                        AS COMPANY_NUM
+	     , A.CUSTOM_NAME
+	     , uniLITE.fnGetUserDate(A.COMP_CODE,A.BILL_DATE) AS BILL_DATE
+	     , A.TOT_AMT_I
+	     , A.SUPPLY_AMT_I
+	     , A.TAX_AMT_I
+	     , 0 TOT_CNT
+	     , 0 TOT_AMT
+	     , 0 BILL_CNT
+	     , 0 BILL_AMT
+	     , 0 CREDIT_CNT
+	     , 0 CREDIT_AMT
+	     , 0 CASH_CNT
+	     , 0 CASH_AMT
+	     , 0 CASHSALE_CNT
+	     , 0 CASHSALE_AMT
+	     , '2' GUBUN
+	     , A.SEQ AS SORT
+	   FROM atx531T A WITH (NOLOCK)
+	  WHERE A.COMP_CODE   = #{S_COMP_CODE}
+	    AND A.FR_PUB_DATE = #{FR_PUB_DATE}
+	    AND A.TO_PUB_DATE = #{TO_PUB_DATE}
+	   AND A.BILL_DIV_CODE = #{BILL_DIV_CODE}
+	UNION ALL
+	SELECT A.FR_PUB_DATE
+	     , A.TO_PUB_DATE
+	     , A.BILL_DIV_CODE
+	     , '합계' SEQ
+	     , '' COMPANY_NUM
+	     , '' CUSTOM_NAME
+	     , '' BILL_DATE
+	     , SUM(A.TOT_AMT_I) AS TOT_AMT_I
+	     , SUM(A.SUPPLY_AMT_I) AS SUPPLY_AMT_I
+	     , SUM(A.TAX_AMT_I) AS TAX_AMT_I
+	     , MAX(B.TOT_CNT) AS TOT_CNT
+	     , MAX(B.TOT_AMT) AS TOT_AMT
+	     , MAX(B.BILL_CNT) AS BILL_CNT
+	     , MAX(B.BILL_AMT) AS BILL_AMT
+	     , MAX(B.CREDIT_CNT) AS CREDIT_CNT
+	     , MAX(B.CREDIT_AMT) AS CREDIT_AMT
+	     , MAX(B.CASH_CNT) AS CASH_CNT
+	     , MAX(B.CASH_AMT) AS CASH_AMT
+	     , MAX(B.CASHSALE_CNT) AS CASHSALE_CNT
+	     , MAX(B.CASHSALE_AMT) AS CASHSALE_AMT
+	     , '1' GUBUN
+	     , 0 SORT
+	   FROM atx531T A WITH (NOLOCK)
+	       RIGHT JOIN ATX530T B WITH (NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+	                                        AND A.FR_PUB_DATE = B.FR_PUB_DATE
+	                                        AND A.TO_PUB_DATE = B.TO_PUB_DATE
+	                                        AND A.BILL_DIV_CODE = B.BILL_DIV_CODE
+	  WHERE A.COMP_CODE   =  #{S_COMP_CODE}
+	    AND A.FR_PUB_DATE = #{FR_PUB_DATE}
+	    AND A.TO_PUB_DATE = #{TO_PUB_DATE}
+	   AND A.BILL_DIV_CODE = #{BILL_DIV_CODE}
+	GROUP BY A.FR_PUB_DATE
+	     , A.TO_PUB_DATE
+	     , A.BILL_DIV_CODE
+	 ORDER BY GUBUN, SORT
+	</select>
+
+</mapper>

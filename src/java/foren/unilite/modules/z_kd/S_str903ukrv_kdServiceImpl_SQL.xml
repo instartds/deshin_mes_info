@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_str903ukrv_kdService">
+	<select id="s_str903ukrv_kdService.selectList" parameterType="Map" resultType="rMap">     
+        BEGIN
+        
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+        
+        DECLARE  @COMP_CODE    NVARCHAR(08) 
+                ,@DIV_CODE     NVARCHAR(08)
+                ,@CUSTOM_CODE  NVARCHAR(20)
+                ,@OUT_DATE_FR  NVARCHAR(08)
+                ,@OUT_DATE_TO  NVARCHAR(08)
+                ,@ITEM_CODE    NVARCHAR(20)
+                ,@NEGO_YN      NVARCHAR(04)
+        
+        SET @COMP_CODE    = #{S_COMP_CODE}      ---법인
+        SET @DIV_CODE     = #{DIV_CODE}         ---사업장
+        SET @CUSTOM_CODE  = #{CUSTOM_CODE}      ---거래처
+        SET @OUT_DATE_FR  = #{OUT_DATE_FR}      ---출고일자FR
+        SET @OUT_DATE_TO  = #{OUT_DATE_TO}      ---출고일자TO
+        SET @ITEM_CODE    = #{ITEM_CODE}        ---품목코드
+        SET @NEGO_YN      = #{NEGO_YN}          ---네고여부
+        
+        SELECT A.DIV_CODE                    AS DIV_CODE        ---사업장
+              ,A.NEGO_YN                     AS NEGO_YN         ---네고처리
+              ,A.NEGO_DATE                   AS NEGO_DATE       ---네고일자
+              ,A.NEGO_DATE                   AS NEGO_DATE_TEMP  ---네고일자(TEMP)
+              ,A.INOUT_CODE                  AS CUSTOM_CODE     ---거래처
+              ,C.CUSTOM_NAME                 AS CUSTOM_NAME     ---거래처명
+              ,B.CAR_TYPE                    AS CAR_TYPE        ---차종
+              ,A.ITEM_CODE                   AS ITEM_CODE       ---품목코드
+              ,B.ITEM_NAME                   AS ITEM_NAME       ---품목명
+              ,B.SPEC                        AS SPEC            ---규격
+              ,A.INOUT_DATE                  AS OUT_DATE        ---출고일
+              ,ISNULL(A.ORDER_UNIT_Q, 0)     AS OUT_Q           ---출고수량
+              --,A.PRICE_YN                    AS PRICE_YN        ---단가유형
+              ,D.CODE_NAME                   AS PRICE_YN
+              ,ISNULL(A.ORDER_UNIT_P, 0)     AS OUT_P           ---출고단가
+              ,ISNULL(A.INOUT_I, 0)          AS OUT_I           ---출고금액
+              ,A.INOUT_NUM                   AS OUT_NUM         ---출고번호
+              ,A.INOUT_SEQ                   AS OUT_SEQ         ---출고순번
+              ,E.APLY_START_DATE  -- 단가적용일자
+			  ,E.ITEM_P			  -- 확정단가
+        FROM       BTR100T A WITH(NOLOCK)
+        INNER JOIN BPR100T B WITH(NOLOCK) ON A.COMP_CODE    = B.COMP_CODE 
+                                         AND A.ITEM_CODE    = B.ITEM_CODE
+        INNER JOIN BCM100T C WITH(NOLOCK) ON C.COMP_CODE    = A.COMP_CODE
+                                         AND C.CUSTOM_CODE  = A.INOUT_CODE
+        LEFT  JOIN BSA100T D WITH(NOLOCK) ON D.COMP_CODE    = A.COMP_CODE
+                                         AND D.MAIN_CODE    = N'S003'
+                                         AND D.SUB_CODE    != N'$'
+                                         AND D.SUB_CODE     = A.PRICE_YN  
+        LEFT JOIN  (SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.CUSTOM_CODE, A.MONEY_UNIT, A.ORDER_UNIT, A.APLY_START_DATE, A.ITEM_P       
+					 FROM BPR400T A WITH(NOLOCK)
+					WHERE A.COMP_CODE   = @COMP_CODE
+					  AND A.TYPE        = '2'
+					  AND A.DIV_CODE    IN (@DIV_CODE, '*')
+					  AND A.APLY_START_DATE = (SELECT MAX(X.APLY_START_DATE)
+											   FROM BPR400T X WITH(NOLOCK)
+											  WHERE X.COMP_CODE   = A.COMP_CODE
+												AND X.TYPE        = A.TYPE
+												AND X.DIV_CODE    IN (@DIV_CODE, '*')
+												AND X.ITEM_CODE   = A.ITEM_CODE
+												AND X.CUSTOM_CODE = A.CUSTOM_CODE
+												AND X.MONEY_UNIT  = A.MONEY_UNIT
+												AND X.ORDER_UNIT  = A.ORDER_UNIT
+												AND X.APLY_START_DATE &lt;= CONVERT(VARCHAR, GETDATE(), 112))) E ON E.COMP_CODE   = A.COMP_CODE
+																											AND E.DIV_CODE    IN (@DIV_CODE, '*')
+																											AND E.ITEM_CODE   = A.ITEM_CODE
+																											AND E.CUSTOM_CODE = A.INOUT_CODE
+																											AND E.MONEY_UNIT  = A.MONEY_UNIT
+																											AND E.ORDER_UNIT  = A.ORDER_UNIT                                         
+        WHERE A.COMP_CODE       = @COMP_CODE
+          AND A.DIV_CODE        = @DIV_CODE
+          AND A.CREATE_LOC      IN ( '1', '5')  --영업/무역(수출)
+          AND A.INOUT_TYPE      = '2'           --출고
+          AND A.INOUT_CODE_TYPE = '4'           --거래처
+          --AND A.PRICE_YN        = '3'           --가단가
+          AND ISNULL(A.ORDER_UNIT_P, 0) = 1.0   -- 단가 1 이면 임시단가로 처리(20200520)
+          AND A.INOUT_DATE      &gt;= @OUT_DATE_FR
+          AND A.INOUT_DATE      &lt;= @OUT_DATE_TO
+          AND (@CUSTOM_CODE     = '' OR (@CUSTOM_CODE  != '' AND A.INOUT_CODE LIKE  @CUSTOM_CODE + '%'))
+          AND (@ITEM_CODE       = '' OR (@ITEM_CODE    != '' AND A.ITEM_CODE  LIKE  @ITEM_CODE + '%'))
+          AND A.NEGO_YN         = @NEGO_YN
+        
+        ORDER BY A.DIV_CODE, A.NEGO_YN, A.NEGO_DATE, A.INOUT_CODE, A.INOUT_DATE
+        
+        SET ARITHABORT OFF
+        SET NOCOUNT OFF
+        
+        END            
+    </select>
+    
+    <update id="s_str903ukrv_kdService.updateDetail" parameterType="Map">       
+        UPDATE  BTR100T
+           SET  NEGO_YN         = #{NEGO_YN},
+                NEGO_DATE       = #{NEGO_DATE}
+         WHERE COMP_CODE        = #{S_COMP_CODE}
+           AND DIV_CODE         = #{DIV_CODE}
+           AND INOUT_NUM        = #{OUT_NUM}
+           AND INOUT_SEQ        = #{OUT_SEQ}
+    </update>
+    
+</mapper>

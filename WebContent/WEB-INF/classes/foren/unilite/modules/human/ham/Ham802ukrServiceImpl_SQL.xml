@@ -1,0 +1,349 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ham802ukrService">
+
+	<select id="ham802ukrService.selectMasterList" parameterType="Map" resultType="rMap">
+		--ham802ukrService.selectMasterList
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+			
+			DECLARE	@COMP_CODE		NVARCHAR(08)
+				  , @PAY_YM			NVARCHAR(06)
+				  , @DEPT_CODE		NVARCHAR(10)
+				  , @PERSON_NUMB	NVARCHAR(10)
+			
+			SET @COMP_CODE		= #{S_COMP_CODE}
+			SET @PAY_YM			= #{DUTY_YM}
+			SET @DEPT_CODE		= #{DEPT_CODE}
+			SET @PERSON_NUMB	= #{PERSON_NUMB}
+
+			SELECT A.COMP_CODE
+				 , A.DIV_CODE
+				 , A.PERSON_NUMB
+				 , A.NAME
+				 , A.DEPT_CODE
+				 , A.DEPT_NAME
+				 , CASE
+						WHEN A.JOIN_DATE &gt; @PAY_YM + '01' THEN A.JOIN_DATE
+						ELSE @PAY_YM + '01'
+				   END	AS DUTY_DATE_FR
+				 , CASE
+						WHEN ISNULL(NULLIF(A.RETR_DATE, ''), '00000000') != '00000000'
+						 AND A.RETR_DATE &lt; @PAY_YM + '31' THEN A.RETR_DATE
+						ELSE @PAY_YM + '31'
+				   END	AS DUTY_DATE_TO
+				 , A.TAX_CODE			--	연장수당세액
+				 , A.HIRE_INSUR_TYPE	--	고용보험계산
+				 , A.WORK_COMPEN_YN		--	산재보험계산
+				 , A.COMP_TAX_I			--	세액계산대상여부
+				 , A.TAXRATE_BASE		--	소득세율기준
+				 , A.PAY_PRESERVE_I		--	시급
+				 , A.ORI_MED_INSUR_I	AS MED_INSUR_I	--	건강보험공제대상액
+				 , A.OLD_MED_INSUR_I	--	장기요양보험공제대상액
+				 , A.HIRE_INSUR_I		--	고용보험공제대상액
+				 , A.ANU_INSUR_I		--	국민연금공제대상액
+				 , B.EMPLOY_RATE		--	고용보험율
+				 , B.BUSI_SHARE_RATE	--	사회(고용)보험사업자부담율
+				 , B.WORKER_COMPEN_RATE	--	산재보험율
+			  FROM             HUM100T A	WITH (NOLOCK)
+				   INNER JOIN  HBS400T B	WITH (NOLOCK) ON A.COMP_CODE	= B.COMP_CODE
+								                         AND B.COMPANY_CODE	= '1'
+                   LEFT  JOIN  HPA600T C    WITH (NOLOCK) ON A.COMP_CODE    = C.COMP_CODE
+                                                         AND A.PERSON_NUMB  = C.PERSON_NUMB
+                                                         AND C.PAY_YYYYMM   = @PAY_YM
+                                                         AND C.SUPP_TYPE    = '1'   								                         
+			 WHERE A.COMP_CODE	= @COMP_CODE			       
+			   AND A.JOIN_DATE &lt;= @PAY_YM + '31'
+			   AND ((A.PAY_GUBUN = '2'  AND A.PAY_GUBUN2 = '1') OR (C.PAY_GUBUN  = '2'  AND C.PAY_GUBUN2 = '1')) 
+			   AND ((ISNULL(NULLIF(A.RETR_DATE, ''), '00000000') = '00000000') OR (A.RETR_DATE &gt;= @PAY_YM + '01'))
+	    	   AND ((ISNULL(@DEPT_CODE	, '') = '') OR (A.DEPT_CODE   LIKE @DEPT_CODE  ))
+	    	   AND ((ISNULL(@PERSON_NUMB, '') = '') OR (A.PERSON_NUMB LIKE @PERSON_NUMB))	    	  
+               
+			
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+	</select>	
+	
+	<select id="ham802ukrService.selectDetailList" parameterType="Map" resultType="rMap">
+		--ham802ukrService.selectDetailList
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+			
+			DECLARE	@COMP_CODE		NVARCHAR(08)
+				  , @PAY_YM			NVARCHAR(06)
+				  , @PERSON_NUMB	NVARCHAR(10)
+				  , @MONTH_DAYS		NUMERIC(2)
+			
+			SET @COMP_CODE		= #{S_COMP_CODE}
+			SET @PAY_YM			= #{DUTY_YM}
+			SET @PERSON_NUMB	= #{PERSON_NUMB}
+			
+			SET @MONTH_DAYS = DATEDIFF(D, @PAY_YM + '01', DATEADD(M, 1, @PAY_YM + '01'))
+
+			SELECT B.COMP_CODE
+				 , B.DIV_CODE
+				 , B.DEPT_CODE
+				 , B.DEPT_NAME
+				 , B.PERSON_NUMB
+				 , B.NAME
+				 , SUBSTRING(A.DUTY_DATE, 1, 4)			AS PAY_YYYY
+				 , SUBSTRING(A.DUTY_DATE, 1, 6)			AS PAY_YYYYMM
+				 , A.DUTY_DATE							AS DUTY_YYYYMMDD
+				 , CASE WHEN ISNULL(D.HOLY_TYPE, '') != '' THEN D.HOLY_TYPE
+						ELSE CASE WHEN DATEPART(DW, A.DUTY_DATE) IN ('1', '7') THEN '0'
+								  ELSE '2'
+							 END
+				   END									AS HOLY_TYPE
+				 , CASE WHEN ISNULL(SUPP_DATE, '') = '' THEN CONVERT(NVARCHAR(8), DATEADD(D, -1, DATEADD(M, 1, @PAY_YM + '01')), 112) ELSE SUPP_DATE END AS SUPP_DATE
+				 , CASE WHEN SUBSTRING(A.DUTY_DATE, 5, 2) BETWEEN '01' AND '03' THEN '14'
+						WHEN SUBSTRING(A.DUTY_DATE, 5, 2) BETWEEN '04' AND '06' THEN '24'
+						WHEN SUBSTRING(A.DUTY_DATE, 5, 2) BETWEEN '07' AND '09' THEN '34'
+						WHEN SUBSTRING(A.DUTY_DATE, 5, 2) BETWEEN '10' AND '12' THEN '44'
+						ELSE '00'
+				   END									AS QUARTER_TYPE
+				 , C.DUTY_TIME
+				 , C.WAGES_STD_I
+				 , C.AMOUNT_I_01
+				 , C.AMOUNT_I_02
+                 , C.SUPP_TOTAL_I                                                             --과세금액
+                 , C.TAX_EXEMPTION_I                                                          --비과세금액
+                 , ISNULL(C.SUPP_TOTAL_I, 0)    + ISNULL(C.TAX_EXEMPTION_I, 0) AS PAY_TOTAL_I --지급총액 
+                 , ISNULL(C.IN_TAX_I, 0)        + ISNULL(C.LOCAL_TAX_I, 0) + 
+                   ISNULL(C.ANU_INSUR_I, 0)     + ISNULL(C.MED_INSUR_I, 0) +  
+                   ISNULL(C.OLD_MED_INSUR_I, 0) + ISNULL(C.HIR_INSUR_I, 0)     AS DED_TOTAL_I --공제총액  
+                 , C.REAL_AMOUNT_I                                                            --실지급액
+				 , C.IN_TAX_I
+				 , C.LOCAL_TAX_I
+				 , C.ANU_INSUR_I
+				 , C.MED_INSUR_I
+				 , C.OLD_MED_INSUR_I
+				 , C.HIR_INSUR_I				 
+			  FROM (
+						SELECT @PAY_YM + RIGHT('00' + CONVERT(VARCHAR(02), number + 1), 2)	AS DUTY_DATE
+						  FROM MASTER..spt_values
+						 WHERE TYPE = 'P'
+						   AND number &lt; @MONTH_DAYS
+				   ) A
+					LEFT OUTER JOIN HUM100T B
+								 ON 1 = 1
+					LEFT OUTER JOIN HAM810T C
+								 ON B.COMP_CODE		= C.COMP_CODE
+								AND B.PERSON_NUMB	= C.PERSON_NUMB
+								AND A.DUTY_DATE		= C.DUTY_YYYYMMDD
+					LEFT OUTER JOIN HBS600T D
+								 ON B.COMP_CODE		= D.COMP_CODE
+								AND B.DIV_CODE		= D.DIV_CODE
+								AND A.DUTY_DATE		= D.CAL_DATE
+			 WHERE B.COMP_CODE		= @COMP_CODE
+			   AND B.PERSON_NUMB	= @PERSON_NUMB
+			 ORDER BY A.DUTY_DATE
+			
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+	</select>	
+	
+	<update id="ham802ukrService.updateDetail" parameterType="Map">
+		--ham802ukrService.updateDetail
+		BEGIN
+		    DECLARE @SUPP_DATE NVARCHAR(08)
+		    SET @SUPP_DATE = REPLACE(#{SUPP_DATE},' ','')
+		    
+			IF ${SUPP_TOTAL_I} + ${TAX_EXEMPTION_I} + ${REAL_AMOUNT_I} = 0
+			BEGIN
+				DELETE
+				  FROM HAM810T
+				 WHERE COMP_CODE	 = #{S_COMP_CODE}
+				   AND DIV_CODE		 = #{DIV_CODE}
+				   AND PAY_YYYYMM	 = #{PAY_YYYYMM}
+				   AND PERSON_NUMB	 = #{PERSON_NUMB}
+				   AND DUTY_YYYYMMDD = #{DUTY_YYYYMMDD}
+			END
+			ELSE
+			BEGIN
+				IF EXISTS (	SELECT *
+							  FROM HAM810T
+							 WHERE COMP_CODE	 = #{S_COMP_CODE}
+							   AND DIV_CODE		 = #{DIV_CODE}
+							   AND PAY_YYYYMM	 = #{PAY_YYYYMM}
+							   AND PERSON_NUMB	 = #{PERSON_NUMB}
+							   AND DUTY_YYYYMMDD = #{DUTY_YYYYMMDD}	)
+				BEGIN
+					UPDATE HAM810T
+					   SET PAY_YYYY			= #{PAY_YYYY}
+						 , QUARTER_TYPE		= #{QUARTER_TYPE}
+						 , SUPP_DATE		= @SUPP_DATE
+						 , DUTY_TIME		= ${DUTY_TIME}
+						 , DUTY_TIME_01     = 0
+                         , DUTY_MINU_01     = 0
+                         , DUTY_TIME_02     = 0
+                         , DUTY_MINU_02     = 0
+						 , WAGES_STD_I		= ${WAGES_STD_I}
+						 , AMOUNT_I_01		= ${AMOUNT_I_01}
+						 , AMOUNT_I_02      = ${AMOUNT_I_02}
+						 , SUPP_TOTAL_I		= ${SUPP_TOTAL_I}
+						 , TAX_EXEMPTION_I  = ${TAX_EXEMPTION_I}
+						 , REAL_AMOUNT_I	= ${REAL_AMOUNT_I}						 
+						 , IN_TAX_I			= ${IN_TAX_I}
+						 , LOCAL_TAX_I		= ${LOCAL_TAX_I}
+						 , ANU_INSUR_I		= ${ANU_INSUR_I}
+						 , MED_INSUR_I		= ${MED_INSUR_I}
+						 , OLD_MED_INSUR_I	= ${OLD_MED_INSUR_I}
+						 , HIR_INSUR_I		= ${HIR_INSUR_I}
+						 , UPDATE_DB_USER	= #{S_USER_ID}
+						 , UPDATE_DB_TIME	= GETDATE()
+					 WHERE COMP_CODE		= #{S_COMP_CODE}
+					   AND DIV_CODE			= #{DIV_CODE}
+					   AND PAY_YYYYMM		= #{PAY_YYYYMM}
+					   AND PERSON_NUMB		= #{PERSON_NUMB}
+					   AND DUTY_YYYYMMDD	= #{DUTY_YYYYMMDD}
+				END
+				ELSE
+				BEGIN
+					INSERT INTO HAM810T
+						 ( COMP_CODE		, DIV_CODE			, PAY_YYYYMM		, PERSON_NUMB		, DUTY_YYYYMMDD
+						 , PAY_YYYY			, QUARTER_TYPE		, SUPP_DATE			, DUTY_TIME			, WAGES_STD_I
+						 , AMOUNT_I_01		, DUTY_TIME_01		, DUTY_MINU_01		, AMOUNT_I_02		, DUTY_TIME_02
+						 , DUTY_MINU_02		, SUPP_TOTAL_I		, TAX_EXEMPTION_I   , REAL_AMOUNT_I		, IN_TAX_I
+						 , LOCAL_TAX_I		, ANU_INSUR_I		, MED_INSUR_I		, OLD_MED_INSUR_I	, HIR_INSUR_I
+						 , INSERT_DB_USER	, INSERT_DB_TIME	, UPDATE_DB_USER	, UPDATE_DB_TIME	)
+					VALUES
+						 ( #{S_COMP_CODE}	, #{DIV_CODE}		, #{PAY_YYYYMM}		, #{PERSON_NUMB}	, #{DUTY_YYYYMMDD}
+						 , #{PAY_YYYY}		, #{QUARTER_TYPE}	, @SUPP_DATE        , ${DUTY_TIME}		, #{WAGES_STD_I}
+						 , #{AMOUNT_I_01}	, 0					, 0					, #{AMOUNT_I_02}	, 0
+						 , 0				, #{SUPP_TOTAL_I}	, #{TAX_EXEMPTION_I}, #{REAL_AMOUNT_I}	, #{IN_TAX_I}
+						 , #{LOCAL_TAX_I}	, #{ANU_INSUR_I}	, #{MED_INSUR_I}	, #{OLD_MED_INSUR_I}, #{HIR_INSUR_I}
+						 , #{S_USER_ID}		, GETDATE()			, #{S_USER_ID}		, GETDATE()			)
+				END
+			END
+		END
+	</update>
+	
+	<update id="ham802ukrService.updateMonthlyRecord" parameterType="Map">
+		--ham802ukrService.updateMonthlyRecord
+		BEGIN
+			DECLARE	@WORK_MM			NVARCHAR(02)
+				  , @WORK_DAY			NUMERIC(2, 0)
+				  , @SUPP_DATE          NVARCHAR(08)   
+				  , @SUPP_TOTAL_I		NUMERIC(18, 0)
+				  , @REAL_AMOUNT_I		NUMERIC(18, 0)
+				  , @TAX_EXEMPTION_I	NUMERIC(18, 0)
+				  , @IN_TAX_I			NUMERIC(18, 0)
+				  , @LOCAL_TAX_I		NUMERIC(18, 0)
+				  , @ANU_INSUR_I		NUMERIC(18, 0)
+				  , @MED_INSUR_I		NUMERIC(18, 0)
+				  , @OLD_MED_INSUR_I	NUMERIC(18, 0)
+				  , @HIR_INSUR_I		NUMERIC(18, 0)
+				  , @BUSI_SHARE_I		NUMERIC(18, 0)
+				  , @WORKER_COMPEN_I	NUMERIC(18, 0)
+				  , @KEY_VALUE			NVARCHAR(40)	= #{KEY_VALUE}
+				  , @OPR_FLAG			NVARCHAR(01)
+				  , @USER_ID			NVARCHAR(100)	= #{S_USER_ID}
+				  , @ERROR_DESC			NVARCHAR(2000)
+			
+			IF NOT EXISTS (	SELECT *
+							  FROM HAM810T
+							 WHERE COMP_CODE	= #{S_COMP_CODE}
+							   AND DIV_CODE		= #{DIV_CODE}
+							   AND PAY_YYYYMM	= #{PAY_YYYYMM}
+							   AND PERSON_NUMB	= #{PERSON_NUMB}	)
+			BEGIN
+				SET @OPR_FLAG = 'D'
+				
+				SELECT @WORK_MM			= WORK_MM
+					 , @WORK_DAY		= WORK_DAY
+					 , @SUPP_DATE       = SUPP_DATE
+					 , @SUPP_TOTAL_I	= SUPP_TOTAL_I
+					 , @REAL_AMOUNT_I	= REAL_AMOUNT_I
+					 , @TAX_EXEMPTION_I	= TAX_EXEMPTION_I
+					 , @IN_TAX_I		= IN_TAX_I
+					 , @LOCAL_TAX_I		= LOCAL_TAX_I
+					 , @ANU_INSUR_I		= ANU_INSUR_I
+					 , @MED_INSUR_I		= MED_INSUR_I
+					 , @OLD_MED_INSUR_I	= OLD_MED_INSUR_I
+					 , @HIR_INSUR_I		= HIR_INSUR_I
+					 , @BUSI_SHARE_I	= 0
+					 , @WORKER_COMPEN_I	= 0
+				  FROM HAM800T
+				 WHERE COMP_CODE	= #{S_COMP_CODE}
+				   AND PAY_YYYYMM	= #{PAY_YYYYMM}
+				   AND PERSON_NUMB	= #{PERSON_NUMB}
+				   AND SUPP_TYPE	= '1'
+			END
+			ELSE
+			BEGIN
+				SELECT @WORK_MM			= RIGHT(PAY_YYYYMM, 2)
+					 , @WORK_DAY		= SUM(CASE WHEN SUPP_TOTAL_I != 0 THEN 1 ELSE 0 END)
+					 , @SUPP_DATE       = MAX(SUPP_DATE)
+					 , @SUPP_TOTAL_I	= SUM(ISNULL(SUPP_TOTAL_I	, 0))
+					 , @REAL_AMOUNT_I	= SUM(ISNULL(REAL_AMOUNT_I	, 0))
+					 , @TAX_EXEMPTION_I	= SUM(ISNULL(TAX_EXEMPTION_I, 0))
+					 , @IN_TAX_I		= SUM(ISNULL(IN_TAX_I		, 0))
+					 , @LOCAL_TAX_I		= SUM(ISNULL(LOCAL_TAX_I	, 0))
+					 , @ANU_INSUR_I		= SUM(ISNULL(ANU_INSUR_I	, 0))
+					 , @MED_INSUR_I		= SUM(ISNULL(MED_INSUR_I	, 0))
+					 , @OLD_MED_INSUR_I	= SUM(ISNULL(OLD_MED_INSUR_I, 0))
+					 , @HIR_INSUR_I		= SUM(ISNULL(HIR_INSUR_I	, 0))
+					 , @BUSI_SHARE_I	= 0
+					 , @WORKER_COMPEN_I	= 0
+				  FROM HAM810T
+				 WHERE COMP_CODE	= #{S_COMP_CODE}
+				   AND DIV_CODE		= #{DIV_CODE}
+				   AND PAY_YYYYMM	= #{PAY_YYYYMM}
+				   AND PERSON_NUMB	= #{PERSON_NUMB}
+				 GROUP BY PAY_YYYYMM
+				
+				IF EXISTS (	SELECT *
+							  FROM HAM800T
+							 WHERE COMP_CODE	= #{S_COMP_CODE}
+							   AND PAY_YYYYMM	= #{PAY_YYYYMM}
+							   AND PERSON_NUMB	= #{PERSON_NUMB}
+							   AND SUPP_TYPE	= '1'	)
+				BEGIN
+					SET @OPR_FLAG = 'N'
+				END
+				ELSE
+				BEGIN
+					SET @OPR_FLAG = 'U'
+				END
+			END
+			
+			--ham800ukrService.insertLogMaster
+			INSERT INTO L_HAM800T
+				 ( TYPE_KEY			, OPR_FLAG
+				 , COMP_CODE		, DEPT_CODE			, DEPT_NAME			, PERSON_NUMB		, PERSON_NAME                 
+				 , REPRE_NUM		, BANK_ACCOUNT1		, BANK_CODE			, BANK_NAME1		, JOIN_DATE                   
+				 , RETR_DATE		, SUPP_TYPE			, PAY_YYYYMM		, SUPP_DATE			, WORK_DAY                    
+				 , SUPP_TOTAL_I		, REAL_AMOUNT_I		, TAX_EXEMPTION_I	, IN_TAX_I			, LOCAL_TAX_I                 
+				 , ANU_INSUR_I		, MED_INSUR_I		, HIR_INSUR_I		, BUSI_SHARE_I		, WORKER_COMPEN_I             
+				 , HIRE_INSUR_TYPE	, WORK_COMPEN_YN	, OLD_MED_INSUR_I	, UPDATE_DB_USER	, UPDATE_DB_TIME
+				 , INSERT_DB_USER	, INSERT_DB_TIME	)
+			SELECT @KEY_VALUE		, @OPR_FLAG
+				 , A.COMP_CODE		, A.DEPT_CODE		, A.DEPT_NAME		, A.PERSON_NUMB		, A.NAME
+				 , REPLACE(uniLITE.fnCipherDecrypt(A.REPRE_NUM, ''), '-', '')
+				 , uniLITE.fnCipherDecrypt(A.BANK_ACCOUNT1, '')
+				 , A.BANK_CODE1		, B.CUSTOM_NAME		, A.JOIN_DATE
+				 , A.RETR_DATE		, '1'				, #{PAY_YYYYMM}		, @SUPP_DATE		, @WORK_DAY
+				 , @SUPP_TOTAL_I	, @REAL_AMOUNT_I	, @TAX_EXEMPTION_I	, @IN_TAX_I			, @LOCAL_TAX_I
+				 , @ANU_INSUR_I		, @MED_INSUR_I		, @HIR_INSUR_I		, @BUSI_SHARE_I		, @WORKER_COMPEN_I
+				 , A.HIRE_INSUR_TYPE, A.WORK_COMPEN_YN	, @OLD_MED_INSUR_I	, @USER_ID			, GETDATE()
+				 , @USER_ID			, GETDATE()
+			  FROM HUM100T A
+					LEFT OUTER JOIN BCM100T B
+								 ON A.COMP_CODE		= B.COMP_CODE
+								AND A.BANK_CODE1	= B.CUSTOM_CODE
+								AND B.CUSTOM_TYPE	= '4'
+			 WHERE A.COMP_CODE		= #{S_COMP_CODE}
+			   AND A.PERSON_NUMB	= #{PERSON_NUMB}
+			
+			
+			EXEC USP_HUMAN_HAM800UKR  @KEY_VALUE
+									, @USER_ID
+									, @ERROR_DESC	OUTPUT
+		END
+	</update>
+	
+</mapper>

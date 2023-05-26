@@ -1,0 +1,349 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="agd151ukrServiceImpl">
+	<select id="agd151ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	    DECLARE @CompCode   NVARCHAR(08)
+	          , @DivCode    NVARCHAR(08)
+	          , @FrDprYymm  NVARCHAR(08)
+	          , @ToDprYymm  NVARCHAR(08)
+	          , @FrItemCode NVARCHAR(08)
+	          , @ToItemCode NVARCHAR(08)
+	
+	    SET @CompCode   = #{S_COMP_CODE}
+	    SET @DivCode    = #{DIV_CODE}
+	    SET @DivCode    = (CASE WHEN @DivCode = '' THEN '%' ELSE @DivCode END)
+	    SET @FrDprYymm  = #{FR_DPR_MONTH}
+	    SET @ToDprYymm  = #{TO_DPR_MONTH}
+	    SET @FrItemCode = #{FR_ITEM_CD}
+	    SET @ToItemCode = #{TO_ITEM_CD}
+	
+	
+	    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#ABA910T'))
+	        DROP TABLE #ABA910T
+	   
+	    CREATE TABLE #ABA910T
+	         ( COMP_CODE            NVARCHAR(08)        -- 법인코드
+	         , DIV_CODE             NVARCHAR(08)        -- 사업장
+	         , ITEM_CODE            NVARCHAR(08)        -- 비용코드
+	         , ITEM_NAME            NVARCHAR(20)        -- 비용명
+	         , ACCNT                NVARCHAR(16)        -- 계정코드
+	         , ACCNT_NAME           NVARCHAR(50)        -- 계정명
+	         , P_ACCNT              NVARCHAR(16)        -- 상대계정코드
+	         , P_ACCNT_NAME         NVARCHAR(50)        -- 상대계정명
+	         , MONEY_UNIT           NVARCHAR(03)        -- 화폐단위
+	         , EXCHG_RATE_O         NUMERIC(30,6)       -- 환율
+	         , AMT_FOR_I            NUMERIC(30,6)       -- 외화금액
+	         , AMT_I                NUMERIC(30,8)       -- 금액
+	         , START_DATE           NVARCHAR(08)        -- 시작일
+	         , END_DATE             NVARCHAR(08)        -- 종료일
+	         , DPR_YYMM             NVARCHAR(06)        -- 상각년월
+	         , TM_DPR_I             NUMERIC(30,6)       -- 상각금액
+	         , FI_DPR_TOT_I         NUMERIC(30,6)       -- 기말비용누계액
+	         , FI_BLN_I             NUMERIC(30,6)       -- 기말미처리잔액
+	         , EX_DATE              NVARCHAR(08)        -- 전표일자
+	         , EX_NUM               NUMERIC(7,0)        -- 전표번호
+	         , AGREE_YN             NVARCHAR(01) )      -- 승인구분       
+	    CREATE INDEX #ABA910T_IDX01 ON #ABA910T (COMP_CODE, ITEM_CODE, DPR_YYMM)
+	
+	    DECLARE @REPAY_METHOD       NVARCHAR(01)
+	          , @REPAY_COMPUTE      NVARCHAR(01)
+	          , @AMT_POINT          NVARCHAR(01)
+	
+	    DECLARE @CurCompCode        NVARCHAR(08)
+	          , @CurDivCode         NVARCHAR(08)
+	          , @CurItemCode        NVARCHAR(08)
+	          , @CurItemName        NVARCHAR(40)
+	          , @CurAccnt           NVARCHAR(16) 
+	          , @CurAccntName       NVARCHAR(50) 
+	          , @CurPAccnt          NVARCHAR(16) 
+	          , @CurPAccntName      NVARCHAR(50) 
+	          , @CurMoneyUnit       NVARCHAR(03) 
+	          , @CurExchgRateO      NUMERIC(30,6)
+	          , @CurAmtForI         NUMERIC(30,6)
+	          , @CurAmtI            NUMERIC(30,8)
+	          , @CurStartDate       NVARCHAR(08) 
+	          , @CurEndDate         NVARCHAR(08) 
+	
+	    DECLARE @TmDprI             NUMERIC(30,6)       -- 상각금액
+	          , @FiDprTotI          NUMERIC(30,6)       -- 기말비용누계액
+	          , @FiBlnI             NUMERIC(30,6)       -- 기말미처리잔액
+	          , @ExDate             NVARCHAR(08)        -- 전표일자
+	          , @ExNum              NUMERIC(7,0)        -- 전표번호
+	          , @AgreeYn            NVARCHAR(01)        -- 승인구분       
+	
+	    DECLARE @StDate             NVARCHAR(08)
+	          , @EndDate            NVARCHAR(08)
+	          , @FrDay              NVARCHAR(08) 
+	          , @ToDay              NVARCHAR(08)
+	          , @TotDay             NUMERIC(30, 6)
+	          , @DayPerMon          NUMERIC(30, 6)
+	          , @AmtPerMon          NUMERIC(30, 6)
+	          , @TotMon             NUMERIC(30, 6)
+	          , @BalDay             NUMERIC(30, 6)
+	          , @BalMon             NUMERIC(30, 6)
+	          , @BalAmt             NUMERIC(30, 6)
+	
+	    SELECT @REPAY_METHOD  = ISNULL(REPAY_METHOD , '1')  --기간비용계산 (1:월할계산, 2:일할계산)
+	         , @REPAY_COMPUTE = ISNULL(REPAY_COMPUTE, '1')  --기간비용조정 (1:당월반영, 2:기말반영)
+	         , @AMT_POINT     = ISNULL(AMT_POINT    , '1')
+	      FROM ABA100T WITH (NOLOCK)
+	     WHERE COMP_CODE = @CompCode
+	       AND BASE_CODE = N'01'
+	
+	    DECLARE CUR_001 CURSOR LOCAL FOR
+	        SELECT A.COMP_CODE  , A.DIV_CODE        , A.ITEM_CODE   , A.ITEM_NAME   , A.ACCNT       , B.ACCNT_NAME  , A.P_ACCNT     , C.ACCNT_NAME AS P_ACCNT_NAME
+	             , A.MONEY_UNIT , A.EXCHG_RATE_O    , A.AMT_FOR_I   , A.AMT_I       , A.START_DATE  , A.END_DATE
+	          FROM            ABA900T A WITH (NOLOCK)
+			       LEFT  JOIN ABA400T B WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE 
+	                                                 AND B.ACCNT     = A.ACCNT
+	               LEFT  JOIN ABA400T C WITH (NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+	                                                 AND C.ACCNT     = A.P_ACCNT
+	         WHERE A.COMP_CODE  = @CompCode
+	         <if test="@foren.Ognl@isNotEmpty(FR_ITEM_CD)">	
+	           AND A.ITEM_CODE &gt;= @FrItemCode
+	         </if>
+	         <if test="@foren.Ognl@isNotEmpty(TO_ITEM_CD)">
+	           AND A.ITEM_CODE &lt;= @ToItemCode
+	         </if>
+	         ORDER BY A.COMP_CODE, A.ITEM_CODE
+	
+	    OPEN CUR_001
+	    FETCH NEXT FROM CUR_001 INTO @CurCompCode   , @CurDivCode   , @CurItemCode  , @CurItemName  , @CurAccnt     , @CurAccntName , @CurPAccnt    , @CurPAccntName
+	                               , @CurMoneyUnit  , @CurExchgRateO, @CurAmtForI   , @CurAmtI      , @CurStartDate , @CurEndDate   
+	    WHILE (@@FETCH_STATUS = 0)            
+	    BEGIN
+	        SET @StDate   = LEFT(@CurStartDate, 6)
+	        SET @EndDate  = LEFT(@CurEndDate  , 6)
+	        SET @FiDprTotI = 0
+	        SET @FiBlnI    = @CurAmtI
+	
+	        WHILE (@StDate &lt;= @EndDate)
+	        BEGIN
+	            SET @TmDprI = 0
+	
+	            SELECT @TmDprI      = TM_DPR_I
+	                 , @ExDate      = EX_DATE
+	                 , @ExNum       = EX_NUM
+	                 , @AgreeYn     = AGREE_YN
+	              FROM ABA910T WITH (NOLOCK)
+	             WHERE COMP_CODE = @CurCompCode
+	               AND ITEM_CODE = @CurItemCode
+	               AND DPR_YYMM  = @StDate
+	
+	            IF (@@ROWCOUNT = 0)
+	            BEGIN
+	                SET @ExDate  = ''
+	                SET @ExNum   = 0
+	                SET @AgreeYn = 'N'
+	
+	                IF @StDate = @EndDate
+	                BEGIN
+	                    SET @TmDprI = @CurAmtI - @FiDprTotI
+	                END
+	                ELSE
+	                BEGIN
+	                    -- 월할계산
+	                    IF @REPAY_METHOD = '1'
+	                    BEGIN
+	                        SET @TotMon    = DATEDIFF(M, @CurStartDate, @CurEndDate) + 1
+	                        SET @AmtPerMon = @CurAmtI / @TotMon
+	
+	                        -- 기간비용조정(1:당월반영, 2:기말반영)
+	                        IF @REPAY_COMPUTE = '1'
+	                        BEGIN
+	                            SET @BalMon = DATEDIFF(M, @CurStartDate, @StDate + '01')
+	                            SET @BalAmt = @CurAmtI * @BalMon / @TotMon
+	                            SET @BalAmt = uniLITE.fnGetRound(@CurCompCode, @BalAmt, @AMT_POINT, 'A_FSET_IS')
+	
+	                            IF @CurAmtI &lt; (@BalAmt - @FiDprTotI + @AmtPerMon)
+	                            BEGIN
+	                                SET @TmDprI = @CurAmtI - @FiDprTotI
+	                            END
+	                            ELSE
+	                            BEGIN
+	                                SET @TmDprI = @BalAmt - @FiDprTotI + @AmtPerMon
+	                            END
+	                        END
+	                        ELSE
+	                        BEGIN
+	                            IF @CurAmtI &lt; @FiDprTotI + @AmtPerMon
+	                            BEGIN
+	                                SET @TmDprI = @CurAmtI - @FiDprTotI
+	                            END
+	                            ELSE
+	                            BEGIN
+	                                SET @TmDprI = @AmtPerMon
+	                            END
+	                        END
+	                    END
+	                    -- 일할계산
+	                    ELSE IF @REPAY_METHOD = '2'
+	                    BEGIN
+	                        IF @StDate = LEFT(@CurStartDate, 6)
+	                        BEGIN
+	                            SET @FrDay = @CurStartDate
+	                        END
+	                        ELSE
+	                        BEGIN
+	                            SET @FrDay = @StDate + '01'
+	                        END
+	
+	                        IF @StDate = LEFT(@CurEndDate, 6)
+	                        BEGIN
+	                            SET @ToDay = @CurEndDate
+	                        END
+	                        ELSE                   
+	                        BEGIN                    
+	                            SET @ToDay = CONVERT(NVARCHAR, DATEADD(D, -1, DATEADD(M, 1, @StDate+ '01')), 112)
+	                        END
+	            
+	                        SET @TotDay    = DATEDIFF(D, @CurStartDate, @CurEndDate) + 1
+	                        SET @DayPerMon = DATEDIFF(D, @FrDay, @ToDay) + 1                    
+	                        SET @AmtPerMon = @CurAmtI * @DayPerMon / @TotDay
+	
+	                        IF @REPAY_COMPUTE = '1'
+	                        BEGIN
+	                            SET @BalDay = DATEDIFF(D, @CurStartDate, @FrDay)
+	                            SET @BalAmt = @CurAmtI * @BalDay / @TotDay
+	                            SET @BalAmt = uniLITE.fnGetRound(@CurCompCode, @BalAmt, @AMT_POINT, 'A_FSET_IS')
+	
+	                            IF @CurAmtI &lt; (   @BalAmt - @FiDprTotI + @AmtPerMon)
+	                            BEGIN
+	                                SET @TmDprI = @CurAmtI - @FiDprTotI
+	                            END
+	                            ELSE
+	                            BEGIN
+	                                SET @TmDprI = @BalAmt - @FiDprTotI + @AmtPerMon
+	                            END
+	                        END
+	                        ELSE
+	                        BEGIN
+	                            IF @CurAmtI &lt; (@FiDprTotI + @AmtPerMon)
+	                            BEGIN
+	                                SET @TmDprI = @CurAmtI - @FiDprTotI
+	                            END
+	                            ELSE
+	                            BEGIN
+	                                SET @TmDprI = @AmtPerMon
+	                            END
+	                        END
+	                    END
+	
+	                    SET @TmDprI = uniLITE.fnGetRound(@CurCompCode, @TmDprI, @AMT_POINT, 'A_FSET_IS')
+	                END
+	            END
+	
+	
+	            SET @FiDprTotI = @FiDprTotI + @TmDprI   -- 기말비용누계액
+	            SET @FiBlnI    = @FiBlnI    - @TmDprI   -- 기말미처리잔액
+	
+	            INSERT INTO #ABA910T
+	            SELECT @CurCompCode , @CurDivCode   , @CurItemCode  , @CurItemName  , @CurAccnt
+	                 , @CurAccntName, @CurPAccnt    , @CurPAccntName, @CurMoneyUnit , @CurExchgRateO
+	                 , @CurAmtForI  , @CurAmtI      , @CurStartDate , @CurEndDate   , @StDate
+	                 , @TmDprI      , @FiDprTotI    , @FiBlnI       , @ExDate       , @ExNum
+	                 , @AgreeYn
+	
+	            SET @StDate = LEFT(CONVERT(NVARCHAR, DATEADD(M, 1, @StDate + '01'), 112), 6)
+	        END
+	
+	        FETCH NEXT FROM CUR_001 INTO @CurCompCode   , @CurDivCode   , @CurItemCode  , @CurItemName  , @CurAccnt     , @CurAccntName , @CurPAccnt    , @CurPAccntName
+	                                   , @CurMoneyUnit  , @CurExchgRateO, @CurAmtForI   , @CurAmtI      , @CurStartDate , @CurEndDate   
+	    END
+	    CLOSE      CUR_001
+	    DEALLOCATE CUR_001
+	
+	    SELECT COMP_CODE
+	         , DIV_CODE
+	         , ITEM_CODE
+	         , ITEM_NAME
+	         , ACCNT
+	         , ACCNT_NAME
+	         , P_ACCNT
+	         , P_ACCNT_NAME
+	         , MONEY_UNIT
+	         , EXCHG_RATE_O
+	         , AMT_FOR_I
+	         , AMT_I
+	         , START_DATE
+	         , END_DATE
+	         , DPR_YYMM
+	         , TM_DPR_I
+	         , FI_DPR_TOT_I
+	         , FI_BLN_I
+	         , CASE WHEN ISDATE(EX_DATE) = 0 THEN CONVERT(NVARCHAR(8), DATEADD(D, -1, DATEADD(M, 1, DPR_YYMM + '01')), 112) ELSE EX_DATE END	AS EX_DATE
+	         , EX_NUM
+	         , AGREE_YN
+		  FROM #ABA910T
+	     WHERE COMP_CODE   = @CompCode
+	       AND DIV_CODE LIKE @DivCode
+	       AND DPR_YYMM   &gt;= @FrDprYymm
+	       AND DPR_YYMM   &lt;= @ToDprYymm
+<!-- 20200626 추가: 작업구분에 따라 기표된 데이터, 되지 않은 데이터 가져오는 로직 추가 -->
+	<if test="WORK_DIVI == &quot;1&quot;">
+	       AND ISDATE(EX_DATE) = 0
+	</if>
+	<if test="WORK_DIVI == &quot;2&quot;">
+	       AND ISDATE(EX_DATE) = 1
+	</if>
+	     ORDER BY COMP_CODE, ITEM_CODE, DPR_YYMM
+	</select>
+
+
+
+	<insert id="agd151ukrServiceImpl.insertLogTable" parameterType="Map">
+		INSERT L_ABA910T (
+			  KEY_VALUE
+			, OPR_FLAG
+			, COMP_CODE
+			, DIV_CODE
+			, ITEM_CODE
+			, DPR_YYMM
+			, TM_DPR_I
+			, INSERT_DB_USER
+			, INSERT_DB_TIME
+		) VALUES (
+			  #{KEY_VALUE}
+			, #{OPR_FLAG}
+			, #{S_COMP_CODE}
+			, #{DIV_CODE}
+			, #{ITEM_CODE}
+			, REPLACE(#{DPR_YYMM}, '.', '')
+			, #{TM_DPR_I}
+			, #{S_USER_ID}
+			, GETDATE()
+		)
+	</insert>
+
+	<update id="agd151ukrServiceImpl.runAutoSlip" parameterType="Map" statementType="CALLABLE">
+		{call uniLITE.USP_ACCNT_AutoSlip54 (
+			#{S_COMP_CODE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{KEY_VALUE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ITEM_CODE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DPR_YYMM,			mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{TM_DPR_I,			mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{PROC_DATE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_USER_ID,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{INPUT_DATE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_LANG_CODE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			'LIST',
+			#{EBYN_MESSAGE,		mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ERROR_DESC,		mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String},
+			#{SLIP_KEY_VALUE,	mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update>
+
+	<update id="agd151ukrServiceImpl.cancelSlip" parameterType="Map" statementType="CALLABLE">
+		{call uniLITE.USP_ACCNT_AutoSlip54Cancel (
+			#{S_COMP_CODE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{KEY_VALUE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{ITEM_CODE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{DPR_YYMM,			mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_USER_ID,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{INPUT_DATE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			#{S_LANG_CODE,		mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+			'LIST',
+			#{ERROR_DESC,		mode=OUT,jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update> 
+</mapper>

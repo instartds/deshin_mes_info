@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_sbx901skrv_kdService">
+
+	<select id="s_sbx901skrv_kdService.selectList" parameterType="Map" resultType="rMap">
+	<![CDATA[
+        /* BOX 회수현황 */
+        BEGIN
+
+        SET NOCOUNT ON
+        SET ARITHABORT ON
+
+        DECLARE @COMP_CODE      NVARCHAR(08)
+               ,@DIV_CODE       NVARCHAR(08)
+               ,@BASIS_DATE     NVARCHAR(08)
+               ,@BASIS_DATE_FR  NVARCHAR(08)
+               ,@BASIS_DATE_TO  NVARCHAR(08)
+               ,@PRE_YYYYMM     NVARCHAR(06)
+               ,@CUSTOM_CODE    NVARCHAR(08)
+               ,@CUSTOM_NAME    NVARCHAR(50)
+               ,@ITEM_CODE      NVARCHAR(08)
+               ,@ITEM_NAME      NVARCHAR(200)
+
+        SET @COMP_CODE      = #{S_COMP_CODE}           -- 법인
+        SET @DIV_CODE       = #{DIV_CODE}              -- 사업장
+        SET @BASIS_DATE     = #{BASIS_DATE}            -- 기준일
+        SET @CUSTOM_CODE    = #{CUSTOM_CODE}           -- 거래처코드
+        SET @CUSTOM_NAME    = #{CUSTOM_NAME}           -- 거래처명
+        SET @ITEM_CODE      = #{ITEM_CODE}             -- 품목(BOX)코드
+        SET @ITEM_NAME      = #{ITEM_NAME}             -- 품목(BOX)명
+        SET @BASIS_DATE_FR  = LEFT(@BASIS_DATE, 6) + '01'
+        SET @BASIS_DATE_TO  = @BASIS_DATE
+        SET @PRE_YYYYMM      = CONVERT(NVARCHAR(06), DATEADD(MONTH, -1, @BASIS_DATE_FR), 112)
+
+
+        SELECT
+         A.COMP_CODE                    AS COMP_CODE      -- 법인
+        ,A.DIV_CODE                     AS DIV_CODE       -- 사업장
+        ,A.CUSTOM_CODE                  AS CUSTOM_CODE    -- 거래처코드
+        ,MAX(A.CUSTOM_NAME)             AS CUSTOM_NAME    -- 거래처명
+        ,A.ITEM_CODE                    AS ITEM_CODE      -- BOX(품목)코드
+        ,MAX(A.ITEM_NAME)               AS ITEM_NAME      -- BOX(품목)명
+        ,MAX(A.SPEC)                    AS SPEC           -- BOX(규격)
+        ,SUM(ISNULL(A.BASIS_Q, 0))      AS PRE_STOCK_Q    -- 전월미회수
+        ,SUM(ISNULL(A.INSTOCK_Q, 0))    AS INSTOCK_Q      -- 회수량
+        ,SUM(ISNULL(A.OUTSTOCK_Q, 0))   AS OUTSTOCK_Q     -- 출고량
+        ,SUM(ISNULL(A.BASIS_Q, 0) + ISNULL(A.OUTSTOCK_Q, 0) - ISNULL(A.INSTOCK_Q, 0)) AS STOCK_Q  ---재고량
+        FROM
+        (
+        SELECT
+         A.COMP_CODE                    AS COMP_CODE        -- 법인
+        ,A.DIV_CODE                  AS DIV_CODE         -- 사업장
+        ,A.INOUT_CODE                 AS CUSTOM_CODE      -- 거래처코드
+        ,C.CUSTOM_NAME                 AS CUSTOM_NAME      -- 거래처명
+        ,A.ITEM_CODE                 AS ITEM_CODE        -- BOX(품목)코드
+        ,B.ITEM_NAME                    AS ITEM_NAME        -- 품목명
+        ,B.SPEC                         AS SPEC             -- 규격
+        ,0                              AS BASIS_Q          -- 전월미회수
+        ,(CASE WHEN A.INOUT_TYPE = '1' THEN ISNULL(A.ORDER_UNIT_Q, 0) ELSE 0 END) AS INSTOCK_Q   -- 회수량
+        ,(CASE WHEN A.INOUT_TYPE = '2' THEN ISNULL(A.ORDER_UNIT_Q, 0) ELSE 0 END) AS OUTSTOCK_Q  -- 출고량
+        FROM  unilite.S_BTR100T_KD A WITH(NOLOCK)
+        LEFT JOIN unilite.BPR100T  B WITH(NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+                                                 AND A.ITEM_CODE  = B.ITEM_CODE
+        LEFT JOIN unilite.BCM100T  C WITH(NOLOCK) ON A.COMP_CODE  = C.COMP_CODE
+                                                 AND A.INOUT_CODE = C.CUSTOM_CODE
+        WHERE A.COMP_CODE   = @COMP_CODE
+          AND A.DiV_CODE    = @DIV_CODE
+          AND A.INOUT_DATE >= @BASIS_DATE_FR
+          AND A.INOUT_DATE <= @BASIS_DATE_TO
+          AND (@CUSTOM_CODE = '' OR (@CUSTOM_CODE != '' AND A.INOUT_CODE  LIKE @CUSTOM_CODE + '%'))
+          AND (@CUSTOM_NAME = '' OR (@CUSTOM_NAME != '' AND C.CUSTOM_NAME LIKE '%' + @CUSTOM_NAME + '%'))
+          AND (@ITEM_CODE   = '' OR (@ITEM_CODE   != '' AND B.ITEM_CODE   LIKE @ITEM_CODE + '%'))
+          AND (@ITEM_NAME   = '' OR (@ITEM_NAME   != '' AND B.ITEM_NAME   LIKE '%' + @ITEM_NAME + '%'))
+        UNION ALL
+
+        SELECT
+         A.COMP_CODE                    AS COMP_CODE        -- 법인
+        ,A.DIV_CODE                     AS DIV_CODE         -- 사업장
+        ,A.CUSTOM_CODE                  AS CUSTOM_CODE      -- 거래처코드
+        ,C.CUSTOM_NAME                  AS CUSTOM_NAME      -- 거래처명
+        ,A.ITEM_CODE                    AS ITEM_CODE        -- BOX(품목)코드
+        ,B.ITEM_NAME                    AS ITEM_NAME        -- 품목명
+        ,B.SPEC                         AS SPEC             -- 규격
+        ,A.STOCK_Q                      AS BASIS_Q          -- 전월미회수
+        ,0                              AS INSTOCK_Q        -- 회수량
+        ,0                              AS OUTSTOCK_Q       -- 출고량
+        FROM (
+      				SELECT A.COMP_CODE, A.DIV_CODE, @PRE_YYYYMM AS BASIS_YYYYMM, A.CUSTOM_CODE, A.ITEM_CODE, A.BASIS_Q, A.BASIS_AMOUNT_I, A.INSTOCK_Q, A.INSTOCK_I, A.OUTSTOCK_Q, A.OUTSTOCK_I, A.STOCK_Q, A.STOCK_I, A.AVERAGE_P
+      				FROM  S_BIV200T_KD A WITH (NOLOCK)
+      				WHERE COMP_CODE=@COMP_CODE
+      				AND	  DIV_CODE=@DIV_CODE
+      				AND   BASIS_YYYYMM =   (SELECT MAX(BASIS_YYYYMM)
+      										FROM S_BIV200T_KD WITH (NOLOCK)
+      										WHERE COMP_CODE	= A.COMP_CODE
+      										AND DIV_CODE	= A.DIV_CODE
+      										AND CUSTOM_CODE = A.CUSTOM_CODE
+      										AND ITEM_CODE	= A.ITEM_CODE
+      										AND BASIS_YYYYMM < LEFT(@BASIS_DATE_FR,6))
+    		) A
+        LEFT JOIN unilite.BPR100T B WITH(NOLOCK) ON A.COMP_CODE   = B.COMP_CODE
+                                                AND A.ITEM_CODE   = B.ITEM_CODE
+        LEFT JOIN unilite.BCM100T C WITH(NOLOCK) ON A.COMP_CODE   = C.COMP_CODE
+                                                AND A.CUSTOM_CODE = C.CUSTOM_CODE
+        WHERE A.COMP_CODE    = @COMP_CODE
+          AND A.DiV_CODE     = @DIV_CODE
+          AND A.BASIS_YYYYMM = @PRE_YYYYMM
+          AND (@CUSTOM_CODE = '' OR (@CUSTOM_CODE != '' AND A.CUSTOM_CODE LIKE @CUSTOM_CODE + '%'))
+          AND (@CUSTOM_NAME = '' OR (@CUSTOM_NAME != '' AND C.CUSTOM_NAME LIKE '%' + @CUSTOM_NAME + '%'))
+          AND (@ITEM_CODE   = '' OR (@ITEM_CODE   != '' AND B.ITEM_CODE   LIKE @ITEM_CODE + '%'))
+          AND (@ITEM_NAME   = '' OR (@ITEM_NAME   != '' AND B.ITEM_NAME   LIKE '%' + @ITEM_NAME + '%'))
+        ) A
+
+        GROUP BY  A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE, A.ITEM_CODE
+        HAVING SUM(ISNULL(A.BASIS_Q, 0)) + SUM(ISNULL(A.INSTOCK_Q, 0)) +  SUM(ISNULL(A.OUTSTOCK_Q, 0)) + (SUM(ISNULL(A.BASIS_Q, 0) + ISNULL(A.OUTSTOCK_Q, 0) - ISNULL(A.INSTOCK_Q, 0)) ) <>0
+
+        SET ARITHABORT OFF
+        SET NOCOUNT OFF
+
+        END
+    ]]>             
+    </select>
+
+</mapper>

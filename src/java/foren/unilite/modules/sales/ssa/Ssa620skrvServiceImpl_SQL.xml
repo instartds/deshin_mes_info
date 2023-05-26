@@ -1,0 +1,542 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ssa620skrvServiceImpl">
+	<select id="ssa620skrvServiceImpl.selectList1" parameterType="Map" resultType="rMap">
+		<![CDATA[
+            /* ssa620skrvServiceImpl.selectList1 */
+            DECLARE @CompCode       NVARCHAR(10)
+                  , @DivCode        NVARCHAR(10)
+                  , @CustomCode     NVARCHAR(10)
+                  , @CustomName     NVARCHAR(30)
+                  , @FrDate         NVARCHAR(08)
+                  , @ToDate         NVARCHAR(08)
+                  , @PrevYM         NVARCHAR(06)
+                  , @SALE_DATE      NVARCHAR(08)
+                  , @BALANCE_AMT    NUMERIC(30,6)
+                  , @BAL_CALC_AMT   NUMERIC(30,6)
+                  , @BASIS_DATE     NVARCHAR(08)
+    
+            SET @CompCode       = #{S_COMP_CODE}
+            SET @DivCode        = #{DIV_CODE}
+            SET @FrDate         = #{FrDate}
+            SET @ToDate         = #{ToDate}
+            SET @CustomCode     = #{CUSTOM_CODE}
+            SET @CustomName     = #{CUSTOM_NAME}
+            SET @PrevYM         = CONVERT(VARCHAR(6), DATEADD(month, -1, @FrDate), 112)
+    
+            IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE ID=OBJECT_ID('tempdb..#TMP_SSA620'))
+                DROP TABLE #TMP_SSA620
+    
+            CREATE TABLE #TMP_SSA620 (
+                SEQ           INT IDENTITY (1, 1) NOT NULL,
+                COMP_CODE     NVARCHAR(08),
+                DIV_CODE      NVARCHAR(08),
+                CUSTOM_CODE   NVARCHAR(08),
+                MONEY_UNIT    NVARCHAR(03),
+                PUB_NUM       NVARCHAR(20),
+                BILL_NUM      NVARCHAR(20),
+                SALE_MONTH    NVARCHAR(06),
+                SALE_DATE     NVARCHAR(10),
+                GUBUN         NVARCHAR(08),
+                SALE_AMT      NUMERIC(30, 6),
+                COLLECT_AMT   NUMERIC(30, 6),
+                BALANCE_AMT   NUMERIC(30, 6),
+                RESULT        NVARCHAR(10),
+                REMARK        NVARCHAR(1000)
+            )
+
+
+            --1. 이월금액 임시테이블에 INSERT
+            INSERT INTO #TMP_SSA620
+            SELECT COMP_CODE
+                 , DIV_CODE
+                 , CUSTOM_CODE
+                 , MONEY_UNIT
+                 , ''                        AS PUB_NUM
+                 , ''                        AS BILL_NUM
+                 , ''                        AS SALE_MONTH
+                 , '01'                      AS SALE_DATE
+                 , '01'                      AS GUBUN
+                 , 0                         AS SALE_AMT
+                 , 0                         AS COLLECT_AMT
+                 , ISNULL(BASIS_AMT_O, 0)    AS BALANCE_AMT    --기초잔액
+                 , ''                        AS RESULT
+                 , '' AS REMARK
+              FROM SAR100T WITH(NOLOCK)
+             WHERE COMP_CODE   = @CompCode
+               AND DIV_CODE    = @DivCode
+               AND CUSTOM_CODE = @CustomCode
+
+
+            --2. 기초잔액 + 조회기간(FROM) 이전의 세금계산서 발행금액 - 조회기간(FROM) 이전의 수금금액 계산
+            INSERT INTO #TMP_SSA620
+            SELECT COMP_CODE
+                 , SALE_DIV_CODE             AS DIV_CODE
+                 , CUSTOM_CODE
+                 , MONEY_UNIT
+                 , ''                        AS PUB_NUM
+                 , ''                        AS BILL_NUM
+                 , ''                        AS SALE_MONTH
+                 , '01'                      AS SALE_DATE
+                 , '01'                      AS GUBUN
+                 , 0                         AS SALE_AMT
+                 , 0                         AS COLLECT_AMT
+                 , SUM(ISNULL(SALE_AMT_O, 0) + ISNULL(TAX_AMT_O, 0)) AS BALANCE_AMT        --조회기간 FROM 이전 세금계산서 발행금액
+                 , ''                        AS RESULT
+                 , '' AS REMARK
+              FROM STB100T WITH(NOLOCK)
+             WHERE COMP_CODE     = @CompCode
+               AND SALE_DIV_CODE = @DivCode
+               AND CUSTOM_CODE   = @CustomCode
+               AND BILL_DATE     < @FrDate
+               AND PUB_NUM       > ''
+             GROUP BY COMP_CODE, SALE_DIV_CODE, CUSTOM_CODE, MONEY_UNIT
+    
+            INSERT INTO #TMP_SSA620
+            SELECT A.COMP_CODE
+                 , A.DIV_CODE
+                 , A.CUSTOM_CODE
+                 , A.MONEY_UNIT
+                 , ''                        AS PUB_NUM
+                 , ''                        AS BILL_NUM
+                 , ''                        AS SALE_MONTH
+                 , '01'                      AS SALE_DATE
+                 , '01'                      AS GUBUN
+                 , 0                         AS SALE_AMT
+                 , 0                         AS COLLECT_AMT
+                -- , (-1) * SUM(ISNULL(A.COLLECT_AMT, 0) + ISNULL(B.PRE_COLET_AMT, 0)) AS BALANCE_AMT        --조회기간 FROM 이전 수금 금액
+                 , (-1) * SUM(ISNULL(A.COLLECT_AMT, 0) ) AS BALANCE_AMT        --조회기간 FROM 이전 수금 금액
+                 , ''                        AS RESULT
+                 , '' AS REMARK
+              FROM      SCO100T A WITH(NOLOCK)
+              LEFT JOIN SCO200T B WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                              AND B.DIV_CODE    = A.DIV_CODE
+                                              AND B.CUSTOM_CODE = A.CUSTOM_CODE
+                                              AND B.MONEY_UNIT  = A.MONEY_UNIT
+             WHERE A.COMP_CODE   = @CompCode
+               AND A.DIV_CODE    = @DivCode
+               AND A.CUSTOM_CODE = @CustomCode
+               AND A.COLLECT_DATE < @FrDate
+             GROUP BY A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE, A.MONEY_UNIT
+             	
+
+
+            --3. 계산서 발행 데이터 임시테이블에 INSERT
+            INSERT INTO #TMP_SSA620
+			
+			SELECT * FROM 
+				(
+	            SELECT COMP_CODE
+	                 , SALE_DIV_CODE               AS DIV_CODE
+	                 , CUSTOM_CODE
+	                 , MONEY_UNIT
+	                 , PUB_NUM                     AS PUB_NUM
+	                 , ''                          AS BILL_NUM
+	                 , SUBSTRING(BILL_DATE, 1, 6)  AS SALE_MONTH
+	                 , uniLITE.fnGetUserDateComp(COMP_CODE, BILL_DATE) AS SALE_DATE
+	                 , '02'                        AS GUBUN
+	                 , SUM(ISNULL(SALE_AMT_O, 0)
+	                 + ISNULL(TAX_AMT_O, 0))       AS SALE_AMT       --매출액
+	                 , 0                           AS COLLECT_AMT    --수금액
+	                 , 0                           AS BALANCE_AMT    --기초잔액
+	                 , ''                          AS RESULT
+	                 , REMARK
+	              FROM STB100T WITH(NOLOCK)
+	             WHERE COMP_CODE     = @CompCode
+	               AND SALE_DIV_CODE = @DivCode
+	               AND CUSTOM_CODE   = @CustomCode
+	               AND BILL_DATE    >= @FrDate
+	               AND BILL_DATE    <= @ToDate
+	             GROUP BY COMP_CODE, SALE_DIV_CODE, CUSTOM_CODE, PUB_NUM, BILL_DATE, MONEY_UNIT
+	             		, REMARK
+			
+				UNION ALL
+
+            --4. 수금데이터 임시테이블에 INSERT
+            --INSERT INTO #TMP_SSA620
+            SELECT COMP_CODE
+                 , DIV_CODE
+                 , CUSTOM_CODE
+                 , MONEY_UNIT
+                 , ''                          AS PUB_NUM
+                 , BILL_NUM                    AS BILL_NUM
+                 , SUBSTRING(COLLECT_DATE, 1, 6)  AS SALE_MONTH
+                 , uniLITE.fnGetUserDateComp(COMP_CODE, COLLECT_DATE) AS SALE_DATE
+                 , '03'                        AS GUBUN
+                 , 0                           AS SALE_AMT       --매출액
+                 , SUM(ISNULL(COLLECT_AMT, 0)) AS COLLECT_AMT    --수금액
+                 , 0                           AS BALANCE_AMT    --기초잔액
+                 , ''                          AS RESULT
+                 , REMARK
+              FROM SCO100T WITH(NOLOCK)
+             WHERE COMP_CODE     = @CompCode
+               AND DIV_CODE      = @DivCode
+               AND CUSTOM_CODE   = @CustomCode
+               AND COLLECT_DATE >= @FrDate
+               AND COLLECT_DATE <= @ToDate
+             GROUP BY COMP_CODE, DIV_CODE, CUSTOM_CODE, COLLECT_DATE, MONEY_UNIT, BILL_NUM
+             			, REMARK
+			) X
+			ORDER BY SALE_DATE
+
+            --5. 월계 insert
+            INSERT INTO #TMP_SSA620
+            SELECT COMP_CODE
+                 , DIV_CODE
+                 , CUSTOM_CODE
+                 , MONEY_UNIT
+                 , ''                          AS PUB_NUM
+                 , ''                          AS BILL_NUM
+                 , SALE_MONTH                  AS SALE_MONTH
+                 , SUBSTRING(SALE_MONTH, 5, 6) + '월계'            AS SALE_DATE
+                 , '04'                        AS GUBUN
+                 , SUM(ISNULL(SALE_AMT, 0))    AS SALE_AMT       --매출액
+                 , SUM(ISNULL(COLLECT_AMT, 0)) AS COLLECT_AMT    --수금액
+                 , 0                           AS BALANCE_AMT    --기초잔액
+                 , ''                          AS RESULT
+                 , '' AS REMARK
+              FROM #TMP_SSA620 WITH(NOLOCK)
+             WHERE COMP_CODE     = @CompCode
+               --AND DIV_CODE      = @DivCode
+               AND CUSTOM_CODE   = @CustomCode
+               AND GUBUN IN ('02', '03')
+             GROUP BY COMP_CODE, DIV_CODE, CUSTOM_CODE, MONEY_UNIT, SALE_MONTH
+
+
+            --6. 계산서 미발행 데이터 임시테이블에 INSERT
+            INSERT INTO #TMP_SSA620
+            SELECT A.COMP_CODE
+                 , A.DIV_CODE
+                 , A.SALE_CUSTOM_CODE          AS CUSTOM_CODE
+                 , A.MONEY_UNIT
+                 , ''                          AS PUB_NUM
+                 , ''                          AS BILL_NUM
+                 , ''                          AS SALE_MONTH
+                 , ''                          AS SALE_DATE
+                 , '05'                        AS GUBUN
+                 , SUM(ISNULL(A.SALE_AMT_O, 0)
+                 + ISNULL(A.TAX_AMT_O, 0))     AS SALE_AMT       --매출액
+                 , 0                           AS COLLECT_AMT    --수금액
+                 , 0                           AS BALANCE_AMT    --기초잔액
+                 , ''                          AS RESULT
+                 , '' 						   AS REMARK
+           
+                 --조회기간에 관계없이 합계 구하기 위해 주석
+                 --, A.BILL_NUM                  AS BILL_NUM
+                 --, SUBSTRING(SALE_DATE, 1, 6)  AS SALE_MONTH
+                 --, uniLITE.fnGetUserDateComp(A.COMP_CODE, A.SALE_DATE) AS SALE_DATE
+                 
+              FROM      SALES_V A WITH(NOLOCK)
+              LEFT JOIN STB100T B WITH(NOLOCK) ON B.COMP_CODE     = A.COMP_CODE
+                                              AND B.SALE_DIV_CODE = A.DIV_CODE
+                                              AND B.PUB_NUM       = A.PUB_NUM
+             WHERE A.COMP_CODE        = @CompCode
+               AND A.DIV_CODE         = @DivCode
+               AND A.SALE_CUSTOM_CODE = @CustomCode
+               --AND A.SALE_DATE       >= @FrDate
+               --AND A.SALE_DATE       <= @ToDate
+               AND B.COMP_CODE IS NULL
+			   AND A.BILL_TYPE != '40'  --카드매출제외
+             GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, A.MONEY_UNIT
+
+            --6-1. 계산서 미발행 데이터 임시테이블에 INSERT(카드매출)
+            INSERT INTO #TMP_SSA620
+            SELECT A.COMP_CODE
+                 , A.DIV_CODE
+                 , A.SALE_CUSTOM_CODE          AS CUSTOM_CODE
+                 , A.MONEY_UNIT
+                 , ''                          AS PUB_NUM
+                 , ''                          AS BILL_NUM
+                 , ''                          AS SALE_MONTH
+                 , ''                          AS SALE_DATE
+                 , '06'                        AS GUBUN
+                 , SUM(ISNULL(A.SALE_AMT_O, 0)
+                 + ISNULL(A.TAX_AMT_O, 0))     AS SALE_AMT       --매출액
+                 , 0                           AS COLLECT_AMT    --수금액
+                 , 0                           AS BALANCE_AMT    --기초잔액
+                 , ''                          AS RESULT
+                 , '' 						   AS REMARK
+           
+                 --조회기간에 관계없이 합계 구하기 위해 주석
+                 --, A.BILL_NUM                  AS BILL_NUM
+                 --, SUBSTRING(SALE_DATE, 1, 6)  AS SALE_MONTH
+                 --, uniLITE.fnGetUserDateComp(A.COMP_CODE, A.SALE_DATE) AS SALE_DATE
+                 
+              FROM      SALES_V A WITH(NOLOCK)
+              LEFT JOIN STB100T B WITH(NOLOCK) ON B.COMP_CODE     = A.COMP_CODE
+                                              AND B.SALE_DIV_CODE = A.DIV_CODE
+                                              AND B.PUB_NUM       = A.PUB_NUM
+             WHERE A.COMP_CODE        = @CompCode
+               AND A.DIV_CODE         = @DivCode
+               AND A.SALE_CUSTOM_CODE = @CustomCode
+               --AND A.SALE_DATE       >= @FrDate
+               --AND A.SALE_DATE       <= @ToDate
+               AND B.COMP_CODE IS NULL
+			   AND A.BILL_TYPE = '40'
+             GROUP BY A.COMP_CODE, A.DIV_CODE, A.SALE_CUSTOM_CODE, A.MONEY_UNIT
+
+
+            --7-1. 데이터 정렬
+            INSERT INTO #TMP_SSA620
+            SELECT TOP 100 PERCENT X.COMP_CODE
+                 , X.DIV_CODE
+                 , X.CUSTOM_CODE
+                 , X.MONEY_UNIT
+                 , X.PUB_NUM
+                 , X.BILL_NUM
+                 , X.SALE_MONTH
+                 , CASE X.SALE_DATE WHEN '01' THEN '이월'
+                                    ELSE X.SALE_DATE
+                   END                            AS SALE_DATE
+                 , X.GUBUN
+                 , X.SALE_AMT
+                 , X.COLLECT_AMT
+                 , X.BALANCE_AMT
+                 , X.RESULT
+                 , X.REMARK
+              FROM (
+                    SELECT A.SEQ
+                         , A.COMP_CODE
+                         , A.DIV_CODE
+                         , A.CUSTOM_CODE
+                         , A.MONEY_UNIT
+                         , A.PUB_NUM
+                         , A.BILL_NUM
+                         , A.SALE_MONTH
+                         , A.SALE_DATE
+                         , A.GUBUN
+                         , A.SALE_AMT
+                         , A.COLLECT_AMT
+                         , SUM(A.BALANCE_AMT + A.SALE_AMT - A.COLLECT_AMT)
+                           OVER (ORDER BY SEQ ASC)        AS BALANCE_AMT
+                         , A.RESULT
+                         , A.REMARK
+                      FROM (
+                            SELECT MIN(SEQ)               AS SEQ
+                                 , COMP_CODE
+                                 , DIV_CODE
+                                 , CUSTOM_CODE
+                                 , MONEY_UNIT
+                                 , PUB_NUM
+                                 , BILL_NUM
+                                 , SALE_MONTH
+                                 , SALE_DATE
+                                 , GUBUN
+                                 , SALE_AMT
+                                 , COLLECT_AMT
+                                 , SUM(BALANCE_AMT)       AS BALANCE_AMT
+                                 , 'RESULT'               AS RESULT
+                                 , '' AS REMARK
+                             FROM #TMP_SSA620
+                            WHERE SALE_DATE = '01'       --이월금액만 계산
+                            GROUP BY COMP_CODE
+                                   , DIV_CODE
+                                   , CUSTOM_CODE
+                                   , MONEY_UNIT
+                                   , PUB_NUM
+                                   , BILL_NUM
+                                   , SALE_DATE
+                                   , GUBUN
+                                   , SALE_AMT
+                                   , COLLECT_AMT
+                                   , SALE_MONTH
+
+                            UNION ALL
+
+                            SELECT SEQ
+                                 , COMP_CODE
+                                 , DIV_CODE
+                                 , CUSTOM_CODE
+                                 , MONEY_UNIT
+                                 , PUB_NUM
+                                 , BILL_NUM
+                                 , SALE_MONTH
+                                 , SALE_DATE
+                                 , GUBUN
+                                 , SALE_AMT
+                                 , COLLECT_AMT
+                                 , 0 AS BALANCE_AMT
+                                 , 'RESULT'               AS RESULT
+                                 , REMARK
+                              FROM #TMP_SSA620
+                             WHERE SALE_DATE != '01'
+                               AND GUBUN IN ('02', '03') ) A --발행 / 수금
+
+                            UNION ALL
+
+                            SELECT SEQ
+                                 , COMP_CODE
+                                 , DIV_CODE
+                                 , CUSTOM_CODE
+                                 , MONEY_UNIT
+                                 , PUB_NUM
+                                 , BILL_NUM
+                                 , SALE_MONTH
+                                 , SALE_DATE
+                                 , GUBUN
+                                 , SALE_AMT
+                                 , COLLECT_AMT
+                                 , 0 AS BALANCE_AMT
+                                 , 'RESULT'               AS RESULT
+                                 , '' AS REMARK
+                              FROM #TMP_SSA620
+                             WHERE GUBUN = '04'          --월계 
+            ) X
+            ORDER BY X.SALE_MONTH, X.SEQ, X.GUBUN
+                
+            --7-2. 데이터 정렬
+            INSERT INTO #TMP_SSA620
+            SELECT COMP_CODE
+                 , DIV_CODE
+                 , CUSTOM_CODE
+                 , MONEY_UNIT
+                 , PUB_NUM
+                 , BILL_NUM
+                 , SALE_MONTH
+                 , SALE_DATE
+                 , '05'                     AS GUBUN
+                 , SALE_AMT
+                 , COLLECT_AMT
+                 , 0 AS BALANCE_AMT
+                 , 'RESULT'                 AS RESULT
+                 , REMARK
+              FROM #TMP_SSA620
+             WHERE GUBUN = '05'          --미발행
+                
+             --7-3. 데이터 정렬
+            INSERT INTO #TMP_SSA620
+            SELECT COMP_CODE
+                 , DIV_CODE
+                 , CUSTOM_CODE
+                 , MONEY_UNIT
+                 , PUB_NUM
+                 , BILL_NUM
+                 , SALE_MONTH
+                 , SALE_DATE
+                 , '06'                     AS GUBUN
+                 , SALE_AMT
+                 , COLLECT_AMT
+                 , 0 AS BALANCE_AMT
+                 , 'RESULT'                 AS RESULT
+                 , REMARK
+              FROM #TMP_SSA620
+             WHERE GUBUN = '06'          --미발행
+
+            --8. 합계 추가
+            INSERT INTO #TMP_SSA620
+            SELECT COMP_CODE
+                 , DIV_CODE
+                 , CUSTOM_CODE
+                 , MONEY_UNIT
+                 , ''                       AS PUB_NUM
+                 , ''                       AS BILL_NUM
+                 , ''                       AS SALE_MONTH
+                 , ''                       AS SALE_DATE
+                 , '07'                     AS GUBUN
+                 , SUM(SALE_AMT)            AS SALE_AMT
+                 , SUM(COLLECT_AMT)         AS COLLECT_AMT
+                 , 0 AS BALANCE_AMT
+                 , 'RESULT'                 AS RESULT
+                 , '' REMARK
+              FROM #TMP_SSA620
+             WHERE GUBUN != '04'          --월계가 아닌 데이터
+               AND RESULT = 'RESULT'
+             GROUP BY COMP_CODE
+                 , DIV_CODE
+                 , CUSTOM_CODE
+                 , MONEY_UNIT
+
+            --9. 조회
+             SELECT *
+               FROM #TMP_SSA620
+              WHERE RESULT = 'RESULT'
+              --ORDER BY MONEY_UNIT, SEQ
+		]]>
+	</select>
+
+	<select id="ssa620skrvServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+		/* ssa620skrvServiceImpl.selectList2 */
+		DECLARE @CompCode   NVARCHAR(10)
+		      , @DivCode    NVARCHAR(10)
+		      , @PubNum     NVARCHAR(20)
+		      , @BillNum    NVARCHAR(20)
+		      , @CustomCode NVARCHAR(10)
+		
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+		
+		SET @CompCode   = #{S_COMP_CODE}
+		SET @DivCode    = #{DIV_CODE}
+		SET @PubNum     = #{PUB_NUM}
+		SET @BillNum    = #{BILL_NUM}
+		SET @CustomCode = #{CUSTOM_CODE}
+		
+		<if test="@foren.Ognl@isNotEmpty(PUB_NUM)">
+			SELECT A.COMP_CODE
+			     , A.DIV_CODE
+			     , B.SALE_DATE
+			     , A.ITEM_CODE
+			     , C1.ITEM_NAME
+			     , C1.SPEC
+			     , C1.SALE_UNIT
+			     , A.SALE_Q
+			     , A.SALE_P
+			     , A.SALE_AMT_O
+			     , A.TAX_AMT_O
+			     , ISNULL(A.SALE_AMT_O, 0) + ISNULL(A.TAX_AMT_O, 0) AS SALE_TOT_O
+--
+			     , ISNULL(A.REMARK, '') AS REMARK
+				 , C2.CODE_NAME		AS SALE_NAME
+
+			  FROM       SSA110T A  WITH(NOLOCK)
+			  INNER JOIN SSA100T B  WITH(NOLOCK) ON B.COMP_CODE  = A.COMP_CODE
+			                                    AND B.DIV_CODE   = A.DIV_CODE
+			                                    AND B.BILL_NUM   = A.BILL_NUM
+			  LEFT  JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+			                                    AND C1.ITEM_CODE = A.ITEM_CODE
+			LEFT JOIN BSA100T C2 WITH(NOLOCK) ON C2.COMP_CODE = B.COMP_CODE
+												AND C2.MAIN_CODE = 'S010'
+												AND C2.SUB_CODE = B.SALE_PRSN
+			 WHERE A.COMP_CODE = @CompCode
+			   AND A.DIV_CODE  = @DivCode
+			   AND A.PUB_NUM   = @PubNum
+		</if>
+		<if test="@foren.Ognl@isEmpty(PUB_NUM)">
+			SELECT A.COMP_CODE
+			     , A.DIV_CODE
+			     , B.SALE_DATE
+			     , A.ITEM_CODE
+			     , C1.ITEM_NAME
+			     , C1.SPEC
+			     , C1.SALE_UNIT
+			     , A.SALE_Q
+			     , A.SALE_AMT_O
+			     , A.TAX_AMT_O
+			     , ISNULL(A.SALE_AMT_O, 0) + ISNULL(A.TAX_AMT_O, 0) AS SALE_TOT_O
+--
+			     , ISNULL(A.REMARK, '') AS REMARK
+			     , C2.CODE_NAME AS SALE_NAME
+			  FROM       SSA110T A  WITH(NOLOCK)
+			  INNER JOIN SSA100T B  WITH(NOLOCK) ON B.COMP_CODE     = A.COMP_CODE
+			                                    AND B.DIV_CODE      = A.DIV_CODE
+			                                    AND B.BILL_NUM      = A.BILL_NUM
+			  LEFT  JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE    = A.COMP_CODE
+			                                    AND C1.ITEM_CODE    = A.ITEM_CODE
+			  LEFT  JOIN STB100T S  WITH(NOLOCK) ON S.COMP_CODE     = A.COMP_CODE
+			                                    AND S.SALE_DIV_CODE = A.DIV_CODE
+			                                    AND S.PUB_NUM       = A.PUB_NUM
+			LEFT JOIN BSA100T C2 WITH(NOLOCK) ON C2.COMP_CODE = B.COMP_CODE
+												AND C2.MAIN_CODE = 'S010'
+												AND C2.SUB_CODE = B.SALE_PRSN
+			 WHERE A.COMP_CODE        = @CompCode
+			   AND A.DIV_CODE         = @DivCode
+			   AND B.SALE_CUSTOM_CODE = @CustomCode
+			   --AND A.BILL_NUM         = {BILL_NUM}
+			   AND S.COMP_CODE IS NULL
+			 ORDER BY B.SALE_DATE, A.BILL_NUM, A.BILL_SEQ
+		</if>
+
+		SET ARITHABORT OFF
+		SET NOCOUNT OFF
+	</select>
+</mapper>

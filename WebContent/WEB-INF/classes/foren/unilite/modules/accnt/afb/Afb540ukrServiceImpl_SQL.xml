@@ -1,0 +1,788 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="afb540ukrServiceImpl">
+	<select id="afb540ukrServiceImpl.selectBudgName" parameterType="Map" resultType="rMap">		/* BUDG_NAME 컬럼수 */
+	--UAccntPopupKrv.CAccntPopupKR[fnGetBudgCode] Query02
+	BEGIN
+	    DECLARE         @COMP_CODE          NVARCHAR(08)
+	
+	--  [ 변수 값 할당 ] ------------------------------------------------------------------------------------------
+	    SET @COMP_CODE  = #{S_COMP_CODE}
+	--  [ 데이터 조회 ] -------------------------------------------------------------------------------------------
+	    SELECT  *
+	    FROM    uniLITE.fnGetBudgLevelName(@COMP_CODE, #{ST_DATE})
+	END	
+	</select>
+	
+	<select id="afb540ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">		/* 그리드1 */
+	--afb540ukr.Cafb540ukr[fnAfb540QStd] Query02
+	BEGIN
+	    SET NOCOUNT ON
+	
+	    DECLARE @COMP_CODE       NVARCHAR(08)   --(필수) 법인코드 
+	          , @FrBudgYyyyMm    NVARCHAR(08)   --(필수) 시작 예산년월
+	          , @ToBudgYyyyMm    NVARCHAR(08)   --(필수) 종료 예산년월
+	          , @BUDG_CODE       NVARCHAR(30)   --(선택) 예산과목
+	          , @DIVERT_DIVI     NVARCHAR(04)   --(선택) 전용구분
+	          , @FR_DATE         NVARCHAR(08)   --(선택) 시작 입력일
+	          , @TO_DATE         NVARCHAR(08)   --(선택) 종료 입력일
+	          , @DEPT_CODE       NVARCHAR(08)   --(선택) 부서코드
+	          , @SP_STS          NVARCHAR(16)   --(선택) 승인여부
+	          , @USER_ID         NVARCHAR(100)   --(필수) USERID
+	
+	          , @BudgGubun       NVARCHAR(01)   -- 예산구분
+	          , @FnDate          NVARCHAR(02)   -- 회계시작년월(월)
+	
+	    SET     @COMP_CODE       = #{S_COMP_CODE}
+	    SET     @FrBudgYyyyMm    = #{FR_BUDG_YYYYMM}
+	    SET     @ToBudgYyyyMm    = #{TO_BUDG_YYYYMM}
+	    SET     @BUDG_CODE       = #{BUDG_CODE}
+	    <if test="@foren.Ognl@isEmpty(DIVERT_DIVI)">
+        SET     @DIVERT_DIVI     = ''
+        </if>
+	    <if test="DIVERT_DIVI == &quot;1&quot;">
+        SET     @DIVERT_DIVI     = '1'
+        </if>
+        <if test="DIVERT_DIVI == &quot;4&quot;">
+        SET     @DIVERT_DIVI     = '4'
+        </if>
+        <if test="DIVERT_DIVI == &quot;2&quot;">
+        SET     @DIVERT_DIVI     = '2'
+        </if>
+        <if test="DIVERT_DIVI == &quot;3&quot;">
+        SET     @DIVERT_DIVI     = '3'
+        </if>
+	    SET     @FR_DATE         = #{FR_DATE}
+	    SET     @TO_DATE         = #{TO_DATE}
+	    SET     @DEPT_CODE       = #{DEPT_CODE}
+	    SET     @SP_STS          = #{SP_STS}
+	    SET     @USER_ID         = #{S_USER_ID}
+	
+	    SET     @BudgGubun       = N'1'   --1:본월예산, 2:이월예산
+	
+	    --회계기간 가져오기
+	    SELECT @FnDate = SUBSTRING(FN_DATE, 5, 2)
+	      FROM BOR100T  WITH (NOLOCK)
+	     WHERE COMP_CODE = @COMP_CODE
+	
+	
+	    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects  WHERE id = OBJECT_ID('tempdb..#TMP_AFB540T_090428'))
+	        DROP TABLE #TMP_AFB540T_090428
+	
+	    --예산확정정보 테이블(AFB510T)에서 데이터 조회하여 그리드 포맷에 맞춰 임시테이블 생성
+	    --(예산코드명을 레벨순서대로 펼침, 예산금액을 12개월로 펼침)
+	    SELECT 
+	           CONVERT(BIT, 0) AS CHOICE                                                                            --선택
+	         , A.AP_STS                                                                                             --구분(승인/미승인)
+	         , A.DIVERT_DIVI                                                                                        --전용구분
+	         , A.BUDG_YYYYMM                                                                                        --예산년월
+	         , A.BUDG_CODE                                                                                          --예산코드
+	
+	    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index" >
+	         , CASE WHEN L${budgNameInfoList.size}.CODE_LEVEL &gt;=  ${index+1}
+	                THEN L${index+1}.BUDG_NAME
+	                ELSE ''
+	            END AS BUDG_NAME_L${index+1}
+	    </foreach>
+	    
+	         , A.DIVERT_BUDG_I                                                                                      --전용금액
+	         , A.DEPT_CODE                                                                                          --부서코드
+	         , C.TREE_NAME AS DEPT_NAME                                                                             --부서명
+	         , A.INSERT_DB_USER                                                                 AS INSERT_DB_USER   --입력자ID
+	         , CONVERT(NVARCHAR(08), A.INSERT_DB_TIME, 112)                                     AS INSERT_DB_TIME   --입력일
+	         , D1.USER_NAME                                                                     AS INSERT_DB_NAME   --입력자명
+	         , uniLITE.fnGetUserDate(A.COMP_CODE, CONVERT(NVARCHAR(08), A.INSERT_DB_TIME, 112)) AS INSERT_DB_DATE   --입력일
+	         , D2.USER_NAME                                                                     AS AP_USER_ID       --승인자
+	         , uniLITE.fnGetUserDate(A.COMP_CODE, A.AP_DATE) AS AP_DATE                                             --승인일
+	         , A.COMP_CODE                                                                                          --COMP_CODE
+	         , A.DIVERT_YYYYMM                                                                                      --전용월
+	         , A.SEQ                                                                                                --순번
+	      INTO #TMP_AFB540T_090428
+	      FROM            AFB520T AS A  WITH(NOLOCK)
+	           LEFT  JOIN AFB510T AS B  WITH(NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+	                                                AND B.BUDG_YYYYMM    = A.BUDG_YYYYMM
+	                                                AND B.DEPT_CODE      = A.DEPT_CODE
+	                                                AND B.BUDG_CODE      = A.BUDG_CODE
+	                                                AND B.BUDG_GUBUN     = @BudgGubun
+	           LEFT  JOIN BSA210T AS C  WITH(NOLOCK) ON C.COMP_CODE      = A.COMP_CODE
+	                                                AND C.TREE_CODE      = A.DEPT_CODE
+	           LEFT  JOIN BSA300T AS D1 WITH(NOLOCK) ON D1.COMP_CODE     = A.COMP_CODE
+	                                                AND D1.USER_ID       = A.INSERT_DB_USER
+	           LEFT  JOIN BSA300T AS D2 WITH(NOLOCK) ON D2.COMP_CODE     = A.COMP_CODE
+	                                                AND D2.USER_ID       = A.AP_USER_ID
+	    
+	           INNER JOIN AFB400T AS L${budgNameInfoList.size} 
+	                              ON L${budgNameInfoList.size}.COMP_CODE     = A.COMP_CODE
+	                             AND L${budgNameInfoList.size}.AC_YYYY       = uniLITE.fnGetBudgAcYyyy(A.COMP_CODE, A.BUDG_YYYYMM)
+	                             AND L${budgNameInfoList.size}.BUDG_CODE     = A.BUDG_CODE
+	    
+	    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index">
+	    		<if test="index+1 &lt; budgNameInfoList.size">
+	               INNER JOIN AFB400T AS L${budgNameInfoList.size-(index+1)} 
+	                                  ON L${budgNameInfoList.size-(index+1)}.COMP_CODE     = L${budgNameInfoList.size-(index)}.COMP_CODE
+	                                 AND L${budgNameInfoList.size-(index+1)}.AC_YYYY       = L${budgNameInfoList.size-(index)}.AC_YYYY
+	                                 AND L${budgNameInfoList.size-(index+1)}.BUDG_CODE     = L${budgNameInfoList.size-(index)}.TREE_LEVEL
+	                                 AND L${budgNameInfoList.size-(index+1)}.CODE_LEVEL    = L${budgNameInfoList.size-(index)}.CODE_LEVEL - 1
+	    		</if>
+	    </foreach>
+	    
+	     WHERE A.COMP_CODE          = @COMP_CODE
+	       AND A.BUDG_YYYYMM       &gt;= @FrBudgYyyyMm
+	       AND A.BUDG_YYYYMM       &lt;= @ToBudgYyyyMm
+	       AND ((A.BUDG_CODE        = @BUDG_CODE   AND @BUDG_CODE   != '') OR (@BUDG_CODE   = ''))
+	       AND ((A.DIVERT_DIVI      = @DIVERT_DIVI AND @DIVERT_DIVI != '') OR (@DIVERT_DIVI = ''))
+	       AND ((CONVERT(NVARCHAR(08), A.INSERT_DB_TIME, 112)  &gt;= @FR_DATE     AND @FR_DATE     != '') OR (@FR_DATE     = ''))
+	       AND ((CONVERT(NVARCHAR(08), A.INSERT_DB_TIME, 112)  &lt;= @TO_DATE     AND @TO_DATE     != '') OR (@TO_DATE     = ''))
+	       AND ((A.DEPT_CODE        = @DEPT_CODE   AND @DEPT_CODE   != '') OR (@DEPT_CODE   = ''))
+	       AND ((A.AP_STS           = @SP_STS      AND @SP_STS      != '') OR (@SP_STS      = ''))
+	       AND L${budgNameInfoList.size}.GROUP_YN     = N'N'
+	
+	    --임시테이블(#TMP_AFB540T_090428)에서 데이터 조회
+	    SELECT CHOICE
+	         , AP_STS
+	         , DIVERT_DIVI
+	         , uniLITE.fnGetUserDate(COMP_CODE, BUDG_YYYYMM) AS BUDG_YYYYMM         --예산년월
+	         , BUDG_CODE                                                            --예산코드
+	    
+	    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index">
+	         , MAX(BUDG_NAME_L${index+1}) AS BUDG_NAME_L${index+1}
+	    </foreach>
+	    
+	         , SUM(DIVERT_BUDG_I) AS DIVERT_BUDG_I
+	         , DEPT_CODE                                                            --부서코드
+	         , DEPT_NAME                                                            --부서명
+	         , INSERT_DB_USER                                                       --입력자ID
+	         , INSERT_DB_TIME                                                       --입력일(YYYYMMDD)
+	         , INSERT_DB_NAME                                                       --입력자명
+	         , INSERT_DB_DATE                                                       --입력일(YYYY.MM.DD)
+	         , AP_USER_ID                                                           --승인자
+	         , uniLITE.fnGetUserDate(COMP_CODE, AP_DATE) AS AP_DATE                 --승인일
+	         , COMP_CODE                                                            --COMP_CODE
+	         , uniLITE.fnGetUserDate(COMP_CODE, DIVERT_YYYYMM) AS DIVERT_YYYYMM     --전용월
+	      FROM #TMP_AFB540T_090428  WITH (NOLOCK)
+	     GROUP BY CHOICE,    AP_STS,         DIVERT_DIVI,    BUDG_YYYYMM   , DEPT_CODE
+	            , DEPT_NAME, INSERT_DB_USER, INSERT_DB_TIME, INSERT_DB_NAME, INSERT_DB_DATE, AP_USER_ID,  AP_DATE
+	            , COMP_CODE, BUDG_CODE,      DIVERT_YYYYMM
+	
+	    SET NOCOUNT OFF
+	END
+	</select>
+	
+	<select id="afb540ukrServiceImpl.selectList2" parameterType="Map" resultType="rMap">		/* 그리드2 */
+	--afb540ukr.Cafb540ukr[fnAfb540QDtl] Query02
+    BEGIN
+        SET NOCOUNT ON
+    
+        DECLARE @COMP_CODE       NVARCHAR(08)   --(필수) 법인코드 
+              , @BudgYyyyMm      NVARCHAR(08)   --(필수) 예산년월
+              , @DEPT_CODE       NVARCHAR(08)   --(필수) 부서코드
+              , @BUDG_CODE       NVARCHAR(30)   --(필수) 예산과목
+              , @DIVERT_YYYYMM   NVARCHAR(06)   --(필수) 전용월
+              , @DIVERT_DIVI     NVARCHAR(06)   --(필수) 전용구분
+              , @USER_ID         NVARCHAR(100)   --(필수) USERID
+              , @INSERT_DB_USER  NVARCHAR(20)   --(필수) 입력자
+              , @INSERT_DB_TIME  NVARCHAR(20)   --(필수) 입력일
+    
+        SET     @COMP_CODE       = #{S_COMP_CODE}
+        SET     @BudgYyyyMm      = #{BUDG_YYYYMM}
+        SET     @DEPT_CODE       = #{DEPT_CODE}
+        SET     @BUDG_CODE       = #{BUDG_CODE}
+        SET     @DIVERT_YYYYMM   = #{DIVERT_YYYYMM}
+        <if test="@foren.Ognl@isEmpty(DIVERT_DIVI)">
+        SET     @DIVERT_DIVI     = ''
+        </if>
+        <if test="DIVERT_DIVI == &quot;1&quot;">
+        SET     @DIVERT_DIVI     = '1'
+        </if>
+        <if test="DIVERT_DIVI == &quot;4&quot;">
+        SET     @DIVERT_DIVI     = '4'
+        </if>
+        <if test="DIVERT_DIVI == &quot;2&quot;">
+        SET     @DIVERT_DIVI     = '2'
+        </if>
+        <if test="DIVERT_DIVI == &quot;3&quot;">
+        SET     @DIVERT_DIVI     = '2'
+        </if>
+        SET     @USER_ID         = #{S_USER_ID}
+        SET     @INSERT_DB_USER  = #{INSERT_DB_NAME}
+        SET     @INSERT_DB_TIME  = #{INSERT_DB_DATE}
+    
+        SELECT uniLITE.fnGetUserDate(A.COMP_CODE, A.DIVERT_YYYYMM) AS AP_DATE           --전용년월
+             , A.DIVERT_BUDG_CODE                                                       --전용과목
+
+    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index">
+             , CASE WHEN L${budgNameInfoList.size}.CODE_LEVEL &gt;=  ${index+1}
+                    THEN L${index+1}.BUDG_NAME
+                    ELSE ''
+                END AS BUDG_NAME_L${index+1}
+    </foreach>
+    
+             , A.DIVERT_DEPT_CODE                                                       --전용부서
+             , A.DIVERT_DEPT_NAME                                                       --전용부서명
+             , ISNULL(A.DIVERT_BUDG_I, 0) AS DIVERT_BUDG_I                              --전용금액
+             , A.REMARK                                                                 --비고
+             , A.SEQ                                                                    --순번
+    
+          FROM            AFB520T AS A  WITH(NOLOCK)
+               LEFT  JOIN BSA210T AS C  WITH(NOLOCK) ON C.COMP_CODE      = A.COMP_CODE
+                                                    AND C.TREE_CODE      = A.DEPT_CODE
+               INNER JOIN AFB400T AS L${budgNameInfoList.size} 
+                                  ON L${budgNameInfoList.size}.COMP_CODE     = A.COMP_CODE
+                                 AND L${budgNameInfoList.size}.AC_YYYY       = uniLITE.fnGetBudgAcYyyy(A.COMP_CODE, A.BUDG_YYYYMM)
+                                 AND L${budgNameInfoList.size}.BUDG_CODE     = A.DIVERT_BUDG_CODE
+    
+    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index">
+	    	<if test="index+1 &lt; budgNameInfoList.size">
+               INNER JOIN AFB400T AS L${budgNameInfoList.size-(index+1)} 
+                                  ON L${budgNameInfoList.size-(index+1)}.COMP_CODE     = L${budgNameInfoList.size-(index)}.COMP_CODE
+                                 AND L${budgNameInfoList.size-(index+1)}.AC_YYYY       = L${budgNameInfoList.size-(index)}.AC_YYYY
+                                 AND L${budgNameInfoList.size-(index+1)}.BUDG_CODE     = L${budgNameInfoList.size-(index)}.TREE_LEVEL
+                                 AND L${budgNameInfoList.size-(index+1)}.CODE_LEVEL    = L${budgNameInfoList.size-(index)}.CODE_LEVEL - 1
+	    	</if>
+    </foreach>
+    
+         WHERE A.COMP_CODE          = @COMP_CODE
+           AND A.BUDG_YYYYMM        = @BudgYyyyMm
+           AND A.DEPT_CODE          = @DEPT_CODE
+           AND A.BUDG_CODE          = @BUDG_CODE
+           AND A.DIVERT_YYYYMM      = @DIVERT_YYYYMM
+           AND A.DIVERT_DIVI        = @DIVERT_DIVI
+           AND A.INSERT_DB_USER     = @INSERT_DB_USER
+           AND CONVERT(NVARCHAR(8), A.INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+           AND L${budgNameInfoList.size}.GROUP_YN     = N'N'
+    
+        SET NOCOUNT OFF
+    END
+	</select>
+	
+	<select id="afb540ukrServiceImpl.selectDivertGroup" parameterType="Map" resultType="rMap">		/* 저장전 검사 */
+	--afb540ukr.Cafb540ukr[fnAfb540Save] Query00
+	SELECT ISNULL(REF_CODE1, SUB_CODE)  AS REF_CODE1
+	  FROM BSA100T WITH (NOLOCK)
+	 WHERE COMP_CODE = #{S_COMP_CODE}
+	   AND MAIN_CODE = 'A133'
+	   AND SUB_CODE  = #{DIVERT_DIVI}
+	</select>
+	
+	<update id="afb540ukrServiceImpl.saveApprove" parameterType="Map">	/* 저장(승인) */
+		<if test="AP_STS == &quot;1&quot;">
+		--afb540ukr.Cafb540ukr[fnAfb540Save] Query01 미승인 -> 승인
+		BEGIN
+		    DECLARE @COMP_CODE      NVARCHAR(08)
+		          , @BUDG_YYYYMM    NVARCHAR(06)
+		          , @DEPT_CODE      NVARCHAR(08)
+		          , @BUDG_CODE      NVARCHAR(30)
+		          , @DIVERT_YYYYMM  NVARCHAR(06)
+		          , @DIVERT_DIVI    NVARCHAR(01)
+		          , @USER_ID        NVARCHAR(100)
+		          , @BUDG_GUBUN     NVARCHAR(01)
+		          , @DIVERT_GROUP   NVARCHAR(01)
+		          , @INSERT_DB_USER NVARCHAR(20)
+		          , @INSERT_DB_TIME NVARCHAR(08)
+		
+		    SET     @COMP_CODE      = #{S_COMP_CODE}
+		    SET     @BUDG_YYYYMM    = #{BUDG_YYYYMM}
+		    SET     @DEPT_CODE      = #{DEPT_CODE}
+		    SET     @BUDG_CODE      = #{BUDG_CODE}
+		    SET     @DIVERT_YYYYMM  = #{DIVERT_YYYYMM}
+		    SET     @DIVERT_DIVI    = #{DIVERT_DIVI}
+		    SET     @USER_ID        = #{S_USER_ID}
+		    SET     @BUDG_GUBUN     = N'1'   --1:본월예산, 2:이월예산
+		    SET     @DIVERT_GROUP   = ${sDivertGroup}
+		    SET     @INSERT_DB_USER = #{INSERT_DB_NAME}
+		    SET     @INSERT_DB_TIME = #{INSERT_DB_DATE}
+		
+		    IF ( @DIVERT_GROUP = '1' )  --조정/전용
+		        BEGIN
+		            -- 전용받는 금액 (+)
+		            UPDATE B
+		               SET B.BUDG_CONV_I = ISNULL(B.BUDG_CONV_I, 0) + ISNULL(A.DIVERT_BUDG_I, 0)
+		              FROM            AFB520T AS A  WITH(NOLOCK)
+		                   INNER JOIN AFB510T AS B  WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		                                                        AND B.BUDG_YYYYMM = A.DIVERT_YYYYMM
+		                                                        AND B.DEPT_CODE   = A.DIVERT_DEPT_CODE
+		                                                        AND B.BUDG_CODE   = A.DIVERT_BUDG_CODE
+		                                                        AND B.BUDG_GUBUN  = @BUDG_GUBUN
+		             WHERE A.COMP_CODE      = @COMP_CODE
+		               AND A.BUDG_YYYYMM    = @BUDG_YYYYMM
+		               AND A.DEPT_CODE      = @DEPT_CODE
+		               AND A.BUDG_CODE      = @BUDG_CODE
+		               AND A.DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		               AND A.DIVERT_DIVI    = @DIVERT_DIVI
+		               AND A.INSERT_DB_USER = @INSERT_DB_USER
+		               AND CONVERT(NVARCHAR(8), A.INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		
+		            IF ( @@ROWCOUNT = 0 )
+		            BEGIN
+		                INSERT AFB510T (  COMP_CODE
+		                                , BUDG_YYYYMM
+		                                , DEPT_CODE
+		                                , BUDG_CODE
+		                                , BUDG_GUBUN
+		                                , BUDG_CONV_I
+		                                , INSERT_DB_USER
+		                                , INSERT_DB_TIME
+		                                , UPDATE_DB_USER
+		                                , UPDATE_DB_TIME )
+		                SELECT  COMP_CODE
+		                     ,  DIVERT_YYYYMM
+		                     ,  DIVERT_DEPT_CODE
+		                     ,  DIVERT_BUDG_CODE
+		                     ,  @BUDG_GUBUN
+		                     ,  DIVERT_BUDG_I
+		                     ,  @USER_ID
+		                     ,  GETDATE()
+		                     ,  @USER_ID
+		                     ,  GETDATE()
+		                FROM    AFB520T WITH (NOLOCK)
+		                WHERE   COMP_CODE      = @COMP_CODE
+		                  AND   BUDG_YYYYMM    = @BUDG_YYYYMM
+		                  AND   DEPT_CODE      = @DEPT_CODE
+		                  AND   BUDG_CODE      = @BUDG_CODE
+		                  AND   DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		                  AND   DIVERT_DIVI    = @DIVERT_DIVI
+		                  AND   INSERT_DB_USER = @INSERT_DB_USER
+		                  AND   CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		            END
+		
+		            -- 전용하는 금액 (-)
+		            UPDATE A
+		               SET A.BUDG_CONV_I = ISNULL(A.BUDG_CONV_I, 0) - ISNULL(B.DIVERT_BUDG_I, 0)
+		              FROM            AFB510T AS A  WITH(NOLOCK)
+		                   INNER JOIN (SELECT COMP_CODE
+		                                    , BUDG_YYYYMM
+		                                    , DEPT_CODE
+		                                    , BUDG_CODE
+		                                    , SUM(ISNULL(DIVERT_BUDG_I, 0)) AS DIVERT_BUDG_I
+		                               FROM   AFB520T WITH (NOLOCK)
+		                               WHERE  COMP_CODE      = @COMP_CODE
+		                               AND    BUDG_YYYYMM    = @BUDG_YYYYMM
+		                               AND    DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		                               AND    DIVERT_DIVI    = @DIVERT_DIVI
+		                               AND    INSERT_DB_USER = @INSERT_DB_USER
+		                               AND    CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		                               GROUP BY COMP_CODE, BUDG_YYYYMM, DEPT_CODE, BUDG_CODE
+		                               ) B    ON B.COMP_CODE     = A.COMP_CODE
+		                                     AND B.BUDG_YYYYMM   = A.BUDG_YYYYMM
+		                                     AND B.DEPT_CODE     = A.DEPT_CODE
+		                                     AND B.BUDG_CODE     = A.BUDG_CODE
+		                                     AND A.BUDG_GUBUN    = @BUDG_GUBUN
+		             WHERE A.COMP_CODE     = @COMP_CODE
+		               AND A.BUDG_YYYYMM   = @BUDG_YYYYMM
+		               AND A.DEPT_CODE     = @DEPT_CODE
+		               AND A.BUDG_CODE     = @BUDG_CODE
+		
+		            IF ( @@ROWCOUNT = 0 )
+		            BEGIN
+		                INSERT AFB510T (  COMP_CODE
+		                                , BUDG_YYYYMM
+		                                , DEPT_CODE
+		                                , BUDG_CODE
+		                                , BUDG_GUBUN
+		                                , BUDG_CONV_I
+		                                , INSERT_DB_USER
+		                                , INSERT_DB_TIME
+		                                , UPDATE_DB_USER
+		                                , UPDATE_DB_TIME )
+		                SELECT  COMP_CODE
+		                     ,  BUDG_YYYYMM
+		                     ,  DEPT_CODE
+		                     ,  BUDG_CODE
+		                     ,  @BUDG_GUBUN
+		                     ,  DIVERT_BUDG_I * (-1)
+		                     ,  @USER_ID
+		                     ,  GETDATE()
+		                     ,  @USER_ID
+		                     ,  GETDATE()
+		                FROM    AFB520T WITH (NOLOCK)
+		                WHERE   COMP_CODE      = @COMP_CODE
+		                  AND   BUDG_YYYYMM    = @BUDG_YYYYMM
+		                  AND   DEPT_CODE      = @DEPT_CODE
+		                  AND   BUDG_CODE      = @BUDG_CODE
+		                  AND   DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		                  AND   DIVERT_DIVI    = @DIVERT_DIVI
+		                  AND   INSERT_DB_USER = @INSERT_DB_USER
+		                  AND   CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		            END
+		        END
+		
+		    ELSE IF ( @DIVERT_GROUP = '2' ) --배정
+		        BEGIN
+		            -- 배정받는 금액 (+)
+		            UPDATE B
+		               SET B.BUDG_ASGN_I = ISNULL(B.BUDG_ASGN_I, 0) + ISNULL(A.DIVERT_BUDG_I, 0)
+		              FROM            AFB520T AS A  WITH(NOLOCK)
+		                   INNER JOIN AFB510T AS B  WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		                                                        AND B.BUDG_YYYYMM = A.DIVERT_YYYYMM
+		                                                        AND B.DEPT_CODE   = A.DIVERT_DEPT_CODE
+		                                                        AND B.BUDG_CODE   = A.DIVERT_BUDG_CODE
+		                                                        AND B.BUDG_GUBUN  = @BUDG_GUBUN
+		             WHERE A.COMP_CODE      = @COMP_CODE
+		               AND A.BUDG_YYYYMM    = @BUDG_YYYYMM
+		               AND A.DEPT_CODE      = @DEPT_CODE
+		               AND A.BUDG_CODE      = @BUDG_CODE
+		               AND A.DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		               AND A.DIVERT_DIVI    = @DIVERT_DIVI
+		               AND A.INSERT_DB_USER = @INSERT_DB_USER
+		               AND CONVERT(NVARCHAR(8), A.INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		
+		            IF ( @@ROWCOUNT = 0 )
+		            BEGIN
+		                INSERT AFB510T (  COMP_CODE
+		                                , BUDG_YYYYMM
+		                                , DEPT_CODE
+		                                , BUDG_CODE
+		                                , BUDG_GUBUN
+		                                , BUDG_ASGN_I
+		                                , INSERT_DB_USER
+		                                , INSERT_DB_TIME
+		                                , UPDATE_DB_USER
+		                                , UPDATE_DB_TIME )
+		                SELECT  COMP_CODE
+		                     ,  DIVERT_YYYYMM
+		                     ,  DIVERT_DEPT_CODE
+		                     ,  DIVERT_BUDG_CODE
+		                     ,  @BUDG_GUBUN
+		                     ,  DIVERT_BUDG_I
+		                     ,  @USER_ID
+		                     ,  GETDATE()
+		                     ,  @USER_ID
+		                     ,  GETDATE()
+		                FROM    AFB520T WITH (NOLOCK)
+		                WHERE   COMP_CODE      = @COMP_CODE
+		                  AND   BUDG_YYYYMM    = @BUDG_YYYYMM
+		                  AND   DEPT_CODE      = @DEPT_CODE
+		                  AND   BUDG_CODE      = @BUDG_CODE
+		                  AND   DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		                  AND   DIVERT_DIVI    = @DIVERT_DIVI
+		                  AND   INSERT_DB_USER = @INSERT_DB_USER
+		                  AND   CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		            END
+		
+		            -- 배정하는 금액 (-)
+		            UPDATE A
+		               SET A.BUDG_CONV_I = ISNULL(A.BUDG_CONV_I, 0) - ISNULL(B.DIVERT_BUDG_I, 0)
+		              FROM            AFB510T AS A  WITH(NOLOCK)
+		                   INNER JOIN (SELECT COMP_CODE
+		                                    , BUDG_YYYYMM
+		                                    , DEPT_CODE
+		                                    , BUDG_CODE
+		                                    , SUM(ISNULL(DIVERT_BUDG_I, 0)) AS DIVERT_BUDG_I
+		                               FROM   AFB520T WITH (NOLOCK)
+		                               WHERE  COMP_CODE      = @COMP_CODE
+		                               AND    BUDG_YYYYMM    = @BUDG_YYYYMM
+		                               AND    DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		                               AND    DIVERT_DIVI    = @DIVERT_DIVI
+		                               AND    INSERT_DB_USER = @INSERT_DB_USER
+		                               AND    CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		                               GROUP BY COMP_CODE, BUDG_YYYYMM, DEPT_CODE, BUDG_CODE
+		                               ) B    ON B.COMP_CODE     = A.COMP_CODE
+		                                     AND B.BUDG_YYYYMM   = A.BUDG_YYYYMM
+		                                     AND B.DEPT_CODE     = A.DEPT_CODE
+		                                     AND B.BUDG_CODE     = A.BUDG_CODE
+		                                     AND A.BUDG_GUBUN    = @BUDG_GUBUN
+		             WHERE A.COMP_CODE     = @COMP_CODE
+		               AND A.BUDG_YYYYMM   = @BUDG_YYYYMM
+		               AND A.DEPT_CODE     = @DEPT_CODE
+		               AND A.BUDG_CODE     = @BUDG_CODE
+		
+		            IF ( @@ROWCOUNT = 0 )
+		            BEGIN
+		                INSERT AFB510T (  COMP_CODE
+		                                , BUDG_YYYYMM
+		                                , DEPT_CODE
+		                                , BUDG_CODE
+		                                , BUDG_GUBUN
+		                                , BUDG_ASGN_I
+		                                , INSERT_DB_USER
+		                                , INSERT_DB_TIME
+		                                , UPDATE_DB_USER
+		                                , UPDATE_DB_TIME )
+		                SELECT  COMP_CODE
+		                     ,  BUDG_YYYYMM
+		                     ,  DEPT_CODE
+		                     ,  BUDG_CODE
+		                     ,  @BUDG_GUBUN
+		                     ,  SUM(DIVERT_BUDG_I) * (-1)
+		                     ,  @USER_ID
+		                     ,  GETDATE()
+		                     ,  @USER_ID
+		                     ,  GETDATE()
+		                FROM    AFB520T WITH (NOLOCK)
+		                WHERE   COMP_CODE      = @COMP_CODE
+		                  AND   BUDG_YYYYMM    = @BUDG_YYYYMM
+		                  AND   DEPT_CODE      = @DEPT_CODE
+		                  AND   BUDG_CODE      = @BUDG_CODE
+		                  AND   DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		                  AND   DIVERT_DIVI    = @DIVERT_DIVI
+		                  AND   INSERT_DB_USER = @INSERT_DB_USER
+		                  AND   CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		                GROUP BY COMP_CODE, BUDG_YYYYMM, DEPT_CODE, BUDG_CODE
+		            END
+		        END
+		
+		    ELSE IF ( @DIVERT_GROUP = '3' ) --추경
+		        BEGIN
+		            -- 전용하는 금액 (+)
+		            UPDATE A
+		               SET A.BUDG_SUPP_I = ISNULL(A.BUDG_SUPP_I, 0) + ISNULL(B.DIVERT_BUDG_I, 0)
+		              FROM            AFB510T AS A WITH (NOLOCK)
+		                   INNER JOIN (SELECT COMP_CODE
+		                                    , BUDG_YYYYMM
+		                                    , DEPT_CODE
+		                                    , BUDG_CODE
+		                                    , SUM(DIVERT_BUDG_I) AS DIVERT_BUDG_I
+		                                    , DIVERT_YYYYMM
+		                                    , DIVERT_DIVI
+		                                    , INSERT_DB_USER
+		                                    , CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) AS INSERT_DB_TIME
+		                                 FROM AFB520T WITH(NOLOCK)
+		                                WHERE COMP_CODE      = @COMP_CODE
+		                                  AND BUDG_YYYYMM    = @BUDG_YYYYMM
+		                                  AND DEPT_CODE      = @DEPT_CODE
+		                                  AND BUDG_CODE      = @BUDG_CODE
+		                                  AND DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		                                  AND DIVERT_DIVI    = @DIVERT_DIVI
+		                                  AND INSERT_DB_USER = @INSERT_DB_USER
+		                                  AND CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		                                GROUP BY COMP_CODE, BUDG_YYYYMM, DEPT_CODE, BUDG_CODE, DIVERT_YYYYMM, DIVERT_DIVI, INSERT_DB_USER, CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112)
+		                              ) B     ON B.COMP_CODE   = A.COMP_CODE
+		                                     AND B.BUDG_YYYYMM = A.BUDG_YYYYMM
+		                                     AND B.DEPT_CODE   = A.DEPT_CODE
+		                                     AND B.BUDG_CODE   = A.BUDG_CODE
+		                                     AND A.BUDG_GUBUN  = @BUDG_GUBUN
+		             WHERE A.COMP_CODE   = @COMP_CODE
+		               AND A.BUDG_YYYYMM = @BUDG_YYYYMM
+		               AND A.DEPT_CODE   = @DEPT_CODE
+		               AND A.BUDG_CODE   = @BUDG_CODE
+		
+		            IF ( @@ROWCOUNT = 0 )
+		            BEGIN
+		                INSERT AFB510T (  COMP_CODE
+		                                , BUDG_YYYYMM
+		                                , DEPT_CODE
+		                                , BUDG_CODE
+		                                , BUDG_GUBUN
+		                                , BUDG_SUPP_I
+		                                , INSERT_DB_USER
+		                                , INSERT_DB_TIME
+		                                , UPDATE_DB_USER
+		                                , UPDATE_DB_TIME )
+		                SELECT  COMP_CODE
+		                     ,  DIVERT_YYYYMM
+		                     ,  DIVERT_DEPT_CODE
+		                     ,  DIVERT_BUDG_CODE
+		                     ,  @BUDG_GUBUN
+		                     ,  SUM(DIVERT_BUDG_I)
+		                     ,  @USER_ID
+		                     ,  GETDATE()
+		                     ,  @USER_ID
+		                     ,  GETDATE()
+		                FROM    AFB520T WITH (NOLOCK)
+		                WHERE   COMP_CODE      = @COMP_CODE
+		                  AND   BUDG_YYYYMM    = @BUDG_YYYYMM
+		                  AND   DEPT_CODE      = @DEPT_CODE
+		                  AND   BUDG_CODE      = @BUDG_CODE
+		                  AND   DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		                  AND   DIVERT_DIVI    = @DIVERT_DIVI
+		                  AND   INSERT_DB_USER = @INSERT_DB_USER
+		                  AND   CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		                GROUP BY COMP_CODE, DIVERT_YYYYMM, DIVERT_DEPT_CODE, DIVERT_BUDG_CODE
+		            END
+		        END
+		
+		    UPDATE A
+		       SET A.AP_STS           = '2'
+		         , A.AP_DATE          = CONVERT(NVARCHAR(08), GETDATE(), 112)
+		         , A.AP_USER_ID       = B.REF_CODE1
+		         , A.AP_CHARGE_CODE   = B.SUB_CODE
+		      FROM            AFB520T AS A  WITH (NOLOCK)
+		           LEFT  JOIN BSA100T AS B  WITH (NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                  AND B.MAIN_CODE = N'A009'
+		                                  AND B.REF_CODE1 = #{S_USER_ID}
+		     WHERE A.COMP_CODE      = @COMP_CODE
+		       AND A.BUDG_YYYYMM    = @BUDG_YYYYMM
+		       AND A.BUDG_CODE      = @BUDG_CODE
+		       AND A.DEPT_CODE      = @DEPT_CODE
+		       AND A.DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		       AND A.DIVERT_DIVI    = @DIVERT_DIVI
+		       AND A.INSERT_DB_USER = @INSERT_DB_USER
+		       AND CONVERT(NVARCHAR(8), A.INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		END
+		</if>
+		<if test="AP_STS == &quot;2&quot;">
+		--afb540ukr.Cafb540ukr[fnAfb540Save] Query02 승인 ->미승인
+		BEGIN
+		    DECLARE @COMP_CODE      NVARCHAR(08)
+		          , @BUDG_YYYYMM    NVARCHAR(06)
+		          , @DEPT_CODE      NVARCHAR(08)
+		          , @BUDG_CODE      NVARCHAR(30)
+		          , @DIVERT_YYYYMM  NVARCHAR(06)
+		          , @DIVERT_DIVI    NVARCHAR(01)
+		          , @USER_ID        NVARCHAR(100)
+		          , @BUDG_GUBUN     NVARCHAR(01)
+		          , @DIVERT_GROUP   NVARCHAR(01)
+		          , @INSERT_DB_USER NVARCHAR(20)
+		          , @INSERT_DB_TIME NVARCHAR(08)
+		
+		    SET     @COMP_CODE      = #{S_COMP_CODE}
+		    SET     @BUDG_YYYYMM    = #{BUDG_YYYYMM}
+		    SET     @DEPT_CODE      = #{DEPT_CODE}
+		    SET     @BUDG_CODE      = #{BUDG_CODE}
+		    SET     @DIVERT_YYYYMM  = #{DIVERT_YYYYMM}
+		    SET     @DIVERT_DIVI    = #{DIVERT_DIVI}
+		    SET     @USER_ID        = #{S_USER_ID}
+		    SET     @BUDG_GUBUN     = N'1'   --1:본월예산, 2:이월예산
+		    SET     @DIVERT_GROUP   = ${sDivertGroup}
+		    SET     @INSERT_DB_USER = #{INSERT_DB_NAME}
+		    SET     @INSERT_DB_TIME = #{INSERT_DB_DATE}
+		
+		    IF ( @DIVERT_GROUP = '1' )  --조정/전용
+		        BEGIN
+		            -- 전용받은 금액 (-)
+		            UPDATE B
+		               SET B.BUDG_CONV_I = ISNULL(B.BUDG_CONV_I, 0) - ISNULL(A.DIVERT_BUDG_I, 0)
+		              FROM            AFB520T AS A  WITH(NOLOCK)
+		                   INNER JOIN AFB510T AS B  WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		                                                        AND B.BUDG_YYYYMM = A.DIVERT_YYYYMM
+		                                                        AND B.DEPT_CODE   = A.DIVERT_DEPT_CODE
+		                                                        AND B.BUDG_CODE   = A.DIVERT_BUDG_CODE
+		                                                        AND B.BUDG_GUBUN  = @BUDG_GUBUN
+		             WHERE A.COMP_CODE      = @COMP_CODE
+		               AND A.BUDG_YYYYMM    = @BUDG_YYYYMM
+		               AND A.DEPT_CODE      = @DEPT_CODE
+		               AND A.BUDG_CODE      = @BUDG_CODE
+		               AND A.DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		               AND A.DIVERT_DIVI    = @DIVERT_DIVI
+		               AND A.INSERT_DB_USER = @INSERT_DB_USER
+		               AND CONVERT(NVARCHAR(8), A.INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		
+		            -- 전용시킨 금액 (+)
+		            UPDATE A
+		               SET A.BUDG_CONV_I = ISNULL(A.BUDG_CONV_I, 0) + ISNULL(B.DIVERT_BUDG_I, 0)
+		              FROM            AFB510T AS A  WITH(NOLOCK)
+		                   INNER JOIN (SELECT COMP_CODE
+		                                    , BUDG_YYYYMM
+		                                    , DEPT_CODE
+		                                    , BUDG_CODE
+		                                    , SUM(ISNULL(DIVERT_BUDG_I, 0)) AS DIVERT_BUDG_I
+		                               FROM   AFB520T WITH (NOLOCK)
+		                               WHERE  COMP_CODE      = @COMP_CODE
+		                               AND    BUDG_YYYYMM    = @BUDG_YYYYMM
+		                               AND    DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		                               AND    DIVERT_DIVI    = @DIVERT_DIVI
+		                               AND    INSERT_DB_USER = @INSERT_DB_USER
+		                               AND    CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		                               GROUP BY COMP_CODE, BUDG_YYYYMM, DEPT_CODE, BUDG_CODE
+		                               ) B    ON B.COMP_CODE     = A.COMP_CODE
+		                                     AND B.BUDG_YYYYMM   = A.BUDG_YYYYMM
+		                                     AND B.DEPT_CODE     = A.DEPT_CODE
+		                                     AND B.BUDG_CODE     = A.BUDG_CODE
+		                                     AND A.BUDG_GUBUN    = @BUDG_GUBUN
+		             WHERE A.COMP_CODE     = @COMP_CODE
+		               AND A.BUDG_YYYYMM   = @BUDG_YYYYMM
+		               AND A.DEPT_CODE     = @DEPT_CODE
+		               AND A.BUDG_CODE     = @BUDG_CODE
+		        END
+		
+		    ELSE IF ( @DIVERT_GROUP = '2' ) --배정
+		        BEGIN
+		            -- 배정받은 금액 (-)
+		            UPDATE B
+		               SET B.BUDG_ASGN_I = ISNULL(B.BUDG_ASGN_I, 0) - ISNULL(A.DIVERT_BUDG_I, 0)
+		              FROM            AFB520T AS A  WITH(NOLOCK)
+		                   INNER JOIN AFB510T AS B  WITH(NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		                                                        AND B.BUDG_YYYYMM = A.DIVERT_YYYYMM
+		                                                        AND B.DEPT_CODE   = A.DIVERT_DEPT_CODE
+		                                                        AND B.BUDG_CODE   = A.DIVERT_BUDG_CODE
+		                                                        AND B.BUDG_GUBUN  = @BUDG_GUBUN
+		             WHERE A.COMP_CODE      = @COMP_CODE
+		               AND A.BUDG_YYYYMM    = @BUDG_YYYYMM
+		               AND A.DEPT_CODE      = @DEPT_CODE
+		               AND A.BUDG_CODE      = @BUDG_CODE
+		               AND A.DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		               AND A.DIVERT_DIVI    = @DIVERT_DIVI
+		               AND A.INSERT_DB_USER = @INSERT_DB_USER
+		               AND CONVERT(NVARCHAR(8), A.INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		
+		            -- 배정시킨 금액 (+)
+		            UPDATE A
+		               SET A.BUDG_CONV_I = ISNULL(A.BUDG_CONV_I, 0) + ISNULL(B.DIVERT_BUDG_I, 0)
+		              FROM            AFB510T AS A  WITH(NOLOCK)
+		                   INNER JOIN (SELECT COMP_CODE
+		                                    , BUDG_YYYYMM
+		                                    , DEPT_CODE
+		                                    , BUDG_CODE
+		                                    , SUM(ISNULL(DIVERT_BUDG_I, 0)) AS DIVERT_BUDG_I
+		                               FROM   AFB520T WITH (NOLOCK)
+		                               WHERE  COMP_CODE      = @COMP_CODE
+		                               AND    BUDG_YYYYMM    = @BUDG_YYYYMM
+		                               AND    DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		                               AND    DIVERT_DIVI    = @DIVERT_DIVI
+		                               AND    INSERT_DB_USER = @INSERT_DB_USER
+		                               AND    CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		                               GROUP BY COMP_CODE, BUDG_YYYYMM, DEPT_CODE, BUDG_CODE
+		                               ) B    ON B.COMP_CODE     = A.COMP_CODE
+		                                     AND B.BUDG_YYYYMM   = A.BUDG_YYYYMM
+		                                     AND B.DEPT_CODE     = A.DEPT_CODE
+		                                     AND B.BUDG_CODE     = A.BUDG_CODE
+		                                     AND A.BUDG_GUBUN    = @BUDG_GUBUN
+		             WHERE A.COMP_CODE     = @COMP_CODE
+		               AND A.BUDG_YYYYMM   = @BUDG_YYYYMM
+		               AND A.DEPT_CODE     = @DEPT_CODE
+		               AND A.BUDG_CODE     = @BUDG_CODE
+		        END
+		
+		    ELSE IF ( @DIVERT_GROUP = '3' ) --추경
+		        BEGIN
+		            -- 추경받은 금액 (-)
+		            UPDATE A
+		               SET A.BUDG_SUPP_I = ISNULL(A.BUDG_SUPP_I, 0) - ISNULL(B.DIVERT_BUDG_I, 0)
+		              FROM            AFB510T AS A WITH (NOLOCK)
+		                   INNER JOIN (SELECT COMP_CODE
+		                                    , BUDG_YYYYMM
+		                                    , DEPT_CODE
+		                                    , BUDG_CODE
+		                                    , SUM(DIVERT_BUDG_I) AS DIVERT_BUDG_I
+		                                    , DIVERT_YYYYMM
+		                                    , DIVERT_DIVI
+		                                    , INSERT_DB_USER
+		                                    , CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) AS INSERT_DB_TIME
+		                                 FROM AFB520T WITH(NOLOCK)
+		                                WHERE COMP_CODE      = @COMP_CODE
+		                                  AND BUDG_YYYYMM    = @BUDG_YYYYMM
+		                                  AND DEPT_CODE      = @DEPT_CODE
+		                                  AND BUDG_CODE      = @BUDG_CODE
+		                                  AND DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		                                  AND DIVERT_DIVI    = @DIVERT_DIVI
+		                                  AND INSERT_DB_USER = @INSERT_DB_USER
+		                                  AND CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		                                GROUP BY COMP_CODE, BUDG_YYYYMM, DEPT_CODE, BUDG_CODE, DIVERT_YYYYMM, DIVERT_DIVI, INSERT_DB_USER, CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112)
+		                              ) B     ON B.COMP_CODE   = A.COMP_CODE
+		                                     AND B.BUDG_YYYYMM = A.BUDG_YYYYMM
+		                                     AND B.DEPT_CODE   = A.DEPT_CODE
+		                                     AND B.BUDG_CODE   = A.BUDG_CODE
+		                                     AND A.BUDG_GUBUN  = @BUDG_GUBUN
+		             WHERE A.COMP_CODE   = @COMP_CODE
+		               AND A.BUDG_YYYYMM = @BUDG_YYYYMM
+		               AND A.DEPT_CODE   = @DEPT_CODE
+		               AND A.BUDG_CODE   = @BUDG_CODE
+		        END
+		
+		    UPDATE AFB520T
+		       SET AP_STS         = '1'
+		         , AP_DATE        = ''
+		         , AP_USER_ID     = ''
+		         , AP_CHARGE_CODE = ''
+		     WHERE COMP_CODE      = @COMP_CODE
+		       AND BUDG_YYYYMM    = @BUDG_YYYYMM
+		       AND DEPT_CODE      = @DEPT_CODE
+		       AND BUDG_CODE      = @BUDG_CODE
+		       AND DIVERT_YYYYMM  = @DIVERT_YYYYMM
+		       AND DIVERT_DIVI    = @DIVERT_DIVI
+		       AND INSERT_DB_USER = @INSERT_DB_USER
+		       AND CONVERT(NVARCHAR(8), INSERT_DB_TIME, 112) = @INSERT_DB_TIME
+		END
+		</if>
+	</update>
+</mapper>

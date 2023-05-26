@@ -1,0 +1,632 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_mms200skrv_kodiServiceImpl">
+    <select id="s_mms200skrv_kodiServiceImpl.selectreceiptNumMasterList" parameterType="Map" resultType="rMap">
+    	/*s_mms200skrv_kodiServiceImpl.selectreceiptNumMasterList */
+        BEGIN
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+
+         DECLARE @CompCode   NVARCHAR(08)  /* 법인코드     */
+               , @UserId     NVARCHAR(100) /* 사용자ID */
+               , @LangType   NVARCHAR(02)  /* 언어구분     */
+               , @RefItem    NVARCHAR(01)  /* 명칭 참조 유형  */
+               , @DateFormat NVARCHAR(10)  /* 날짜 포맷 유형 설정 */
+
+        	SET @CompCode = #{S_COMP_CODE}
+            SET @UserId   = #{S_USER_ID}
+            SET @LangType = #{S_LANG_CODE}
+
+         /* 명칭 참조 유형 */
+            SELECT TOP 1 @RefItem = REF_ITEM
+              FROM BSA300T WITH (NOLOCK)
+             WHERE USER_ID = @UserId
+
+            SET @RefItem = ISNULL(@RefItem, N'0')
+
+         /* 날짜 포맷 유형 설정 */
+            SELECT TOP 1 @DateFormat = CODE_NAME
+              FROM BSA100T WITH (NOLOCK)
+             WHERE COMP_CODE = @CompCode
+               AND MAIN_CODE = N'B044'
+               AND REF_CODE1 = N'Y'
+
+            SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+         /* 데이터 조회 */
+        	SELECT
+        		1 AS PRINT_CNT																					--출력매수
+        		, A.RECEIPT_NUM																					--접수번호
+				, A.RECEIPT_SEQ																					--접수순번
+        		, (CASE WHEN ISNULL(A.RECEIPT_DATE, '') = '' THEN ''
+        												     ELSE REPLACE(REPLACE(REPLACE(
+        												     	@DateFormat, 'YYYY', SUBSTRING(A.RECEIPT_DATE, 1, 4))
+        	       														   , 'MM'  , SUBSTRING(A.RECEIPT_DATE, 5, 2))
+        	       													       , 'DD'  , SUBSTRING(A.RECEIPT_DATE, 7, 2))
+        	      END)                AS RECEIPT_DATE															--접수일
+        	   , A.CUSTOM_CODE																					--거래처
+        	   ,(CASE WHEN @RefItem = '1' THEN C.CUSTOM_NAME1
+        	          WHEN @RefItem = '2' THEN C.CUSTOM_NAME2
+        	                              ELSE C.CUSTOM_NAME
+        	     END)      			  AS CUSTOM_NAME															--거래처명
+        	   , A.ITEM_CODE																					--품목코드
+        	   ,(CASE WHEN @RefItem = '1' THEN D.ITEM_NAME1
+        	          WHEN @RefItem = '2' THEN D.ITEM_NAME2
+        	                              ELSE D.ITEM_NAME
+        	     END)                 AS ITEM_NAME																--품목명
+        	   , D.SPEC																							--규격
+			   , ISNULL(A.INSPEC_FLAG, 'N') AS INSPEC_FLAG														--검사대상
+			    , CASE WHEN G.INSPEC_Q > 0 AND H.INSTOCK_YN > 0 THEN '5'
+					  WHEN G.INSPEC_Q > 0 AND ISNULL(H.INSTOCK_YN, '') = ''  THEN '3'
+					  ELSE '1'
+			     END  AS INSPEC_STATUS																			 --검사진행상태
+			   , G.END_DECISION																					 --최종판정
+			   , G.INSPEC_DATE																					 --검사일
+        	   , E.ORDER_DATE																					 --발주일자
+			   , B.ORDER_UNIT_Q AS ORDER_Q																	     --발주량
+			   , A.RECEIPT_Q																					 --접수량
+			   , A.LOT_NO																						 --LOT_NO
+			   , B.ORDER_UNIT																					 --구매단위
+			   , B.ORDER_P																						 --단가
+			   , A.RECEIPT_Q * B.ORDER_UNIT_P AS ORDER_O														 --금액
+			   , ISNULL(B.ORDER_UNIT_Q,0) - ISNULL(B.RECEIPT_Q, 0) AS NOT_RECEIPT_Q								 --미접수량
+			   , A.MAKE_LOT_NO																					 --제조사LOT
+			   , A.MAKE_DATE																					 --제조일자
+			   , A.MAKE_EXP_DATE																				 --유통기한
+        	   , A.RECEIPT_PRSN																					 --
+        	   , B.ORDER_NUM																					 --발주번호
+			   , B.ORDER_SEQ																					 --발주순번
+			   , E.ORDER_PRSN																					 --구매담당
+        	   , E.PROJECT_NO																					 --프로젝트번호
+        	   , A.ORDER_TYPE																					 --발주형태
+			   , I.ITEM_ACCOUNT																					 --품목계정
+			   , B.DVRY_DATE																					 --납기일
+			   , A.RECEIPT_PRSN																					 --접수자
+			   , G.INSPEC_NUM																					 --검사번호
+			   , G.INSPEC_SEQ																					 --검사순번
+			   , G.INSPEC_TYPE																					 --검사유형
+			   , G.INSPEC_Q																						 --검사량
+			   , G.GOOD_INSPEC_Q																				 --양품량
+			   , G.BAD_INSPEC_Q																					 --불량량
+			   , (G.BAD_INSPEC_Q * B.ORDER_UNIT_P)													AS BAD_AMT   --불량금액
+			   , convert(numeric(5,2),((G.BAD_INSPEC_Q / (A.RECEIPT_Q * B.TRNS_RATE)) * 100))		AS BAD_LATE  --불량률
+			   , E.REMARK																						 --발주비고
+			   , A.REMARK																		    AS RECEIPT_REMARK --접수비고
+			   , G.REMARK																		    AS INSPECT_REMARK --검사비고
+        	   , B.TRNS_RATE																						  --입수
+			   , D.STOCK_UNIT																						  --재고단위
+			   , G.GOODBAD_TYPE																						  --합격여부
+			   , G.INSTOCK_Q																						  --입고량
+			   , A.COMP_CODE
+			   , A.DIV_CODE
+        	   , F.PJT_NAME -- 프로잭트 명
+
+        	FROM          QMS100T A WITH (NOLOCK)
+        	   LEFT  JOIN MPO200T B WITH (NOLOCK) ON A.COMP_CODE   = B.COMP_CODE
+        	                   					 AND A.DIV_CODE    = B.IN_DIV_CODE
+        	                   					 AND A.ORDER_NUM   = B.ORDER_NUM
+        	                   					 AND A.ORDER_SEQ   = B.ORDER_SEQ
+        	  LEFT  JOIN MPO100T E WITH (NOLOCK) ON B.COMP_CODE    = E.COMP_CODE
+        					                     AND B.DIV_CODE    = E.DIV_CODE
+        					                     AND B.ORDER_NUM   = E.ORDER_NUM
+        	   LEFT  JOIN BCM600T F WITH (NOLOCK) ON A.COMP_CODE   = F.COMP_CODE
+        					                     AND E.PROJECT_NO  = F.PJT_CODE
+        	   INNER JOIN BCM100T C WITH (NOLOCK) ON A.COMP_CODE   = C.COMP_CODE
+        	                   					 AND A.CUSTOM_CODE = C.CUSTOM_CODE
+        	   INNER JOIN BPR100T D WITH (NOLOCK) ON A.COMP_CODE   = D.COMP_CODE
+        	                   					 AND A.ITEM_CODE   = D.ITEM_CODE
+        	   --20190604 조회조건 item_account 추가
+        	   INNER JOIN BPR200T I WITH (NOLOCK) ON I.COMP_CODE   = A.COMP_CODE
+        	                   					 AND I.DIV_CODE    = A.DIV_CODE
+        	                   					 AND I.ITEM_CODE   = A.ITEM_CODE
+        	   LEFT JOIN QMS200T  G WITH (NOLOCK) ON A.COMP_CODE   = G.COMP_CODE
+												 AND A.RECEIPT_NUM = G.RECEIPT_NUM
+												 AND A.RECEIPT_SEQ = G.RECEIPT_SEQ
+               LEFT JOIN (SELECT COMP_CODE
+								, DIV_CODE
+								, ITEM_CODE
+								, INSPEC_NUM
+								, INSPEC_SEQ
+								, COUNT(1) AS INSTOCK_YN
+						   FROM BTR100T WITH (NOLOCK)
+						   WHERE COMP_CODE = @CompCode
+						   AND   DIV_CODE  = #{DIV_CODE}
+						   AND   INOUT_TYPE = '1'
+						   AND   ISNULL(INSPEC_NUM, '') != ''
+						   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, INSPEC_NUM, INSPEC_SEQ) H ON G.COMP_CODE   = H.COMP_CODE
+																	 											 AND G.DIV_CODE    = H.DIV_CODE
+																	 											 AND G.ITEM_CODE	= H.ITEM_CODE
+																	 											 AND G.INSPEC_NUM	= H.INSPEC_NUM
+																	 											  AND G.INSPEC_SEQ	= H.INSPEC_SEQ
+            WHERE  A.COMP_CODE = @CompCode
+              AND  ISNULL(A.TRADE_FLAG_YN, 'N') = 'N'
+
+        <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+            AND		A.DIV_CODE      = #{DIV_CODE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(RECEIPT_DATE_FR)">
+        	AND		A.RECEIPT_DATE &gt;= #{RECEIPT_DATE_FR}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(RECEIPT_DATE_TO)">
+        	AND		A.RECEIPT_DATE &lt;= #{RECEIPT_DATE_TO}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(INSPEC_DATE_FR)">
+        	AND		G.INSPEC_DATE &gt;= #{INSPEC_DATE_FR}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(INSPEC_DATE_TO)">
+        	AND		G.INSPEC_DATE &lt;= #{INSPEC_DATE_TO}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(ORDER_DATE_FR)">
+        	AND		E.ORDER_DATE &gt;= #{ORDER_DATE_FR}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(ORDER_DATE_TO)">
+        	AND		E.ORDER_DATE &lt;= #{ORDER_DATE_TO}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+            AND		A.CUSTOM_CODE   = #{CUSTOM_CODE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+            AND		A.ITEM_CODE     LIKE #{ITEM_CODE} + '%'
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+            AND		A.ORDER_TYPE    = #{ORDER_TYPE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(LOT_NO)">
+            AND		B.LOT_NO     LIKE #{LOT_NO} + '%'
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(RECEIPT_PRSN)">
+            AND		A.RECEIPT_PRSN    = #{RECEIPT_PRSN}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(INSPEC_STATUS)">
+            AND  CASE WHEN G.INSPEC_Q > 0 AND H.INSTOCK_YN > 0 THEN '5'
+				            WHEN G.INSPEC_Q > 0 AND ISNULL(H.INSTOCK_YN, '') = ''  THEN '3'
+				            ELSE '1'
+			         END    = #{INSPEC_STATUS}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+        	--20190604 조회조건 item_account 추가
+            AND		I.ITEM_ACCOUNT   = #{ITEM_ACCOUNT}
+        </if>
+		<if test="@foren.Ognl@isNotEmpty(END_DECISION)">
+            AND		G.END_DECISION	      = #{END_DECISION}
+        </if>
+            UNION ALL
+
+        	 	SELECT  1 AS PRINT_CNT																				    --출력매수
+        			, A.RECEIPT_NUM																					--접수번호
+					, A.RECEIPT_SEQ																					--접수순번
+        			, (CASE WHEN ISNULL(A.RECEIPT_DATE, '') = '' THEN ''
+        														 ELSE REPLACE(REPLACE(REPLACE(
+        												     		@DateFormat, 'YYYY', SUBSTRING(A.RECEIPT_DATE, 1, 4))
+        	       															   , 'MM'  , SUBSTRING(A.RECEIPT_DATE, 5, 2))
+        	       															   , 'DD'  , SUBSTRING(A.RECEIPT_DATE, 7, 2))
+        			  END)                AS RECEIPT_DATE															--접수일
+        		   , A.CUSTOM_CODE																					--거래처
+        		   ,(CASE WHEN @RefItem = '1' THEN C.CUSTOM_NAME1
+        				  WHEN @RefItem = '2' THEN C.CUSTOM_NAME2
+        									  ELSE C.CUSTOM_NAME
+        			 END)      			  AS CUSTOM_NAME															--거래처명
+        		   , A.ITEM_CODE																					--품목코드
+        		   ,(CASE WHEN @RefItem = '1' THEN D.ITEM_NAME1
+        				  WHEN @RefItem = '2' THEN D.ITEM_NAME2
+        									  ELSE D.ITEM_NAME
+        			 END)                 AS ITEM_NAME																--품목명
+        		   , D.SPEC																							--규격
+				   , ISNULL(A.INSPEC_FLAG, 'N') AS INSPEC_FLAG														--검사대상
+					, CASE WHEN G.INSPEC_Q > 0 AND H.INSTOCK_YN > 0 THEN '5'
+						  WHEN G.INSPEC_Q > 0 AND ISNULL(H.INSTOCK_YN, '') = ''  THEN '3'
+						  ELSE '1'
+					 END  AS INSPEC_STATUS																			 --검사진행상태
+				   , G.END_DECISION																					 --최종판정
+				   , G.INSPEC_DATE																					 --검사일
+        		   , E.DATE_CONTRACT					AS ORDER_DATE																	 --발주일자
+				   , ISNULL(B.QTY,0) AS ORDER_Q																	     --발주량
+				   , A.RECEIPT_Q																					 --접수량
+				   , A.LOT_NO																						 --LOT_NO
+				   , B.UNIT								AS ORDER_UNIT												 --발주단위
+				   , B2.ORDER_P 																					 --단가
+				   , A.RECEIPT_Q * B2.ORDER_UNIT_Q AS ORDER_O														 --금액
+				   , ISNULL(B2.ORDER_UNIT_Q,0) - ISNULL(A.RECEIPT_Q, 0) AS NOT_RECEIPT_Q							 --미접수량
+				   , A.MAKE_LOT_NO																					 --제조사LOT
+				   , A.MAKE_DATE																					 --제조일자
+				   , A.MAKE_EXP_DATE																				 --유통기한
+        		   , A.RECEIPT_PRSN																					 --
+        		   , B.ORDER_NUM																					 --발주번호
+				   , B.ORDER_SEQ																					 --발주순번
+				   , B1.ORDER_PRSN																					 --구매담당
+        		   , E.PROJECT_NO																					 --프로젝트번호
+        		   , A.ORDER_TYPE																					 --발주형태
+				   , I.ITEM_ACCOUNT																					 --품목계정
+				   , B2.DVRY_DATE																					 --납기일
+				   , A.RECEIPT_PRSN																					 --접수자
+				   , G.INSPEC_NUM																					 --검사번호
+				   , G.INSPEC_SEQ																					 --검사순번
+				   , G.INSPEC_TYPE																					 --검사유형
+				   , G.INSPEC_Q																						 --검사량
+				   , G.GOOD_INSPEC_Q																				 --양품량
+				   , G.BAD_INSPEC_Q																					 --불량량
+				   , (G.BAD_INSPEC_Q * B2.ORDER_UNIT_P)													AS BAD_AMT   --불량금액
+				   , convert(numeric(5,2),((G.BAD_INSPEC_Q / (A.RECEIPT_Q * B.TRNS_RATE)) * 100))		AS BAD_LATE  --불량률
+				   , B1.REMARK																						 --발주비고
+				   , A.REMARK																		    AS RECEIPT_REMARK --접수비고
+				   , G.REMARK																		    AS INSPECT_REMARK --검사비고
+        		   , B.TRNS_RATE																						  --입수
+				   , D.STOCK_UNIT																						  --재고단위
+				   , G.GOODBAD_TYPE																						  --합격여부
+				   , G.INSTOCK_Q																						  --입고량
+				   , A.COMP_CODE
+				   , A.DIV_CODE
+        		   , F.PJT_NAME -- 프로잭트 명
+        	FROM          QMS100T A WITH (NOLOCK)
+        	   LEFT  JOIN TIA110T B WITH (NOLOCK) ON A.COMP_CODE   = B.COMP_CODE
+        	                   					 AND A.DIV_CODE    = B.DIV_CODE
+        	                   					 AND A.ORDER_NUM   = B.SO_SER_NO
+        	                   					 AND A.ORDER_SEQ   = B.SO_SER
+				LEFT  JOIN MPO200T B2 WITH (NOLOCK) ON A.COMP_CODE   = B2.COMP_CODE
+        	                   					 AND A.DIV_CODE    = B2.DIV_CODE
+        	                   					 AND A.ORDER_NUM   = B2.ORDER_NUM
+        	                   					 AND A.ORDER_SEQ   = B2.ORDER_SEQ
+			   INNER JOIN MPO100T B1 WITH(NOLOCK) ON B1.COMP_CODE = B2.COMP_CODE
+												  AND B1.DIV_CODE = B2.DIV_CODE
+												  AND B1.ORDER_NUM = B2.ORDER_NUM
+        	   LEFT  JOIN TIA100T E WITH (NOLOCK) ON A.COMP_CODE   = E.COMP_CODE
+        					                     AND A.DIV_CODE    = E.DIV_CODE
+        					                     AND A.ORDER_NUM   = E.SO_SER_NO
+				LEFT  JOIN BCM600T F WITH (NOLOCK) ON A.COMP_CODE   = F.COMP_CODE
+        					                     AND E.PROJECT_NO    = F.PJT_CODE
+        	   INNER JOIN BCM100T C WITH (NOLOCK) ON A.COMP_CODE   = C.COMP_CODE
+        	                   					 AND A.CUSTOM_CODE = C.CUSTOM_CODE
+        	   INNER JOIN BPR100T D WITH (NOLOCK) ON A.COMP_CODE   = D.COMP_CODE
+        	                   					 AND A.ITEM_CODE   = D.ITEM_CODE
+        	   --20190604 조회조건 item_account 추가
+        	   INNER JOIN BPR200T I WITH (NOLOCK) ON I.COMP_CODE   = A.COMP_CODE
+        	                   					 AND I.DIV_CODE    = A.DIV_CODE
+        	                   					 AND I.ITEM_CODE   = A.ITEM_CODE
+        	   LEFT JOIN QMS200T  G WITH (NOLOCK) ON A.COMP_CODE   = G.COMP_CODE
+												 AND A.RECEIPT_NUM = G.RECEIPT_NUM
+												 AND A.RECEIPT_SEQ = G.RECEIPT_SEQ
+                LEFT JOIN (SELECT COMP_CODE
+								, DIV_CODE
+								, INSPEC_NUM
+								, INSPEC_SEQ
+								, ITEM_CODE
+								, COUNT(1) AS INSTOCK_YN
+						   FROM BTR100T WITH (NOLOCK)
+						   WHERE COMP_CODE = @CompCode
+						   AND   DIV_CODE  = #{DIV_CODE}
+						   AND   INOUT_TYPE = '1'
+						   AND   ISNULL(INSPEC_NUM, '') != ''
+						   GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, INSPEC_NUM, INSPEC_SEQ) H ON G.COMP_CODE   = H.COMP_CODE
+																	 											 AND G.DIV_CODE    = H.DIV_CODE
+																	 											 AND G.ITEM_CODE	= H.ITEM_CODE
+																	 											 AND G.INSPEC_NUM	= H.INSPEC_NUM
+																	 											 AND G.INSPEC_SEQ	= H.INSPEC_SEQ
+           WHERE  A.COMP_CODE = @CompCode
+             AND  ISNULL(A.TRADE_FLAG_YN, 'N') = 'Y'
+         <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+            AND		A.DIV_CODE      = #{DIV_CODE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(RECEIPT_DATE_FR)">
+        	AND		A.RECEIPT_DATE &gt;= #{RECEIPT_DATE_FR}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(RECEIPT_DATE_TO)">
+        	AND		A.RECEIPT_DATE &lt;= #{RECEIPT_DATE_TO}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(INSPEC_DATE_FR)">
+        	AND		G.INSPEC_DATE &gt;= #{INSPEC_DATE_FR}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(INSPEC_DATE_TO)">
+        	AND		G.INSPEC_DATE &lt;= #{INSPEC_DATE_TO}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(ORDER_DATE_FR)">
+        	AND		B1.ORDER_DATE &gt;= #{ORDER_DATE_FR}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(ORDER_DATE_TO)">
+        	AND		B1.ORDER_DATE &lt;= #{ORDER_DATE_TO}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+            AND		A.CUSTOM_CODE   = #{CUSTOM_CODE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+            AND		A.ITEM_CODE      LIKE #{ITEM_CODE} + '%'
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+            AND		A.ORDER_TYPE    = #{ORDER_TYPE}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(LOT_NO)">
+            AND		B.LOT_NO     LIKE #{LOT_NO} + '%'
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(RECEIPT_PRSN)">
+            AND		A.RECEIPT_PRSN    = #{RECEIPT_PRSN}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(END_DECISION)">
+            AND		G.END_DECISION	      = #{END_DECISION}
+        </if>
+         <if test="@foren.Ognl@isNotEmpty(INSPEC_STATUS)">
+            AND  CASE WHEN G.INSPEC_Q > 0 AND H.INSTOCK_YN > 0 THEN '5'
+				            WHEN G.INSPEC_Q > 0 AND ISNULL(H.INSTOCK_YN, '') = ''  THEN '3'
+				            ELSE '1'
+			         END    = #{INSPEC_STATUS}
+        </if>
+        <if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+        	--20190604 조회조건 item_account 추가
+            AND		I.ITEM_ACCOUNT   = #{ITEM_ACCOUNT}
+        </if>
+              ORDER BY A.RECEIPT_NUM, A.RECEIPT_SEQ
+
+
+         SET ARITHABORT OFF
+         SET NOCOUNT OFF
+
+         END
+    </select>
+
+<select id="s_mms200skrv_kodiServiceImpl.printList" parameterType="Map" resultType="rMap">
+
+CREATE TABLE #TEMP_TABLE
+(
+        RECEIPT_NUM           NVARCHAR(100)     NOT NULL
+    ,   RECEIPT_SEQ             NUMERIC(38) NOT NULL
+)
+
+DECLARE
+
+@I INT,
+@MAXNO INT
+<foreach collection="RECEIPT_NUM_SEQ" item="item" separator="" close="" open="">
+
+SET @I = 1
+SET @MAXNO = ${item.PRINT_CNT}
+
+WHILE @I &lt;= @MAXNO
+	BEGIN
+
+	INSERT INTO #TEMP_TABLE (
+
+		RECEIPT_NUM
+		,RECEIPT_SEQ
+	)VALUES(
+		'${item.RECEIPT_NUM}'
+		,${item.RECEIPT_SEQ}
+	)
+
+			SET @I = @I + 1
+	END
+
+</foreach>
+
+			SELECT A.ITEM_CODE			-- 자재코드
+			  , B.ITEM_NAME					-- 자재명칭
+			  , A.LOT_NO	    					-- LOT_NO
+			  , SUBSTRING(A.RECEIPT_DATE,1,4) + REPLICATE('0', 3 - len(convert(varchar,uniLITE.fnGetCalWeek(#{S_COMP_CODE}, A.RECEIPT_DATE)))) + convert(varchar,uniLITE.fnGetCalWeek(#{S_COMP_CODE}, A.RECEIPT_DATE)) AS RECEIPT_DATE1 --입고주차
+			  , A.RECEIPT_Q	*  MP.TRNS_RATE AS 	RECEIPT_Q				-- 입고량
+			  , A.MAKE_EXP_DATE  			--사용기한
+			  , A.RECEIPT_DATE AS RECEIPT_DATE2				--입고일자
+			  , A.MAKE_LOT_NO				--업체LOT
+			  , C.CUSTOM_NAME				--업체명
+			  , B.LOCATION						--위치
+			  , B.ITEM_ACCOUNT
+			  , MP.TRNS_RATE
+			  , B1.STOCK_UNIT
+			  , A.RECEIPT_NUM
+			  , A.RECEIPT_SEQ
+			  , A.MAKE_DATE
+			  , R1.CODE_NAME AS INSPEC_PRSN_NAME			--검사자명
+			  , A.RECEIPT_Q AS RECEIPT_ORDER_Q
+			  , A.ORDER_UNIT
+			  , CASE WHEN D3.REF_CODE3 = '40' THEN 'Q10' + '-' + SUBSTRING(A.RECEIPT_NUM,6,6)
+															 + '-' + SUBSTRING(A.RECEIPT_NUM,12,3)
+															 + '-' + REPLICATE('0', 2 - LEN(convert(nvarchar(5),A.RECEIPT_SEQ)))
+															 +  convert(nvarchar(5),A.RECEIPT_SEQ)
+						  ELSE 'Q20' + '-' + SUBSTRING(A.RECEIPT_NUM,6,6)
+									     + '-' + SUBSTRING(A.RECEIPT_NUM,12,3)
+									     + '-' + REPLICATE('0', 2 - LEN(convert(nvarchar(5),A.RECEIPT_SEQ)))
+									     +  convert(nvarchar(5),A.RECEIPT_SEQ)
+				END AS RECEIPT_NUM2
+			    , CASE WHEN ISNULL(A.MAKE_DATE,'') = '' THEN A.MAKE_EXP_DATE ELSE A.MAKE_DATE END AS RECEIPT_DATE2
+			  FROM QMS100T A
+			  INNER JOIN BPR200T B ON A.COMP_CODE = B.COMP_CODE
+			       AND A.DIV_CODE	= B.DIV_CODE
+			       AND A.ITEM_CODE	= B.ITEM_CODE
+			  INNER JOIN BPR100T B1 ON A.COMP_CODE = B1.COMP_CODE
+									AND A.ITEM_CODE = B1.ITEM_CODE
+			  INNER JOIN BCM100T C ON A.COMP_CODE = C.COMP_CODE
+			       AND A.CUSTOM_CODE	= C.CUSTOM_CODE
+			  LEFT JOIN MPO200T MP ON A.COMP_CODE = MP.COMP_CODE
+								  AND A.DIV_CODE  = MP.IN_DIV_CODE
+								  AND A.ORDER_NUM = MP.ORDER_NUM
+								  AND A.ORDER_SEQ = MP.ORDER_SEQ
+			  LEFT JOIN BSA100T R1 WITH(NOLOCK) ON R1.COMP_CODE = A.COMP_CODE
+															   AND R1.MAIN_CODE = 'Q021'
+															   AND R1.SUB_CODE = A.RECEIPT_PRSN
+			  LEFT JOIN BSA100T D3 WITH (NOLOCK) ON D3.COMP_CODE = A.COMP_CODE
+													AND D3.MAIN_CODE = 'B020'
+													AND D3.SUB_CODE  != '$'
+													AND D3.SUB_CODE = B.ITEM_ACCOUNT
+			  INNER JOIN #TEMP_TABLE TP ON TP.RECEIPT_NUM = A.RECEIPT_NUM
+			  						   AND TP.RECEIPT_SEQ = A.RECEIPT_SEQ
+			 WHERE A.COMP_CODE = #{S_COMP_CODE}
+			   AND A.DIV_CODE  = #{DIV_CODE}
+
+
+              ORDER BY A.RECEIPT_NUM, A.RECEIPT_SEQ
+
+
+
+DROP TABLE   #TEMP_TABLE
+    </select>
+
+<select id="s_mms200skrv_kodiServiceImpl.printListItemLotGroup" parameterType="Map" resultType="rMap">
+
+	CREATE TABLE #TEMP_TABLE
+	(
+	        RECEIPT_NUM           NVARCHAR(100)     NOT NULL
+	    ,   RECEIPT_SEQ             NUMERIC(38) NOT NULL
+	)
+
+	DECLARE
+
+	@I INT,
+	@MAXNO INT
+	<foreach collection="RECEIPT_NUM_SEQ" item="item" separator="" close="" open="">
+
+	SET @I = 1
+	SET @MAXNO = ${item.PRINT_CNT}
+
+	WHILE @I &lt;= @MAXNO
+		BEGIN
+
+		INSERT INTO #TEMP_TABLE (
+
+			RECEIPT_NUM
+			,RECEIPT_SEQ
+		)VALUES(
+			'${item.RECEIPT_NUM}'
+			,${item.RECEIPT_SEQ}
+		)
+
+				SET @I = @I + 1
+		END
+
+	</foreach>
+
+					SELECT A.ITEM_CODE			-- 자재코드
+						  , MAX(B.ITEM_NAME) AS ITEM_NAME					-- 자재명칭
+						  , A.LOT_NO	    					-- LOT_NO
+						--  , SUBSTRING(A.RECEIPT_DATE,1,4) + REPLICATE('0', 3 - len(convert(varchar,uniLITE.fnGetCalWeek('MASTER', A.RECEIPT_DATE)))) + convert(varchar,uniLITE.fnGetCalWeek('MASTER', A.RECEIPT_DATE)) AS RECEIPT_DATE1 --입고주차
+						  , SUM(A.RECEIPT_Q)	*  MAX(MP.TRNS_RATE) AS 	RECEIPT_Q				-- 입고량
+						  , MAX(A.MAKE_EXP_DATE) AS MAKE_EXP_DATE  		--사용기한
+						  , MAX(A.RECEIPT_DATE)  AS RECEIPT_DATE2				--입고일자
+						  , MAX(A.MAKE_LOT_NO)   AS MAKE_LOT_NO			--업체LOT
+						  , MAX(C.CUSTOM_NAME)   AS CUSTOM_NAME			--업체명
+						  , MAX(B.LOCATION)      AS LOCATION					--위치
+						  , MAX(B.ITEM_ACCOUNT)  AS ITEM_ACCOUNT
+						  , MAX(MP.TRNS_RATE)    AS TRNS_RATE
+						  , MAX(B1.STOCK_UNIT)   AS STOCK_UNIT
+						  , MAX(A.RECEIPT_NUM)   AS RECEIPT_NUM
+						  , MAX(A.RECEIPT_SEQ)   AS RECEIPT_SEQ
+						  , MAX(A.MAKE_DATE)     AS MAKE_DATE
+						  , MAX(R1.CODE_NAME)	 AS INSPEC_PRSN_NAME			--검사자명
+						  , SUM(A.RECEIPT_Q)	 AS RECEIPT_ORDER_Q
+						  , MAX(A.ORDER_UNIT)    AS ORDER_UNIT
+
+				  FROM QMS100T A
+				  INNER JOIN BPR200T B ON A.COMP_CODE = B.COMP_CODE
+				       AND A.DIV_CODE	= B.DIV_CODE
+				       AND A.ITEM_CODE	= B.ITEM_CODE
+				  INNER JOIN BPR100T B1 ON A.COMP_CODE = B1.COMP_CODE
+										AND A.ITEM_CODE = B1.ITEM_CODE
+				  INNER JOIN BCM100T C ON A.COMP_CODE = C.COMP_CODE
+				       AND A.CUSTOM_CODE	= C.CUSTOM_CODE
+				  LEFT JOIN MPO200T MP ON A.COMP_CODE = MP.COMP_CODE
+									  AND A.DIV_CODE  = MP.IN_DIV_CODE
+									  AND A.ORDER_NUM = MP.ORDER_NUM
+									  AND A.ORDER_SEQ = MP.ORDER_SEQ
+				  LEFT JOIN BSA100T R1 WITH(NOLOCK) ON R1.COMP_CODE = A.COMP_CODE
+																   AND R1.MAIN_CODE = 'Q021'
+																   AND R1.SUB_CODE = A.RECEIPT_PRSN
+				  LEFT JOIN BSA100T D3 WITH (NOLOCK) ON D3.COMP_CODE = A.COMP_CODE
+														AND D3.MAIN_CODE = 'B020'
+														AND D3.SUB_CODE  != '$'
+														AND D3.SUB_CODE = B.ITEM_ACCOUNT
+				  INNER JOIN #TEMP_TABLE TP ON TP.RECEIPT_NUM = A.RECEIPT_NUM
+				  						   AND TP.RECEIPT_SEQ = A.RECEIPT_SEQ
+				 WHERE A.COMP_CODE = #{S_COMP_CODE}
+				   AND A.DIV_CODE  = #{DIV_CODE}
+
+				 GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.LOT_NO
+	             ORDER BY MAX(A.RECEIPT_NUM), MAX(A.RECEIPT_SEQ)
+
+
+
+	DROP TABLE   #TEMP_TABLE
+    </select>
+	<select id="s_mms200skrv_kodiServiceImpl.printListItemLotGroup2" parameterType="Map" resultType="rMap">
+		/*s_mms200skrv_kodiServiceImpl.printListItemLotGroup2*/
+
+		SELECT  A.COMP_CODE
+				  , A.DIV_CODE
+				  , MAX(A.RECEIPT_NUM) AS RECEIPT_NUM
+				  , MAX(A.RECEIPT_SEQ) AS RECEIPT_SEQ
+				  , MAX(A.RECEIPT_DATE)AS RECEIPT_DATE	--검사일자
+
+				  , A.ITEM_CODE		--자재코드
+				  , D.ITEM_NAME		--품명
+				  , D.SPEC			--규격
+				  , MAX(A.CUSTOM_CODE) AS CUSTOM_CODE
+				  , MAX(C.CUSTOM_NAME) AS CUSTOM_NAME	--수신 ,공급처
+				  , MAX(C.TELEPHON) AS TELEPHON 		--연락처
+
+				  , SUM(A.INSPEC_Q) AS INSPEC_Q		--납품수량
+				  , SUM(A.RECEIPT_Q) *  MAX(B2.TRNS_RATE) AS RECEIPT_Q	--접수수량 * 구매입수
+
+				  , MAX(R1.CODE_NAME) AS INSPEC_PRSN_NAME			--검사자명
+
+				  , MAX(A.ORDER_NUM) AS ORDER_NUM		--발주번호
+				  , MAX(A.ORDER_SEQ) AS ORDER_SEQ
+
+
+				  , (MAX(A.RECEIPT_NUM) +  convert(nvarchar(5), MAX(A.RECEIPT_SEQ))) AS NOSEQ
+
+				  , A.LOT_NO
+				  , MAX(A.MAKE_LOT_NO) AS MAKE_LOT_NO
+		  		  , MAX(A.MAKE_DATE) AS MAKE_DATE
+		  		  , MAX(A.MAKE_EXP_DATE) AS MAKE_EXP_DATE
+		  		  , MAX(E.RECEIPT_DATE) AS RECEIPT_DATE
+		  		  , MAX(D.ITEM_LEVEL1) AS ITEM_LEVEL1
+		  		  , MAX(D2.ITEM_ACCOUNT) AS ITEM_ACCOUNT
+		  		  , MAX(D.STOCK_UNIT) AS STOCK_UNIT
+		  		  , MAX(B2.TRNS_RATE) AS TRNS_RATE
+		  		  , MAX(D3.REF_CODE3) AS STD_ITEM_ACCOUNT
+		  		  , SUM(A.RECEIPT_Q) AS ORDER_RECEIPT_Q
+			  	  , MAX(A.ORDER_UNIT) AS ORDER_UNIT
+			  	  , CASE WHEN MAX(D3.REF_CODE3) = '40' THEN 'Q10' + '-' + SUBSTRING(MAX(E.RECEIPT_NUM),6,6)
+															 + '-' + SUBSTRING(MAX(E.RECEIPT_NUM),12,3)
+															 + '-' + REPLICATE('0', 2 - LEN(convert(nvarchar(5),MAX(A.RECEIPT_SEQ))))
+															 +  convert(nvarchar(5),MAX(A.RECEIPT_SEQ))
+												  ELSE 'Q20' + '-' + SUBSTRING(MAX(E.RECEIPT_NUM),6,6)
+															 + '-' + SUBSTRING(MAX(E.RECEIPT_NUM),12,3)
+															 + '-' + REPLICATE('0', 2 - LEN(convert(nvarchar(5),MAX(A.RECEIPT_SEQ))))
+															 +  convert(nvarchar(5),MAX(A.RECEIPT_SEQ))
+					END AS RECEIPT_NUM2
+				  , CASE WHEN ISNULL(MAX(A.MAKE_DATE),'') = '' THEN MAX(A.MAKE_EXP_DATE) ELSE MAX(A.MAKE_DATE) END AS RECEIPT_DATE2
+				  FROM QMS100T A WITH(NOLOCK)
+
+				INNER JOIN MPO200T B2 WITH(NOLOCK) ON B2.COMP_CODE = A.COMP_CODE
+									  AND B2.IN_DIV_CODE = A.DIV_CODE
+									  AND B2.ORDER_NUM = A.ORDER_NUM
+									  AND B2.ORDER_SEQ = A.ORDER_SEQ
+				INNER JOIN MPO100T B1 WITH(NOLOCK) ON B1.COMP_CODE = B2.COMP_CODE
+									  AND B1.DIV_CODE = B2.DIV_CODE
+									  AND B1.ORDER_NUM = B2.ORDER_NUM
+				  LEFT JOIN BCM100T C WITH(NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+												  AND C.CUSTOM_CODE = A.CUSTOM_CODE
+				  LEFT JOIN BPR100T D WITH(NOLOCK) ON D.COMP_CODE = A.COMP_CODE
+												  AND D.ITEM_CODE = A.ITEM_CODE
+				  LEFT JOIN BSA100T R1 WITH(NOLOCK) ON R1.COMP_CODE = A.COMP_CODE
+												   AND R1.MAIN_CODE = 'Q021'
+												   AND R1.SUB_CODE = A.RECEIPT_PRSN
+
+				   LEFT JOIN QMS100T E WITH(NOLOCK) ON A.COMP_CODE = E.COMP_CODE
+												   AND A.DIV_CODE = E.DIV_CODE
+												   AND A.RECEIPT_NUM = E.RECEIPT_NUM
+												   AND A.RECEIPT_SEQ = E.RECEIPT_SEQ
+				  LEFT JOIN BPR200T D2 WITH(NOLOCK) ON A.COMP_CODE = D2.COMP_CODE
+												   AND A.DIV_CODE   = D2.DIV_CODE
+												   AND A.ITEM_CODE = D2.ITEM_CODE
+				  LEFT JOIN BSA100T D3 WITH (NOLOCK) ON D3.COMP_CODE = D2.COMP_CODE
+													AND D3.MAIN_CODE = 'B020'
+													AND D3.SUB_CODE  != '$'
+													AND D3.SUB_CODE = D2.ITEM_ACCOUNT
+				  WHERE A.COMP_CODE = #{S_COMP_CODE}
+				  AND A.DIV_CODE = #{DIV_CODE}
+
+				AND
+				<foreach collection="RECEIPT_NUMS" item="item" separator="OR" close=")" open="(">
+				   ( A.RECEIPT_NUM + CONVERT(VARCHAR(3),A.RECEIPT_SEQ) = '${item.RECEIPT_NUM}')
+				</foreach>
+				 GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.LOT_NO, D.ITEM_NAME, D.SPEC
+		  ORDER BY NOSEQ
+	</select>
+
+</mapper>

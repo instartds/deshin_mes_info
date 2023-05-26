@@ -1,0 +1,293 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_pmr101ukrv_inServiceImpl">
+	<select id="s_pmr101ukrv_inServiceImpl.selectDetailList" parameterType="Map" resultType="rMap">		<!-- 작업실적등록 조회 -->
+		--s_pmr101ukrv_in.Cs_pmr101ukrv_in[fnPmr100QStd] Query01
+		BEGIN
+		     SELECT A.WKORD_NUM
+		          , A.ITEM_CODE
+		          , CASE WHEN ISNULL(B.ITEM_NAME2,'')=''
+		                 THEN B.ITEM_NAME
+		                 ELSE B.ITEM_NAME2
+		            END                            AS ITEM_NAME
+		          , A.WORK_SHOP_CODE
+		          , A.LOT_NO
+		          --20200406 추가
+		          , ISNULL(A.Progrs_Kind_Cd, '00') AS Progrs_Kind_Cd
+		          , A.Pbl_Line_No                  AS PRODT_LINE
+		          , A.WKORD_Q
+		          , A.PROG_UNIT
+		          --20200514 추가: PACK_QTY
+		          , ISNULL(C.PACK_QTY, 1)          AS PACK_QTY
+		      FROM       PMP100T A WITH(NOLOCK)
+		      INNER JOIN BPR100T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE 
+		                                       AND A.ITEM_CODE = B.ITEM_CODE
+		      --20200514 추가: PACK_QTY
+		      INNER JOIN BPR200T C WITH(NOLOCK) ON C.COMP_CODE = A.COMP_CODE 
+		                                       AND C.DIV_CODE 	= A.DIV_CODE
+		                                       AND C.ITEM_CODE = A.ITEM_CODE
+		      WHERE A.COMP_CODE        = #{S_COMP_CODE}
+		        AND A.DIV_CODE         = #{DIV_CODE}
+		        AND A.PRODT_START_DATE = #{PRODT_DATE}
+		        AND ((ISNULL(A.SEMI_ITEM_CODE,'') != '' AND A.WORK_SHOP_CODE  = 'W30')
+		          OR (ISNULL(A.SEMI_ITEM_CODE,'')  = '' AND A.WORK_SHOP_CODE != 'W30'))
+		        AND A.LINE_END_YN                  = 'Y'
+		       <if test="@foren.Ognl@isNotEmpty(WORK_SHOP_CODE)">
+		        AND A.WORK_SHOP_CODE               = #{WORK_SHOP_CODE}
+		      </if>
+		       <if test="@foren.Ognl@isNotEmpty(Progrs_Kind_Cd)">
+		        AND ISNULL(Progrs_Kind_Cd, '00')   = #{Progrs_Kind_Cd}
+		      </if>
+		      --20200406 추가
+		      ORDER BY A.WKORD_NUM
+		END
+	</select>
+
+<!-- 등록 -->	
+	<select id="s_pmr101ukrv_inServiceImpl.beforeSaveCheck" parameterType="Map" resultType="rMap">		<!-- 공정별등록 조회1 -->
+		SELECT TOP 1 WKORD_NUM 
+		  FROM PMR300T WITH(NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND DIV_CODE = #{DIV_CODE}
+		   AND WKORD_NUM = #{WKORD_NUM}
+		   AND ITEM_CODE = #{ITEM_CODE}
+	</select>
+
+	<select id="s_pmr101ukrv_inServiceImpl.selectDetailList5" parameterType="Map" resultType="rMap">		<!-- 불량내역등록 조회 -->
+	--s_pmr101ukrv_in.Cs_pmr101ukrv_in[fnPmr100QSt2] Query01
+		SELECT  B.DIV_CODE
+			, B.WORK_SHOP_CODE
+			, B.WKORD_NUM
+			, #{PROG_WORK_CODE} AS PROG_WORK_CODE
+			,(SELECT TOP 1 PROG_WORK_NAME FROM PBS200T WHERE PROG_WORK_CODE = #{PROG_WORK_CODE}) AS PROG_WORK_NAME
+			, uniLITE.fnGetUserDateComp(B.comp_code, B.prodt_start_date) AS PRODT_DATE
+			--, uniLITE.fnGetUserDateComp(A.comp_code, ISNULL(C.PRODT_DATE, CONVERT(VARCHAR(8), GETDATE(), 112)  )) AS PRODT_DATE
+			, B.ITEM_CODE
+			, A.SUB_CODE AS BAD_CODE
+			, A.CODE_NAME AS BAD_NAME
+			, unilite.fnFormat(A.COMP_CODE, ISNULL(C.BAD_Q,0), 'P_FSET_QS')  AS BAD_Q
+			, ISNULL(C.REMARK,'') AS REMARK
+			, C.UPDATE_DB_USER
+			, C.UPDATE_DB_TIME
+			, B.COMP_CODE
+			, (SELECT CASE WHEN ISNULL(CC.WKORD_NUM,'') = '' THEN 'N' ELSE 'Y' END FROM PMR300T CC WHERE CC.WKORD_NUM	= #{WKORD_NUM} AND C.BAD_CODE = CC.BAD_CODE) AS CHECK_VALUE
+		 FROM BSA100T A WITH (NOLOCK)
+			LEFT JOIN PMP100T B WITH (NOLOCK) ON A.COMP_CODE	= B.COMP_CODE 
+												 AND B.DIV_CODE 	= #{DIV_CODE}
+												 AND B.WKORD_NUM	= #{WKORD_NUM}
+												 AND B.LINE_END_YN='Y'
+			LEFT JOIN PMR300T C WITH (NOLOCK) ON A.COMP_CODE	= C.COMP_CODE 
+												 AND B.DIV_CODE		= C.DIV_CODE 
+												 AND A.SUB_CODE		= C.BAD_CODE
+												 AND C.WKORD_NUM	= #{WKORD_NUM}
+			LEFT JOIN PBS200T D WITH (NOLOCK) ON B.COMP_CODE		= D.COMP_CODE 
+												 AND B.DIV_CODE			= D.DIV_CODE 
+												 AND B.PROG_WORK_CODE	=	D.PROG_WORK_CODE 
+												 AND B.WORK_SHOP_CODE	=	D.WORK_SHOP_CODE
+<!-- 20200409 수정: 하드코딩 변수로 변경 -->
+	  WHERE A.COMP_CODE = #{S_COMP_CODE}
+	    AND A.MAIN_CODE = 'P003'
+	    AND A.SUB_CODE != '$'
+	    AND A.REF_CODE3 = #{PROG_WORK_CODE}
+	    --20200427 추가: 사용여부 'Y'인 데이터만 보이도록 수정
+	    AND A.USE_YN    = 'Y'
+	  ORDER BY A.SORT_SEQ, A.SUB_CODE 
+	</select>
+
+	<insert id="s_pmr101ukrv_inServiceImpl.insertDetail5" parameterType="Map">		/* 불량내역등록 추가 */
+	INSERT INTO PMR300T
+		 ( DIV_CODE    
+		 , WORK_SHOP_CODE
+		 , WKORD_NUM   
+		 , PROG_WORK_CODE
+		 , PRODT_DATE  
+		 , ITEM_CODE   
+		 , BAD_CODE    
+		 , BAD_Q       
+		 , REMARK      
+		 , UPDATE_DB_USER
+		 , UPDATE_DB_TIME
+		 , COMP_CODE )
+	VALUES
+	     ( #{DIV_CODE}    
+		 , #{WORK_SHOP_CODE}
+		 , #{WKORD_NUM}   
+		 , (SELECT TOP 1 REF_CODE1 FROM BSA100T WITH(NOLOCK) WHERE COMP_CODE=#{S_COMP_CODE} AND MAIN_CODE='Z004' AND SUB_CODE=#{PROG_WORK_CODE})  
+		 , #{PRODT_DATE}  
+		 , #{ITEM_CODE}   
+		 , #{BAD_CODE}    
+		 , #{BAD_Q}       
+		 , #{REMARK}      
+		 , #{S_USER_ID}
+		 , getDate()
+		 , #{S_COMP_CODE} )
+	</insert>
+
+	<update id="s_pmr101ukrv_inServiceImpl.updateDetail5" parameterType="Map">        /* 불량내역등록 수정 */
+		--s_pmr101ukrv_in.Cs_pmr101ukrv_in[fnPmr100Sav2] Query1
+		IF NOT EXISTS (
+						SELECT TOP 1 1
+						FROM PMR300T 
+						WHERE COMP_CODE=#{S_COMP_CODE}
+						AND DIV_CODE= #{DIV_CODE} 
+						AND WKORD_NUM      =  #{WKORD_NUM}   
+						AND PRODT_DATE     = #{PRODT_DATE} 
+						AND PROG_WORK_CODE = (SELECT TOP 1 REF_CODE1 FROM BSA100T WITH(NOLOCK) WHERE COMP_CODE=#{S_COMP_CODE}  AND MAIN_CODE='Z004' AND SUB_CODE=#{PROG_WORK_CODE})
+						AND BAD_CODE       = #{BAD_CODE}
+					  )
+		BEGIN
+		INSERT INTO PMR300T
+			 ( DIV_CODE    
+			 , WORK_SHOP_CODE
+			 , WKORD_NUM   
+			 , PROG_WORK_CODE
+			 , PRODT_DATE  
+			 , ITEM_CODE   
+			 , BAD_CODE    
+			 , BAD_Q       
+			 , REMARK      
+			 , UPDATE_DB_USER
+			 , UPDATE_DB_TIME
+			 , COMP_CODE )
+		VALUES
+			 ( #{DIV_CODE}    
+			 , #{WORK_SHOP_CODE}
+			 , #{WKORD_NUM}   
+			 , (SELECT TOP 1 REF_CODE1 FROM BSA100T WITH(NOLOCK) WHERE COMP_CODE=#{S_COMP_CODE} AND MAIN_CODE='Z004' AND SUB_CODE=#{PROG_WORK_CODE})  
+			 , #{PRODT_DATE}  
+			 , #{ITEM_CODE}   
+			 , #{BAD_CODE}    
+			 , #{BAD_Q}       
+			 , #{REMARK}      
+			 , #{S_USER_ID}
+			 , getDate()
+			 , #{S_COMP_CODE} )
+		END
+		ELSE
+		BEGIN 
+			 UPDATE PMR300T
+				SET BAD_Q          = #{BAD_Q}
+				  , REMARK         = #{REMARK}
+				  , UPDATE_DB_USER = #{S_USER_ID}
+				  , UPDATE_DB_TIME = GETDATE()
+			  WHERE DIV_CODE       = #{DIV_CODE}
+				AND WKORD_NUM      = #{WKORD_NUM}
+				AND PRODT_DATE     = #{PRODT_DATE}
+				AND BAD_CODE       = #{BAD_CODE}
+				AND COMP_CODE      = #{S_COMP_CODE}
+		END
+	</update>
+
+	<delete id="s_pmr101ukrv_inServiceImpl.deleteDetail5" parameterType="Map">        /* 불량내역등록 삭제 */
+        --s_pmr101ukrv_in.Cs_pmr101ukrv_in[fnPmr100Sav2] Query1
+        DELETE FROM PMR300T 
+         WHERE DIV_CODE       = #{DIV_CODE}
+           AND WKORD_NUM      = #{WKORD_NUM}
+           AND PROG_WORK_CODE = #{PROG_WORK_CODE}
+           AND PRODT_DATE     = #{PRODT_DATE}
+           AND BAD_CODE       = #{BAD_CODE}
+           AND COMP_CODE      = #{S_COMP_CODE}
+	</delete>
+
+	<select id="s_pmr101ukrv_inServiceImpl.fnRecordCombo" parameterType="Map" resultType="rMap">		<!-- 작업실적등록 조회 -->
+	--s_pmr101ukrv_in.Cs_pmr101ukrv_in[fnRecordCombo] Query01
+	 BEGIN
+		SELECT SUB_CODE    AS 'value'
+			 , CODE_NAME   AS 'text'
+		  FROM BSA100T WITH(NOLOCK)
+		 WHERE COMP_CODE = 'MASTER'
+		   AND MAIN_CODE ='Z004'
+		   AND SUB_CODE != '$'
+		   AND USE_YN    = 'Y'
+		 ORDER BY SORT_SEQ
+	 END
+	</select>
+
+
+
+
+<!-- 20200406 추가: 생산라인 사용 중 확인로직 -->
+	<select id="s_pmr101ukrv_inServiceImpl.fnCheckProgressCode" parameterType="Map" resultType="string">
+		/* s_pmr101ukrv_inServiceImpl.fnCheckProgressCode */
+		SELECT CASE WHEN COUNT(COMP_CODE) = 0 THEN 'N'
+		            ELSE 'Y'
+		       END                                       AS PROGRESS_CHECK
+		  FROM PMP100T WITH(NOLOCK)
+		 WHERE COMP_CODE      = #{S_COMP_CODE}
+		   AND DIV_CODE       = #{DIV_CODE}
+		   AND Pbl_Line_No    = #{PRODT_LINE}
+		   AND WKORD_NUM     != #{WKORD_NUM}
+--		   AND PROG_WORK_CODE = {PROG_WORK_CODE}
+		   AND ISNULL(Progrs_Kind_Cd, '00') IN ('01', '02')
+	</select>
+
+<!-- 20200407 추가: MES SP실행 로직 -->
+	<update id="s_pmr101ukrv_inServiceImpl.fnRunProdtLine" parameterType="Map">
+		/* s_pmr101ukrv_inServiceImpl.fnRunProdtLine */
+		DECLARE @P_COMPANY_NO         INT                   --법인코드
+		      , @P_PRDCTN_DT          NVARCHAR(08)          --생산일자
+		      , @P_PRDCTN_PRODUCT_NO  NVARCHAR(20)          --생산계획번호 Or 작업지시번호
+		      , @P_PRDCTN_PRODUCT_CD  NVARCHAR(20)          --제품코드
+		      , @P_PRDCTN_PRODUCT_NM  NVARCHAR(100)         --제품명
+		      , @P_PLAN_OUTTRN        NUMERIC(10, 2)        --계획수량 Or 작업지시수량
+		      , @P_ACMSLT_OUTTRN      NUMERIC(10, 2)        --실적수량 Or 생산실적수량
+		      , @P_PBL_LINE_NO        NUMERIC(2)            --공정라인
+		      , @P_UNIT_CD            NVARCHAR(10)          --생산단위
+		      , @P_PROGRS_KIND_CD     NVARCHAR(02)          --진행구분코드
+		      --20200424 추가
+		      , @P_ERP_LOT_NO         NVARCHAR(20)          --LOT_NO
+		      , @SQLStmt              NVARCHAR(4000)
+		      , @KEY_VALUE            NVARCHAR(20)          --20200416 추가: 오류발생 시, 오류메세지 호출할 KEY값 추가
+		      --20200513 추가
+		      , @PACK_QTY             NUMERIC(30, 6)
+
+		    SET @P_COMPANY_NO        = 1
+		    SET @P_PRDCTN_DT         = #{PRODT_DATE}
+		    SET @P_PRDCTN_PRODUCT_NO = #{WKORD_NUM}
+		    SET @P_PRDCTN_PRODUCT_CD = #{ITEM_CODE}
+		    SET @P_PRDCTN_PRODUCT_NM = #{ITEM_NAME}
+		    SET @P_PLAN_OUTTRN       = ${WKORD_Q}
+		    SET @P_ACMSLT_OUTTRN     = 0
+		    SET @P_PBL_LINE_NO       = ${PRODT_LINE}
+		    SET @P_UNIT_CD           = #{PROG_UNIT}
+		    SET @P_PROGRS_KIND_CD    = #{Progrs_Kind_Cd}
+		    --20200424 추가
+		    SET @P_ERP_LOT_NO        = #{LOT_NO}
+		    SET @KEY_VALUE           = #{KEY_VALUE}         --20200416 추가: 오류발생 시, 오류메세지 호출할 KEY값 추가
+		    --20200514 추가
+		    SET @PACK_QTY            = #{PACK_QTY}
+		    SET @PACK_QTY            = ISNULL(@PACK_QTY, 1) --노파심
+
+		    --20200416 추가: 오류발생 시, 오류메세지 호출할 KEY값 추가 (MES쪽에서 개발 완료되면 주석 해제) - 20200417 주석 해제(MES에서 개발 완료) - 20200424 수정: LOT_NO 추가
+		    SET @SQLStmt             = 'EXEC (' + '''CALL IF_M_PRDCTN_PRODUCT_PLAN(' + '''''' + @KEY_VALUE + ''''', ' + CONVERT(NVARCHAR, @P_COMPANY_NO) + ', ''''' + @P_PRDCTN_DT + ''''', ''''' + @P_PRDCTN_PRODUCT_NO + ''''', ''''' + @P_PRDCTN_PRODUCT_CD + ''''', ''''' + @P_PRDCTN_PRODUCT_NM + ''''', ' + CONVERT(NVARCHAR, @P_PLAN_OUTTRN) + ', ' +  CONVERT(NVARCHAR, @P_ACMSLT_OUTTRN) + ', ' + CONVERT(NVARCHAR, @P_PBL_LINE_NO) + ', ''''' + @P_UNIT_CD + ''''', ''''' + @P_PROGRS_KIND_CD + ''''', ''''' + @P_ERP_LOT_NO + ''''', ' + CONVERT(NVARCHAR, @PACK_QTY) + ', 1)''' + ') at INNOMES'
+
+		EXEC (@SQLStmt)
+	</update>
+
+<!-- 20200416 추가: 오류발생 시, 메세지 가져오는 로직 추가 -->
+	<select id="s_pmr101ukrv_inServiceImpl.fnGetErrDesc" parameterType="Map" resultType="string">
+		/* s_pmr101ukrv_inServiceImpl.fnGetErrDesc */
+		DECLARE @KEY_VALUE NVARCHAR(20)
+		      , @SQLStmt   NVARCHAR(4000)
+		SET     @KEY_VALUE = #{KEY_VALUE}    --'IF_PRD20200407100040'
+		SET     @SQLStmt   = 'SELECT ERROR_STR FROM OpenQuery(INNOMES, ''SELECT * FROM SYNERGY_CLOUD.m_prdctn_product_plan_if_err_log WHERE IF_SEQ = ' + '''''' + @KEY_VALUE + ''''''')'
+
+		EXEC SP_EXECUTESQL @SQLStmt
+	</select>
+
+<!-- 20200407 추가: 생산라인 변경 시, 진행상태를 대기로 변경하기 위한 로직 -->
+	<update id="s_pmr101ukrv_inServiceImpl.fnUpdateProgress" parameterType="Map">
+		/* s_pmr101ukrv_inServiceImpl.fnUpdateProgress */
+		UPDATE PMP100T
+		   SET Progrs_Kind_Cd = #{Progrs_Kind_Cd}    --진행상태코드
+		     , Pbl_Line_No    = #{PRODT_LINE}        --생산라인
+		     --20200514 추가
+		     , UPDATE_DB_USER = #{S_USER_ID}
+		     , UPDATE_DB_TIME = GETDATE()
+		 WHERE COMP_CODE      = #{S_COMP_CODE}
+		   AND DIV_CODE       = #{DIV_CODE}
+		   AND WKORD_NUM      = #{WKORD_NUM}
+<!-- 20200414 주석:  각 작업 진행 후, update 시 공정 조건 제외 -->
+--		   AND PROG_WORK_CODE = {PROG_WORK_CODE}
+	</update>
+</mapper>

@@ -1,0 +1,670 @@
+//@charset UTF-8
+// http://pastebin.com/aReGA9Vi
+// JavaScript keycode : http://unixpapa.com/js/key.html 
+// http://www.cambiaresearch.com/articles/15/javascript-char-codes-key-codes
+
+var UNI_GRID_NEW_VAL="";
+
+/*****************************************
+ *  Ext.Editor Overide
+ *  키입력으로 Editor 모드 들어 가게
+ *  Deprecated - 2014.09.16 field.selectText() 에 오류가 있어 override 취소. 현재 UniBaseFields 에서 selectOnFocus: true 사용하고 있음.
+ */
+/*
+Ext.override(Ext.Editor, {
+     startEdit : function(el, value) {
+        var me = this,
+            field = me.field;
+
+        me.completeEdit();
+        me.boundEl = Ext.get(el);
+        value = Ext.isDefined(value) ? value : Ext.String.trim(me.boundEl.dom.innerText || me.boundEl.dom.innerHTML);
+
+        if (!me.rendered) {
+            // Render to the ownerCt's element
+            // Being floating, we do not need to use the actual layout's target.
+            // Indeed, it's better if we do not so that we do not interfere with layout's child management,
+            // especially with CellEditors in the element of a TablePanel.
+            if (me.ownerCt) {
+                me.parentEl = me.ownerCt.el;
+                me.parentEl.position();
+            }
+            me.render(me.parentEl || document.body);
+        }
+
+        if (me.fireEvent('beforestartedit', me, me.boundEl, value) !== false) {
+            me.startValue = value;
+            me.show();
+            // temporarily suspend events on field to prevent the "change" event from firing when reset() and setValue() are called
+            field.suspendEvents();
+            field.reset();
+            field.setValue(value);
+            //field.setValue((UNI_GRID_NEW_VAL != '' ? UNI_GRID_NEW_VAL : value));
+            field.resumeEvents();
+            me.realign(true);
+            
+            if(field.getRawValue().length > 0)
+            	//field.selectText();	//2014.09.16 셀 클릭시 텍스트가 있는 경우에 에디터 박스가 안나타나는 현상 발생. field.focus() 로 변경
+            	field.focus([field.getRawValue().length]);
+            else
+            	field.focus([field.getRawValue().length]);
+            
+            if (field.autoSize) {
+                field.autoSize();
+            }
+            me.editing = true;
+        }
+    }
+
+});
+*/
+/****************************
+ * Ext.grid.plugin.CellEditing
+ * 아무키나 가지고 Edit 모드 들어 가게
+ * 
+ */
+Ext.define('Ext.overide.grid.plugin.CellEditing', {
+    override: 'Ext.grid.plugin.CellEditing',	
+    onSpecialKey: function(ed, field, e) {
+        var sm;
+ 		// Enter키를 Tab과 같이 사용
+        if (e.getKey() === e.TAB || e.getKey() === e.ENTER) {
+            e.stopEvent();
+
+            if (ed) {
+                // Allow the field to act on tabs before onEditorTab, which ends
+                // up calling completeEdit. This is useful for picker type fields.
+                ed.onEditorTab(e);
+            }
+
+            sm = ed.up('tablepanel').getSelectionModel();
+            if (sm.onEditorTab) {
+                return sm.onEditorTab(ed.editingPlugin, e);
+            }
+        }
+    }
+});
+
+
+/****************************
+ * Ext.grid.plugin.CellEditing
+ * 아무키나 가지고 Edit 모드 들어 가게
+ * - click으로 edit 모드 들어갈때 현제 선택 되었을때만 가능 하게
+ * 
+ */
+Ext.define('Ext.overide.grid.plugin.Editing', {
+    override: 'Ext.grid.plugin.Editing',
+    // @private
+//    initEditTriggers: function() {
+//        var me = this,
+//            view = me.view;
+//
+//        // Listen for the edit trigger event.
+//        if (me.triggerEvent == 'cellfocus') {
+//            me.mon(view, 'cellfocus', me.onCellFocus, me);
+//        } else if (me.triggerEvent == 'rowfocus') {
+//            me.mon(view, 'rowfocus', me.onRowFocus, me);
+//        } else {
+//
+//            // Prevent the View from processing when the SelectionModel focuses.
+//            // This is because the SelectionModel processes the mousedown event, and
+//            // focusing causes a scroll which means that the subsequent mouseup might
+//            // take place at a different document XY position, and will therefore
+//            // not trigger a click.
+//            // This Editor must call the View's focusCell method directly when we recieve a request to edit
+//            if (view.getSelectionModel().isCellModel) {
+//                view.onCellFocus = Ext.Function.bind(me.beforeViewCellFocus, me);
+//            }
+//
+//            // Listen for whichever click event we are configured to use
+//            me.mon(view, me.triggerEvent || ('cell' + (me.clicksToEdit === 1 ? 'click' : 'dblclick')), me.onCellClick, me);
+//        }
+//
+//        // add/remove header event listeners need to be added immediately because
+//        // columns can be added/removed before render
+//        me.initAddRemoveHeaderEvents();
+//        // wait until render to initialize keynav events since they are attached to an element
+//        view.on('render', me.initKeyNavHeaderEvents, me, {single: true});
+//    },
+    
+    /**
+     * 선택되었을때만 Edit 모드 들어 가게 수정 
+     * @param {} view
+     * @param {} cell
+     * @param {} colIdx
+     * @param {} record
+     * @param {} row
+     * @param {} rowIdx
+     * @param {} e
+     */
+//    onCellClick: function(view, cell, colIdx, record, row, rowIdx, e) {
+//        // Make sure that the column has an editor.  In the case of CheckboxModel,
+//        // calling startEdit doesn't make sense when the checkbox is clicked.
+//        // Also, cancel editing if the element that was clicked was a tree expander.
+//        var expanderSelector = view.expanderSelector,
+//            // Use getColumnManager() in this context because colIdx includes hidden columns.
+//            columnHeader = view.ownerCt.getColumnManager().getHeaderAtIndex(colIdx),
+//            editor = columnHeader.getEditor(record);
+//		//console.log('cellClick');
+//		var editable = true;
+//		if (view.getSelectionModel().isCellModel) {
+//			var selModel = view.selModel;
+//			var selection = selModel.selection;
+//			if( selection &&  selection.column == colIdx &&  selection.row == rowIdx) {
+//				editable = true;
+//			} else {
+//				editable = false;
+//			}
+//		}
+//		//console.log('editable : ' , editable);
+//        if (editor && editable && !expanderSelector || !e.getTarget(expanderSelector)) {
+//           this.startEdit(record, columnHeader);
+//        }
+//    },
+    
+    initKeyNavHeaderEvents: function() {
+        var me = this;
+	/*
+        me.keyNav = Ext.create('Ext.util.KeyNav', me.view.el, {
+            enter: me.onEnterKey,
+            esc: me.onEscKey,
+            scope: me
+        });
+        */
+        me.keyNav = new Ext.util.KeyMap({
+        	target: me.view.el, 
+        	processEvent:function(event, el) {
+        		if(event.getKey ) {
+        			// 입력 가능한 값이면 
+        			if( me.isValuableEvenv( event) ) {
+        				me.onValueKey(event);
+        				event = {};
+        			} else {
+        				UNI_GRID_NEW_VAL = "";
+        			}
+        			
+        		}
+        		return event;
+        	},
+        	binding: [
+	        	{	
+	        		//key: [Ext.EventObject.ENTER, Ext.EventObject.SPACE, Ext.EventObject.F2],
+	        		key: Ext.EventObject.ENTER,
+	        		fn: me.onEnterKey,	//startEdit
+	        		scope: me
+	        	}, {
+	        		key: Ext.EventObject.ESC, 
+	        		fn: me.onEscKey,	//cancelEdit
+	        		scope: me
+	        	}/*, {
+	                key: [48, 49, 50, 51, 52, 53, 54, 55, 56, 57],  // 0123456789
+	                fn: me.onValueKey,
+	                scope: me
+	            }*/
+	        ]
+        });
+    },
+    isValuableEvenv: function(event) {
+    	var chk = false;
+		var key = event.getKey();
+		if( key >= 48 && key < 93) {	// number, alphabet
+			chk = true;
+		} else if ( key >=96 && key <= 111) {	// numpad 
+			chk = true;
+		} else if ( key >=186 && key <= 192 || key >=219 && key <=222) {	// numpad 
+			chk = true;
+		}
+		//console.log("Key : " + key +" : charCode = " + event.getCharCode() + "   is " + chk);
+    	return chk
+    },
+ 	onValueKey: function(e) {
+            var me = this,
+                grid = me.grid,
+                selModel = grid.getSelectionModel(),
+                record,
+                columnHeader = grid.headerCt.getHeaderAtIndex(0);
+ 
+            // Calculate editing start position from SelectionModel
+            // CellSelectionModel
+            if (selModel.isCellModel) {
+                pos = selModel.getCurrentPosition();
+                if(grid.store.getAt) {
+                	record = grid.store.getAt(pos.row);
+                }else{
+                	record = selModel.getLastSelected();
+                }
+                columnHeader = grid.headerCt.getHeaderAtIndex(pos.column);
+            }
+            // RowSelectionModel
+            else {
+                record = selModel.getLastSelected();
+            }
+ 
+            ed = me.getEditor(record, columnHeader);
+            if (ed) {
+               UNI_GRID_NEW_VAL = String.fromCharCode(e);
+            }
+ 
+            // start cell edit mode
+            //me.startEdit(record, columnHeader, null, true);
+            me.startEdit(record, columnHeader);
+        }
+});
+
+
+/*******************************************
+ * UniAbstractGridPanel 
+ */
+Ext.define('Unilite.com.grid.UniAbstractGridPanel', {
+	getEditor: function(me) {
+		var editiong = Ext.create('Ext.grid.plugin.CellEditing', {
+						//clicksToMoveEditor: 1,
+						clicksToEdit: 2, // 1 or 2 , 수정 모드로 들어가기 위한 Click 횟수 
+						autoCancel : false,
+						listeners: {
+							beforeedit: function(editor, e, eOpts) {	
+								me.uniOpt.currentRecord = e.record;
+								if( (e.column.uniOPT && e.column.uniOPT.isPk ) || (e.column.isLink) ) {
+									if( e.record.phantom) {
+										return true;
+									} else {
+										//UniApp.updateStatus( '추가건만 수정이 가능합니다.');
+										return false;
+									}
+								}
+								
+							}
+						}
+			});
+		return editiong;
+	}, // getEditor
+	// private
+	setColumnInfo: function( me, col, fields) {
+		if(! Ext.isDefined(col)) {
+			console.error( "column is undefined !!! - ",col);
+			return false;
+		}
+
+		// 기본 속성 등록
+		Ext.applyIf(col, me.columnDefaults);
+		
+		if( col.isLink == true ) {
+			Ext.applyIf(col, {'tdCls': 'GRID_COL_HREF'});
+		}
+		// 모델을 참조
+		if(col.dataIndex) {
+			var field = this._getField(fields, col.dataIndex);
+			if (Ext.isDefined(field)) {
+				var isFieldEditable = Unilite.nvl(field['editable'], true);
+				//var colEditable  = Unilite.nvl(col,editable, true);
+				var columnEditable = false;
+				var lAllowBlank = Unilite.nvl(field['allowBlank'],true);
+				//console.log(field['text'], editable, lAllowBlank);
+				// 1.헤더명칭 등록(Model참조)
+				var text = field['text'];
+				if (!text) {
+					text = col.dataIndex;
+				}
+				if( field.isPk) {
+					Ext.applyIf(col, {uniOPT:{} });
+					Ext.applyIf(col.uniOPT, {	'isPk' : field.isPk	});
+				}
+				//Ext.applyIf(col, {	'text' : text	});
+				// mouse cursor 설정 
+				var storeEditable = this._getStoreEditable(me);
+				if(storeEditable && isFieldEditable && Unilite.nvl(col.editable, true)) {
+//	노란색 제거 2014.4.8 
+//					if(lAllowBlank == false) {
+//						Ext.applyIf(col, {'tdCls': 'GRID_COL_EDITABLE GRID_COL_MANDATORY'});
+//					} else {
+//						Ext.applyIf(col, {'tdCls': 'GRID_COL_EDITABLE'});
+//					}
+					//if(lAllowBlank == false) {
+					//	Ext.applyIf(col, {'style': {'background':  '#FCFCB6'}  });
+					//}
+					if(lAllowBlank == false) {
+						text = "<span style='color:#f00 !important;font-weight:bold'>*</span>" + text;
+					}
+					columnEditable = true;
+					Ext.applyIf(col, {'tdCls': 'GRID_COL_EDITABLE'});
+				}
+				Ext.applyIf(col, {	'text' : text	});
+				if(  Ext.isDefined(col.editor)) {
+					columnEditable = false;
+				}
+				// 타입 설정
+				var fieldType = field['type'];
+				var fieldFormat = field['format'];
+				
+				if(fieldType ) {
+					var t = fieldType.type;
+					var editListeners = {};
+					var editorConfing = {
+						'allowBlank' : lAllowBlank
+					};
+					if(field.minLength) {
+						Ext.applyIf(editorConfing, {'minLength': field.minLength });
+					}
+					if(field.maxLength) {
+						Ext.applyIf(editorConfing, {'maxLength': field.maxLength });
+					}
+					if(field.minValue) {
+						Ext.applyIf(editorConfing, {'minValue': field.minValue });
+					}
+					if(field.maxValue) {
+						Ext.applyIf(editorConfing, {'maxValue': field.maxValue });
+					}
+					
+					
+					//minLength / MaxLength
+					//console.log(col.dataIndex, "TYPE", t, "-",fieldType, fieldFormat, lAllowBlank)
+					if( t ==  'string') {
+						Ext.applyIf(col, {align: 'left' });
+						Ext.applyIf(editorConfing, {xtype : 'textfield' });
+					} else if( t ==  'number') {
+						Ext.applyIf(col, {align: 'right' , xtype:'numbercolumn' });
+						Ext.applyIf(editorConfing, {xtype : 'uniNumberfield' });
+					} else  if( t ==  'int' || t ==  'integer') {
+						Ext.applyIf(col, {align: 'right', xtype:'numbercolumn' , format:'0,000'});
+						Ext.applyIf(editorConfing, {xtype : 'uniNumberfield' });
+					} else if( t ==  'float') {
+						Ext.applyIf(col, {align: 'right', xtype:'numbercolumn'  });
+						Ext.applyIf(editorConfing, {xtype : 'uniNumberfield' });						
+					} else if( t ==  'bool' || t == 'boolean') {
+						Ext.applyIf(col, {
+									xtype: 'booleancolumn',
+									trueText: 'Yes',
+    								falseText: 'No'});
+						Ext.applyIf(col, {align: 'center' });
+						Ext.applyIf(editorConfing, {xtype : 'checkboxfield' });
+						
+					} else if( t ==  'date' || t ==  'uniDate') {
+						Ext.applyIf(col, {align: 'center', xtype: 'uniDateColumn' });
+						//Ext.applyIf(col, {format: Unilite.dateFormat });
+						
+						// 날자 Editor 설정 
+						Ext.applyIf(editorConfing, {
+							xtype : 'uniDatefield',
+						    format: Unilite.dateFormat 
+						 });
+					} else if( t ==  'uniMonth') {
+						Ext.applyIf(col, {align: 'center', xtype: 'uniMonthColumn' });
+						//Ext.applyIf(col, {format: Unilite.monthFormat });
+						
+						// 날자 Editor 설정 
+						Ext.applyIf(editorConfing, {
+							xtype : 'uniMonthfield',
+							format: Unilite.monthFormat
+						 });
+					} else if(t ==  'uniQty') {
+						Ext.applyIf(col, {align: 'right' , xtype:'uniNnumberColumn', format: UniFormat.Qty });
+						Ext.applyIf(editorConfing, {xtype : 'uniNumberfield' });						
+					} else if(t ==  'uniPrice') {
+						Ext.applyIf(col, {align: 'right' , xtype:'uniNnumberColumn', format: UniFormat.Price });
+						Ext.applyIf(editorConfing, {xtype : 'uniNumberfield' });						
+					} else if(t ==  'uniUnitPrice') {
+						Ext.applyIf(col, {align: 'right' , xtype:'uniNnumberColumn', format: UniFormat.UnitPrice });
+						Ext.applyIf(editorConfing, {xtype : 'uniNumberfield' });
+					} else if(t ==  'uniPercent') {
+						Ext.applyIf(col, {align: 'right' , xtype:'uniNnumberColumn', format: UniFormat.Percent });
+						Ext.applyIf(editorConfing, {xtype : 'uniNumberfield' });
+					} else if(t ==  'uniFC') {
+						Ext.applyIf(col, {align: 'right' , xtype:'uniNnumberColumn', format: UniFormat.FC });
+						Ext.applyIf(editorConfing, {xtype : 'uniNumberfield' });
+					} else if(t ==  'uniER') {
+						Ext.applyIf(col, {align: 'right' , xtype:'uniNnumberColumn', format: UniFormat.ER });
+						Ext.applyIf(editorConfing, {xtype : 'uniNumberfield' });
+					} else if(t ==  'uniTime') {
+						if(field.format) {
+							if(field.format == 'His') {
+								Ext.applyIf(col, {align: 'center' , 
+									xtype:'uniTimeColumn', 
+									format:'H:i:s' });
+								Ext.applyIf(editorConfing, {
+									xtype : 'uniTimefield',
+									hideTrigger: true,
+									autoSelect: false,
+									increment: 1,
+									format : "H:i:s",
+									altFormats :'H|H:i|Hi|H:i:s|His',	
+	    							submitFormat:'His'
+	    							
+								});
+							}
+						} else {
+							Ext.applyIf(col, {align: 'center' , xtype:'uniTimeColumn' });
+							Ext.applyIf(editorConfing, {xtype : 'uniTimefield'});
+						}
+					} else if(t ==  'uniYear') {
+						Ext.applyIf(col, {align: 'right' , xtype:'string' });
+						Ext.applyIf(editorConfing, {xtype : 'textfield' });
+					} else if(t ==  'uniPassword') {
+						Ext.applyIf(col, {'renderer' : function(val) { 
+							if(Ext.isEmpty(val)) {
+								return '';
+							}else{
+								return '********';
+							}
+						}});
+						Ext.applyIf(editorConfing, {inputType :'password' });
+					}
+					if(columnEditable){
+						Ext.applyIf(col, {'editor' : editorConfing});
+					}
+				} // type && editor(AUTO)
+				
+				/*
+				if(fieldFormat )  {
+					if(fieldFormat == 'price') {
+						Ext.apply(col, {align: 'right' , xtype:'uniPriceColumn' });
+					}
+				}
+				*/
+				// 콤보 설정(code) comboType:'AU', comboCode:'CB23' 
+				var isCombo = false;
+				if(field.comboType) {	
+					var combo = Unilite.form.createCombobox(field); // Unilite.js
+					Ext.apply(col, {renderer:  Unilite.grid.comboRenderer(combo) });
+					if(columnEditable) {
+						Ext.apply(col, {editor:  combo });
+					}
+					isCombo = true;
+				} else if(field.store) {
+					var combo = Unilite.form.createCombobox(field);
+					Ext.apply(col, {renderer:  Unilite.grid.comboRenderer(combo) });
+					if(columnEditable) {
+						Ext.apply(col, {editor:  combo });
+					}
+					isCombo = true;
+				}
+				
+				if(isCombo) {
+					Ext.apply(col, {doSort:  function(state) {
+							console.log("do custom Sort for combobox");
+							var ds = this.up('grid').getStore();
+			                var field = this.getSortParam();
+			                var colx = col; //col.renderer;
+			                ds.sort({
+			                    property: field,
+			                    direction: state,
+			                    transform: function(val) {
+			                    	var t = colx.renderer(val);
+			                    	if (t == undefined ) {
+			                    		t = "";
+			                    	}
+			                    	//console.log( "transfer : " + val + " => " + t);
+			                    	return t
+			                    }
+
+			                });
+						}						
+					}); //Ext.apply					
+				} // if
+			}
+		} // col.dateindex
+		
+		
+		if(col.tooltip) {
+			Ext.applyIf(col, {renderer :function(value, metadata,record) { metadata.tdAttr = 'data-qtip="' + value + '"'; return value; } });
+		}
+		// column merge 처리용
+		if(Ext.isArray(col.columns)) {
+			//console.log(col.columns);
+			for (var i = 0, len = col.columns.length; i < len; i++) {
+				this.setColumnInfo(me, col.columns[i], fields );
+			}
+		}
+		
+	},
+	    // grid의 store가 수정 가능한지 확인 
+	_getStoreEditable : function(grid) {
+		var storeEditable = false;
+		if(grid.store.uniOpt) {
+			if( grid.store.uniOpt.editable ) {
+				storeEditable = true;
+			}
+		}
+		return storeEditable;
+	},
+		// private
+	_getField : function(fields, id) {
+		var srchField;
+		if (fields) {
+
+			for (var i = 0, len = fields.length; i < len; i++) {
+				var field = fields[i];
+				if (field['name'] == id) {
+					srchField = field;
+					break;
+				}
+			}
+		}
+		return srchField;
+	},
+	/**
+	 * 새로운 행을 추가 하고 편집을 시작 한다.
+	 * @param {} record
+	 * @param {} startEditColumnName
+	 * @param {} rowIndex
+	 * @return {}
+	 */
+	createRow:function(grid, values, startEditColumnName, rowIndex, newRecord) {
+
+		//현재행 다음줄 부터
+		if(!rowIndex)  {
+			rowIndex = grid.getSelectedRowIndex();
+		}else if(rowIndex >= grid.getStore().getCount())  {
+			rowIndex = grid.getSelectedRowIndex();
+		}		
+		rowIndex = (rowIndex < 0)? 0 : rowIndex +1;
+		console.log("rowIndex = " ,rowIndex );
+		
+		if(!newRecord) {
+			newRecord =  Ext.create (grid.store.model, values);
+		}
+		console.log("newRowIndex 1= " ,rowIndex );
+		//newRecord = grid.store.insert(rowIndex, newRecord);
+		grid.store.insert(rowIndex, newRecord);
+		//console.log("newRowIndex 2= " ,rowIndex );
+		if(grid.getSelectionModel().isCellModel) {
+		}else{
+			grid.getSelectionModel().select(rowIndex);
+		}
+		//grid.startEdit(startEditColumnName);
+		//console.log("newRowIndex 3= " ,rowIndex );
+		return newRecord;
+	},
+	/*
+	onCellKeyDownFun : function (grid, viewTable, td, cellIndex, record, tr, rowIndex, e, eOpts) {
+		switch( e.getKey() ) {
+			//case Ext.EventObject.ENTER:  // 기본으로 처리
+			case Ext.EventObject.SPACE:
+  			case Ext.EventObject.F2:
+  			 	//console.log('start edit');
+  			 	this.startEdit(grid, cellIndex);
+    			break;
+    		default:
+    			var key = e.getKey();
+    			console.log("Kye:", key);
+    		
+	    } // switch
+	    
+	},
+	*/
+
+	/**
+	 * 현재 선택된 행에서 수정모드로 진입.
+	 * @param {} columnName
+	 */
+	startEdit: function(grid, columnName, val) {
+		var me = grid, column = 0, edit;
+		if( typeof columnName == "String") {
+			column = me.getColumn(columnName);
+		} else if ( typeof columnName == "number") {
+			column = columnName;
+		}
+		if(this._getStoreEditable(me)) {
+			var edit = this.getEditing(grid);
+			var vrow = this.getSelectedRecord(grid);
+			edit.startEditByPosition({
+	            row: vrow,
+	            column: column
+	        });
+		}
+		
+	},
+	/**
+	 * 
+	 * @return {}
+	 */
+	getEditing:function(grid) {
+		return grid.editing;
+	},
+	
+	getSelectedRecords: function(grid) {
+		return grid.getSelectionModel().getSelection();
+	},
+	getSelectedRecord:function(grid) {
+		var selectedRecords = this.getSelectedRecords(grid);
+		if(selectedRecords && selectedRecords.length > 0 ) {
+			return selectedRecords[0];
+		}		
+	},
+	getColumnFilterType: function(t) {
+		var filterType = '';
+		if( t ==  'string') {
+			filterType = 'string';
+		} else if( t ==  'number') {
+			filterType = 'numeric';
+		} else  if( t ==  'int' || t ==  'integer') {
+			filterType = 'numeric';
+		} else if( t ==  'float') {
+			filterType = 'numeric';	
+		} else if( t ==  'bool' || t == 'boolean') {
+			filterType = 'uniList';
+			
+		} else if( t ==  'date' || t ==  'uniDate' || t ==  'uniMonth') {
+			filterType = 'date';
+		} else if(t ==  'uniQty') {
+			filterType = 'numeric';					
+		} else if(t ==  'uniPrice') {
+			filterType = 'numeric';					
+		} else if(t ==  'uniUnitPrice') {
+			filterType = 'numeric';
+		} else if(t ==  'uniPercent') {
+			filterType = 'numeric';
+		} else if(t ==  'uniFC') {
+			filterType = 'numeric';
+		} else if(t ==  'uniER') {
+			filterType = 'numeric';
+		} else if(t ==  'uniTime') {
+			filterType = 'string';
+		} else if(t ==  'uniYear') {
+			filterType = 'string';
+		} else {
+			filterType = 'string';
+		}
+		
+		return filterType;
+	}
+});  // UniAbstractGridPanel

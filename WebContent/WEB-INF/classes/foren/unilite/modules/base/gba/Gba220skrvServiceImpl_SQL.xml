@@ -1,0 +1,233 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="gba220skrvServiceImpl">
+	<select id="gba220skrvServiceImpl.selectDetailList" parameterType="Map" resultType="rMap">
+	SELECT *,CASE WHEN BUDGET_O=0 THEN '' ELSE convert(varchar(20),convert(decimal(18,2),ORDER_O/BUDGET_O*100))+ '%'  END  NOW_FUT FROM(
+SELECT  GUBUN1, MAX(ORDER_DATE) ORDER_DATE, MAX(DVRY_DATE) DVRY_DATE,
+         ITEM_CODE, MAX(ITEM_NAME) ITEM_NAME,    MAX(SPEC) SPEC, SUM(ORDER_UNIT_Q) ORDER_UNIT_Q, SUM(ORDER_P) ORDER_P, SUM(ORDER_O) ORDER_O,
+         MAX(BUDGET_UNIT_O) BUDGET_UNIT_O, SUM(BUDGET_O) BUDGET_O,  SUM(EX_O) EX_O, SUM(CSTOCK) CSTOCK,  SUM(SALE_Q) SALE_Q, SUM(SALE_O) SALE_O,
+         MAX(T_ORDER_O) T_ORDER_O, MAX(T_COLLECT_O) T_COLLECT_O, MAX(T_BUDGET_O) T_BUDGET_O,  MAX(T_AMT_I) T_AMT_I,  (MaX(T_BUDGET_O) + MAX(T_AMT_I)) T_EX_O
+ From
+ (
+     SELECT  PROJECT_NO, PROJECT_NAME, GUBUN1,
+             SUBSTRING(ORDER_DATE,1,4) + '.' + SUBSTRING(ORDER_DATE,5,2) + '.' + SUBSTRING(ORDER_DATE,7,2) ORDER_DATE,
+             SUBSTRING(DVRY_DATE,1,4) + '.' + SUBSTRING(DVRY_DATE,5,2) + '.' + SUBSTRING(DVRY_DATE,7,2) DVRY_DATE,
+             ITEM_CODE, ITEM_NAME,   SPEC, ORDER_UNIT_Q, ORDER_P, ORDER_O,
+             BUDGET_UNIT_O, BUDGET_O,  EX_O, CSTOCK, SALE_Q, SALE_O,
+             ISNULL((SELECT SUM(ORDER_O) + SUM(L_O)
+			            From
+			             (
+		                 SELECT  SUM(B.ORDER_O) ORDER_O,
+		                         ISNULL((SELECT  SUM(ORDER_O) FROM GBA100T WHERE PJT_CODE=A.PROJECT_NO  GROUP BY PJT_CODE),0) L_O
+				                FROM SOF100T A, SOF110T B
+				                 Where A.ORDER_NUM = B.ORDER_NUM 	AND A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE = B.DIV_CODE AND A.COMP_CODE=#{S_COMP_CODE}
+							<if test="@foren.Ognl@isNotEmpty(PJT_CODE)">
+						       AND A.PROJECT_NO LIKE #{PJT_CODE}+'%'
+						      </if>
+				                 GROUP BY A.PROJECT_NO
+				             )AA
+				             ),0) T_ORDER_O,
+             ISNULL((SELECT SUM(COLLECT_AMT) FROM SCO100T 
+			            WHERE 1=1 <if test="@foren.Ognl@isNotEmpty(PJT_CODE)">
+					       AND	PROJECT_NO LIKE #{PJT_CODE}+'%'
+					      </if>
+			             AND COLLECT_TYPE NOT IN ('83', '81')),0) T_COLLECT_O,
+             ISNULL((SELECT SUM(BUDGET_O)
+			             From
+			             (
+			                 SELECT  ORDER_NUM, ITEM_CODE, CASE WHEN (ITEM_ACCOUNT = '제품' OR ITEM_ACCOUNT = '반제품') THEN    ISNULL((SELECT (PL_COST+PL_AMOUNT)*ORDER_UNIT_Q FROM BPL100T WHERE PROD_ITEM_CODE=AA.ITEM_CODE AND COMP_CODE=#{S_COMP_CODE}),0)  Else ISNULL((SELECT PURCHASE_BASE_P*ORDER_UNIT_Q FROM BPR200T WHERE ITEM_CODE=AA.ITEM_CODE AND COMP_CODE=#{S_COMP_CODE}),0) END BUDGET_O
+			                 From
+			                 (
+			                     SELECT  A.ORDER_NUM,
+			                             (SELECT CODE_NAME FROM BSA100T WHERE MAIN_CODE='B020' AND SUB_CODE=(SELECT ITEM_ACCOUNT FROM BPR200T WHERE ITEM_CODE=B.ITEM_CODE AND COMP_CODE=#{S_COMP_CODE})) ITEM_ACCOUNT,
+			                            B.ITEM_CODE ITEM_CODE,
+			                             SUM(B.ORDER_Q) ORDER_UNIT_Q
+			                    FROM SOF100T A, SOF110T B
+			                     Where A.ORDER_NUM = B.ORDER_NUM  AND A.DIV_CODE=#{DIV_CODE} AND A.COMP_CODE=B.COMP_CODE AND A.COMP_CODE=#{S_COMP_CODE} 
+								
+								<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+									AND A.CUSTOM_CODE = #{CUSTOM_CODE} 
+								</if>
+								 
+			                     GROUP BY A.PROJECT_NO, A.ORDER_NUM, CUSTOM_CODE, B.ITEM_CODE, A.ORDER_DATE, ORDER_STATUS
+			                 )AA
+			            	 WHERE 1=1 <if test="@foren.Ognl@isNotEmpty(PJT_CODE)">
+							AND ORDER_NUM LIKE #{PJT_CODE}+'%'
+					      </if>
+			             )TT
+			             ),0) T_BUDGET_O,
+             ISNULL((SELECT  SUM(AMT_I)
+			             From
+			             (
+				                 SELECT  CASE WHEN (AC_DATA1 = '05-R20-01' OR AC_DATA1 = '06-R10-07' OR AC_DATA1 = '06-R20-05' OR AC_DATA1= '06-R20-06') THEN '05-112-1'
+				                         WHEN AC_DATA1 = '05-R60-01' THEN '06-010-1' ELSE AC_DATA1 END  PJT_CODE,
+				                         AMT_I
+				                   FROM  AGJ210T 
+				                  WHERE (ACCNT  LIKE '5%' OR ACCNT LIKE '1723%' OR ACCNT LIKE '4%') AND MOD_DIVI IS NULL AND ACCNT != '41200' AND COMP_CODE=#{S_COMP_CODE} AND ACCNT != '41500'
+				                    AND (AC_DATA1 != '00-000-0' AND AC_DATA1 != '00-000-1' AND AC_DATA1 IS NOT NULL AND AC_DATA1 != '')             
+			                        <if test="@foren.Ognl@isNotEmpty(PJT_CODE)">
+										AND AC_DATA1 LIKE #{PJT_CODE}+'%'
+								    </if>
+			                 Union All
+				                 SELECT PROJECT_NO, COLLECT_AMT 
+				                   FROM SCO100T  
+								  WHERE COMP_CODE=#{S_COMP_CODE} 
+								   AND  DIV_CODE=#{DIV_CODE}
+								   <if test="@foren.Ognl@isNotEmpty(PJT_CODE)">
+										AND PROJECT_NO LIKE #{PJT_CODE}+'%'
+								   </if> 
+								   AND COLLECT_TYPE IN('81', '83')
+			            )T
+			             WHERE 1=1 <if test="@foren.Ognl@isNotEmpty(PJT_CODE)">
+										AND PJT_CODE LIKE #{PJT_CODE}+'%'
+					     		 </if>
+			            ),0) T_AMT_I
+         From
+         (
+              SELECT  A.PROJECT_NO
+					, E.PJT_NAME		AS PROJECT_NAME
+				    , '수주' GUBUN1
+                    , A.ORDER_DATE
+					, MAX(B.DVRY_DATE)	AS DVRY_DATE
+                    , B.ITEM_CODE
+                    , MAX(C.ITEM_NAME)	AS ITEM_NAME
+					, MAX(C.SPEC)		AS SPEC 
+					, SUM(B.ORDER_Q)	AS ORDER_UNIT_Q
+					, CASE WHEN ISNULL(SUM(B.ORDER_Q),0) = 0 THEN 0 ELSE (SUM(B.ORDER_O)/SUM(B.ORDER_Q)) END	AS ORDER_P
+					, SUM(B.ORDER_O)	AS ORDER_O
+                    , CASE WHEN (F.CODE_NAME = '제품' OR F.CODE_NAME = '반제품') THEN   SUM(ISNULL(H.PL_COST,0)+ISNULL(H.PL_AMOUNT,0)) ELSE MAX(D.PURCHASE_BASE_P)  END BUDGET_UNIT_O
+                    , CASE WHEN (F.CODE_NAME = '제품' OR F.CODE_NAME = '반제품') THEN   SUM((ISNULL(H.PL_COST,0)+ISNULL(H.PL_AMOUNT,0))* B.ORDER_UNIT_Q) ELSE SUM(D.PURCHASE_BASE_P*B.ORDER_Q) END BUDGET_O
+                    , ISNULL((SELECT SUM(AMT_I) FROM AGJ210T 
+											   WHERE COMP_CODE= #{S_COMP_CODE}
+											     AND (ACCNT  LIKE '5%' OR ACCNT LIKE '1723%' OR ACCNT LIKE '4%') AND MOD_DIVI IS NULL
+												 AND ACCNT != '41200'  AND ACCNT != '41500'   AND (AC_DATA1 != '00-000-0' AND AC_DATA1 != '00-000-1' AND AC_DATA1 IS NOT NULL AND AC_DATA1 != '')
+												 AND AC_DATA1 LIKE  #{PJT_CODE}+'%'  AND AC_DATA3 = B.ITEM_CODE GROUP BY AC_DATA3),0)			AS EX_O
+                    , ISNULL((SELECT SUM(GOOD_STOCK_Q) FROM BIV100T WHERE COMP_CODE	= #{S_COMP_CODE} AND DIV_CODE	= #{DIV_CODE} AND ITEM_CODE = B.ITEM_CODE  GROUP BY ITEM_CODE) , 0)		AS CSTOCK
+					, SUM(B.OUTSTOCK_Q)					AS SALE_Q  
+					, SUM(B.ORDER_P*B.OUTSTOCK_Q)		AS SALE_O 
+                 FROM SOF100T A WITH(NOLOCK)
+						INNER JOIN SOF110T B WITH(NOLOCK) ON A.COMP_CODE	= B.COMP_CODE
+														 AND A.DIV_CODE		= B.DIV_CODE
+														 AND A.ORDER_NUM	= B.ORDER_NUM
+						INNER JOIN BPR100T C WITH(NOLOCK) ON A.COMP_CODE	= C.COMP_CODE
+														 AND B.ITEM_CODE	= C.ITEM_CODE
+						INNER JOIN BPR200T D WITH(NOLOCK) ON A.COMP_CODE	= D.COMP_CODE
+														 AND A.DIV_CODE		= D.DIV_CODE
+														 AND B.ITEM_CODE	= D.ITEM_CODE
+						LEFT  JOIN BCM600T E WITH(NOLOCK) ON A.COMP_CODE	= E.COMP_CODE
+														 AND A.PROJECT_NO 	= E.PJT_CODE
+						LEFT  JOIN BSA100T F WITH(NOLOCK) ON F.COMP_CODE	= A.COMP_CODE
+														 AND F.MAIN_CODE	= 'B020'
+														 AND F.SUB_CODE		= D.ITEM_ACCOUNT
+						LEFT  JOIN BPL100T H WITH(NOLOCK) ON H.COMP_CODE	= A.COMP_CODE
+														 AND H.DIV_CODE		= A.DIV_CODE
+														 AND H.PROD_ITEM_CODE	= B.ITEM_CODE
+	                Where A.COMP_CODE=#{S_COMP_CODE}
+	                  AND A.DIV_CODE=#{DIV_CODE} 
+	                  <if test="@foren.Ognl@isNotEmpty(PJT_CODE)">
+		       				AND A.PROJECT_NO LIKE #{PJT_CODE}+'%'
+		      		 </if>
+	                 GROUP BY A.PROJECT_NO, E.PJT_NAME, A.ORDER_NUM, B.ITEM_CODE, F.CODE_NAME, A.ORDER_DATE
+     Union All
+		    SELECT  A.PJT_CODE	AS PROJECT_NO
+		     	, D.PJT_NAME	AS PROJECT_NAME
+		     	, '수주' GUBUN1
+				, '' as ORDER_DATE
+				 ,'' as DVRY_DATE
+		     	, ('ZZ_' + A.BUDG_CODE)	AS ITEM_CODE
+				, A.BUDG_NAME	AS ITEM_NAME	
+		     	, '' as SPEC
+		     	,  0 ORDER_UNIT_Q
+		     	,  0 ORDER_P
+		     	,  A.ORDER_O	AS ORDER_O
+		     	,  0 BUDGET_UNIT_O
+		     	,  A.BUDG_O		AS BUDGET_O
+		     	,  SUM(ISNULL(C.AMT_I, 0))	 AS EX_O
+		        , 0 CSTOCK
+		        , 0 SALE_Q
+		        , 0 SALE_O
+		     FROM GBA100T A WITH(NOLOCK)
+		     	INNER JOIN GBA010T B WITH(NOLOCK) ON A.COMP_CODE	= B.COMP_CODE  
+												 AND A.BUDG_CODE	= B.BUDG_CODE 
+				LEFT  JOIN AGJ210T C WITH(NOLOCK) ON A.COMP_CODE	= C.COMP_CODE
+												 AND A.PJT_CODE		= C.AC_DATA1 
+												 AND (C.ACCNT  LIKE '5%' OR C.ACCNT LIKE '1723%' OR C.ACCNT LIKE '4%') AND C.MOD_DIVI IS NULL
+												 AND C.ACCNT != '41200'  AND C.ACCNT != '41500'
+												 AND (C.AC_DATA1 != '00-000-0' AND C.AC_DATA1 != '00-000-1' AND C.AC_DATA1 IS NOT NULL AND C.AC_DATA1 != '')
+												 AND C.AC_DATA3 = 'ZZ_' + A.BUDG_CODE
+				LEFT  JOIN BCM600T D WITH(NOLOCK) ON A.COMP_CODE	= D.COMP_CODE
+												 AND A.PJT_CODE 	= D.PJT_CODE
+             WHERE  A.COMP_CODE	= #{S_COMP_CODE}
+             	AND A.DIV_CODE	= #{DIV_CODE} 
+             	<if test="@foren.Ognl@isNotEmpty(PJT_CODE)">
+			    	AND A.PJT_CODE LIKE #{PJT_CODE}+'%'
+			    </if> 		
+			 GROUP BY A.PJT_CODE, D.PJT_NAME, A.BUDG_CODE, A.BUDG_NAME, A.ORDER_O, A.BUDG_O	  
+     Union All
+		    SELECT  A.PROJECT_NO
+		           , B.PJT_NAME		AS PROJECT_NAME
+		           , '입금' GUBUN1, '' ORDER_DATE, '' DVRY_DATE, '' ITEM_CODE
+		           , (SUBSTRING(A.COLLECT_DATE,1,4) + '.' +SUBSTRING(A.COLLECT_DATE,5,2) + '.' + SUBSTRING(A.COLLECT_DATE,7,2))		AS ITEM_NAME
+		           , C.CODE_NAME  +  '/' + ISNULL(A.REMARK,'') AS SPEC
+		           , 0 ORDER_UNIT_Q, 0 ORDER_P, COLLECT_AMT ORDER_O, 0 BUDGET_UNIT_O, 0 BUDGET_O,  0 EX_O, 0 CSTOCK, 0 SALE_Q, 0 SALE_O
+		    FROM SCO100T A WITH(NOLOCK)
+				LEFT  JOIN BCM600T B WITH(NOLOCK) ON A.COMP_CODE	= B.COMP_CODE
+												 AND A.PROJECT_NO 	= B.PJT_CODE
+				LEFT  JOIN BSA100T C WITH(NOLOCK) ON A.COMP_CODE	= C.COMP_CODE
+												 AND C.MAIN_CODE	= 'S017'
+												 AND C.SUB_CODE		= A.COLLECT_TYPE
+             WHERE  A.COMP_CODE	= #{S_COMP_CODE}
+             	AND A.DIV_CODE	= #{DIV_CODE}
+            	 <if test="@foren.Ognl@isNotEmpty(PJT_CODE)">
+			       	AND A.PROJECT_NO LIKE #{PJT_CODE}+'%'
+			      </if>
+     			AND A.COLLECT_TYPE NOT IN ('83', '81') 
+     Union All
+             SELECT A.PROJECT_NO
+				  , C.PJT_NAME	AS PROJECT_NAME
+				  , '지출' GUBUN1, '' ORDER_DATE, '' DVRY_DATE, 'ZZ_발주' ITEM_CODE, '' ITEM_NAME, '' SPEC
+				  , 0 ORDER_UNIT_Q, 0 ORDER_P, 0 ORDER_O, 0 BUDGET_UNIT_O, 0 BUDGET_O
+				  , SUM(CASE WHEN B.CONTROL_STATUS = '9' THEN (B.INSTOCK_Q * B.ORDER_P) ELSE B.ORDER_O END)  AS EX_O
+				  , 0 CSTOCK, 0 SALE_Q, 0 SALE_O
+             FROM MPO100T A  WITH(NOLOCK)
+					INNER JOIN MPO200T B WITH(NOLOCK) ON A.COMP_CODE	= B.COMP_CODE
+													 AND A.DIV_CODE		= B.DIV_CODE
+													 AND A.ORDER_NUM	= B.ORDER_NUM
+					LEFT  JOIN BCM600T C WITH(NOLOCK) ON A.COMP_CODE	= C.COMP_CODE
+													 AND A.PROJECT_NO	= C.PJT_CODE
+             WHERE A.COMP_CODE	= #{S_COMP_CODE}
+             	AND A.DIV_CODE	= #{DIV_CODE}
+		      <if test="@foren.Ognl@isNotEmpty(PJT_CODE)">
+		       	AND A.PROJECT_NO LIKE #{PJT_CODE}+'%'
+		      </if>
+     		GROUP BY A.PROJECT_NO, C.PJT_NAME
+     Union All
+			SELECT  A.AC_DATA1		AS PROJECT_NO
+				   , C.PJT_NAME		AS PROJECT_NAME
+				   , '지출' GUBUN1, '' ORDER_DATE, '' DVRY_DATE
+				   , CASE WHEN A.AC_DATA3 = '' THEN A.ACCNT  ELSE A.AC_DATA3 END AS ITEM_CODE 
+				   , ((CASE WHEN MAX(A.AC_DATA_NAME3) = '' THEN MAX(B.ACCNT_NAME)  ELSE MAX(A.AC_DATA_NAME3) END) + '/' + MAX(A.AC_DATE))  AS ITEM_NAME
+				   , A.REMARK		AS SPEC
+				   , 0 ORDER_UNIT_Q, 0 ORDER_P,  0 ORDER_O, 0 BUDGET_UNIT_O, 0 BUDGET_O
+                   , SUM(AMT_I) EX_O, 0 CSTOCK, 0 SALE_Q, 0 SALE_O
+             FROM  AGJ210T A WITH(NOLOCK) 
+					INNER JOIN ABA400T B WITH(NOLOCK) ON A.COMP_CODE	= B.COMP_CODE
+													 AND A.ACCNT		= B.ACCNT
+					LEFT  JOIN BCM600T C WITH(NOLOCK) ON A.COMP_CODE	= C.COMP_CODE
+													 AND A.AC_DATA1 	= C.PJT_CODE
+			 WHERE A.COMP_CODE	= #{S_COMP_CODE} 
+				AND (A.ACCNT  LIKE '5%' OR A.ACCNT LIKE '1723%' OR A.ACCNT LIKE '4%') 
+				AND A.MOD_DIVI IS NULL 
+				AND A.ACCNT != '41200' AND A.ACCNT != '41500'
+		      <if test="@foren.Ognl@isNotEmpty(PJT_CODE)">
+		       	AND A.AC_DATA1 LIKE #{PJT_CODE}+'%'
+		      </if>
+		     GROUP BY A.AC_DATA1,C.PJT_NAME, A.ACCNT, A.REMARK, A.AC_DATA3
+ 
+     )ZZ
+ )ZZZ
+ GROUP BY GUBUN1, ITEM_CODE, ITEM_NAME, SPEC
+  )ZZZZ
+ ORDER BY GUBUN1, ITEM_CODE, ITEM_NAME, SPEC
+	</select>
+</mapper>

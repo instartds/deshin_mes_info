@@ -1,0 +1,1348 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_pmp111ukrv_ypServiceImpl">
+	<select id="s_pmp111ukrv_ypServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+			SET ANSI_WARNINGS OFF
+            SET ARITHIGNORE ON
+            SET ARITHABORT OFF
+
+			DECLARE   @CompCode	NVARCHAR(08)/* 법인코드	*/
+					, @UserId	  NVARCHAR(100)/* 사용자ID	*/
+					, @LangType	NVARCHAR(2) /* 언어구분	*/
+					, @RefItem	 NVARCHAR(01)/* 명칭 참조 유형  */
+					, @DateFormat  NVARCHAR(10)/* 날짜 포맷 유형 설정 */
+					, @TimeSI	  NVARCHAR(01)
+					, @TimeSR	  NVARCHAR(01)
+					, @TimeSS	  NVARCHAR(01)
+
+			SELECT @TimeSI = MAX(CASE WHEN SUB_CODE = 'SI' THEN REF_CODE1 ELSE '' END)
+				 , @TimeSR = MAX(CASE WHEN SUB_CODE = 'SR' THEN REF_CODE1 ELSE '' END)
+				 , @TimeSS = MAX(CASE WHEN SUB_CODE = 'SS' THEN REF_CODE1 ELSE '' END)
+			 FROM BSA100T
+			WHERE COMP_CODE = @CompCode
+			  AND MAIN_CODE = N'S048'
+			  AND SUB_CODE IN(N'SI', N'SR', N'SS')
+
+			IF @TimeSI IS NULL
+				SET @TimeSI = 'N'
+			IF @TimeSR IS NULL
+				SET @TimeSR = 'N'
+			IF @TimeSS IS NULL
+				SET @TimeSS = 'N'
+
+			SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_ID}
+			SET @LangType = #{S_LANG_CODE}
+
+			/* 명칭 참조 유형 */
+			SELECT TOP 1 @RefItem = REF_ITEM
+			  FROM BSA300T WITH(NOLOCK)
+			 WHERE USER_ID = @UserId
+
+			SET @RefItem = ISNULL(@RefItem, N'0')
+
+			/* 날짜 포맷 유형 설정 */
+			SELECT TOP 1 @DateFormat = CODE_NAME
+			  FROM BSA100T WITH(NOLOCK)
+			 WHERE COMP_CODE = @CompCode
+			   AND MAIN_CODE = N'B044'
+			   AND REF_CODE1 = N'Y'
+
+			SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+			SELECT * FROM (
+				SELECT * FROM (
+						SELECT DISTINCT
+							  CASE WHEN ISNULL(F.P_COUNT, '') = '' THEN 'N'
+							  	   ELSE 'Y'
+							  END															AS P_COUNT			--출력여부
+							, '2'															AS FLAG				--작업지시량 수정가능여부(2:불가 / 1:가능)
+							, C2.ITEM_LEVEL1
+							, C2.ITEM_LEVEL2
+							, C2.ITEM_LEVEL3
+							, A.COMP_CODE
+							, A.DIV_CODE
+							, B.CUSTOM_CODE
+							, (CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+									WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+														ELSE C1.CUSTOM_NAME
+								END)														AS CUSTOM_NAME
+							, A.ITEM_CODE
+							, (CASE WHEN @RefItem = '1' THEN C2.ITEM_NAME1
+									WHEN @RefItem = '2' THEN C2.ITEM_NAME2
+														ELSE C2.ITEM_NAME
+								END)														AS ITEM_NAME
+							, C2.SPEC
+							, A.ORDER_UNIT
+							, A.ORDER_Q
+							, A.PREV_ORDER_Q
+							, F.PRODT_Q
+						<!-- 	, CASE WHEN ISNULL(F.LOT_NO, '') = '' THEN E.LOT_NO
+								   ELSE F.LOT_NO
+							  END															AS LOT_NO -->
+							, ISNULL(F.LOT_NO, '') AS LOT_NO
+							, CASE WHEN ISNULL(F.PACK_QTY, 0) = 0 THEN C3.PACK_QTY
+								   ELSE F.PACK_QTY
+							  END															AS PACK_QTY
+							, CASE WHEN ISNULL(F.GR01_LABEL_Q, 0) = 0 THEN CEILING(F.PRODT_Q / C3.PACK_QTY) * 2
+								   ELSE F.GR01_LABEL_Q
+							  END															AS GR01_LABEL_Q
+							, CASE WHEN ISNULL(F.DELI_LABEL_Q, 0) = 0 THEN CEILING(F.PRODT_Q / C3.PACK_QTY)
+								   ELSE F.DELI_LABEL_Q
+							  END															AS DELI_LABEL_Q
+							, CASE WHEN ISNULL(F.PRODT_YEAR, '') = '' THEN SUBSTRING(A.PROD_END_DATE, 0, 5)
+								   ELSE F.PRODT_YEAR
+							  END															AS PRODT_YEAR
+							, CASE WHEN ISNULL(F.EXP_DATE, '') = '' THEN CONVERT(NVARCHAR(08), DATEADD(DAY,4,A.PROD_END_DATE), 112)
+								   ELSE F.EXP_DATE
+							  END															AS EXP_DATE
+							, (CASE WHEN ISNULL(A.DVRY_DATE, '') = ''
+									THEN ''
+									ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.DVRY_DATE, 1, 4))
+																			, 'MM'  , SUBSTRING(A.DVRY_DATE, 5, 2))
+																			, 'DD'  , SUBSTRING(A.DVRY_DATE, 7, 2))
+								END)														AS DVRY_DATE			/* 납기일				*/
+							, (CASE WHEN ISNULL(A.PROD_END_DATE, '') = ''
+									THEN ''
+									ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PROD_END_DATE, 1, 4))
+																			, 'MM'  , SUBSTRING(A.PROD_END_DATE, 5, 2))
+																			, 'DD'  , SUBSTRING(A.PROD_END_DATE, 7, 2))
+								END)														AS PROD_END_DATE		/* 생산완료요청일			*/
+							, (CASE WHEN ISNULL(A.EXP_ISSUE_DATE, '') = ''
+									THEN ''
+									ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.EXP_ISSUE_DATE, 1, 4))
+																			, 'MM'  , SUBSTRING(A.EXP_ISSUE_DATE, 5, 2))
+																			, 'DD'  , SUBSTRING(A.EXP_ISSUE_DATE, 7, 2))
+								END)														AS EXP_ISSUE_DATE		/* 출하예정일			*/
+							, A.ORDER_NUM
+							, A.SER_NO
+							, F.WONSANGI
+							, B1.FARM_CODE
+							, B1.FARM_NAME
+
+							, B0.CUSTOM_CODE												AS PRDT_CUSTOM_CODE
+							, B2.CUSTOM_NAME												AS PRDT_CUSTOM_NAME
+							, A.OUTSTOCK_Q
+							, CASE WHEN A.OUTSTOCK_Q IS NOT NULL AND A.OUTSTOCK_Q = 0 THEN 'Y'
+								  	  ELSE 'N'
+							  END SRQ100T_DEL
+							,  CASE WHEN C.ISSUE_QTY IS NOT NULL THEN 'Y'
+								  	   ELSE 'N'
+							  END SRQ100T_YN
+
+						FROM		   SOF110T		A  WITH(NOLOCK)
+							INNER JOIN SOF100T		B  WITH(NOLOCK)  ON B.COMP_CODE			= A.COMP_CODE
+																	AND B.DIV_CODE			= A.DIV_CODE
+																	AND B.ORDER_NUM			= A.ORDER_NUM
+
+							INNER JOIN BCM100T		C1 WITH(NOLOCK)  ON  C1.COMP_CODE		= B.COMP_CODE
+																	AND C1.CUSTOM_CODE		= B.CUSTOM_CODE
+							INNER JOIN BPR100T		C2 WITH(NOLOCK)  ON C2.COMP_CODE		= A.COMP_CODE
+																	AND C2.ITEM_CODE		= A.ITEM_CODE
+							INNER JOIN BPR200T		C3 WITH(NOLOCK)  ON C3.COMP_CODE		= A.COMP_CODE
+																	AND C3.DIV_CODE			= A.DIV_CODE
+																	AND C3.ITEM_CODE		= A.ITEM_CODE
+							LEFT  JOIN MPO200T		D  WITH(NOLOCK)  ON D.COMP_CODE			= A.COMP_CODE
+																	AND D.DIV_CODE			= A.DIV_CODE
+																	--AND D.CUSTOM_CODE		= B.CUSTOM_CODE
+																	AND D.SO_NUM			= A.ORDER_NUM
+																	AND D.SO_SEQ			= A.SER_NO
+							LEFT  JOIN BTR100T		E  WITH(NOLOCK)  ON E.COMP_CODE			= D.COMP_CODE
+																	AND E.DIV_CODE			= D.DIV_CODE
+																	AND E.ITEM_CODE			= D.ITEM_CODE
+																	AND E.ORDER_NUM			= D.ORDER_NUM
+																	----
+																	AND E.ORDER_SEQ			= D.ORDER_SEQ
+																	AND E.INOUT_TYPE         = N'1'
+																	AND E.CREATE_LOC         = '2'
+																	AND E.INOUT_CODE_TYPE    = N'4'
+							LEFT  JOIN S_PMP111T_YP F  WITH(NOLOCK)  ON F.COMP_CODE			= A.COMP_CODE
+																	AND F.DIV_CODE			= A.DIV_CODE
+																	AND F.ITEM_CODE			= A.ITEM_CODE
+																	AND F.ORDER_NUM			= A.ORDER_NUM
+																	AND F.SER_NO			= A.SER_NO
+							LEFT  JOIN SRQ100T		C  WITH(NOLOCK)  ON C.COMP_CODE			= A.COMP_CODE
+																	AND C.ISSUE_DIV_CODE	= A.OUT_DIV_CODE
+																	AND C.ORDER_NUM			= A.ORDER_NUM
+																	AND C.SER_NO			= A.SER_NO
+																	AND C.LOT_NO			= F.LOT_NO
+							LEFT  JOIN BCM100T		B0 WITH(NOLOCK)	ON B0.COMP_CODE			= A.COMP_CODE
+																	AND B0.CHANNEL			= CASE WHEN ISNULL(SUBSTRING(F.LOT_NO, 1, 2), '') != '' THEN SUBSTRING(F.LOT_NO, 1, 2)
+																								   ELSE 'ZZZ'									--F.LOT_NO가 없을 때는 조회되는 것이 없도록 3자리와 비교
+																							  END
+							LEFT JOIN S_BCM106T_YP	B1 WITH(NOLOCK) ON B1.COMP_CODE			= B0.COMP_CODE
+																	AND B1.CUSTOM_CODE		= B0.CUSTOM_CODE
+																	AND B1.FARM_CODE		= SUBSTRING(F.LOT_NO, 8, 2)
+							LEFT JOIN BCM100T		B2 WITH(NOLOCK) ON B2.COMP_CODE			= B0.COMP_CODE
+																	AND B2.CUSTOM_CODE		= B0.CUSTOM_CODE
+
+						WHERE A.COMP_CODE				= @CompCode
+						  AND A.OUT_DIV_CODE			= #{DIV_CODE}					/* 마스터폼 정보*/
+						  AND A.ORDER_STATUS			= 'N'							/* 미마감인 건만 조회 */
+						  AND ISNULL(B.STATUS,'6')		= '6'							/* 승인완결여부 */
+						  AND ISNULL(F.COMP_CODE,'')   != ''							/* 구매작업지시 된 것만 조회 */
+						  AND B.ORDER_TYPE NOT IN ('06','07') 					/*농산물유통 노지채소유통은 항상 제외*/
+						<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+						   AND B.CUSTOM_CODE = #{CUSTOM_CODE}
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+						   AND (B.CUSTOM_CODE LIKE #{CUSTOM_CODE} + '%'
+							   OR C1.CUSTOM_NAME LIKE #{CUSTOM_CODE} + '%')
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+						   AND (B.CUSTOM_CODE LIKE #{CUSTOM_NAME} + '%'
+							   OR C1.CUSTOM_NAME LIKE #{CUSTOM_NAME} + '%')
+						</if>
+
+						<if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+						  AND B.ORDER_TYPE  = #{ORDER_TYPE}
+						</if>
+
+						<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+						   AND A.ITEM_CODE	= #{ITEM_CODE}
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+						   AND (A.ITEM_CODE	LIKE #{ITEM_CODE} + '%'
+							   OR C2.ITEM_NAME LIKE #{ITEM_CODE} + '%')
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(ITEM_NAME) and @foren.Ognl@isEmpty(ITEM_CODE)">
+						   AND (A.ITEM_CODE	LIKE #{ITEM_NAME} + '%'
+							   OR C2.ITEM_NAME LIKE #{ITEM_NAME} + '%')
+						</if>
+
+						<if test="@foren.Ognl@isNotEmpty(SUPPLY_TYPE)">
+						  AND C3.SUPPLY_TYPE		 = #{SUPPLY_TYPE}
+						</if>
+
+						<if test="@foren.Ognl@isNotEmpty(EXP_ISSUE_DATE_FR)">
+						  AND A.EXP_ISSUE_DATE	&gt;= #{EXP_ISSUE_DATE_FR}
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(EXP_ISSUE_DATE_TO)">
+						  AND A.EXP_ISSUE_DATE	&lt;= #{EXP_ISSUE_DATE_TO}
+						</if>
+				)	AS Z1
+
+
+			UNION ALL
+				SELECT * FROM (
+						SELECT
+							  CASE WHEN ISNULL(MAX(F.P_COUNT), '') = '' THEN 'N'
+							  	   ELSE 'Y'
+							  END															AS P_COUNT			--출력여부
+							, '1'															AS FLAG				--작업지시량 수정가능여부(2:불가 / 1:가능)
+							, C2.ITEM_LEVEL1
+							, C2.ITEM_LEVEL2
+							, C2.ITEM_LEVEL3
+							, A.COMP_CODE
+							, A.DIV_CODE
+							, B.CUSTOM_CODE
+							, (CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+									WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+														ELSE C1.CUSTOM_NAME
+								END)														AS CUSTOM_NAME
+							, A.ITEM_CODE
+							, (CASE WHEN @RefItem = '1' THEN C2.ITEM_NAME1
+									WHEN @RefItem = '2' THEN C2.ITEM_NAME2
+														ELSE C2.ITEM_NAME
+								END)														AS ITEM_NAME
+							, C2.SPEC
+							, A.ORDER_UNIT
+							, A.ORDER_Q
+							, A.PREV_ORDER_Q
+							--, A.ORDER_Q - ISNULL(SUM(F.PRODT_Q), 0)							AS PRODT_Q
+							, A.ORDER_Q - ISNULL((SELECT SUM(PRODT_Q )
+															FROM S_PMP111T_YP
+															WHERE COMP_CODE = A.COMP_CODE
+															AND DIV_CODE =  A.DIV_CODE
+															AND ORDER_NUM = A.ORDER_NUM
+															AND SER_NO = A.SER_NO), 0)							AS PRODT_Q
+							, ''															AS LOT_NO
+							, CASE WHEN ISNULL(F.PACK_QTY, 0) = 0 THEN C3.PACK_QTY
+								   ELSE F.PACK_QTY
+							  END															AS PACK_QTY
+							, CEILING((A.ORDER_Q - ISNULL((SELECT SUM(PRODT_Q )
+													FROM S_PMP111T_YP
+													WHERE COMP_CODE = A.COMP_CODE
+													AND DIV_CODE =  A.DIV_CODE
+													AND ORDER_NUM = A.ORDER_NUM
+													AND SER_NO = A.SER_NO), 0)	) / C3.PACK_QTY) * 2
+							  																AS GR01_LABEL_Q
+							, CEILING((A.ORDER_Q - ISNULL((SELECT SUM(PRODT_Q )
+													FROM S_PMP111T_YP
+													WHERE COMP_CODE = A.COMP_CODE
+													AND DIV_CODE =  A.DIV_CODE
+													AND ORDER_NUM = A.ORDER_NUM
+													AND SER_NO = A.SER_NO), 0)	) / C3.PACK_QTY)
+							  																AS DELI_LABEL_Q
+							, CASE WHEN ISNULL(MAX(F.PRODT_YEAR), '') = '' THEN SUBSTRING(A.PROD_END_DATE, 0, 5)
+								   ELSE MAX(F.PRODT_YEAR)
+							  END															AS PRODT_YEAR
+							, CASE WHEN ISNULL(MAX(F.EXP_DATE), '') = '' THEN CONVERT(NVARCHAR(08), DATEADD(DAY,4,A.PROD_END_DATE), 112)
+								   ELSE MAX(F.EXP_DATE)
+							  END															AS EXP_DATE
+							, (CASE WHEN ISNULL(A.DVRY_DATE, '') = ''
+									THEN ''
+									ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.DVRY_DATE, 1, 4))
+																			, 'MM'  , SUBSTRING(A.DVRY_DATE, 5, 2))
+																			, 'DD'  , SUBSTRING(A.DVRY_DATE, 7, 2))
+								END)														AS DVRY_DATE			/* 납기일				*/
+							, (CASE WHEN ISNULL(A.PROD_END_DATE, '') = ''
+									THEN ''
+									ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PROD_END_DATE, 1, 4))
+																			, 'MM'  , SUBSTRING(A.PROD_END_DATE, 5, 2))
+																			, 'DD'  , SUBSTRING(A.PROD_END_DATE, 7, 2))
+								END)														AS PROD_END_DATE		/* 생산완료요청일			*/
+							, (CASE WHEN ISNULL(A.EXP_ISSUE_DATE, '') = ''
+									THEN ''
+									ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.EXP_ISSUE_DATE, 1, 4))
+																			, 'MM'  , SUBSTRING(A.EXP_ISSUE_DATE, 5, 2))
+																			, 'DD'  , SUBSTRING(A.EXP_ISSUE_DATE, 7, 2))
+								END)														AS EXP_ISSUE_DATE		/* 출하예정일			*/
+							, A.ORDER_NUM
+							, A.SER_NO
+							, ''																AS WONSANGI
+							, ''																AS FARM_CODE
+							, ''																AS FARM_NAME
+
+							, ''																AS PRDT_CUSTOM_CODE
+							, ''																AS PRDT_CUSTOM_NAME
+							, 0 AS OUTSTOCK_Q
+							, 'N' AS SRQ100T_DEL
+							, ''  AS SRQ100T_YN
+						FROM		   SOF110T		A  WITH(NOLOCK)
+							INNER JOIN SOF100T		B  WITH(NOLOCK)  ON B.COMP_CODE			= A.COMP_CODE
+																	AND B.DIV_CODE			= A.DIV_CODE
+																	AND B.ORDER_NUM			= A.ORDER_NUM
+							INNER JOIN BCM100T		C1 WITH(NOLOCK)  ON  C1.COMP_CODE		= B.COMP_CODE
+																	AND C1.CUSTOM_CODE		= B.CUSTOM_CODE
+							INNER JOIN BPR100T		C2 WITH(NOLOCK)  ON C2.COMP_CODE		= A.COMP_CODE
+																	AND C2.ITEM_CODE		= A.ITEM_CODE
+							INNER JOIN BPR200T		C3 WITH(NOLOCK)  ON C3.COMP_CODE		= A.COMP_CODE
+																	AND C3.DIV_CODE			= A.DIV_CODE
+																	AND C3.ITEM_CODE		= A.ITEM_CODE
+							LEFT  JOIN MPO200T		D  WITH(NOLOCK)  ON D.COMP_CODE			= A.COMP_CODE
+																	AND D.DIV_CODE			= A.DIV_CODE
+																	--AND D.CUSTOM_CODE		= B.CUSTOM_CODE
+																	AND D.SO_NUM			= A.ORDER_NUM
+																	AND D.SO_SEQ			= A.SER_NO
+							LEFT  JOIN BTR100T		E  WITH(NOLOCK)  ON E.COMP_CODE			= D.COMP_CODE
+																	AND E.DIV_CODE			= D.DIV_CODE
+																	AND E.ITEM_CODE			= D.ITEM_CODE
+																	AND E.ORDER_NUM			= D.ORDER_NUM
+																	AND E.ORDER_SEQ			= D.ORDER_SEQ
+																	AND E.INOUT_TYPE		 = N'1'
+																	AND E.CREATE_LOC		= '2'
+																	AND E.INOUT_CODE_TYPE	= N'4'
+							LEFT  JOIN S_PMP111T_YP F  WITH(NOLOCK)  ON F.COMP_CODE			= A.COMP_CODE
+																	AND F.DIV_CODE			= A.DIV_CODE
+																	AND F.ITEM_CODE			= A.ITEM_CODE
+																	AND F.ORDER_NUM			= A.ORDER_NUM
+																	AND F.SER_NO			= A.SER_NO
+	--						LEFT  JOIN SRQ100T		C  WITH(NOLOCK)  ON C.COMP_CODE			= A.COMP_CODE
+	--																AND C.ISSUE_DIV_CODE	= A.OUT_DIV_CODE
+	--																AND C.ORDER_NUM			= A.ORDER_NUM
+	--																AND C.SER_NO			= A.SER_NO
+	--																AND C.LOT_NO			= F.LOT_NO
+							LEFT JOIN PMP100T		Z WITH(NOLOCK) ON Z.COMP_CODE			= A.COMP_CODE
+																	AND Z.DIV_CODE			= A.DIV_CODE
+																	AND Z.ORDER_NUM			= A.ORDER_NUM
+																	AND Z.SER_NO			= A.SER_NO
+
+						WHERE A.COMP_CODE				= @CompCode
+						  AND A.OUT_DIV_CODE			= #{DIV_CODE}					/* 마스터폼 정보*/
+						  AND A.ORDER_STATUS			= 'N'							/* 미마감인 건만 조회 */
+						  AND ISNULL(B.STATUS,'6')		= '6'							/* 승인완결여부 */
+						  AND B.ORDER_TYPE NOT IN ('06','07') 					/*농산물유통 노지채소유통은 항상 제외*/
+						<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+						   AND B.CUSTOM_CODE = #{CUSTOM_CODE}
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+						   AND (B.CUSTOM_CODE LIKE #{CUSTOM_CODE} + '%'
+							   OR C1.CUSTOM_NAME LIKE #{CUSTOM_CODE} + '%')
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+						   AND (B.CUSTOM_CODE LIKE #{CUSTOM_NAME} + '%'
+							   OR C1.CUSTOM_NAME LIKE #{CUSTOM_NAME} + '%')
+						</if>
+
+						<if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+						  AND B.ORDER_TYPE  = #{ORDER_TYPE}
+						</if>
+
+						<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+						   AND A.ITEM_CODE	= #{ITEM_CODE}
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+						   AND (A.ITEM_CODE	LIKE #{ITEM_CODE} + '%'
+							   OR C2.ITEM_NAME LIKE #{ITEM_CODE} + '%')
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(ITEM_NAME) and @foren.Ognl@isEmpty(ITEM_CODE)">
+						   AND (A.ITEM_CODE	LIKE #{ITEM_NAME} + '%'
+							   OR C2.ITEM_NAME LIKE #{ITEM_NAME} + '%')
+						</if>
+
+						<if test="@foren.Ognl@isNotEmpty(SUPPLY_TYPE)">
+						  AND C3.SUPPLY_TYPE		 = #{SUPPLY_TYPE}
+						</if>
+
+						<if test="@foren.Ognl@isNotEmpty(EXP_ISSUE_DATE_FR)">
+						  AND A.EXP_ISSUE_DATE	&gt;= #{EXP_ISSUE_DATE_FR}
+						</if>
+						<if test="@foren.Ognl@isNotEmpty(EXP_ISSUE_DATE_TO)">
+						  AND A.EXP_ISSUE_DATE	&lt;= #{EXP_ISSUE_DATE_TO}
+						</if>
+
+						  AND ISNULL(Z.ORDER_NUM, '') = ''  --생산 작업지시등록 되지 않은 것만 가져오게
+						  AND A.ORDER_Q - ISNULL((SELECT SUM(PRODT_Q ) -- 20181001 추가
+													FROM S_PMP111T_YP
+													WHERE COMP_CODE = A.COMP_CODE
+													AND DIV_CODE =  A.DIV_CODE
+													AND ORDER_NUM = A.ORDER_NUM
+													AND SER_NO = A.SER_NO), 0)		> 0
+					GROUP BY A.COMP_CODE	, A.DIV_CODE		, A.ITEM_CODE	, A.ORDER_UNIT	, A.ORDER_Q		, A.PREV_ORDER_Q, A.PROD_END_DATE, A.DVRY_DATE, A.EXP_ISSUE_DATE, A.ORDER_NUM, A.SER_NO
+						   , B.CUSTOM_CODE
+						   , C1.CUSTOM_NAME1, C1.CUSTOM_NAME2	, C1.CUSTOM_NAME
+						   , C2.ITEM_NAME1	, C2.ITEM_NAME2		, C2.ITEM_NAME	, C2.SPEC		, C2.ITEM_LEVEL1, C2.ITEM_LEVEL2, C2.ITEM_LEVEL3
+						   , C3.PACK_QTY
+						   , F.PACK_QTY		, F.PRODT_YEAR		, F.EXP_DATE	, F.P_COUNT
+				--	HAVING A.ORDER_Q > ISNULL(SUM(F.PRODT_Q), 0)								/* 일부만 구매작업지시 되거나 작업지시 안된것 조회 */ /*20181001 주석처리*/
+				)	AS Z2
+			)	AS Z3
+			ORDER BY Z3.P_COUNT, Z3.FLAG, Z3.ITEM_LEVEL1, Z3.ITEM_LEVEL2, Z3.ITEM_LEVEL3, Z3.CUSTOM_NAME, Z3.ITEM_NAME
+
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+	</select>
+
+
+
+
+
+
+
+	<!-- 배송분류표 데이터 생성 -->
+	<select id="s_pmp111ukrv_ypServiceImpl.makeDeliLabel" parameterType="Map" resultType="rMap">
+	/* s_pmp111ukrv_ypServiceImpl.makeDeliLabel (배송분류표 데이터 생성) */
+		DECLARE   @CompCode		NVARCHAR(08)		/* 법인코드			*/
+				, @UserId		NVARCHAR(100)		/* 사용자ID		*/
+				, @LangType		NVARCHAR(2)			/* 언어구분			*/
+				, @RefItem		NVARCHAR(01)		/* 명칭 참조 유형		*/
+				, @DateFormat	NVARCHAR(10)		/* 날짜 포맷 유형 설정	*/
+
+		SET @CompCode = #{S_COMP_CODE}
+		SET @UserId   = #{S_USER_ID}
+		SET @LangType = #{S_LANG_CODE}
+
+		/* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+			FROM BSA300T WITH (NOLOCK)
+			WHERE USER_ID = @UserId
+
+		SET @RefItem = ISNULL(@RefItem, N'0')
+
+		/* 날짜 포맷 유형 설정 */
+		SELECT TOP 1 @DateFormat = CODE_NAME
+			FROM BSA100T WITH (NOLOCK)
+			WHERE COMP_CODE = @CompCode
+			AND MAIN_CODE = N'B044'
+			AND REF_CODE1 = N'Y'
+
+		SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		SELECT A.COMP_CODE
+			 , B.CUSTOM_CODE
+			 , E.CUSTOM_NAME
+			 , A.ITEM_CODE
+			 , C.ITEM_NAME
+			  --, ISNULL(C.SPEC, '')									AS SPEC
+			 , ISNULL(A.ORDER_UNIT, 'KG')								AS SPEC
+			 , ISNULL(A.ORDER_Q, 0)											AS ORDER_Q
+			 , CEILING(A.ORDER_Q / F.PACK_QTY)								AS LABEL_Q
+			 , (CASE WHEN ISNULL(A.EXP_ISSUE_DATE, '') = ''
+							THEN ''
+							ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.EXP_ISSUE_DATE, 1, 4))
+																	, 'MM'  , SUBSTRING(A.EXP_ISSUE_DATE, 5, 2))
+																	, 'DD'  , SUBSTRING(A.EXP_ISSUE_DATE, 7, 2))
+					END)												AS DELIVERY_DATE		--배송일(출하예정일)
+			 , (CASE WHEN ISNULL(B.ORDER_DATE, '') = ''
+							THEN ''
+							ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.ORDER_DATE, 1, 4))
+																	, 'MM'  , SUBSTRING(B.ORDER_DATE, 5, 2))
+																	, 'DD'  , SUBSTRING(B.ORDER_DATE, 7, 2))
+					END)												AS ORDER_DATE			--발주일(수주등록일)
+			 , (CASE WHEN ISNULL(A.PROD_END_DATE, '') = ''
+							THEN ''
+							ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PROD_END_DATE, 1, 4))
+																	, 'MM'  , SUBSTRING(A.PROD_END_DATE, 5, 2))
+																	, 'DD'  , SUBSTRING(A.PROD_END_DATE, 7, 2))
+					END)												AS PACK_DATE			--포장일(생산완료일)
+			 , '10℃이하'													AS STORAGE_METHOD
+			 , (CASE WHEN ISNULL(A.PROD_END_DATE, '') = ''
+							THEN ''
+							ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(CONVERT(NVARCHAR(08), DATEADD(DAY,3,A.PROD_END_DATE), 112), 1, 4))
+																	, 'MM'  , SUBSTRING(CONVERT(NVARCHAR(08), DATEADD(DAY,3,A.PROD_END_DATE), 112), 5, 2))
+																	, 'DD'  , SUBSTRING(CONVERT(NVARCHAR(08), DATEADD(DAY,3,A.PROD_END_DATE), 112), 7, 2))
+					END)												AS EXP_DATE				--유통기한(생산완료일 + 3일)
+			 , ''															AS CAR_NUMBER
+			 , '별도표기'														AS ORIGIN				--원산지
+			 , #{PRODT_YEAR} 		                  						AS PRODT_YEAR
+			 , '특'															AS QUALITY_GRADE
+			 , D.COMP_NAME													AS SUPPLIER
+			 , '전처리작업일 : '	+ (CASE WHEN ISNULL(A.PROD_END_DATE, '') = ''
+										THEN ''
+										ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PROD_END_DATE, 1, 4))
+																				, 'MM'  , SUBSTRING(A.PROD_END_DATE, 5, 2))
+																				, 'DD'  , SUBSTRING(A.PROD_END_DATE, 7, 2))
+					END)													AS PRE_WORK_DATE
+			 , A.ORDER_NUM
+			 , A.SER_NO
+
+		  FROM		 SOF110T	  A WITH(NOLOCK)
+		  INNER JOIN SOF100T	  B WITH(NOLOCK)	ON B.COMP_CODE		= A.COMP_CODE
+		  										   AND B.DIV_CODE		= A.DIV_CODE
+		  										   AND B.ORDER_NUM		= A.ORDER_NUM
+		  INNER JOIN BPR100T	  C WITH(NOLOCK)	ON C.COMP_CODE		= A.COMP_CODE
+		  										   AND C.ITEM_CODE		= A.ITEM_CODE
+		  INNER JOIN BOR100T	  D WITH(NOLOCK)	ON D.COMP_CODE		= A.COMP_CODE
+		  INNER JOIN BCM100T	  E WITH(NOLOCK)	ON E.COMP_CODE		= B.COMP_CODE
+		  										   AND E.CUSTOM_CODE	= B.CUSTOM_CODE
+		  INNER JOIN BPR200T	  F WITH(NOLOCK)	ON F.COMP_CODE		= A.COMP_CODE
+												   AND F.DIV_CODE		= A.DIV_CODE
+												   AND F.ITEM_CODE		= A.ITEM_CODE
+
+		 WHERE A.COMP_CODE		= #{S_COMP_CODE}
+		   AND A.DIV_CODE		= #{DIV_CODE}
+		   AND A.SER_NO			= #{SER_NO}
+		   AND A.ORDER_NUM 		= #{ORDER_NUM}
+--		 GROUP BY A.COMP_CODE, D.COMP_NAME, A.DIV_CODE, A.ORDER_NUM, A.ITEM_CODE, C.ITEM_NAME, C.SPEC
+--				, A.PROD_END_DATE, A.ORDER_Q, B.CUSTOM_CODE, E.CUSTOM_NAME
+	</select>
+
+
+	<!-- 친환경 데이터 생성  -->
+	<select id="s_pmp111ukrv_ypServiceImpl.makeGr01Label" parameterType="Map" resultType="rMap">
+		/* s_pmp111ukrv_ypServiceImpl.makeGr01Label (친환경(소) 데이터 생성) */
+		DECLARE   @CompCode		NVARCHAR(08)	/* 법인코드				*/
+				, @UserId		NVARCHAR(100)	/* 사용자ID			*/
+				, @LangType		NVARCHAR(02)	/* 언어구분				*/
+				, @RefItem		NVARCHAR(01)	/* 명칭 참조 유형			*/
+				, @DateFormat	NVARCHAR(10)	/* 날짜 포맷 유형 설정		*/
+				, @charArray	NVARCHAR(23)	/* 인증번호 생성을 위한 array	*/
+
+		SET @CompCode = #{S_COMP_CODE}
+		SET @UserId   = #{S_USER_ID}
+		SET @LangType = #{S_LANG_CODE}
+		SET @charArray = 'A,B,C,D,E,F,G,H,I,J,K,L'
+
+		/* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+			FROM BSA300T WITH (NOLOCK)
+			WHERE USER_ID = @UserId
+
+		SET @RefItem = ISNULL(@RefItem, N'0')
+
+		/* 날짜 포맷 유형 설정 */
+		SELECT TOP 1 @DateFormat = CODE_NAME
+			FROM BSA100T WITH (NOLOCK)
+			WHERE COMP_CODE = @CompCode
+			AND MAIN_CODE = N'B044'
+			AND REF_CODE1 = N'Y'
+
+		SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+		SELECT A.COMP_CODE
+			 , D.COMP_NAME
+			 , A.DIV_CODE
+			 , CASE WHEN ISNULL(H1.CERT_NO, '') = '' THEN  '3-6-1'
+					ELSE H1.CERT_NO
+			   END															AS COMP_CERF_CODE
+			 , D.TELEPHON
+			 , D.ADDR
+			 , A.ORDER_NUM
+			 , A.SER_NO
+			 , A.ITEM_CODE
+			 , C.ITEM_NAME
+
+			 --, CASE WHEN ISNULL(E2.FARM_NAME, '') = '' THEN  ISNULL(E.CUSTOM_NAME + '(' + E1.CERT_NO + ')', '')
+				--		 ELSE ISNULL(E2.FARM_NAME + + '(' + E2.CERT_NO + ')', '')
+				--END															AS PRODT_PERSON
+
+
+			 , CASE WHEN ISNULL(E2.FARM_NAME, '') = '' THEN  ISNULL(E3.REF_CODE1, '') + '(' + E.CUSTOM_NAME + ')'
+					ELSE E2.ORIGIN  + '(' + E2.FARM_NAME + ')'
+			   END													AS PRODT_PERSON
+
+
+			 , #{PRODT_YEAR}                 								AS PRODT_YEAR
+			 , C.SALE_UNIT													AS SALE_UNIT
+			 , CASE WHEN ISNULL(E2.CERT_NO, '') != '' THEN ISNULL(E2.CERT_NO, '')
+					ELSE ISNULL(E1.CERT_NO, '')
+			   END															AS BARCODE
+
+			 , ISNULL(A.ITEM_CODE, '') + '-' + #{LOT_NO} + '-' +
+			   ISNULL(SUBSTRING(A.EXP_ISSUE_DATE,7, 2), '') + ISNULL((SELECT VALUE FROM fnSplit(@charArray, ',')
+																	   WHERE IDX = ISNULL(SUBSTRING(A.EXP_ISSUE_DATE,5, 2), '')), '') + ISNULL(SUBSTRING(A.EXP_ISSUE_DATE,3, 2), '') + '-' +
+			   ISNULL(B.CUSTOM_CODE, '')									AS MANAGE_NO		--이력번호
+			 , ISNULL(E1.CERT_ORG, '')										AS CENTER
+			 , CASE WHEN ISNULL(B2.CUSTOM_NAME1, '') = '' THEN ISNULL(B2.CUSTOM_NAME, '')
+			 		ELSE ISNULL(B2.CUSTOM_NAME1, '')
+			   END															AS CUSTOM_NAME
+			 , 1															AS LABEL_Q
+
+		  FROM		 SOF110T	  A WITH(NOLOCK)
+		  INNER JOIN SOF100T	  B WITH(NOLOCK)	ON B.COMP_CODE		= A.COMP_CODE
+		  										   AND B.DIV_CODE		= A.DIV_CODE
+		  										   AND B.ORDER_NUM		= A.ORDER_NUM
+		   LEFT  JOIN BCM100T	  B2 WITH(NOLOCK)	ON B2.COMP_CODE		= B.COMP_CODE
+												   AND B2.CUSTOM_CODE	= B.CUSTOM_CODE
+		  INNER JOIN BPR100T	  C WITH(NOLOCK)	ON C.COMP_CODE		= A.COMP_CODE
+		  										   AND C.ITEM_CODE		= A.ITEM_CODE
+		  INNER JOIN BOR100T	  D WITH(NOLOCK)	ON D.COMP_CODE		= A.COMP_CODE
+		  --LEFT  JOIN BCM100T	  E WITH(NOLOCK)	ON E.COMP_CODE		= B.COMP_CODE
+				--								   AND E.CUSTOM_CODE	= B.CUSTOM_CODE
+		  LEFT  JOIN BCM100T	  E WITH(NOLOCK)	ON E.COMP_CODE		= B.COMP_CODE
+												   AND E.CHANNEL	= SUBSTRING(#{LOT_NO}, 1, 2)
+		  LEFT JOIN S_BCM100T_YP  E1 WITH(NOLOCK)	ON E1.COMP_CODE		= E.COMP_CODE
+												   AND E1.CUSTOM_CODE	= E.CUSTOM_CODE
+												   AND E1.TYPE			= SUBSTRING(#{LOT_NO}, 10, 1)
+												   AND ( A.EXP_ISSUE_DATE BETWEEN E1.APLY_START_DATE AND E1.APLY_END_DATE )
+		  LEFT  JOIN S_BCM106T_YP E2 WITH(NOLOCK)	ON E2.COMP_CODE		= E.COMP_CODE
+												   AND E2.CUSTOM_CODE	= E.CUSTOM_CODE
+												   AND E2.FARM_CODE		= SUBSTRING(#{LOT_NO}, 8, 2)
+		   LEFT JOIN BSA100T		E3 WITH(NOLOCK)	ON E3.COMP_CODE			= E.COMP_CODE
+												   AND E3.MAIN_CODE			= 'B056'
+												   AND E3.SUB_CODE			= E.AREA_TYPE
+--		  LEFT  JOIN MPO200T	  F  WITH(NOLOCK)	ON F.COMP_CODE		= A.COMP_CODE
+--												   AND F.DIV_CODE		= A.DIV_CODE
+--												   AND F.CUSTOM_CODE	= B.CUSTOM_CODE
+--												   AND F.ORDER_NUM		= A.ORDER_NUM
+--												   AND F.ORDER_SEQ		= A.SER_NO
+--		  LEFT  JOIN BTR100T	  G  WITH(NOLOCK)	ON G.COMP_CODE		= F.COMP_CODE
+--												   AND G.ITEM_CODE		= F.ITEM_CODE
+--												   AND G.ORDER_NUM		= F.ORDER_NUM
+		  LEFT JOIN BCM100T		  H WITH(NOLOCK)	ON H.COMP_CODE		= A.COMP_CODE
+												   AND H.CUSTOM_CODE	= (SELECT CODE_NAME FROM BSA100T WITH(NOLOCK)
+																			WHERE COMP_CODE = A.COMP_CODE
+																			  AND MAIN_CODE = 'T000'
+																			  AND SUB_CODE  = 'T000' )
+		  LEFT JOIN S_BCM100T_YP  H1 WITH(NOLOCK)	ON H1.COMP_CODE			= H.COMP_CODE
+												   AND H1.CUSTOM_CODE		= H.CUSTOM_CODE
+												   AND B.ORDER_DATE BETWEEN H1.APLY_START_DATE AND H1.APLY_END_DATE
+
+		 WHERE A.COMP_CODE		= #{S_COMP_CODE}
+		   AND A.DIV_CODE		= #{DIV_CODE}
+		   AND A.ORDER_NUM 		= #{ORDER_NUM}
+		   AND A.SER_NO			= #{SER_NO}
+	</select>
+
+
+
+	<select id="s_pmp111ukrv_ypServiceImpl.printList1" parameterType="Map" resultType="rMap">
+        BEGIN
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+
+            DECLARE   @CompCode NVARCHAR(08)/* 법인코드 */
+                    , @UserId     NVARCHAR(100)/* 사용자ID  */
+                    , @RefItem   NVARCHAR(01)/* 명칭 참조 유형  */
+                    , @DateFormat  NVARCHAR(10)/* 날짜 포맷 유형 설정 */
+                    , @TimeSI     NVARCHAR(01)
+                    , @TimeSR     NVARCHAR(01)
+                    , @TimeSS     NVARCHAR(01)
+                    , @PRINT_USER          NVARCHAR(100)            --(선택) 출력자
+                    , @VIEW_PRINT_INFO_YN  NVARCHAR(01)             --인쇄출력정보 여부
+
+            SELECT @TimeSI = MAX(CASE WHEN SUB_CODE = 'SI' THEN REF_CODE1 ELSE '' END)
+                 , @TimeSR = MAX(CASE WHEN SUB_CODE = 'SR' THEN REF_CODE1 ELSE '' END)
+                 , @TimeSS = MAX(CASE WHEN SUB_CODE = 'SS' THEN REF_CODE1 ELSE '' END)
+             FROM BSA100T
+            WHERE COMP_CODE = @CompCode
+              AND MAIN_CODE = N'S048'
+              AND SUB_CODE IN(N'SI', N'SR', N'SS')
+
+            IF @TimeSI IS NULL
+                SET @TimeSI = 'N'
+            IF @TimeSR IS NULL
+                SET @TimeSR = 'N'
+            IF @TimeSS IS NULL
+                SET @TimeSS = 'N'
+
+            SET @CompCode = #{S_COMP_CODE}
+            SET @UserId   = #{S_USER_ID}
+
+            /*출력자*/
+            SELECT @PRINT_USER = USER_NAME
+                FROM BSA300T WITH(NOLOCK)
+                WHERE COMP_CODE = @CompCode
+                AND USER_ID = @UserId
+
+            /*출력정보 표시여부*/
+            SELECT @VIEW_PRINT_INFO_YN = SUB_CODE
+                FROM BSA100T WITH(NOLOCK)
+                WHERE COMP_CODE = @CompCode
+                AND MAIN_CODE = 'B249'
+                AND SUB_CODE != '$'
+                AND REF_CODE1 = 'Y'
+
+            /* 명칭 참조 유형 */
+            SELECT TOP 1 @RefItem = REF_ITEM
+              FROM BSA300T WITH(NOLOCK)
+             WHERE USER_ID = @UserId
+
+            SET @RefItem = ISNULL(@RefItem, N'0')
+
+            /* 날짜 포맷 유형 설정 */
+            SELECT TOP 1 @DateFormat = CODE_NAME
+              FROM BSA100T WITH(NOLOCK)
+             WHERE COMP_CODE = @CompCode
+               AND MAIN_CODE = N'B044'
+               AND REF_CODE1 = N'Y'
+
+            SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+            SELECT
+                  A.ITEM_CODE
+                 ,C2.ITEM_NAME
+                 ,(CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+                        WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+                                            ELSE C1.CUSTOM_NAME
+                    END)                                                        AS CUSTOM_NAME
+                , SUBSTRING(#{PRODT_START_DATE}, 1, 4) + '-' + SUBSTRING(#{PRODT_START_DATE}, 5, 2) + '-' + SUBSTRING(#{PRODT_START_DATE}, 7, 2)  AS PRODT_START_DATE
+                , SUBSTRING(A.EXP_ISSUE_DATE, 5, 2) + '/' + SUBSTRING(A.EXP_ISSUE_DATE, 7, 2) AS EXP_ISSUE_DATE
+                , A.ORDER_Q         AS WKORD_Q
+                , A.DIV_CODE
+                , I.DIV_NAME
+                , SUBSTRING(A.PROD_END_DATE, 1, 4) + '-' + SUBSTRING(A.PROD_END_DATE, 5, 2) + '-' + SUBSTRING(A.PROD_END_DATE, 7, 2)  AS PROD_END_DATE
+                , A.REMARK
+                , @PRINT_USER           AS PRINT_USER                   --출력자 이름
+                , @VIEW_PRINT_INFO_YN   AS VIEW_PRINT_INFO_YN           --인쇄출력정보 표시여부
+
+            FROM           SOF110T A  WITH(NOLOCK)
+                INNER JOIN SOF100T B  WITH(NOLOCK)   ON B.COMP_CODE         = A.COMP_CODE
+                                                    AND B.DIV_CODE          = A.DIV_CODE
+                                                    AND B.ORDER_NUM         = A.ORDER_NUM
+                INNER JOIN BCM100T C1 WITH(NOLOCK)  ON  C1.COMP_CODE        = B.COMP_CODE
+                                                    AND C1.CUSTOM_CODE      = B.CUSTOM_CODE
+                INNER JOIN BPR100T C2 WITH(NOLOCK)   ON C2.COMP_CODE        = A.COMP_CODE
+                                                    AND C2.ITEM_CODE        = A.ITEM_CODE
+                INNER JOIN BPR200T C3 WITH(NOLOCK)   ON C3.COMP_CODE        = A.COMP_CODE
+                                                    AND C3.DIV_CODE         = A.DIV_CODE
+                                                    AND C3.ITEM_CODE        = A.ITEM_CODE
+                INNER JOIN BOR120T I WITH (NOLOCK) ON I.COMP_CODE   = A.COMP_CODE
+                                                  AND I.DIV_CODE    = A.DIV_CODE
+                INNER JOIN uniLITE.fnSplit(#{WKORD_NUM}, ',') AS J ON J.VALUE = A.ORDER_NUM + CONVERT(NVARCHAR(MAX),  A.SER_NO)
+
+            WHERE A.COMP_CODE           = @CompCode
+
+            ORDER BY C2.ITEM_NAME, A.ITEM_CODE, B.CUSTOM_CODE, A.EXP_ISSUE_DATE
+
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END
+    </select>
+
+    <select id="s_pmp111ukrv_ypServiceImpl.printList2" parameterType="Map" resultType="rMap">
+        BEGIN
+            SET NOCOUNT ON
+            SET ARITHABORT ON
+
+            DECLARE   @CompCode NVARCHAR(08)/* 법인코드 */
+                    , @UserId     NVARCHAR(100)/* 사용자ID  */
+                    , @RefItem   NVARCHAR(01)/* 명칭 참조 유형  */
+                    , @DateFormat  NVARCHAR(10)/* 날짜 포맷 유형 설정 */
+                    , @TimeSI     NVARCHAR(01)
+                    , @TimeSR     NVARCHAR(01)
+                    , @TimeSS     NVARCHAR(01)
+                    , @PRINT_USER          NVARCHAR(100)            --(선택) 출력자
+                    , @VIEW_PRINT_INFO_YN  NVARCHAR(01)             --인쇄출력정보 여부
+
+            SELECT @TimeSI = MAX(CASE WHEN SUB_CODE = 'SI' THEN REF_CODE1 ELSE '' END)
+                 , @TimeSR = MAX(CASE WHEN SUB_CODE = 'SR' THEN REF_CODE1 ELSE '' END)
+                 , @TimeSS = MAX(CASE WHEN SUB_CODE = 'SS' THEN REF_CODE1 ELSE '' END)
+             FROM BSA100T
+            WHERE COMP_CODE = @CompCode
+              AND MAIN_CODE = N'S048'
+              AND SUB_CODE IN(N'SI', N'SR', N'SS')
+
+            IF @TimeSI IS NULL
+                SET @TimeSI = 'N'
+            IF @TimeSR IS NULL
+                SET @TimeSR = 'N'
+            IF @TimeSS IS NULL
+                SET @TimeSS = 'N'
+
+            SET @CompCode = #{S_COMP_CODE}
+            SET @UserId   = #{S_USER_ID}
+
+            /*출력자*/
+            SELECT @PRINT_USER = USER_NAME
+                FROM BSA300T WITH(NOLOCK)
+                WHERE COMP_CODE = @CompCode
+                AND USER_ID = @UserId
+
+            /*출력정보 표시여부*/
+            SELECT @VIEW_PRINT_INFO_YN = SUB_CODE
+                FROM BSA100T WITH(NOLOCK)
+                WHERE COMP_CODE = @CompCode
+                AND MAIN_CODE = 'B249'
+                AND SUB_CODE != '$'
+                AND REF_CODE1 = 'Y'
+
+            /* 명칭 참조 유형 */
+            SELECT TOP 1 @RefItem = REF_ITEM
+              FROM BSA300T WITH(NOLOCK)
+             WHERE USER_ID = @UserId
+
+            SET @RefItem = ISNULL(@RefItem, N'0')
+
+            /* 날짜 포맷 유형 설정 */
+            SELECT TOP 1 @DateFormat = CODE_NAME
+              FROM BSA100T WITH(NOLOCK)
+             WHERE COMP_CODE = @CompCode
+               AND MAIN_CODE = N'B044'
+               AND REF_CODE1 = N'Y'
+
+            SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+            SELECT
+                   SUBSTRING(#{PACKING_DATE}, 1, 4) + '-' + SUBSTRING(#{PACKING_DATE}, 5, 2) + '-' + SUBSTRING(#{PACKING_DATE}, 7, 2)      AS PACKING_DATE     --포장일자
+                 , SUBSTRING(A.DVRY_DATE, 1, 4) + '-' + SUBSTRING(A.DVRY_DATE, 5, 2) + '-' + SUBSTRING(A.DVRY_DATE, 7, 2)   AS DVRY_DATE        --납기일자
+                 , B.CUSTOM_CODE
+                 , (CASE WHEN @RefItem = '1' THEN C1.CUSTOM_NAME1
+                        WHEN @RefItem = '2' THEN C1.CUSTOM_NAME2
+                                            ELSE C1.CUSTOM_NAME
+                    END)                                                        AS CUSTOM_NAME          --거래처
+
+                 , A.ITEM_CODE
+                 , K.CODE_NAME                                                  AS CUSTOM_TYPE          --거래처유형
+                 , C2.ITEM_NAME                                                                         --품목명
+                 , C2.SPEC                                                                              --규격
+                -- , A.ORDER_Q                                                                            --수량
+                 , CONVERT(DECIMAL(6,2),SUBSTRING(J.VALUE,CHARINDEX(':', J.VALUE)+1,LEN(J.VALUE))) AS ORDER_Q
+                 , A.REMARK                                             --비고
+                 , @PRINT_USER           AS PRINT_USER                   --출력자 이름
+                 , @VIEW_PRINT_INFO_YN   AS VIEW_PRINT_INFO_YN           --인쇄출력정보 표시여부
+            FROM           SOF110T A  WITH(NOLOCK)
+                INNER JOIN SOF100T B  WITH(NOLOCK)   ON B.COMP_CODE         = A.COMP_CODE
+                                                    AND B.DIV_CODE          = A.DIV_CODE
+                                                    AND B.ORDER_NUM         = A.ORDER_NUM
+                INNER JOIN BCM100T C1 WITH(NOLOCK)  ON  C1.COMP_CODE        = B.COMP_CODE
+                                                    AND C1.CUSTOM_CODE      = B.CUSTOM_CODE
+                INNER JOIN BPR100T C2 WITH(NOLOCK)   ON C2.COMP_CODE        = A.COMP_CODE
+                                                    AND C2.ITEM_CODE        = A.ITEM_CODE
+                INNER JOIN BPR200T C3 WITH(NOLOCK)   ON C3.COMP_CODE        = A.COMP_CODE
+                                                    AND C3.DIV_CODE         = A.DIV_CODE
+                                                    AND C3.ITEM_CODE        = A.ITEM_CODE
+                INNER JOIN BOR120T I WITH (NOLOCK) ON I.COMP_CODE   = A.COMP_CODE
+                                                  AND I.DIV_CODE    = A.DIV_CODE
+                INNER JOIN uniLITE.fnSplit(#{WKORD_NUM}, ',') AS J ON SUBSTRING(J.VALUE,1,CHARINDEX(':', J.VALUE)-1)  = A.ORDER_NUM + CONVERT(NVARCHAR(MAX),  A.SER_NO)
+                 LEFT JOIN BSA100T K WITH (NOLOCK) ON K.COMP_CODE   = A.COMP_CODE
+                                                  AND K.MAIN_CODE   = 'B055'
+                                                  AND K.SUB_CODE    = C1.AGENT_TYPE
+
+            WHERE A.COMP_CODE           = @CompCode
+
+            ORDER BY B.CUSTOM_CODE, A.EXP_ISSUE_DATE, A.ITEM_CODE
+
+            SET NOCOUNT OFF
+            SET ARITHABORT OFF
+        END
+    </select>
+
+
+
+
+
+
+	<!-- 삭제 전 출하지시등록 실행여부 체크로직 -->
+	<select id="s_pmp111ukrv_ypServiceImpl.checkBeforeDelete" parameterType="Map" resultType="rMap">
+		SELECT COUNT(COMP_CODE) AS COUNT
+		  FROM SRQ100T WITH(NOLOCK)
+		 WHERE COMP_CODE	= #{S_COMP_CODE}
+		   AND DIV_CODE		= #{DIV_CODE}
+		   AND ORDER_NUM	= #{ORDER_NUM}
+		   AND SER_NO		= #{SER_NO}
+		   AND LOT_NO		= #{LOT_NO}
+	</select>
+	<!-- 라벨 출력 후, 해당 데이터 저장  -->
+	<select id="s_pmp111ukrv_ypServiceImpl.savePrinted" parameterType="Map" resultType="rMap">--useGeneratedKeys="false"
+		--update 전 출하지시등록 실행여부 체크로직
+		DECLARE @CHECK_SRQ100T INT
+
+
+		SET @CHECK_SRQ100T = 0
+
+
+		SELECT @CHECK_SRQ100T = COUNT(COMP_CODE)
+		  FROM SRQ100T WITH(NOLOCK)
+		 WHERE COMP_CODE	= #{S_COMP_CODE}
+		   AND DIV_CODE		= #{DIV_CODE}
+		   AND ORDER_NUM	= #{ORDER_NUM}
+		   AND SER_NO		= #{SER_NO}
+		   AND LOT_NO		= #{LOT_NO}
+
+
+		MERGE INTO S_PMP111T_YP 							A
+		USING ( SELECT #{S_COMP_CODE}	AS COMP_CODE
+					 , #{DIV_CODE}		AS DIV_CODE
+					 , #{ITEM_CODE}		AS ITEM_CODE
+					 , #{ORDER_NUM}		AS ORDER_NUM
+					 , #{SER_NO}		AS SER_NO
+					 , #{LOT_NO}		AS LOT_NO
+			  )												B
+																	ON A.COMP_CODE	= B.COMP_CODE
+																   AND A.DIV_CODE	= B.DIV_CODE
+																   AND A.ITEM_CODE	= B.ITEM_CODE
+																   AND A.ORDER_NUM	= B.ORDER_NUM
+																   AND A.SER_NO		= B.SER_NO
+																   AND A.LOT_NO		= B.LOT_NO
+
+	<!-- 	WHEN MATCHED AND @CHECK_SRQ100T = 0 THEN -->
+		WHEN MATCHED  THEN
+			UPDATE SET
+				  LOT_NO			= #{LOT_NO}
+				, WONSANGI			= #{WONSANGI}
+	<if test="FLAG == &quot;1&quot;">
+				, PRODT_Q			= A.PRODT_Q + #{PRODT_Q}
+	</if>
+	<if test="FLAG == &quot;2&quot;">
+				, PRODT_Q			= #{PRODT_Q}
+	</if>
+				, PACK_QTY			= #{PACK_QTY}
+				, GR01_LABEL_Q		= #{GR01_LABEL_Q}
+				, DELI_LABEL_Q		= #{DELI_LABEL_Q}
+				, PRODT_YEAR		= #{PRODT_YEAR}
+				, EXP_DATE			= #{EXP_DATE}
+				, P_COUNT			= 1
+				, P_RECORD			= CONVERT(NVARCHAR(008), GETDATE(), 112) + '/' + #{S_USER_ID} + ';'
+				, UPDATE_DB_USER	= #{S_USER_ID}
+				, UPDATE_DB_TIME	= GETDATE()
+
+		WHEN NOT MATCHED THEN
+			INSERT (
+				  COMP_CODE
+				, DIV_CODE
+				, CUSTOM_CODE
+				, ITEM_CODE
+				, ORDER_UNIT
+				, ORDER_Q
+				, PRODT_Q
+				, LOT_NO
+				, WONSANGI
+				, PACK_QTY
+				, GR01_LABEL_Q
+				, DELI_LABEL_Q
+				, PRODT_YEAR
+				, EXP_DATE
+				, DVRY_DATE
+				, PROD_END_DATE
+				, EXP_ISSUE_DATE
+				, ORDER_NUM
+				, SER_NO
+				, P_COUNT
+				, P_RECORD
+				, INSERT_DB_USER
+				, INSERT_DB_TIME
+				, UPDATE_DB_USER
+				, UPDATE_DB_TIME
+			) VALUES (
+				  #{COMP_CODE}
+				, #{DIV_CODE}
+				, #{CUSTOM_CODE}
+				, #{ITEM_CODE}
+				, #{ORDER_UNIT}
+				, #{ORDER_Q}
+				, #{PRODT_Q}
+				, #{LOT_NO}
+				, #{WONSANGI}
+				, #{PACK_QTY}
+				, #{GR01_LABEL_Q}
+				, #{DELI_LABEL_Q}
+				, #{PRODT_YEAR}
+				, #{EXP_DATE}
+				, #{DVRY_DATE}
+				, #{PROD_END_DATE}
+				, #{EXP_ISSUE_DATE}
+				, #{ORDER_NUM}
+				, #{SER_NO}
+				, 1
+				, CONVERT(NVARCHAR(008), GETDATE(), 112) + '/' + #{S_USER_ID} + ';'
+				, #{S_USER_ID}
+				, GETDATE()
+				, #{S_USER_ID}
+				, GETDATE()
+				);
+
+		SELECT @CHECK_SRQ100T AS COUNT
+	</select>
+
+    <delete id="s_pmp111ukrv_ypServiceImpl.delPrinted" parameterType="Map">     /* 삭제 */
+        DELETE FROM S_PMP111T_YP
+         WHERE  COMP_CODE = #{S_COMP_CODE}
+           AND  DIV_CODE = #{DIV_CODE}
+           AND  ITEM_CODE = #{ITEM_CODE}
+           AND  ORDER_NUM = #{ORDER_NUM}
+           AND  SER_NO = #{SER_NO}
+           AND  LOT_NO = #{LOT_NO}
+    </delete>
+	<delete id="s_pmp111ukrv_ypServiceImpl.delSrq100t" parameterType="Map">     /* 삭제 */
+      <!--     DELETE  FROM SRQ100T
+           WHERE COMP_CODE	= #{S_COMP_CODE}
+		   AND DIV_CODE		= #{DIV_CODE}
+		   AND ORDER_NUM	= #{ORDER_NUM}
+		   AND SER_NO		= #{SER_NO}
+		   AND LOT_NO		= #{LOT_NO} -->
+    </delete>
+	<select id="s_pmp111ukrv_ypServiceImpl.checkIpAddr" parameterType="Map" resultType="rMap">
+	     SELECT  ISNULL(REF_CODE1,'') AS GREEN_S_IP_ADDR
+			     	,ISNULL(REF_CODE2,'') AS GREEN_B_IP_ADDR
+			     	,ISNULL(REF_CODE3,'') AS DELI_IP_ADDR
+	     FROM BSA100T WITH(NOLOCK)
+	     WHERE COMP_CODE = #{S_COMP_CODE}
+	        AND MAIN_CODE = 'B253'
+	        AND SUB_CODE != '$'
+	        AND SUB_CODE = #{S_USER_ID}
+
+	</select>
+
+	<!-- 친환경 데이터 생성  -->
+	<select id="s_pmp111ukrv_ypServiceImpl.greenLabelClipPrintList" parameterType="Map" resultType="rMap">
+		/* s_pmp111ukrv_ypServiceImpl.greenClipPrintList (친환경(소) 데이터 생성) */
+		DECLARE   @CompCode		NVARCHAR(08)	/* 법인코드				*/
+				, @UserId		NVARCHAR(100)	/* 사용자ID			*/
+				, @LangType		NVARCHAR(02)	/* 언어구분				*/
+				, @RefItem		NVARCHAR(01)	/* 명칭 참조 유형			*/
+				, @DateFormat	NVARCHAR(10)	/* 날짜 포맷 유형 설정		*/
+				, @charArray	NVARCHAR(23)	/* 인증번호 생성을 위한 array	*/
+
+		SET @CompCode = #{S_COMP_CODE}
+		SET @UserId   = #{S_USER_ID}
+		SET @LangType = #{S_LANG_CODE}
+		SET @charArray = 'A,B,C,D,E,F,G,H,I,J,K,L'
+
+		CREATE TABLE #TEMP_TABLE
+		(
+		        ORDER_NUM             	NVARCHAR(20)     NOT NULL
+		    ,   SER_NO            		NUMERIC(10) 	 NOT NULL
+		    ,   LOT_NO					NVARCHAR(50)     NULL
+		    ,   PRODT_YEAR				NVARCHAR(4)      NULL
+		    ,   ORIGIN					NVARCHAR(50)      NULL
+		    ,   PRDCER_CERT_NO			NVARCHAR(50)      NULL
+
+		)
+
+		DECLARE
+
+		@I INT,
+		@MAXNO INT
+		<foreach collection="ORDER_NUM_PARAMS" item="item" separator="" close="" open="">
+
+		SET @I = 1
+		SET @MAXNO = ${item.LABEL_Q}
+
+		WHILE @I &lt;= @MAXNO
+			BEGIN
+
+			INSERT INTO #TEMP_TABLE (
+				 ORDER_NUM
+				,SER_NO
+				,LOT_NO
+				,PRODT_YEAR
+				,ORIGIN
+				,PRDCER_CERT_NO
+			)VALUES(
+				'${item.ORDER_NUM}'
+				,${item.SERNO}
+				,'${item.LOT_NO}'
+				,'${item.PRODT_YEAR}'
+				,'${item.ORIGIN}'
+				,'${item.PRDCER_CERT_NO}'
+			)
+
+					SET @I = @I + 1
+			END
+
+		</foreach>
+
+
+		/* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+			FROM BSA300T WITH (NOLOCK)
+			WHERE USER_ID = @UserId
+
+		SET @RefItem = ISNULL(@RefItem, N'0')
+
+		/* 날짜 포맷 유형 설정 */
+		SELECT TOP 1 @DateFormat = CODE_NAME
+			FROM BSA100T WITH (NOLOCK)
+			WHERE COMP_CODE = @CompCode
+			AND MAIN_CODE = N'B044'
+			AND REF_CODE1 = N'Y'
+
+		SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+		SELECT A.COMP_CODE
+			 , D.COMP_NAME
+			 , A.DIV_CODE
+			 , CASE WHEN ISNULL(H1.CERT_NO, '') = '' THEN  '3-6-1'
+					ELSE H1.CERT_NO
+			   END															AS COMP_CERF_CODE
+			 , D.TELEPHON
+			 , D.ADDR
+			 , A.ORDER_NUM
+			 , A.SER_NO
+			 , A.ITEM_CODE
+			 , C.ITEM_NAME
+
+			 --, CASE WHEN ISNULL(E2.FARM_NAME, '') = '' THEN  ISNULL(E.CUSTOM_NAME + '(' + E1.CERT_NO + ')', '')
+				--		 ELSE ISNULL(E2.FARM_NAME + + '(' + E2.CERT_NO + ')', '')
+				--END															AS PRODT_PERSON
+
+
+			 --, CASE WHEN ISNULL(E2.FARM_NAME, '') = '' THEN  ISNULL(E3.REF_CODE1, '') + '(' + E.CUSTOM_NAME + ')'
+			--		ELSE E2.ORIGIN  + '(' + E2.FARM_NAME + ')'
+			 --  END													AS PRODT_PERSON
+
+
+			 , TP.PRODT_YEAR                								AS PRODT_YEAR
+			 , C.SALE_UNIT													AS SALE_UNIT
+			 , CASE WHEN ISNULL(E2.CERT_NO, '') != '' THEN ISNULL(E2.CERT_NO, '')
+					ELSE ISNULL(E1.CERT_NO, '')
+			   END																	AS BARCODE
+
+			 --, ISNULL(A.ITEM_CODE, '') + '-' + TP.LOT_NO + '-' +
+			 --  ISNULL(SUBSTRING(A.EXP_ISSUE_DATE,7, 2), '') + ISNULL((SELECT VALUE FROM fnSplit(@charArray, ',')
+			 --														   WHERE IDX = ISNULL(SUBSTRING(A.EXP_ISSUE_DATE,5, 2), '')), '') + ISNULL(SUBSTRING(A.EXP_ISSUE_DATE,3, 2), '') + '-' +
+			 --  ISNULL(B.CUSTOM_CODE, '')									AS MANAGE_NO		--이력번호
+			 , ISNULL(E1.CERT_ORG, '')										AS CENTER
+			 , CASE WHEN ISNULL(B2.CUSTOM_NAME1, '') = '' THEN ISNULL(B2.CUSTOM_NAME, '')
+			 		ELSE ISNULL(B2.CUSTOM_NAME1, '')
+			   END															AS CUSTOM_NAME
+			 , 1															AS LABEL_Q
+			 , TP.PRODT_YEAR
+			 , TP.ORIGIN													AS PRODT_PERSON
+			 , TP.PRDCER_CERT_NO											AS MANAGE_NO
+		  FROM		 SOF110T	  A WITH(NOLOCK)
+		  INNER JOIN SOF100T	  B WITH(NOLOCK)	ON B.COMP_CODE		= A.COMP_CODE
+		  										   AND B.DIV_CODE		= A.DIV_CODE
+		  										   AND B.ORDER_NUM		= A.ORDER_NUM
+		   LEFT  JOIN BCM100T	  B2 WITH(NOLOCK)	ON B2.COMP_CODE		= B.COMP_CODE
+												   AND B2.CUSTOM_CODE	= B.CUSTOM_CODE
+		  INNER JOIN BPR100T	  C WITH(NOLOCK)	ON C.COMP_CODE		= A.COMP_CODE
+		  										   AND C.ITEM_CODE		= A.ITEM_CODE
+		  INNER JOIN BOR100T	  D WITH(NOLOCK)	ON D.COMP_CODE		= A.COMP_CODE
+		  --LEFT  JOIN BCM100T	  E WITH(NOLOCK)	ON E.COMP_CODE		= B.COMP_CODE
+				--								   AND E.CUSTOM_CODE	= B.CUSTOM_CODE
+		  INNER JOIN #TEMP_TABLE TP 				ON TP.ORDER_NUM = A.ORDER_NUM
+			  						  			   AND TP.SER_NO 	= A.SER_NO
+		  LEFT  JOIN BCM100T	  E WITH(NOLOCK)	ON E.COMP_CODE		= B.COMP_CODE
+												   AND E.CHANNEL	= SUBSTRING(TP.LOT_NO, 1, 2)
+		  LEFT JOIN S_BCM100T_YP  E1 WITH(NOLOCK)	ON E1.COMP_CODE		= E.COMP_CODE
+												   AND E1.CUSTOM_CODE	= E.CUSTOM_CODE
+												   AND E1.TYPE			= SUBSTRING(TP.LOT_NO, 10, 1)
+												   AND ( A.EXP_ISSUE_DATE BETWEEN E1.APLY_START_DATE AND E1.APLY_END_DATE )
+		  LEFT  JOIN S_BCM106T_YP E2 WITH(NOLOCK)	ON E2.COMP_CODE		= E.COMP_CODE
+												   AND E2.CUSTOM_CODE	= E.CUSTOM_CODE
+												   AND E2.FARM_CODE		= SUBSTRING(TP.LOT_NO, 8, 2)
+		   LEFT JOIN BSA100T		E3 WITH(NOLOCK)	ON E3.COMP_CODE			= E.COMP_CODE
+												   AND E3.MAIN_CODE			= 'B056'
+												   AND E3.SUB_CODE			= E.AREA_TYPE
+--		  LEFT  JOIN MPO200T	  F  WITH(NOLOCK)	ON F.COMP_CODE		= A.COMP_CODE
+--												   AND F.DIV_CODE		= A.DIV_CODE
+--												   AND F.CUSTOM_CODE	= B.CUSTOM_CODE
+--												   AND F.ORDER_NUM		= A.ORDER_NUM
+--												   AND F.ORDER_SEQ		= A.SER_NO
+--		  LEFT  JOIN BTR100T	  G  WITH(NOLOCK)	ON G.COMP_CODE		= F.COMP_CODE
+--												   AND G.ITEM_CODE		= F.ITEM_CODE
+--												   AND G.ORDER_NUM		= F.ORDER_NUM
+		  LEFT JOIN BCM100T		  H WITH(NOLOCK)	ON H.COMP_CODE		= A.COMP_CODE
+												   AND H.CUSTOM_CODE	= (SELECT CODE_NAME FROM BSA100T WITH(NOLOCK)
+																			WHERE COMP_CODE = A.COMP_CODE
+																			  AND MAIN_CODE = 'T000'
+																			  AND SUB_CODE  = 'T000' )
+		  LEFT JOIN S_BCM100T_YP  H1 WITH(NOLOCK)	ON H1.COMP_CODE			= H.COMP_CODE
+												   AND H1.CUSTOM_CODE		= H.CUSTOM_CODE
+												   AND B.ORDER_DATE BETWEEN H1.APLY_START_DATE AND H1.APLY_END_DATE
+
+		 WHERE A.COMP_CODE		= #{S_COMP_CODE}
+		   AND A.DIV_CODE		= #{DIV_CODE}
+
+	</select>
+
+	<!-- 배송분류표 데이터 생성 -->
+	<select id="s_pmp111ukrv_ypServiceImpl.deliveryLabelClipPrintList" parameterType="Map" resultType="rMap">
+	/* s_pmp111ukrv_ypServiceImpl.deliveryLabelClipPrintList (배송분류표 데이터 생성) */
+		DECLARE   @CompCode		NVARCHAR(08)		/* 법인코드			*/
+				, @UserId		NVARCHAR(100)		/* 사용자ID		*/
+				, @LangType		NVARCHAR(2)			/* 언어구분			*/
+				, @RefItem		NVARCHAR(01)		/* 명칭 참조 유형		*/
+				, @DateFormat	NVARCHAR(10)		/* 날짜 포맷 유형 설정	*/
+
+		SET @CompCode = #{S_COMP_CODE}
+		SET @UserId   = #{S_USER_ID}
+		SET @LangType = #{S_LANG_CODE}
+
+		/* 명칭 참조 유형 */
+		SELECT TOP 1 @RefItem = REF_ITEM
+			FROM BSA300T WITH (NOLOCK)
+			WHERE USER_ID = @UserId
+
+		SET @RefItem = ISNULL(@RefItem, N'0')
+
+		/* 날짜 포맷 유형 설정 */
+		SELECT TOP 1 @DateFormat = CODE_NAME
+			FROM BSA100T WITH (NOLOCK)
+			WHERE COMP_CODE = @CompCode
+			AND MAIN_CODE = N'B044'
+			AND REF_CODE1 = N'Y'
+
+		SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+
+		SELECT A.COMP_CODE
+			 , B.CUSTOM_CODE
+			 , E.CUSTOM_NAME
+			 , A.ITEM_CODE
+			 , C.ITEM_NAME
+			  --, ISNULL(C.SPEC, '')									AS SPEC
+			 , ISNULL(A.ORDER_UNIT, 'KG')								AS SPEC
+			 , CEILING(A.ORDER_Q / F.PACK_QTY)								AS LABEL_Q
+			 , (CASE WHEN ISNULL(A.EXP_ISSUE_DATE, '') = ''
+							THEN ''
+							ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.EXP_ISSUE_DATE, 1, 4))
+																	, 'MM'  , SUBSTRING(A.EXP_ISSUE_DATE, 5, 2))
+																	, 'DD'  , SUBSTRING(A.EXP_ISSUE_DATE, 7, 2))
+					END)												AS DELIVERY_DATE		--배송일(출하예정일)
+			 , (CASE WHEN ISNULL(B.ORDER_DATE, '') = ''
+							THEN ''
+							ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.ORDER_DATE, 1, 4))
+																	, 'MM'  , SUBSTRING(B.ORDER_DATE, 5, 2))
+																	, 'DD'  , SUBSTRING(B.ORDER_DATE, 7, 2))
+					END)												AS ORDER_DATE			--발주일(수주등록일)
+			 , (CASE WHEN ISNULL(A.PROD_END_DATE, '') = ''
+							THEN ''
+							ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PROD_END_DATE, 1, 4))
+																	, 'MM'  , SUBSTRING(A.PROD_END_DATE, 5, 2))
+																	, 'DD'  , SUBSTRING(A.PROD_END_DATE, 7, 2))
+					END)												AS PACK_DATE			--포장일(생산완료일)
+			 , '10℃이하'													AS STORAGE_METHOD
+			 , (CASE WHEN ISNULL(A.PROD_END_DATE, '') = ''
+							THEN ''
+							ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(CONVERT(NVARCHAR(08), DATEADD(DAY,4,A.PROD_END_DATE), 112), 1, 4))
+																	, 'MM'  , SUBSTRING(CONVERT(NVARCHAR(08), DATEADD(DAY,4,A.PROD_END_DATE), 112), 5, 2))
+																	, 'DD'  , SUBSTRING(CONVERT(NVARCHAR(08), DATEADD(DAY,4,A.PROD_END_DATE), 112), 7, 2))
+					END)												AS EXP_DATE				--유통기한(생산완료일 + 3일)
+			 , ''															AS CAR_NUMBER
+			 , CASE WHEN ISNULL(TP.ORIGIN,'') = '' THEN '별도표기' ELSE TP.ORIGIN END 	AS ORIGIN				--원산지
+			 , TP.PRODT_YEAR 		                  						AS PRODT_YEAR
+			 , '특'															AS QUALITY_GRADE
+			 , D.COMP_NAME													AS SUPPLIER
+			 , '전처리작업일 : '	+ (CASE WHEN ISNULL(A.PROD_END_DATE, '') = ''
+										THEN ''
+										ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PROD_END_DATE, 1, 4))
+																				, 'MM'  , SUBSTRING(A.PROD_END_DATE, 5, 2))
+																				, 'DD'  , SUBSTRING(A.PROD_END_DATE, 7, 2))
+					END)													AS PRE_WORK_DATE
+			 , A.ORDER_NUM
+			 , A.SER_NO
+			 , TP.QTY_BOX 													AS BOX_Q
+			 , TP.ORDER_Q
+		  FROM		 SOF110T	  A WITH(NOLOCK)
+		  INNER JOIN SOF100T	  B WITH(NOLOCK)	ON B.COMP_CODE		= A.COMP_CODE
+		  										   AND B.DIV_CODE		= A.DIV_CODE
+		  										   AND B.ORDER_NUM		= A.ORDER_NUM
+		  INNER JOIN BPR100T	  C WITH(NOLOCK)	ON C.COMP_CODE		= A.COMP_CODE
+		  										   AND C.ITEM_CODE		= A.ITEM_CODE
+		  INNER JOIN BOR100T	  D WITH(NOLOCK)	ON D.COMP_CODE		= A.COMP_CODE
+		  INNER JOIN BCM100T	  E WITH(NOLOCK)	ON E.COMP_CODE		= B.COMP_CODE
+		  										   AND E.CUSTOM_CODE	= B.CUSTOM_CODE
+		  INNER JOIN BPR200T	  F WITH(NOLOCK)	ON F.COMP_CODE		= A.COMP_CODE
+												   AND F.DIV_CODE		= A.DIV_CODE
+												   AND F.ITEM_CODE		= A.ITEM_CODE
+		  INNER JOIN ##s_pmp110ukrv_ypService_TEMP1 TP 				ON TP.ORDER_NUM 	= A.ORDER_NUM
+			  						  			   						AND TP.SER_NO 		= A.SER_NO
+		 WHERE A.COMP_CODE		= #{S_COMP_CODE}
+		   AND A.DIV_CODE		= #{DIV_CODE}
+
+--		 GROUP BY A.COMP_CODE, D.COMP_NAME, A.DIV_CODE, A.ORDER_NUM, A.ITEM_CODE, C.ITEM_NAME, C.SPEC
+--				, A.PROD_END_DATE, A.ORDER_Q, B.CUSTOM_CODE, E.CUSTOM_NAME
+
+		IF  EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects  WHERE id=object_id('tempdb..##s_pmp110ukrv_ypService_TEMP1'))
+			DROP TABLE ##s_pmp110ukrv_ypService_TEMP1
+	</select>
+	<update id="s_pmp111ukrv_ypServiceImpl.insertDeliveryLabelTemp" parameterType="Map">
+		/*s_pmp111ukrv_ypServiceImpl.insertDeliveryLabelTemp*/
+			IF NOT EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects  WHERE id=object_id('tempdb..##s_pmp110ukrv_ypService_TEMP1'))
+
+			   BEGIN
+						CREATE TABLE ##s_pmp110ukrv_ypService_TEMP1
+						(
+						        ORDER_NUM             	NVARCHAR(20)     NOT NULL
+						    ,   SER_NO            		NVARCHAR(10) 	 NOT NULL
+						    ,   PACK_QTY				NVARCHAR(10)      NULL
+						    ,   ORDER_Q					NVARCHAR(10)      NULL
+						    ,   REMAIN_Q				NVARCHAR(10)      NULL
+						    ,   QTY_BOX					NVARCHAR(30)      NULL
+							,   QTY_PER_BOX				NVARCHAR(20)      NULL
+						    ,   PRODT_YEAR				NVARCHAR(4)      NULL
+						    ,   EXT_DATE				NVARCHAR(10)     NULL
+						    ,   ORIGIN					NVARCHAR(30)     NULL
+
+						)
+						INSERT INTO ##s_pmp110ukrv_ypService_TEMP1
+						   ( ORDER_NUM
+						   , SER_NO
+						   , PACK_QTY
+						   , REMAIN_Q
+						   , ORDER_Q
+						   , QTY_PER_BOX
+						   , QTY_BOX
+						   , PRODT_YEAR
+						   , EXT_DATE
+						   , ORIGIN
+						   )
+						VALUES
+						   (#{ORDER_NUM}
+						   ,#{SER_NO}
+						   ,#{PACK_QTY}
+						   ,#{REMAIN_Q}
+						   ,#{QTY_PER_BOX}
+						   ,#{QTY_PER_BOX}
+						   ,#{QTY_BOX}
+						   ,#{PRODT_YEAR}
+						   ,#{EXT_DATE}
+						   ,#{ORIGIN}
+						)
+		    	END
+		  ELSE
+		   		BEGIN
+		   			INSERT INTO ##s_pmp110ukrv_ypService_TEMP1
+					   ( ORDER_NUM
+					   , SER_NO
+					   , PACK_QTY
+					   , REMAIN_Q
+					   , ORDER_Q
+					   , QTY_PER_BOX
+					   , QTY_BOX
+					   , PRODT_YEAR
+					   , EXT_DATE
+					   , ORIGIN
+					   )
+					VALUES
+					   (#{ORDER_NUM}
+					   ,#{SER_NO}
+					   ,#{PACK_QTY}
+					   ,#{REMAIN_Q}
+					   ,#{QTY_PER_BOX}
+					   ,#{QTY_PER_BOX}
+					   ,#{QTY_BOX}
+					   ,#{PRODT_YEAR}
+					   ,#{EXT_DATE}
+					   ,#{ORIGIN}
+					)
+
+		   		END
+	</update>
+</mapper>

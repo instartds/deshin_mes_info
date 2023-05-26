@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cam210skrvServiceImpl">
+					
+	<select id="cam210skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+    DECLARE @CompCode NVARCHAR(8), @DivCode NVARCHAR(8), @InoutDateFr NVARCHAR(8), @InoutDateTo NVARCHAR(8), @WorkMonth NVARCHAR(8)
+
+    SET @CompCode    = #{S_COMP_CODE}
+    SET @DivCode     = #{DIV_CODE}          -- 조회조건 : 사업장
+    SET @WorkMonth   = #{WORK_MONTH}     	-- 조회조건 : 기준월
+		                                    -- 조회조건 : 품목계정
+		                                    -- 조회조건 : 품목코드
+		                                    -- 조회조건 : 생산구분(B014)
+
+-- cam210skrv / 간접재료비 품목별 집계현황(1단계)
+
+    SELECT A.ST_GB
+         , A.SUM_GB
+         , A.WORK_SHOP_CD
+         , A.WORK_SHOP_NAME
+         , A.ITEM_CODE
+         , A.ITEM_NAME
+         , A.SPEC
+         , A.INOUT_Q
+         , A.UNIT_COST
+         , A.AMT
+      FROM (SELECT A.ST_GB
+                 , ISNULL(A.SUM_GB,'1') AS SUM_GB
+                 , A.WORK_SHOP_CD
+                 , ISNULL(E.TREE_NAME,'')   AS WORK_SHOP_NAME
+                 , A.ITEM_CODE
+                 , ISNULL(C.ITEM_NAME,'')   AS ITEM_NAME
+                 , ISNULL(C.SPEC     ,'')   AS SPEC
+                 , SUM(A.INOUT_Q)           AS INOUT_Q
+                 , AVG(A.UNIT_COST)         AS UNIT_COST
+                 , SUM(A.AMT)               AS AMT
+              FROM            CAM210T A WITH (NOLOCK)
+        		   LEFT  JOIN BPR200T B WITH (NOLOCK) ON A.COMP_CODE  = B.COMP_CODE
+        		                                     AND A.DIV_CODE   = B.DIV_CODE
+        		                                     AND A.ITEM_CODE  = B.ITEM_CODE
+        		   LEFT  JOIN BPR100T C WITH (NOLOCK) ON A.COMP_CODE  = C.COMP_CODE
+        		                                     AND A.ITEM_CODE  = C.ITEM_CODE
+                   LEFT  JOIN BSA230T E WITH (NOLOCK) ON E.COMP_CODE  = A.COMP_CODE
+                                                     AND E.TYPE_LEVEL = A.DIV_CODE
+                                                     AND E.TREE_CODE  = A.WORK_SHOP_CD
+             WHERE A.COMP_CODE  = @CompCode
+               AND A.DIV_CODE   = @DivCode
+               AND A.WORK_MONTH = @WorkMonth
+               AND A.ST_GB      = '2'
+               <if  test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+               AND B.ITEM_ACCOUNT IN 
+               <foreach collection="ITEM_ACCOUNT" item="item" separator="," close=")" open="(">
+					#{item}
+				</foreach>
+	           </if>
+				<if test="@foren.Ognl@isNotEmpty(PROD_ITEM_CODE) and @foren.Ognl@isNotEmpty(PROD_ITEM_NAME)"> <!-- 20210819 수정: 품목코드 팝업창 정규화 -->
+					AND A.ITEM_CODE 			  = #{PROD_ITEM_CODE}
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(PROD_ITEM_CODE) and @foren.Ognl@isEmpty(PROD_ITEM_NAME)"> <!-- 20210819 수정: 품목코드 팝업창 정규화 -->
+					AND A.ITEM_CODE 	 	   LIKE #{PROD_ITEM_CODE} + '%'
+				</if>
+				<if test="@foren.Ognl@isEmpty(PROD_ITEM_CODE) and @foren.Ognl@isNotEmpty(PROD_ITEM_NAME)"> <!-- 20210819 수정: 품목코드 팝업창 정규화 -->
+					AND C.ITEM_NAME 	 LIKE '%' + #{PROD_ITEM_NAME} + '%'
+				</if>
+               <if  test="@foren.Ognl@isNotEmpty(SUM_GB)">
+               AND A.SUM_GB IN 
+               <foreach collection="SUM_GB" item="item" separator="," close=")" open="(">
+					#{item}
+				</foreach>
+	           </if>
+	         GROUP BY A.ST_GB, ISNULL(A.SUM_GB,'1'), A.WORK_SHOP_CD, A.ITEM_CODE, ISNULL(E.TREE_NAME,''), ISNULL(C.ITEM_NAME,''), ISNULL(C.SPEC     ,'')
+             HAVING SUM(A.INOUT_Q) != 0 OR SUM(A.AMT) != 0
+        
+            UNION ALL
+
+            SELECT A.ST_GB
+                 , ISNULL(A.SUM_GB,'1') AS SUM_GB
+                 , A.WORK_SHOP_CD
+                 , ISNULL(E.CUSTOM_NAME,'') AS WORK_SHOP_NAME
+                 , A.ITEM_CODE
+                 , ISNULL(C.ITEM_NAME,'')   AS ITEM_NAME
+                 , ISNULL(C.SPEC     ,'')   AS SPEC
+                 , SUM(A.INOUT_Q)           AS INOUT_Q
+                 , AVG(A.UNIT_COST)         AS UNIT_COST
+                 , SUM(A.AMT)               AS AMT
+              FROM            CAM210T A WITH (NOLOCK)
+        		   LEFT  JOIN BPR200T B WITH (NOLOCK) ON A.COMP_CODE   = B.COMP_CODE
+        		                                     AND A.DIV_CODE    = B.DIV_CODE
+        		                                     AND A.ITEM_CODE   = B.ITEM_CODE
+        		   LEFT  JOIN BPR100T C WITH (NOLOCK) ON A.COMP_CODE   = C.COMP_CODE
+        		                                     AND A.ITEM_CODE   = C.ITEM_CODE
+                   LEFT  JOIN BCM100T E WITH (NOLOCK) ON E.COMP_CODE   = A.COMP_CODE
+                                                     AND E.CUSTOM_CODE = A.WORK_SHOP_CD
+             WHERE A.COMP_CODE  = @CompCode
+               AND A.DIV_CODE   = @DivCode
+               AND A.WORK_MONTH = @WorkMonth
+               AND A.ST_GB      = '3'
+               <if  test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+               AND B.ITEM_ACCOUNT IN 
+               <foreach collection="ITEM_ACCOUNT" item="item" separator="," close=")" open="(">
+					#{item}
+				</foreach>
+	           </if>
+				<if test="@foren.Ognl@isNotEmpty(PROD_ITEM_CODE) and @foren.Ognl@isNotEmpty(PROD_ITEM_NAME)"> <!-- 20210819 수정: 품목코드 팝업창 정규화 -->
+					AND A.ITEM_CODE 			  = #{PROD_ITEM_CODE}
+				</if>
+				<if test="@foren.Ognl@isNotEmpty(PROD_ITEM_CODE) and @foren.Ognl@isEmpty(PROD_ITEM_NAME)"> <!-- 20210819 수정: 품목코드 팝업창 정규화 -->
+					AND A.ITEM_CODE 	 	   LIKE #{PROD_ITEM_CODE} + '%'
+				</if>
+				<if test="@foren.Ognl@isEmpty(PROD_ITEM_CODE) and @foren.Ognl@isNotEmpty(PROD_ITEM_NAME)"> <!-- 20210819 수정: 품목코드 팝업창 정규화 -->
+					AND C.ITEM_NAME 	 LIKE '%' + #{PROD_ITEM_NAME} + '%'
+				</if>
+               <if  test="@foren.Ognl@isNotEmpty(SUM_GB)">
+               AND A.SUM_GB IN 
+               <foreach collection="SUM_GB" item="item" separator="," close=")" open="(">
+					#{item}
+				</foreach>
+	           </if>
+             GROUP BY A.ST_GB, ISNULL(A.SUM_GB,'1'), A.WORK_SHOP_CD, A.ITEM_CODE, ISNULL(E.CUSTOM_NAME,''), ISNULL(C.ITEM_NAME,''), ISNULL(C.SPEC     ,'')
+             HAVING SUM(A.INOUT_Q) != 0 OR SUM(A.AMT) != 0) A
+     WHERE 1=1
+       <if  test="@foren.Ognl@isNotEmpty(ST_GB)">
+       AND A.ST_GB = #{ST_GB}
+       </if>
+     ORDER BY A.ST_GB, A.SUM_GB, A.WORK_SHOP_CD, A.ITEM_CODE
+            
+	</select>
+</mapper>

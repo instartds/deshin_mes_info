@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="aisc115skrvServiceImpl">
+	<select id="aisc115skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	
+	    DECLARE @COMP_CODE      NVARCHAR(08)        --(필수) 법인코드
+	          , @DPR_YEAR        NVARCHAR(04)        --(필수) FROM 기준년도
+	          , @ACCNT          NVARCHAR(16)        --(선택) 계정코드
+	          , @ACCNT_NAME     NVARCHAR(50)        --(선택) 계정명
+			  , @AsstDivi       NVARCHAR(01)        --자산구분(1:고정자산, 2:부외자산)
+	
+	    SET     @COMP_CODE      = #{S_COMP_CODE}
+	    SET     @DPR_YEAR        = #{DPR_YEAR}
+	    SET     @ACCNT          = #{ACCNT}
+	    SET     @ACCNT_NAME     = #{ACCNT_NAME}
+	
+	
+	    --SET     @AsstDivi       = N'1'
+		SELECT      A.ASST
+				 ,	A.ASST_NAME
+				 ,  A.ACCNT
+				 ,  A.ACCNT_NAME
+				 ,  A.ACQ_DATE
+				 ,  A.ACQ_AMT_I
+				 ,  B.GOV_GRANT_AMT_I   AS GOV_ACQ_AMT_I
+				 ,  A.DRB_YEAR
+			<foreach collection="DPR_YYMM_LIST" item="item" index="i">
+			 	 ,  A.DPR_YYMM_${i+1}
+			</foreach>
+				 ,  A.TM_DPR_TOT_I
+				 ,  A.TM_BALN_I
+			<foreach collection="DPR_YYMM_LIST" item="item" index="i">
+			 	, B.GOV_DPR_YYMM_${i+1}
+			</foreach>
+				, B.GOV_TM_DPR_TOT_I
+				, B.GOV_TM_BALN_I
+				, A.TM_DPR_TOT_I - ISNULL(B.GOV_TM_DPR_TOT_I, 0) AS YRDPRI_GOV_DPR_TOT_I 
+				, A.TM_BALN_I - ISNULL(B.GOV_TM_BALN_I, 0)       AS BALNDPRI_GOV_BALN_I 
+		FROM(
+		    SELECT ASST
+				 ,	ASST_NAME
+				 ,  ACCNT
+				 ,  ACCNT_NAME
+				 ,  ACQ_DATE
+				 ,  ACQ_AMT_I
+				 ,  DRB_YEAR
+				 <foreach collection="DPR_YYMM_LIST" item="item" index="i">
+				 	,[${item}] AS DPR_YYMM_${i+1}
+				 </foreach>
+				 ,  TM_DPR_TOT_I
+				 ,  TM_BALN_I
+				 
+			FROM (
+				SELECT  
+			            A.ASST
+			         ,  A.ASST_NAME
+					 ,  A.ACCNT
+					 ,  N1.ACCNT_NAME
+					 ,  A.ACQ_DATE
+				 	 ,  A.ACQ_AMT_I
+			         ,  B.DPR_YYMM
+			         ,  MAX(B.DRB_YEAR)  OVER (PARTITION BY  A.ASST
+											 ,  A.ASST_NAME
+											 ,  A.ACCNT
+											 ,  N1.ACCNT_NAME
+								 )  AS DRB_YEAR
+			         ,  LEFT(B.DPR_YYMM, 4) AS DPR_YEAR
+			         ,  ISNULL(B.TM_DPR_I, 0)   AS TM_DPR_I
+					 ,  ISNULL(A.FI_DPR_TOT_I, 0)	AS TM_DPR_TOT_I
+					 ,  ISNULL(A.FL_BALN_I, 0)		AS TM_BALN_I
+			    FROM            AISS300T    AS A  WITH (NOLOCK)
+			        INNER JOIN  AISC100T    AS B  WITH (NOLOCK) ON  B.COMP_CODE = A.COMP_CODE
+			                                                    AND B.ASST      = A.ASST
+			                                                    AND B.DPR_YYMM &gt;= @DPR_YEAR +'01'
+			                                                    AND B.DPR_YYMM &lt;= @DPR_YEAR +'12'
+					LEFT  JOIN ABA400T  AS N1 WITH (NOLOCK) ON  N1.COMP_CODE         = A.COMP_CODE
+			                                                AND N1.ACCNT             = A.ACCNT                                        
+			        
+			    WHERE A.COMP_CODE          = @COMP_CODE
+			    --AND   A.ASST_DIVI          = @AsstDivi
+			    AND   A.ASST_DIVI         IN ('1', '3')
+		        <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">     
+					AND A.DIV_CODE IN
+					<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+						#{item}
+					</foreach>         
+				</if>
+			    AND   ((A.ACCNT         LIKE       @ACCNT      + '%' AND @ACCNT        != '') OR (@ACCNT        = ''))
+			    AND   ((N1.ACCNT_NAME   LIKE '%' + @ACCNT_NAME + '%' AND @ACCNT_NAME   != '') OR (@ACCNT_NAME   = ''))
+			    AND   LEFT(B.DPR_YYMM, 4)        = @DPR_YEAR   
+		    
+		    ) as T01
+				 PIVOT (
+					SUM( TM_DPR_I ) 
+				 FOR DPR_YYMM IN 
+				 	<foreach collection="DPR_YYMM_LIST" item="item"  separator="," close=")" open="(">
+						   [${item}] 
+					</foreach> 
+			) as TP01
+		) AS A
+		LEFT JOIN (
+			SELECT  ASST
+					, GOV_GRANT_ACCNT
+					, ACCNT_NAME AS GOV_GRANT_ACCNT_NAME
+					, ACQ_DATE
+			 		, ACQ_AMT_I
+			 		, GOV_GRANT_AMT_I
+					<foreach collection="DPR_YYMM_LIST" item="item" index="i">
+					 	,[${item}] AS GOV_DPR_YYMM_${i+1}
+					 </foreach>
+			
+					, TM_DPR_TOT_I AS GOV_TM_DPR_TOT_I
+				 	, TM_BALN_I    AS GOV_TM_BALN_I
+			FROM (
+					SELECT  
+				            A.ASST
+				         ,  A.ASST_NAME
+						 ,  A.GOV_GRANT_ACCNT
+						 ,  N1.ACCNT_NAME
+						 ,  A.ACQ_DATE
+					 	 ,  A.ACQ_AMT_I
+					 	 ,  A.GOV_GRANT_AMT_I
+				         ,  B.DPR_YYMM
+				         ,  MAX(B.DRB_YEAR)  OVER (PARTITION BY  A.ASST
+												 ,  A.ASST_NAME
+												 ,  A.GOV_GRANT_ACCNT
+												 ,  N1.ACCNT_NAME
+									 )  AS DRB_YEAR
+				         ,  LEFT(B.DPR_YYMM, 4) AS DPR_YEAR
+				         ,  ISNULL(B.GOV_GRANT_TM_DPR_I , 0) AS TM_DPR_I
+						 ,  ISNULL(A.GOV_GRANT_DPR_TOT_I, 0) AS TM_DPR_TOT_I
+						 ,  ISNULL(A.GOV_GRANT_BALN_I   , 0) AS TM_BALN_I
+				    FROM            AISS300T    AS A  WITH (NOLOCK)
+				        INNER JOIN  AISC100T    AS B  WITH (NOLOCK) ON  B.COMP_CODE = A.COMP_CODE
+				                                                    AND B.ASST      = A.ASST
+				                                                    AND B.DPR_YYMM &gt;= @DPR_YEAR +'01'
+				                                                    AND B.DPR_YYMM &lt;= @DPR_YEAR +'12'
+						LEFT  JOIN ABA400T  AS N1 WITH (NOLOCK) ON  N1.COMP_CODE         = A.COMP_CODE
+				                                                AND N1.ACCNT             = A.GOV_GRANT_ACCNT                                        
+				        
+				    WHERE A.COMP_CODE          = @COMP_CODE
+				    AND   A.ASST_DIVI         IN ('1', '3')
+			        <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">     
+						AND A.DIV_CODE IN
+						<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+							#{item}
+						</foreach>         
+					</if>
+				    AND   ((A.ACCNT         LIKE       @ACCNT      + '%' AND @ACCNT        != '') OR (@ACCNT        = ''))
+				    AND   ((N1.ACCNT_NAME   LIKE '%' + @ACCNT_NAME + '%' AND @ACCNT_NAME   != '') OR (@ACCNT_NAME   = ''))
+				    AND   LEFT(B.DPR_YYMM, 4)        = @DPR_YEAR   
+			    
+			    ) as T02 
+					 PIVOT (
+						SUM( TM_DPR_I ) 
+					 FOR DPR_YYMM IN 
+					 	<foreach collection="DPR_YYMM_LIST" item="item"  separator="," close=")" open="(">
+							   [${item}] 
+						</foreach> 
+				) as TP02
+			
+		) B   ON B.ASST = A.ASST
+
+	    ORDER BY A.ASST
+	
+	</select>
+</mapper>

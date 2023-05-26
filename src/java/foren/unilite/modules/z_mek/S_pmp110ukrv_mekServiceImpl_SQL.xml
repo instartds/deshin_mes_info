@@ -1,0 +1,434 @@
+<?xml version="1.0" encoding="UTF-8"?><!---->
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_pmp110ukrv_mekServiceImpl">
+	
+	<select id="s_pmp110ukrv_mekServiceImpl.selectList" parameterType="Map" resultType="rMap">
+			SELECT  A.DIV_CODE
+				 , A.SEQ
+				 , A.ITEM_CODE
+				 , C1.ITEM_NAME
+				 , C1.SPEC
+				 , C1.STOCK_UNIT
+				 , A.ALLOCK_Q
+				 , A.UNIT_Q
+			  FROM		 PMP200T A WITH (NOLOCK)
+			  INNER JOIN PMP100T B WITH (NOLOCK) ON B.COMP_CODE     = A.COMP_CODE
+												AND B.DIV_CODE      = A.DIV_CODE
+												AND B.WKORD_NUM     = A.WKORD_NUM
+												AND B.WORK_SHOP_CODE     = A.WORK_SHOP_CODE
+			  INNER JOIN BPR100T C1 WITH(NOLOCK) ON C1.COMP_CODE	= A.COMP_CODE
+												AND C1.ITEM_CODE	= A.ITEM_CODE
+			 WHERE A.COMP_CODE		= #{S_COMP_CODE}
+			   AND A.DIV_CODE		= #{DIV_CODE}
+			   AND A.WKORD_NUM		= #{WKORD_NUM}
+			   --AND B.TEMPC_03		= 'Y'
+			   AND B.LINE_END_YN	= 'Y'
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+			   AND B.ITEM_CODE	= #{ITEM_CODE}
+			</if>
+			 ORDER BY A.WKORD_NUM, A.SEQ
+	</select>
+	<select id="s_pmp110ukrv_mekServiceImpl.updateList" parameterType="Map"  resultType="rMap">
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+			
+			DECLARE @CompCode       NVARCHAR(08)    /* 법인코드            */
+				  , @DivCode        NVARCHAR(08)    /* 사업장코드          */
+				  , @WkordNum       NVARCHAR(20)    /* 작지번호            */
+				  , @WorkShopCode   NVARCHAR(08)    /* 작업장코드          */
+				  , @ProdWkordDate  NVARCHAR(08)    /* 작지일,실적일       */
+				  , @ItemCode       NVARCHAR(20)    /* 품목코드            */
+				  , @WkordQ         NUMERIC(30,6)   /* 작지량              */
+				  , @LotNo          NVARCHAR(20)    /* LOT NO              */
+				  , @Remark         NVARCHAR(1000)  /* 특기사항            */
+				  , @ProdtNum       NVARCHAR(20)    /* 생산실적번호        */
+				  , @UserId         NVARCHAR(100)   /* 사용자ID            */
+				
+				  , @WhCode         NVARCHAR(08)    /* 자재출고창고        */
+				  , @GoodWhCode     NVARCHAR(08)    /* 양품입고창고        */
+				  , @GoodWhCellCode NVARCHAR(20)    /* 양품입고창고Cell    */
+				  , @GoodPrsn       NVARCHAR(10)    /* 양품입고담당자      */
+				  , @BadWhCode      NVARCHAR(08)    /* 불량입고창고        */
+				  , @BadWhCellCode  NVARCHAR(20)    /* 불량입고창고Cell    */
+				  , @BadPrsn        NVARCHAR(10)    /* 불량입고담당자      */
+				  , @ItemStatus		NVARCHAR(10)	/* 양불구분 1:양품, 2:불량*/
+				  , @ReworkType		NVARCHAR(10)	/* 재작업유형 */
+				  , @ErrorDesc      NVARCHAR(2000)
+			
+			SET @CompCode      = #{S_COMP_CODE}
+			SET @DivCode       = #{DIV_CODE}
+			SET @WorkShopCode  = #{WORK_SHOP_CODE}
+			SET @ProdWkordDate = #{WORK_DATE}
+			SET @ItemCode      = #{ITEM_CODE}
+			SET @WkordQ        = #{WKORD_Q}
+			SET @LotNo         = #{LOT_NO}
+			SET @Remark        = #{ANSWER}
+			SET @UserId        = #{S_USER_ID}
+			SET @ItemStatus	   = #{ITEM_STATUS}
+			SET @ReworkType		= #{REWORK_TYPE}
+		
+			-- 1.작업지시번호 생성
+			EXEC unilite.SP_GetAutoNumComp @CompCode, @DivCode, 'PMP100T', 'P', @ProdWkordDate, '1', @WkordNum OUTPUT    
+			
+			-- 2.작업지시정보 생성 (REWORK_YN = 'Y' 재작업지시에서 생성된 작업지시)
+			INSERT INTO PMP100T
+				 ( COMP_CODE        , DIV_CODE          , WKORD_NUM         , PROG_WORK_CODE    , WORK_SHOP_CODE
+				 , PRODT_WKORD_DATE , PRODT_WKORD_TIME  , PRODT_START_DATE  , PRODT_START_TIME  , PRODT_END_DATE
+				 , PRODT_END_TIME   , ITEM_CODE         , WKORD_Q           , WORK_Q            , PRODT_Q
+				 , BAD_Q            , LINE_SEQ          , PROG_UNIT         , PROG_UNIT_Q       , PROG_RATE
+				 , LINE_END_YN      , WORK_END_YN       , REWORK_YN         , STOCK_EXCHG_TYPE  , WKORD_STATUS
+				 , TOP_WKORD_NUM    , WK_PLAN_NUM       , CUSTOM_CODE       , PROJECT_NO        , PJT_CODE
+				 , LOT_NO           , REMARK            , MOLD_CODE         , EQUIP_CODE        , NOW_DEPR
+				 , PRODT_PRSN       , PRODT_MACH        , PRODT_TIME        , DAY_NIGHT         , WKORD_PRSN
+				 , REMARK2          , SEMI_ITEM_CODE    , SO_NUM            , SO_SEQ            , BOX_TYPE
+				 , BOX_WKORD_Q      , EXPIRATION_DAY    , CAVIT_BASE_Q      , CAPA_HR_Q         , CAPA_DAY_Q
+				 , EXPIRATION_DATE  , EQUIP_CODE2       , GAMMA             , CUSTOM_NAME       , PRODT_DATE
+				 , ORDER_NUM        , SER_NO            , WKORD_TYPE        , PRINT_YN          , PROGRS_KIND_CD
+				 , PBL_LINE_NO      , RAW_CELL_CODE     , TEMPC_03			, REWORK_TYPE
+				 , INSERT_DB_USER   , INSERT_DB_TIME    , UPDATE_DB_USER    , UPDATE_DB_TIME )
+			SELECT COMP_CODE        , DIV_CODE          , @WkordNum         , PROG_WORK_CODE    , WORK_SHOP_CODE
+				 , @ProdWkordDate   , NULL              , @ProdWkordDate    , NULL              , @ProdWkordDate
+				 , NULL             , @ItemCode         , @WkordQ           , 0                 , 0
+				 , 0                , ROW_NUMBER() OVER (ORDER BY PROG_WORK_CODE)
+				                                        , PROG_UNIT         , 1                 , 0 
+				 , LAST_YN          , 'N'               , 'Y'               , ''                , '2'
+				 , @WkordNum        , ''                , ''                , ''                , ''
+				 , @LotNo           , @Remark           , ''                , ''                , 0
+				 , ''               , ''                , ''                , ''                , ''
+				 , ''               , NULL              , NULL              , NULL              , NULL
+				 , NULL             , 1                 , 0                 , 0                 , 0
+				 , @ProdWkordDate   , NULL              , NULL              , NULL              , @ProdWkordDate
+				 , NULL             , NULL              , 'A'               , 'N'               , NULL
+				 , NULL             , NULL              , NULL				, @ReworkType
+				 , @UserId          , GETDATE()         , @UserId           , GETDATE()
+			  FROM PBS200T WITH (NOLOCK)
+			 WHERE COMP_CODE      = @CompCode
+			   AND DIV_CODE       = @DivCode
+			   AND WORK_SHOP_CODE = @WorkShopCode
+			   AND USE_YN         = 'Y'
+		
+			-- 3.예약정보 생성 
+			SELECT @WhCode = WH_CODE FROM BSA230T WITH (NOLOCK) WHERE COMP_CODE = @CompCode AND TREE_CODE = @WorkShopCode
+			
+			SET @WhCode = ISNULL(@WhCode, '')
+	
+			INSERT INTO PMP200T
+				 ( COMP_CODE        , DIV_CODE          , WKORD_NUM         , ITEM_CODE         , REF_TYPE
+				 , PATH_CODE        , WORK_SHOP_CODE    , ALLOCK_Q          , OUTSTOCK_REQ_DATE , OUTSTOCK_REQ_Q
+				 , UNIT_Q           , LOSS_RATE         , OUTSTOCK_NUM      , OUT_METH          , REF_ITEM_CODE
+				 , EXCHG_YN         , REMARK            , PROJECT_NO        , PJT_CODE          , LOT_NO
+				 , GRANT_TYPE       , WH_CODE           , PRODT_Q           , ONHAND_Q          , IN_PLAN_Q
+				 , OUT_PLAN_Q       , SEQ               , GROUP_CODE        , WEIGHT_RATE
+				 , INSERT_DB_USER   , INSERT_DB_TIME    , UPDATE_DB_USER    , UPDATE_DB_TIME )
+			SELECT @CompCode        , @DivCode          , @WkordNum         , ITEM_CODE         , ''
+				 , '0'              , @WorkShopCode     , ALLOCK_Q          , '00000000'        , 0
+				 , UNIT_Q           , 0                 , '*'               , '1'               , NULL
+				 , 'N'              , ''                , ''                , ''                , ''
+				 , '2'              , @WhCode           , 0                 , 0                 , 0
+				 , 0                , SEQ               , NULL              , 1
+				 , @UserId          , GETDATE()         , @UserId           , GETDATE()
+			 FROM L_PMP200T_XLS WITH (NOLOCK)
+			WHERE _EXCEL_JOBID  = #{_EXCEL_JOBID}
+			  AND USE_YN = 'Y'
+			
+			-- 4.생산실적번호 생성
+			EXEC unilite.SP_GetAutoNumComp @CompCode, @DivCode, 'PMR100T', 'P', @ProdWkordDate, '1', @ProdtNum OUTPUT    
+			
+			-- 5.생산실적정보생성
+			INSERT INTO PMR100T
+				 ( COMP_CODE        , DIV_CODE          , PRODT_NUM         , PRODT_DATE        , PROG_WORK_CODE
+				 , PROG_WKORD_Q     , WORK_Q            , PASS_Q            , GOOD_WORK_Q       , BAD_WORK_Q
+				 , WKORD_NUM        , LINE_END_YN       , WK_PLAN_NUM       , CONTROL_STATUS    , MAN_HOUR
+				 , REMARK           , PROJECT_NO        , PJT_CODE          , LOT_NO            , FR_SERIAL_NO
+				 , TO_SERIAL_NO     , FR_TIME           , TO_TIME           , PROG_PRODT_NUM    , PROG_PRODT_Q
+				 , PROG_EXCEED_Q    , MOLD_CODE         , EQUIP_CODE        , NOW_DEPR          , PRODT_PRSN
+				 , PRODT_MACH       , PRODT_TIME        , DAY_NIGHT         , PQC               , BOX_TRNS_RATE
+				 , BOX_Q            , SAVING_Q          , MAN_CNT           , HAZARD_CHECK      , MICROBE_CHECK
+				 , BAD_QC_Q         , BAD_PROG_Q        , PRODT_START_TIME  , PRODT_END_TIME    , PIECE
+				 , EXPIRATION_DATE  , YIELD             , LOSS_Q            , ETC_Q
+				 , INSERT_DB_USER   , INSERT_DB_TIME    , UPDATE_DB_USER    , UPDATE_DB_TIME )
+			SELECT COMP_CODE        , DIV_CODE          , @ProdtNum         , PRODT_WKORD_DATE  , PROG_WORK_CODE
+				 , WKORD_Q          , WKORD_Q           , CASE WHEN @ItemStatus='1' THEN WKORD_Q ELSE 0 END, CASE WHEN @ItemStatus='1' THEN WKORD_Q ELSE 0 END, CASE WHEN @ItemStatus='2' THEN WKORD_Q ELSE 0 END
+				 , WKORD_NUM        , LINE_END_YN       , WK_PLAN_NUM       , '9'               , 0
+				 , REMARK           , PROJECT_NO        , PJT_CODE          , LOT_NO            , ''
+				 , ''               , NULL              , NULL              , NULL              , 0
+				 , 0                , NULL              , ''                , 0                 , ' '
+				 , NULL             , NULL              , DAY_NIGHT         , NULL              , 0
+				 , 0                , 0                 , 0                 , 'N'               , 'N'
+				 , NULL             , NULL              , NULL              , NULL              , 0
+				 , EXPIRATION_DATE  , 0                 , 0                 , 0
+				 , @UserId          , GETDATE()         , @UserId           , GETDATE()
+			  FROM PMP100T WITH (NOLOCK)
+			 WHERE COMP_CODE   = @CompCode
+			   AND DIV_CODE    = @DivCode
+			   AND WKORD_NUM   = @WkordNum
+			   AND LINE_END_YN = 'Y'
+			
+			SELECT @WkordNum AS WKORD_NUM ,  @ErrorDesc AS ERROR_DESC
+			
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+	</select>
+	<insert id="s_pmp110ukrv_mekServiceImpl.insertExcel" parameterType="Map">
+		/* s_pmp110ukrv_mekServiceImpl.insertExcel */
+		INSERT INTO L_PMP200T_XLS (
+			   _EXCEL_JOBID
+			 , _EXCEL_ROWNUM
+			 , _EXCEL_HAS_ERROR
+			 , _EXCEL_ERROR_MSG
+			 , COMP_CODE
+			 , DIV_CODE
+			 , ITEM_CODE
+			 , UNIT_Q
+			 , WH_CODE
+			 , ALLOCK_Q
+			 , LOT_NO
+		) VALUES (
+			   #{_EXCEL_JOBID}
+			 , #{_EXCEL_ROWNUM}
+			 , #{_EXCEL_HAS_ERROR,jdbcType=VARCHAR}
+			 , #{_EXCEL_ERROR_MSG,jdbcType=VARCHAR}
+			 , #{S_COMP_CODE}
+			 , #{DIV_CODE}
+			 , #{ITEM_CODE}
+			 , #{UNIT_Q}
+			 , #{WH_CODE}
+			 , ISNULL(CONVERT(INT,#{UNIT_Q}),0) * ISNULL(CONVERT(INT,#{WKORD_Q}),0)
+			 , #{LOT_NO}
+		)
+	</insert>
+	<update id="s_pmp110ukrv_mekServiceImpl.updateExcel" parameterType="Map">
+		/* s_pmp110ukrv_mekServiceImpl.insertExcel */
+		UPDATE L_PMP200T_XLS
+		   SET USE_YN		= 'Y'
+			 , SEQ			= #{SEQ}
+			 , UNIT_Q		= #{UNIT_Q}
+			 , ALLOCK_Q		= #{ALLOCK_Q}
+		WHERE _EXCEL_JOBID  = #{_EXCEL_JOBID}
+		  AND _EXCEL_ROWNUM = #{_EXCEL_ROWNUM}
+		
+	</update>
+	<update id="s_pmp110ukrv_mekServiceImpl.excelValidate" parameterType="Map">
+		/* s_pmp110ukrv_mekServiceImpl.insertExcel */
+		UPDATE A
+		   SET _EXCEL_HAS_ERROR =  CASE WHEN ISNULL(B.ITEM_CODE, '') = '' THEN 'Y'
+										ELSE 'N'
+								   END
+			 , _EXCEL_ERROR_MSG =  CASE WHEN ISNULL(B.ITEM_CODE, '') = '' THEN '등록된 품목이 없습니다.'
+										ELSE ''
+								   END
+			 , A.ITEM_NAME		=  C.ITEM_NAME
+			 , A.SPEC			=  C.SPEC
+			 , A.STOCK_UNIT		=  C.STOCK_UNIT
+		  FROM				L_PMP200T_XLS A
+				LEFT  JOIN  BPR200T B ON B.COMP_CODE = A.COMP_CODE
+									 AND B.DIV_CODE  = A.DIV_CODE
+									 AND B.ITEM_CODE = A.ITEM_CODE
+				LEFT  JOIN  BPR100T C ON C.COMP_CODE = A.COMP_CODE
+									 AND C.ITEM_CODE = A.ITEM_CODE
+		WHERE _EXCEL_JOBID = #{_EXCEL_JOBID}
+		
+	</update>
+	<select id="s_pmp110ukrv_mekServiceImpl.selectExcelUploadSheet1" parameterType="Map" resultType="rMap">
+		SELECT
+			    _EXCEL_JOBID
+			  , _EXCEL_ROWNUM
+			  , _EXCEL_HAS_ERROR
+			  , _EXCEL_ERROR_MSG
+			  , DIV_CODE
+			  , ITEM_CODE
+			  , ITEM_NAME
+			  , SPEC
+			  , STOCK_UNIT
+			  , UNIT_Q
+			  , ALLOCK_Q
+			  , WH_CODE
+			  , LOT_NO
+		FROM  L_PMP200T_XLS
+		WHERE _EXCEL_JOBID = #{_EXCEL_JOBID}  
+	</select>
+	<update id="s_pmp110ukrv_mekServiceImpl.deleteAll" parameterType="Map">
+	BEGIN
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+	
+	    DECLARE @CompCode       NVARCHAR(08)    /* 법인코드            */
+	          , @DivCode        NVARCHAR(08)    /* 사업장코드          */
+	          , @WkordNum       NVARCHAR(20)    /* 작지번호            */
+	          , @ProdtNum       NVARCHAR(20)    /* 생산실적번호        */
+	          , @UserId         NVARCHAR(100)   /* 사용자ID            */
+	
+	          , @GoodWhCode     NVARCHAR(08)    /* 양품입고창고        */
+	          , @GoodWhCellCode NVARCHAR(20)    /* 양품입고창고Cell    */
+	          , @GoodPrsn       NVARCHAR(10)    /* 양품입고담당자      */
+	          , @BadWhCode      NVARCHAR(08)    /* 불량입고창고        */
+	          , @BadWhCellCode  NVARCHAR(20)    /* 불량입고창고Cell    */
+	          , @BadPrsn        NVARCHAR(10)    /* 불량입고담당자      */
+	
+	          , @ErrorDesc      NVARCHAR(2000)  
+	
+	    SET @CompCode      = #{S_COMP_CODE}
+	    SET @DivCode       = #{DIV_CODE}
+	    SET @WkordNum      = #{WKORD_NUM}
+	    SET @UserId        = #{S_USER_ID}
+	
+	    -- 1.생산실적번호 조회
+	    SELECT TOP 1 @ProdtNum = PRODT_NUM
+	      FROM PMR100T WITH (NOLOCK)
+	     WHERE COMP_CODE   = @CompCode
+	       AND DIV_CODE    = @DivCode
+	       AND WKORD_NUM   = @WkordNum
+	       AND LINE_END_YN = 'Y'
+	
+	    -- 2.생산실적정보 삭제
+	    DELETE FROM PMR100T
+	     WHERE COMP_CODE   = @CompCode
+	       AND DIV_CODE    = @DivCode
+	       AND WKORD_NUM   = @WkordNum
+	
+	    -- 5.예약정보 삭제
+	    DELETE FROM PMP200T
+	     WHERE COMP_CODE   = @CompCode
+	       AND DIV_CODE    = @DivCode
+	       AND WKORD_NUM   = @WkordNum
+	
+	    -- 6.작지정보 삭제
+	    DELETE FROM PMP100T
+	     WHERE COMP_CODE   = @CompCode
+	       AND DIV_CODE    = @DivCode
+	       AND WKORD_NUM   = @WkordNum
+	
+	    SET NOCOUNT OFF
+	    SET ARITHABORT OFF
+	END
+	</update>
+	<select id="s_pmp110ukrv_mekServiceImpl.selectWorkNum" parameterType="Map" resultType="rMap">
+		/* uniLITE5Popup.CPopup[fnGetWkordNum] Query01   조회창  */
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+			
+			DECLARE   @CompCode		NVARCHAR(08)	/* 법인코드          */
+					, @UserId		NVARCHAR(100)	/* 사용자ID         */
+					, @LangType		NVARCHAR(2)		/* 언어구분          */
+					, @RefItem		NVARCHAR(01)	/* 명칭 참조 유형      */
+					, @DateFormat	NVARCHAR(10)	/* 날짜 포맷 유형 설정     */
+			
+			SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_ID}
+			SET @LangType = #{S_LANG_CODE}
+			
+			/* 명칭 참조 유형 */
+			SELECT TOP 1 @RefItem = REF_ITEM
+			  FROM BSA300T WITH (NOLOCK)
+			 WHERE USER_ID = @UserId
+			
+			SET @RefItem = ISNULL(@RefItem, N'0')
+			
+			/* 날짜 포맷 유형 설정 */
+			SELECT TOP 1 @DateFormat = CODE_NAME
+			  FROM BSA100T WITH (NOLOCK)
+			 WHERE COMP_CODE = @CompCode
+			   AND MAIN_CODE = N'B044'
+			   AND REF_CODE1 = N'Y'
+			
+			SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+			
+			/* 데이터 조회 */
+			SELECT A.WKORD_NUM
+				 , A.ITEM_CODE
+				 , CASE WHEN @RefItem = '0' THEN C1.ITEM_NAME
+						WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+						WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+						ELSE					 C1.ITEM_NAME
+				   END													AS ITEM_NAME
+				 , C1.SPEC
+				 ,(CASE WHEN ISNULL(A.PRODT_WKORD_DATE, '') = ''
+						THEN ''
+						ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PRODT_WKORD_DATE, 1, 4))
+																, 'MM'  , SUBSTRING(A.PRODT_WKORD_DATE, 5, 2))
+																, 'DD'  , SUBSTRING(A.PRODT_WKORD_DATE, 7, 2))
+				   END)													AS PRODT_WKORD_DATE
+				 ,(CASE WHEN ISNULL(A.PRODT_START_DATE, '') = ''
+						THEN ''
+						ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PRODT_START_DATE, 1, 4))
+																, 'MM'  , SUBSTRING(A.PRODT_START_DATE, 5, 2))
+																, 'DD'  , SUBSTRING(A.PRODT_START_DATE, 7, 2))
+				   END)													AS PRODT_START_DATE
+				 ,(CASE WHEN ISNULL(A.PRODT_END_DATE, '') = ''
+						THEN ''
+						ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PRODT_END_DATE, 1, 4))
+																, 'MM'  , SUBSTRING(A.PRODT_END_DATE, 5, 2))
+																, 'DD'  , SUBSTRING(A.PRODT_END_DATE, 7, 2))
+				   END)													AS PRODT_END_DATE
+				 , CASE WHEN ISNULL(A.PROG_UNIT_Q, 0) = 0 THEN 0
+						ELSE ISNULL(A.WKORD_Q, 0) / ISNULL(A.PROG_UNIT_Q, 0)
+				   END													AS WKORD_Q
+				 , A.WK_PLAN_NUM
+				 , A.DIV_CODE
+				 , A.WORK_SHOP_CODE
+				 , B.ORDER_NUM
+				 , ISNULL(B.ORDER_Q, 0)									AS ORDER_Q
+				 , A.REMARK
+				 , ISNULL(A.PRODT_Q, 0)									AS PRODT_Q
+				 , C1.STOCK_UNIT
+				 , A.PROJECT_NO
+				 , A.PJT_CODE
+				 , A.LOT_NO
+				 , A.REWORK_YN
+				 , A.REWORK_TYPE
+				 , A.STOCK_EXCHG_TYPE
+				 , B.REMARK  AS CUSTOM
+				 --20180705 추가
+				 , A.PRODT_PRSN
+				 , A.PRODT_MACH
+				 , A.PRODT_TIME
+				 , A.DAY_NIGHT
+				 , A.WKORD_PRSN
+			  FROM				PMP100T A  WITH (NOLOCK)
+					LEFT  JOIN  PPL100T B  WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+														AND B.DIV_CODE    = A.DIV_CODE
+														AND B.WK_PLAN_NUM = A.WK_PLAN_NUM
+					INNER JOIN  BPR100T C1 WITH (NOLOCK) ON C1.COMP_CODE  = A.COMP_CODE
+														AND C1.ITEM_CODE  = A.ITEM_CODE
+			 WHERE  A.COMP_CODE			= @CompCode
+			   AND  LINE_END_YN			= 'Y'
+			   --AND  A.TEMPC_03			= 'Y'
+			   AND  A.REWORK_YN			= 'Y'
+		<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+			   AND  A.DIV_CODE			= #{DIV_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(WKORD_NUM)">
+			   AND  A.WKORD_NUM			= #{WKORD_NUM}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(FR_PRODT_DATE)"> 
+			   AND  A.PRODT_START_DATE &gt;=#{FR_PRODT_DATE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(TO_PRODT_DATE)"> 
+			   AND  A.PRODT_START_DATE &lt;= #{TO_PRODT_DATE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(WORK_SHOP_CODE)">
+			   AND  A.WORK_SHOP_CODE	= #{WORK_SHOP_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+			   AND  A.ITEM_CODE		 LIKE #{ITEM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+			   AND (CASE WHEN @RefItem = '1' THEN C1.ITEM_NAME1
+						 WHEN @RefItem = '2' THEN C1.ITEM_NAME2
+						 ELSE					  C1.ITEM_NAME
+					END)			 LIKE #{ITEM_NAME} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(LOT_NO)">
+			   AND  A.LOT_NO			= #{LOT_NO}
+		</if>
+			 ORDER BY A.WKORD_NUM
+			
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+	</select>
+	
+</mapper>

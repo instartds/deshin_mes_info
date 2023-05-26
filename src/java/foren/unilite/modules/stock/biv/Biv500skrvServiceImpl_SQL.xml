@@ -1,0 +1,810 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="biv500skrvServiceImpl">
+<!-- Aging Report (기간별) 조회 -->
+	<select id="biv500skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* biv500skrvServiceImpl.selectList (Aging Report (기간별별) 조회) */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+		    DECLARE         @COMP_CODE          NVARCHAR(20)                -- (필수) 법인코드
+		                  , @DIV_CODE           NVARCHAR(08)                -- (필수) 사업장
+		                  , @BASIS_DATE         NVARCHAR(06)                -- (필수) 기준년월
+		                  , @START_DATE         NVARCHAR(08)                -- (설정) 시작일자
+		                  , @WH_CODE            NVARCHAR(10)                -- (선택) 창고
+		                  , @ITEM_CODE          NVARCHAR(20)                -- (선택) 품목코드
+		                  , @ITEM_NAME          NVARCHAR(200)               -- (선택) 품목명
+		                  , @ITEM_LEVEL1        NVARCHAR(10)                -- (선택) 대분류
+		                  , @ITEM_LEVEL2        NVARCHAR(10)                -- (선택) 중분류
+		                  , @ITEM_LEVEL3        NVARCHAR(10)                -- (선택) 소분류
+		                  , @ITEM_ACCOUNT       NVARCHAR(10)                -- (선택) 품목계정
+		                  , @STOCK_YN           NVARCHAR(01)                -- (선택) 재고'0'포함여부 : Y-포함, N-미포함
+
+		                  --추후 기간가져와서 계산하기 위해서 변수 선언
+		                  , @period1            INT                         -- (선택) RECEIVED_1 기간(개월 수)
+		                  , @period2            INT                         -- (선택) RECEIVED_2 기간(개월 수)
+		                  , @period3            INT                         -- (선택) RECEIVED_3 기간(개월 수)
+		                  , @period4            INT                         -- (선택) RECEIVED_4 기간(개월 수)
+		
+		--  [ 1. 변수 값 할당 ] -----------------------------------------------------------------------------------------------
+		    SET @COMP_CODE          = #{S_COMP_CODE}
+		    SET @DIV_CODE           = #{DIV_CODE}
+		    SET @BASIS_DATE         = #{BASIS_MONTH}
+		    SET @START_DATE         = #{BASIS_MONTH} + '01'
+		    SET @START_DATE         = CONVERT(NVARCHAR(08), DATEADD(DAY, -1, DATEADD(MONTH, 1, @START_DATE)), 112)  -- 매월 말일
+		    SET @WH_CODE            = #{WH_CODE}
+		    SET @ITEM_CODE          = #{ITEM_CODE}
+		    SET @ITEM_NAME          = #{ITEM_NAME}
+		    SET @ITEM_LEVEL1        = #{ITEM_LEVEL1}
+		    SET @ITEM_LEVEL2        = #{ITEM_LEVEL2}
+		    SET @ITEM_LEVEL3        = #{ITEM_LEVEL3}
+		    SET @ITEM_ACCOUNT       = #{ITEM_ACCOUNT}
+		    SET @STOCK_YN           = #{STOCK_YN}
+
+		SELECT @period1 = CASE WHEN ISNUMERIC(ISNULL(A.REF_CODE1, 0)) = 1 THEN ISNULL(A.REF_CODE1, 0)
+		                       ELSE 3
+		                  END
+		     , @period2 = CASE WHEN ISNUMERIC(ISNULL(B.REF_CODE1, 0)) = 1 THEN ISNULL(B.REF_CODE1, 0)
+		                       ELSE 3
+		                  END
+		     , @period3 = CASE WHEN ISNUMERIC(ISNULL(C.REF_CODE1, 0)) = 1 THEN ISNULL(C.REF_CODE1, 0)
+		                       ELSE 6
+		                  END
+		     , @period4 = CASE WHEN ISNUMERIC(ISNULL(D.REF_CODE1, 0)) = 1 THEN ISNULL(D.REF_CODE1, 0)
+		                       ELSE 12
+		                  END
+		  FROM      BSA100T A WITH(NOLOCK)
+		  LEFT JOIN BSA100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                  AND B.MAIN_CODE = A.MAIN_CODE
+		                                  AND B.SUB_CODE  = '20'
+		  LEFT JOIN BSA100T C WITH(NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+		                                  AND C.MAIN_CODE = A.MAIN_CODE
+		                                  AND C.SUB_CODE  = '30'
+		  LEFT JOIN BSA100T D WITH(NOLOCK) ON D.COMP_CODE = A.COMP_CODE
+		                                  AND D.MAIN_CODE = A.MAIN_CODE
+		                                  AND D.SUB_CODE  = '40'
+		 WHERE A.COMP_CODE = @COMP_CODE
+		   AND A.MAIN_CODE = 'M513'
+		   AND A.SUB_CODE  = '10' 
+
+		    SET @period1 = ISNULL(@period1, 3)
+		    SET @period2 = ISNULL(@period2, 3)
+		    SET @period3 = ISNULL(@period3, 6)
+		    SET @period4 = ISNULL(@period4, 12)
+
+
+		DECLARE @RECEIVED_DATE1 NVARCHAR(08)
+
+		--  [ 2. 초기화 ] ------------------------------------------------------------------------------------------------
+		--  [ 3. 임시 테이블 처리 ] -------------------------------------------------------------------------------------------
+		    DECLARE             @TypeKey            NVARCHAR(20)
+
+		    SET @TypeKey      = REPLACE(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(30), GETDATE(), 121), '-', ''), ':', ''), '.', ''), ' ', '')
+
+		--  3-1. 하루전 임시 데이터 삭제
+		    IF NOT EXISTS   (
+		                    SELECT TOP 1 1
+		                    FROM   T_BIV500SKRV1 WITH (NOLOCK)
+		                    WHERE  TYPE_KEY LIKE LEFT(@TypeKey, 8) + N'%'
+		                    )
+		        TRUNCATE TABLE T_BIV500SKRV1
+
+		    IF NOT EXISTS   (
+		                    SELECT TOP 1 1
+		                    FROM   T_BIV500SKRV3 WITH (NOLOCK)
+		                    WHERE  TYPE_KEY LIKE LEFT(@TypeKey, 8) + N'%'
+		                    )
+		        TRUNCATE TABLE T_BIV500SKRV3
+
+		--  [ 4. 재고 데이터 생성 (T_BIV500SKRV3) ] ------------------------------------------------------------------------
+		--  4-1. 재고정보
+		    INSERT  INTO    T_BIV500SKRV3
+		    (       TYPE_KEY
+		         ,  COMP_CODE         ,  DIV_CODE          ,  ITEM_CODE         ,  LOT_NO
+		         ,  BASIS_Q           ,  INSTOCK_Q         ,  OUTSTOCK_Q        ,  STOCK_Q
+		    )
+		    SELECT  @TypeKey                                                                            AS TYPE_KEY
+		         ,  A.COMP_CODE                                                                         AS COMP_CODE
+		         ,  A.DIV_CODE                                                                          AS DIV_CODE
+		         ,  A.ITEM_CODE                                                                         AS ITEM_CODE
+		         ,  A.LOT_NO                                                                            AS LOT_NO
+		         ,  SUM(A.BASIS_Q   )                                                                   AS BASIS_Q
+		         ,  SUM(A.INSTOCK_Q )                                                                   AS INSTOCK_Q
+		         ,  SUM(A.OUTSTOCK_Q)                                                                   AS OUTSTOCK_Q
+		         ,  SUM(A.STOCK_Q   )                                                                   AS STOCK_Q
+		    FROM    BIV250T     A  WITH (NOLOCK) 
+		    WHERE   A.COMP_CODE         =  @COMP_CODE
+		    AND     A.DIV_CODE          =  @DIV_CODE
+		    AND     A.BASIS_YYYYMM      =  @BASIS_DATE
+		    AND     A.SUM_TYPE          =  N'C'
+		    GROUP   BY
+		            A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.LOT_NO
+
+
+		--  4-2. 입고정보
+		    UPDATE  A
+		    SET     A.INOUT_DATE        =  ISNULL(B.INOUT_DATE, N'')
+		         ,  A.MAKE_DATE         =  ISNULL(B.MAKE_DATE , N'')
+		    FROM                T_BIV500SKRV3    A  WITH (NOLOCK)
+		            INNER JOIN  (
+		                        SELECT  COMP_CODE, DIV_CODE, ITEM_CODE, LOT_NO
+		                             ,  MAX(ISNULL(INOUT_DATE, N'')) AS INOUT_DATE 
+		                             ,  MAX(ISNULL(MAKE_EXP_DATE , N'')) AS MAKE_DATE
+		                             ,  SUM(ISNULL(INOUT_Q   , 0.0)) AS INOUT_Q
+		                        FROM    BTR100T     WITH (NOLOCK) 
+		                        WHERE   COMP_CODE       =  @COMP_CODE
+		                        AND     DIV_CODE        =  @DIV_CODE
+		                        AND     INOUT_TYPE      =  N'1' 
+		                        AND     INOUT_METH      IN  ( N'1', N'2') 
+		                        AND     CREATE_LOC      =  N'2'
+		                        AND     INOUT_DATE     &lt;=  @START_DATE
+		                        GROUP   BY
+		                                COMP_CODE, DIV_CODE, ITEM_CODE, LOT_NO
+		                        ) B                                  ON  B.COMP_CODE        =  A.COMP_CODE
+		                                                            AND  B.DIV_CODE         =  A.DIV_CODE
+		                                                            AND  B.ITEM_CODE        =  A.ITEM_CODE
+		                                                            AND  B.LOT_NO           =  A.LOT_NO
+		    WHERE   A.TYPE_KEY          =  @TypeKey
+
+		--  4-3. 재고입고/실사/반품정보 (입고일자/유효일자 없을 경우)
+		    UPDATE  A
+		    SET     A.INOUT_DATE        =  CASE WHEN A.INOUT_DATE = N'' THEN ISNULL(B.INOUT_DATE, N'') ELSE A.INOUT_DATE END
+		         ,  A.MAKE_DATE         =  CASE WHEN A.MAKE_DATE  = N'' THEN ISNULL(B.MAKE_DATE , N'') ELSE A.MAKE_DATE  END
+		    FROM                T_BIV500SKRV3    A  WITH (NOLOCK)
+		            INNER JOIN  (
+		                        SELECT  COMP_CODE, DIV_CODE, ITEM_CODE, LOT_NO
+		                             ,  MAX(ISNULL(INOUT_DATE, N'')) AS INOUT_DATE 
+		                             ,  MAX(ISNULL(MAKE_EXP_DATE , N'')) AS MAKE_DATE
+		                             ,  SUM(ISNULL(INOUT_Q   , 0.0)) AS INOUT_Q
+		                        FROM    BTR100T     WITH (NOLOCK) 
+		                        WHERE   COMP_CODE       =  @COMP_CODE
+		                        AND     DIV_CODE        =  @DIV_CODE
+		                        AND   ((INOUT_TYPE      =  N'1'         AND CREATE_LOC      =  N'4'  AND     INOUT_METH      =  N'1'  )        -- 입고(재고)
+		                            OR (INOUT_TYPE      =  N'2'         AND MOVE_TYPE       =  N'4296')     -- 출고(실사)
+		                            OR (INOUT_TYPE      =  N'3'         AND CREATE_LOC      =  N'1'))       -- 반품(영업)
+		                        AND     INOUT_DATE     &lt;=  @START_DATE
+		                        GROUP   BY
+		                                COMP_CODE, DIV_CODE, ITEM_CODE, LOT_NO
+		                        ) B                                  ON  B.COMP_CODE        =  A.COMP_CODE
+		                                                            AND  B.DIV_CODE         =  A.DIV_CODE
+		                                                            AND  B.ITEM_CODE        =  A.ITEM_CODE
+		                                                            AND  B.LOT_NO           =  A.LOT_NO
+		    WHERE   A.TYPE_KEY          =  @TypeKey
+		    AND    (A.INOUT_DATE        =  N''
+		        OR  A.MAKE_DATE         =  N'')
+
+		--  4-4. 최종 입고일자/유효일자 없을 경우 기초년월 입력
+		    UPDATE  A
+		    SET     A.INOUT_DATE        =  CASE WHEN A.INOUT_DATE = N'' THEN ISNULL(B.BASIS_YYYYMM, N'') ELSE A.INOUT_DATE END
+		         ,  A.MAKE_DATE         =  CASE WHEN A.MAKE_DATE  = N'' THEN ISNULL(B.BASIS_YYYYMM, N'') ELSE A.MAKE_DATE  END
+		    FROM                T_BIV500SKRV3    A  WITH (NOLOCK)
+		            INNER JOIN  (
+		                        SELECT  COMP_CODE, DIV_CODE, MIN(BASIS_YYYYMM + N'01') AS BASIS_YYYYMM 
+		                        FROM    BIV900T     WITH (NOLOCK) 
+		                        WHERE   COMP_CODE       =  @COMP_CODE
+		                        AND     DIV_CODE        =  @DIV_CODE
+		                        GROUP   BY
+		                                COMP_CODE, DIV_CODE
+		                        ) B                                  ON  B.COMP_CODE        =  A.COMP_CODE
+		                                                            AND  B.DIV_CODE         =  A.DIV_CODE
+		    WHERE   A.TYPE_KEY          =  @TypeKey
+		    AND    (A.INOUT_DATE        =  N''
+		        OR  A.MAKE_DATE         =  N'')
+
+		--  [ 5. 조회 데이터 생성 (T_BIV500SKRV1) ] ------------------------------------------------------------------------
+		--  5-1. 품목정보
+		    INSERT  INTO    T_BIV500SKRV1
+		    (       TYPE_KEY
+		         ,  COMP_CODE         ,  DIV_CODE          ,  DIV               ,  ITEM_CODE         ,  ITEM_NAME,    SPEC
+		    )
+		    SELECT  @TypeKey                                                                            AS TYPE_KEY
+		         ,  A.COMP_CODE                                                                         AS COMP_CODE
+		         ,  A.DIV_CODE                                                                          AS DIV_CODE
+		         ,  ISNULL(B.REMARK1, '')                                                               AS DIV
+		         ,  A.ITEM_CODE                                                                         AS ITEM_CODE
+		         ,  B.ITEM_NAME                                                                         AS ITEM_NAME
+		         ,  B.SPEC                                                                                AS SPEC
+		    FROM                BPR200T     A  WITH (NOLOCK)
+		            INNER JOIN  BPR100T     B  WITH (NOLOCK) ON  B.COMP_CODE    =  A.COMP_CODE
+		                                                    AND  B.ITEM_CODE    =  A.ITEM_CODE
+		                                                    AND  B.USE_YN       =  N'Y'
+		    WHERE   A.COMP_CODE         =       @COMP_CODE
+		    AND     A.DIV_CODE          =       @DIV_CODE
+		    AND   ((A.WH_CODE           =       @WH_CODE         AND @WH_CODE       != '') OR (@WH_CODE      = ''))
+		    <if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE 		  = #{ITEM_CODE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE 	   LIKE #{ITEM_CODE} + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND B.ITEM_NAME LIKE '%' + #{ITEM_NAME} + '%' 
+			</if>
+		    AND   ((B.ITEM_LEVEL1       =       @ITEM_LEVEL1     AND @ITEM_LEVEL1   != '') OR (@ITEM_LEVEL1  = ''))
+		    AND   ((B.ITEM_LEVEL2       =       @ITEM_LEVEL2     AND @ITEM_LEVEL2   != '') OR (@ITEM_LEVEL2  = ''))
+		    AND   ((B.ITEM_LEVEL3       =       @ITEM_LEVEL3     AND @ITEM_LEVEL3   != '') OR (@ITEM_LEVEL3  = ''))
+		    AND   ((A.ITEM_ACCOUNT      =       @ITEM_ACCOUNT    AND @ITEM_ACCOUNT  != '') OR (@ITEM_ACCOUNT  = ''))
+
+		--  5-2. 구매단가(TP)
+		    UPDATE  A
+		    SET     A.AVERAGE_P  =       
+		              CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(P2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')    -- 기준단가 적용 제품/반제품 금액
+		                         THEN CONVERT(NUMERIC(30, 6), ISNULL(P2.BASIS_P, 0) )
+		                     ELSE ISNULL(H.AVERAGE_P,0)
+		               END
+		    FROM                T_BIV500SKRV1    A  WITH (NOLOCK)
+		              INNER JOIN BPR200T P2 WITH(NOLOCK) ON P2.COMP_CODE   = A.COMP_CODE
+		                                                AND P2.DIV_CODE    = A.DIV_CODE
+		                                                AND P2.ITEM_CODE   = A.ITEM_CODE
+		              LEFT  JOIN BSA100T M1 WITH(NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE            -- 단가처리 기준
+		                                                AND M1.MAIN_CODE   = 'B069'
+		                                                AND M1.SUB_CODE    = '1'                    -- 1:기준재고단가 2:원가계산단가
+		                                                AND M1.REF_CODE1   = 'Y'
+		              LEFT  JOIN BIV200T H  WITH(NOLOCK) ON H.COMP_CODE    =  A.COMP_CODE
+		                                                AND H.DIV_CODE     =  A.DIV_CODE
+		                                                AND H.BASIS_YYYYMM =  @BASIS_DATE
+		                                                AND H.ITEM_CODE    =  A.ITEM_CODE
+		    WHERE   A.TYPE_KEY          =  @TypeKey
+
+		--  5-3. 현재고(기준년월 기준)
+		    UPDATE  A
+		    SET     A.STOCK_Q           =  ISNULL(B.STOCK_Q, 0.0)
+		    FROM                T_BIV500SKRV1    A  WITH (NOLOCK)
+		            INNER JOIN  (
+		                        SELECT  B1.COMP_CODE, B1.DIV_CODE, B1.ITEM_CODE
+		                             ,  SUM(B1.STOCK_Q) AS STOCK_Q
+		                        FROM    BIV200T     B1 WITH (NOLOCK)
+		                        WHERE   B1.COMP_CODE        =  @COMP_CODE
+		                        AND     B1.DIV_CODE         =  @DIV_CODE
+		                        AND     B1.BASIS_YYYYMM     =  @BASIS_DATE
+		                        GROUP   BY
+		                                B1.COMP_CODE, B1.DIV_CODE, B1.ITEM_CODE
+		                        ) B                                  ON  B.COMP_CODE        =  A.COMP_CODE
+		                                                            AND  B.DIV_CODE         =  A.DIV_CODE
+		                                                            AND  B.ITEM_CODE        =  A.ITEM_CODE
+		    WHERE   A.TYPE_KEY          =  @TypeKey
+
+		--  5-4. 기간별 입고수량
+		    UPDATE  A
+		    SET     A.RECEIVED_1        =  ISNULL(B.INOUT_Q_1, 0.0)
+		         ,  A.RECEIVED_2        =  ISNULL(B.INOUT_Q_2, 0.0)
+		         ,  A.RECEIVED_3        =  ISNULL(B.INOUT_Q_3, 0.0)
+		         ,  A.RECEIVED_4        =  ISNULL(B.INOUT_Q_4, 0.0)
+		    FROM                T_BIV500SKRV1    A  WITH (NOLOCK)
+		            INNER JOIN  (
+		                        SELECT  B1.COMP_CODE, B1.DIV_CODE, B1.ITEM_CODE
+		                             ,  SUM(B1.INOUT_Q_1) AS INOUT_Q_1
+		                             ,  SUM(B1.INOUT_Q_2) AS INOUT_Q_2
+		                             ,  SUM(B1.INOUT_Q_3) AS INOUT_Q_3
+		                             ,  SUM(B1.INOUT_Q_4) AS INOUT_Q_4
+		                        FROM    (
+		                                SELECT  A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.LOT_NO, A.INOUT_Q
+		                                     ,  CASE WHEN A.INOUT_DATE &lt;  CONVERT(NVARCHAR, DATEADD(MONTH,  1,  @BASIS_DATE + '01'), 112)
+		                                              AND A.INOUT_DATE &gt;= CONVERT(NVARCHAR, DATEADD(MONTH, -(@period1 - 1),  @BASIS_DATE + '01'), 112)                                 ---2
+		                                             THEN A.INOUT_Q 
+		                                             ELSE 0 
+		                                        END                                                                                         AS INOUT_Q_1
+		                                     ,  CASE WHEN A.INOUT_DATE &lt;  CONVERT(NVARCHAR, DATEADD(MONTH, -(@period1 - 1),  @BASIS_DATE + '01'), 112)                                 ---2
+		                                              AND A.INOUT_DATE &gt;= CONVERT(NVARCHAR, DATEADD(MONTH, -(@period1 + @period2 - 1),  @BASIS_DATE + '01'), 112)                      ---5
+		                                             THEN A.INOUT_Q 
+		                                             ELSE 0 
+		                                        END                                                                                         AS INOUT_Q_2
+		                                     ,  CASE WHEN A.INOUT_DATE &lt;  CONVERT(NVARCHAR, DATEADD(MONTH, -(@period1 + @period2 - 1),  @BASIS_DATE + '01'), 112)                      ---5
+		                                              AND A.INOUT_DATE &gt;= CONVERT(NVARCHAR, DATEADD(MONTH, -(@period1 + @period2 + @period3 - 1), @BASIS_DATE + '01'), 112)            ---11 (기존 12)
+		                                             THEN A.INOUT_Q 
+		                                             ELSE 0 
+		                                        END                                                                                         AS INOUT_Q_3
+		                                     ,  CASE WHEN A.INOUT_DATE &lt;  CONVERT(NVARCHAR, DATEADD(MONTH, -(@period1 + @period2 + @period3 - 1), @BASIS_DATE + '01'), 112)            ---11 (기존 12)
+		                                              AND A.INOUT_DATE &gt;= CONVERT(NVARCHAR, DATEADD(MONTH, -(@period1 + @period2 + @period3 + @period4 - 1), @BASIS_DATE + '01'), 112) ---23 (기존 24)
+		                                             THEN A.INOUT_Q 
+		                                             ELSE 0 
+		                                        END                                                                                         AS INOUT_Q_4
+		                                FROM    BTR100T     A  WITH (NOLOCK)
+		                                WHERE   A.COMP_CODE         =  @COMP_CODE
+		                                AND     A.DIV_CODE          =  @DIV_CODE
+		                                AND     A.INOUT_TYPE        =  N'1'
+		                                AND     A.CREATE_LOC        =  N'2'
+		                                AND     A.INOUT_DATE       &gt;=  CONVERT(NVARCHAR, DATEADD(MONTH, -24, @BASIS_DATE + '01'), 112)
+		                                AND     A.INOUT_DATE       &lt;=  @START_DATE
+		                                ) B1
+		                        GROUP   BY
+		                                B1.COMP_CODE, B1.DIV_CODE, B1.ITEM_CODE
+		                        ) B                                  ON  B.COMP_CODE        =  A.COMP_CODE
+		                                                            AND  B.DIV_CODE         =  A.DIV_CODE
+		                                                            AND  B.ITEM_CODE        =  A.ITEM_CODE
+		    WHERE   A.TYPE_KEY          =  @TypeKey
+
+		--  5-5. 보유기간별 재고수량(입고일자 기준)
+		    UPDATE  A
+		    SET     A.STOCK_QTY_90          =  ISNULL(B.STOCK_QTY_90        , 0.0)
+		         ,  A.STOCK_QTY_90_TO_180   =  ISNULL(B.STOCK_QTY_90_TO_180 , 0.0)
+		         ,  A.STOCK_QTY_181_TO_365  =  ISNULL(B.STOCK_QTY_181_TO_365, 0.0)
+		         ,  A.STOCK_QTY_366_TO_730  =  ISNULL(B.STOCK_QTY_366_TO_730, 0.0)
+		         ,  A.STOCK_QTY_730         =  ISNULL(B.STOCK_QTY_730       , 0.0)
+		         ,  A.STOCK_QTY_TOTAL       =  ISNULL(B.STOCK_QTY_TOTAL     , 0.0)
+		    FROM                T_BIV500SKRV1    A  WITH (NOLOCK)
+		            INNER JOIN  (
+		                        SELECT  B1.COMP_CODE, B1.DIV_CODE, B1.ITEM_CODE
+		                             ,  SUM(B1.STOCK_1) AS STOCK_QTY_90
+		                             ,  SUM(B1.STOCK_2) AS STOCK_QTY_90_TO_180
+		                             ,  SUM(B1.STOCK_3) AS STOCK_QTY_181_TO_365
+		                             ,  SUM(B1.STOCK_4) AS STOCK_QTY_366_TO_730
+		                             ,  SUM(B1.STOCK_5) AS STOCK_QTY_730
+		                             ,  SUM(B1.STOCK_Q) AS STOCK_QTY_TOTAL
+		                        FROM    (
+		                                SELECT  A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.LOT_NO, A.INOUT_DATE
+		                                     ,  DATEDIFF(DAY, A.INOUT_DATE, @START_DATE)                                                                AS DATE_DIFF    
+		                                     ,  CASE WHEN DATEDIFF(DAY, A.INOUT_DATE, @START_DATE) BETWEEN   0 AND  90 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_1
+		                                     ,  CASE WHEN DATEDIFF(DAY, A.INOUT_DATE, @START_DATE) BETWEEN  91 AND 180 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_2
+		                                     ,  CASE WHEN DATEDIFF(DAY, A.INOUT_DATE, @START_DATE) BETWEEN 181 AND 365 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_3
+		                                     ,  CASE WHEN DATEDIFF(DAY, A.INOUT_DATE, @START_DATE) BETWEEN 366 AND 730 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_4
+		                                     ,  CASE WHEN DATEDIFF(DAY, A.INOUT_DATE, @START_DATE)               > 730 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_5
+		                                     ,  SUM(A.STOCK_Q)                                                                                          AS STOCK_Q
+		                                FROM    T_BIV500SKRV3    A  WITH (NOLOCK) 
+		                                WHERE   A.TYPE_KEY          =  @TypeKey
+		                                GROUP   BY
+		                                        A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.LOT_NO, A.INOUT_DATE
+		                                ) B1
+		                        GROUP   BY
+		                                B1.COMP_CODE, B1.DIV_CODE, B1.ITEM_CODE
+		                        ) B                                  ON  B.COMP_CODE        =  A.COMP_CODE
+		                                                            AND  B.DIV_CODE         =  A.DIV_CODE
+		                                                            AND  B.ITEM_CODE        =  A.ITEM_CODE
+		    WHERE   A.TYPE_KEY          =  @TypeKey
+
+		--  5-6. 잔여기간별 재고수량(유효일자 기준)
+		    UPDATE  A
+		    SET     A.PROVISON_180_QTY      =  ISNULL(B.PROVISON_180_QTY     , 0.0)
+		         ,  A.PROVISON_365_QTY      =  ISNULL(B.PROVISON_365_QTY     , 0.0)
+		         ,  A.PROVISON_730_QTY      =  ISNULL(B.PROVISON_730_QTY     , 0.0)
+		         ,  A.PROVISON_730_OVER_QTY =  ISNULL(B.PROVISON_730_OVER_QTY, 0.0)
+		    FROM                T_BIV500SKRV1    A  WITH (NOLOCK)
+		            LEFT  JOIN  (
+		                        SELECT  B1.COMP_CODE, B1.DIV_CODE, B1.ITEM_CODE
+		                             ,  SUM(B1.STOCK_1) AS PROVISON_180_QTY
+		                             ,  SUM(B1.STOCK_2) AS PROVISON_365_QTY
+		                             ,  SUM(B1.STOCK_3) AS PROVISON_730_QTY
+		                             ,  SUM(B1.STOCK_4) AS PROVISON_730_OVER_QTY
+		                        FROM    (
+		                                SELECT  A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.LOT_NO, A.MAKE_DATE
+		                                     ,  DATEDIFF(DAY, @START_DATE, A.MAKE_DATE)                                                                 AS DATE_DIFF
+		                                     ,  CASE WHEN DATEDIFF(DAY, @START_DATE, A.MAKE_DATE)       &lt; 180         THEN SUM(A.STOCK_Q) ELSE 0 END    AS STOCK_1
+		                                     ,  CASE WHEN DATEDIFF(DAY, @START_DATE, A.MAKE_DATE) BETWEEN 180 AND 364 THEN SUM(A.STOCK_Q) ELSE 0 END    AS STOCK_2
+		                                     ,  CASE WHEN DATEDIFF(DAY, @START_DATE, A.MAKE_DATE) BETWEEN 365 AND 729 THEN SUM(A.STOCK_Q) ELSE 0 END    AS STOCK_3
+		                                     ,  CASE WHEN DATEDIFF(DAY, @START_DATE, A.MAKE_DATE)      &gt;= 730        THEN SUM(A.STOCK_Q) ELSE 0 END    AS STOCK_4
+		                                     ,  SUM(A.STOCK_Q)                                                                                          AS STOCK_Q
+		                                FROM    T_BIV500SKRV3    A  WITH (NOLOCK) 
+		                                WHERE   A.TYPE_KEY          =  @TypeKey
+		                                GROUP   BY
+		                                        A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.LOT_NO, A.MAKE_DATE
+		                                ) B1
+		                        GROUP   BY
+		                                B1.COMP_CODE, B1.DIV_CODE, B1.ITEM_CODE
+		                        ) B                                  ON  B.COMP_CODE        =  A.COMP_CODE
+		                                                            AND  B.DIV_CODE         =  A.DIV_CODE
+		                                                            AND  B.ITEM_CODE        =  A.ITEM_CODE
+		    WHERE   A.TYPE_KEY          =  @TypeKey
+
+		--  [ 6. 데이터 조회 ] ------------------------------------------------------------------------------------------------
+		     SELECT A.COMP_CODE                             AS COMP_CODE
+		         ,  A.DIV_CODE                              AS DIV_CODE
+		         ,  A.ITEM_CODE                             AS ITEM_CODE
+		         ,  A.ITEM_NAME                             AS ITEM_NAME
+		         ,  A.SPEC                                  AS SPEC
+		         ,  A.AVERAGE_P                             AS AVERAGE_P
+		         ,  A.STOCK_Q                               AS STOCK_Q
+
+		         ,  A.RECEIVED_1                            AS RECEIVED_1
+		         ,  A.RECEIVED_2                            AS RECEIVED_2
+		         ,  A.RECEIVED_3                            AS RECEIVED_3
+		         ,  A.RECEIVED_4                            AS RECEIVED_4
+
+		         ,  A.STOCK_QTY_90                          AS STOCK_QTY_90
+		         ,  A.STOCK_QTY_90_TO_180                   AS STOCK_QTY_90_TO_180
+		         ,  A.STOCK_QTY_181_TO_365                  AS STOCK_QTY_181_TO_365
+		         ,  A.STOCK_QTY_366_TO_730                  AS STOCK_QTY_366_TO_730
+		         ,  A.STOCK_QTY_730                         AS STOCK_QTY_730
+		         ,  A.STOCK_QTY_TOTAL                       AS STOCK_QTY_TOTAL
+
+		         ,  A.STOCK_AMT_90                          AS STOCK_AMT_90
+		         ,  A.STOCK_AMT_90_TO_180                   AS STOCK_AMT_90_TO_180
+		         ,  A.STOCK_AMT_181_TO_365                  AS STOCK_AMT_181_TO_365
+		         ,  A.STOCK_AMT_366_TO_730                  AS STOCK_AMT_366_TO_730
+		         ,  A.STOCK_AMT_730                         AS STOCK_AMT_730
+		         ,  A.STOCK_AMT_TOTAL                       AS STOCK_AMT_TOTAL
+
+		         ,  A.NO_DEMAND_QTY                         AS NO_DEMAND_QTY
+		         ,  A.NO_DEMAND_AMT                         AS NO_DEMAND_AMT
+
+		         ,  A.PROVISON_180_QTY                      AS PROVISON_180_QTY
+		         ,  A.PROVISON_180_AMT                      AS PROVISON_180_AMT
+		         ,  A.PROVISON_365_QTY                      AS PROVISON_365_QTY
+		         ,  A.PROVISON_365_AMT                      AS PROVISON_365_AMT
+		         ,  A.PROVISON_730_QTY                      AS PROVISON_730_QTY
+		         ,  A.PROVISON_730_AMT                      AS PROVISON_730_AMT
+		         ,  A.PROVISON_730_OVER_QTY                 AS PROVISON_730_OVER_QTY
+		         ,  A.PROVISON_730_OVER_AMT                 AS PROVISON_730_OVER_AMT
+		    FROM    T_BIV500SKRV1    A  WITH (NOLOCK)
+		    WHERE   A.TYPE_KEY          = @TypeKey
+		    AND    ((A.STOCK_Q != 0 AND ISNULL(@STOCK_YN, 'N') = 'N') OR ISNULL(@STOCK_YN, 'N') = 'Y')
+		    ORDER   BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE
+		-----------------------------------------------------------------------------------------------------------------------
+
+		    SET ARITHABORT OFF
+		    SET NOCOUNT OFF
+		END
+	</select>
+
+
+
+
+
+<!-- Aging Report (월별) 조회 -->
+	<select id="biv500skrvServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+		/* biv500skrvServiceImpl.selectList2 (Aging Report (월별) 조회 ) */
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+
+		    DECLARE         @COMP_CODE          NVARCHAR(20)                -- (필수) 법인코드
+		                  , @DIV_CODE           NVARCHAR(08)                -- (필수) 사업장
+		                  , @BASIS_DATE         NVARCHAR(06)                -- (필수) 기준년월
+		                  , @START_DATE         NVARCHAR(08)                -- (설정) 시작일자
+		                  , @WH_CODE            NVARCHAR(10)                -- (선택) 창고
+		                  , @ITEM_CODE          NVARCHAR(20)                -- (선택) 품목코드
+		                  , @ITEM_NAME          NVARCHAR(200)               -- (선택) 품목명
+		                  , @ITEM_LEVEL1        NVARCHAR(10)                -- (선택) 대분류
+		                  , @ITEM_LEVEL2        NVARCHAR(10)                -- (선택) 중분류
+		                  , @ITEM_LEVEL3        NVARCHAR(10)                -- (선택) 소분류
+		                  , @ITEM_ACCOUNT       NVARCHAR(10)                -- (선택) 품목계정
+		                  , @STOCK_YN           NVARCHAR(01)                -- (선택) 재고'0'포함여부 : Y-포함, N-미포함
+
+		--  [ 1. 변수 값 할당 ] -----------------------------------------------------------------------------------------------
+		    SET @COMP_CODE          = #{S_COMP_CODE}
+		    SET @DIV_CODE           = #{DIV_CODE}
+		    SET @BASIS_DATE         = #{BASIS_MONTH}
+		    SET @START_DATE         = #{BASIS_MONTH} + '01'
+		    SET @START_DATE         = CONVERT(NVARCHAR(08), DATEADD(DAY, -1, DATEADD(MONTH, 1, @START_DATE)), 112)  -- 매월 말일
+		    SET @WH_CODE            = #{WH_CODE}
+		    SET @ITEM_CODE          = #{ITEM_CODE}
+		    SET @ITEM_NAME          = #{ITEM_NAME}
+		    SET @ITEM_LEVEL1        = #{ITEM_LEVEL1}
+		    SET @ITEM_LEVEL2        = #{ITEM_LEVEL2}
+		    SET @ITEM_LEVEL3        = #{ITEM_LEVEL3}
+		    SET @ITEM_ACCOUNT       = #{ITEM_ACCOUNT}
+		    SET @STOCK_YN           = #{STOCK_YN}
+
+		--  [ 2. 초기화 ] -----------------------------------------------------------------------------------------------------
+		--  [ 3. 임시 테이블 처리 ] -------------------------------------------------------------------------------------------
+		    DECLARE             @TypeKey            NVARCHAR(20)
+
+		    SET @TypeKey      = REPLACE(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(30), GETDATE(), 121), '-', ''), ':', ''), '.', ''), ' ', '')
+
+		--  3-1. 하루전 임시 데이터 삭제
+		    IF NOT EXISTS   (
+		                    SELECT TOP 1 1
+		                    FROM   T_BIV500SKRV2 WITH (NOLOCK)
+		                    WHERE  TYPE_KEY LIKE LEFT(@TypeKey, 8) + N'%'
+		                    )
+		        TRUNCATE TABLE T_BIV500SKRV2
+
+		    IF NOT EXISTS   (
+		                    SELECT TOP 1 1
+		                    FROM   T_BIV500SKRV3 WITH (NOLOCK)
+		                    WHERE  TYPE_KEY LIKE LEFT(@TypeKey, 8) + N'%'
+		                    )
+		        TRUNCATE TABLE T_BIV500SKRV3
+
+		--  [ 4. 재고 데이터 생성 (T_BIV500SKRV3) ] ------------------------------------------------------------------------
+		--  4-1. 재고정보
+		    INSERT  INTO    T_BIV500SKRV3
+		    (       TYPE_KEY
+		         ,  COMP_CODE         ,  DIV_CODE          ,  ITEM_CODE         ,  LOT_NO
+		         ,  BASIS_Q           ,  INSTOCK_Q         ,  OUTSTOCK_Q        ,  STOCK_Q
+		    )
+		    SELECT  @TypeKey                                                                            AS TYPE_KEY
+		         ,  A.COMP_CODE                                                                         AS COMP_CODE
+		         ,  A.DIV_CODE                                                                          AS DIV_CODE
+		         ,  A.ITEM_CODE                                                                         AS ITEM_CODE
+		         ,  A.LOT_NO                                                                            AS LOT_NO
+		         ,  SUM(A.BASIS_Q   )                                                                   AS BASIS_Q
+		         ,  SUM(A.INSTOCK_Q )                                                                   AS INSTOCK_Q
+		         ,  SUM(A.OUTSTOCK_Q)                                                                   AS OUTSTOCK_Q
+		         ,  SUM(A.STOCK_Q   )                                                                   AS STOCK_Q
+		    FROM    BIV250T     A  WITH (NOLOCK) 
+		    WHERE   A.COMP_CODE         =  @COMP_CODE
+		    AND     A.DIV_CODE          =  @DIV_CODE
+		    AND     A.BASIS_YYYYMM      =  @BASIS_DATE
+		    AND     A.SUM_TYPE          =  N'C'
+		    GROUP   BY
+		            A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.LOT_NO
+
+		--  4-2. 입고정보
+		    UPDATE  A
+		    SET     A.INOUT_DATE        =  ISNULL(B.INOUT_DATE, N'')
+		         ,  A.MAKE_DATE         =  ISNULL(B.MAKE_DATE , N'')
+		    FROM                T_BIV500SKRV3    A  WITH (NOLOCK)
+		            INNER JOIN  (
+		                        SELECT  COMP_CODE, DIV_CODE, ITEM_CODE, LOT_NO
+		                             ,  MAX(ISNULL(INOUT_DATE, N'')) AS INOUT_DATE 
+		                             ,  MAX(ISNULL(MAKE_DATE , N'')) AS MAKE_DATE
+		                             ,  SUM(ISNULL(INOUT_Q   , 0.0)) AS INOUT_Q
+		                        FROM    BTR100T   WITH (NOLOCK) 
+		                        WHERE   COMP_CODE       =  @COMP_CODE
+		                        AND     DIV_CODE        =  @DIV_CODE
+		                        AND     INOUT_TYPE      =  N'1' 
+		                        AND     INOUT_METH      =  N'1' 
+		                        AND     CREATE_LOC      =  N'2'
+		                        AND     INOUT_DATE     &lt;=  @START_DATE
+		                        GROUP   BY
+		                                COMP_CODE, DIV_CODE, ITEM_CODE, LOT_NO
+		                        ) B                                  ON  B.COMP_CODE        =  A.COMP_CODE
+		                                                            AND  B.DIV_CODE         =  A.DIV_CODE
+		                                                            AND  B.ITEM_CODE        =  A.ITEM_CODE
+		                                                            AND  B.LOT_NO           =  A.LOT_NO
+		    WHERE   A.TYPE_KEY          =  @TypeKey
+
+		--  4-3. 재고입고/실사/반품정보 (입고일자/유효일자 없을 경우)
+		    UPDATE  A
+		    SET     A.INOUT_DATE        =  CASE WHEN A.INOUT_DATE = N'' THEN ISNULL(B.INOUT_DATE, N'') ELSE A.INOUT_DATE END
+		         ,  A.MAKE_DATE         =  CASE WHEN A.MAKE_DATE  = N'' THEN ISNULL(B.MAKE_DATE , N'') ELSE A.MAKE_DATE  END
+		    FROM                T_BIV500SKRV3    A  WITH (NOLOCK)
+		            INNER JOIN  (
+		                        SELECT  COMP_CODE, DIV_CODE, ITEM_CODE, LOT_NO
+		                             ,  MAX(ISNULL(INOUT_DATE, N'')) AS INOUT_DATE 
+		                             ,  MAX(ISNULL(MAKE_DATE , N'')) AS MAKE_DATE
+		                             ,  SUM(ISNULL(INOUT_Q   , 0.0)) AS INOUT_Q
+		                        FROM    BTR100T    WITH (NOLOCK) 
+		                        WHERE   COMP_CODE       =  @COMP_CODE
+		                        AND     DIV_CODE        =  @DIV_CODE
+		                        AND   ((INOUT_TYPE      =  N'1'         AND CREATE_LOC      =  N'4'  AND     INOUT_METH      =  N'1'  )        -- 입고(재고)
+		                            OR (INOUT_TYPE      =  N'2'         AND MOVE_TYPE       =  N'4296')     -- 출고(실사)
+		                            OR (INOUT_TYPE      =  N'3'         AND CREATE_LOC      =  N'1'))       -- 반품(영업)
+		                        AND     INOUT_DATE     &lt;=  @START_DATE
+		                        GROUP   BY
+		                                COMP_CODE, DIV_CODE, ITEM_CODE, LOT_NO
+		                        ) B                                  ON  B.COMP_CODE        =  A.COMP_CODE
+		                                                            AND  B.DIV_CODE         =  A.DIV_CODE
+		                                                            AND  B.ITEM_CODE        =  A.ITEM_CODE
+		                                                            AND  B.LOT_NO           =  A.LOT_NO
+		    WHERE   A.TYPE_KEY          =  @TypeKey
+		    AND    (A.INOUT_DATE        =  N''
+		        OR  A.MAKE_DATE         =  N'')
+
+		--  4-4. 최종 입고일자/유효일자 없을 경우 기초년월 입력
+		    UPDATE  A
+		    SET     A.INOUT_DATE        =  CASE WHEN A.INOUT_DATE = N'' THEN ISNULL(B.BASIS_YYYYMM, N'') ELSE A.INOUT_DATE END
+		         ,  A.MAKE_DATE         =  CASE WHEN A.MAKE_DATE  = N'' THEN ISNULL(B.BASIS_YYYYMM, N'') ELSE A.MAKE_DATE  END
+		    FROM                T_BIV500SKRV3    A  WITH (NOLOCK)
+		            INNER JOIN  (
+		                        SELECT  COMP_CODE, DIV_CODE, MIN(BASIS_YYYYMM + N'01') AS BASIS_YYYYMM 
+		                        FROM    BIV900T     WITH (NOLOCK) 
+		                        WHERE   COMP_CODE       =  @COMP_CODE
+		                        AND     DIV_CODE        =  @DIV_CODE
+		                        GROUP   BY
+		                                COMP_CODE, DIV_CODE
+		                        ) B                                  ON  B.COMP_CODE        =  A.COMP_CODE
+		                                                            AND  B.DIV_CODE         =  A.DIV_CODE
+		    WHERE   A.TYPE_KEY          =  @TypeKey
+		    AND    (A.INOUT_DATE        =  N''
+		        OR  A.MAKE_DATE         =  N'')
+
+		--  [ 5. 조회 데이터 생성 (T_BIV500SKRV2) ] ------------------------------------------------------------------------
+		--  5-1. 품목정보
+		    INSERT  INTO    T_BIV500SKRV2
+		    (       TYPE_KEY
+		         ,  COMP_CODE         ,  DIV_CODE          ,  DIV               ,  ITEM_CODE         ,  ITEM_NAME, SPEC
+		    )
+		    SELECT  @TypeKey                                                                            AS TYPE_KEY
+		         ,  A.COMP_CODE                                                                         AS COMP_CODE
+		         ,  A.DIV_CODE                                                                          AS DIV_CODE
+		         ,  ISNULL(B.REMARK1, '')                                                               AS DIV
+		         ,  A.ITEM_CODE                                                                         AS ITEM_CODE
+		         ,  B.ITEM_NAME                                                                         AS ITEM_NAME
+		         ,  B.SPEC                                                                              AS SPEC
+		    FROM                BPR200T     A  WITH (NOLOCK)
+		            INNER JOIN  BPR100T     B  WITH (NOLOCK) ON  B.COMP_CODE    =  A.COMP_CODE
+		                                                    AND  B.ITEM_CODE    =  A.ITEM_CODE
+		                                                    AND  B.USE_YN       =  N'Y'
+		    WHERE   A.COMP_CODE         =       @COMP_CODE
+		    AND     A.DIV_CODE          =       @DIV_CODE
+		    AND   ((A.WH_CODE           =       @WH_CODE         AND @WH_CODE       != '') OR (@WH_CODE      = ''))
+		    <if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE 		  = #{ITEM_CODE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+			AND A.ITEM_CODE 	   LIKE #{ITEM_CODE} + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			AND B.ITEM_NAME LIKE '%' + #{ITEM_NAME} + '%' 
+			</if>
+		    AND   ((B.ITEM_LEVEL1       =       @ITEM_LEVEL1     AND @ITEM_LEVEL1   != '') OR (@ITEM_LEVEL1  = ''))
+		    AND   ((B.ITEM_LEVEL2       =       @ITEM_LEVEL2     AND @ITEM_LEVEL2   != '') OR (@ITEM_LEVEL2  = ''))
+		    AND   ((B.ITEM_LEVEL3       =       @ITEM_LEVEL3     AND @ITEM_LEVEL3   != '') OR (@ITEM_LEVEL3  = ''))
+		    AND   ((A.ITEM_ACCOUNT      =       @ITEM_ACCOUNT    AND @ITEM_ACCOUNT  != '') OR (@ITEM_ACCOUNT = ''))
+
+		--  5-2. 구매단가(TP)
+		    UPDATE  A
+		    SET     A.AVERAGE_P  =
+		              CASE WHEN ISNULL(M1.SUB_CODE, '') = '1' AND SUBSTRING(ISNULL(P2.ITEM_ACCOUNT, ''), 1, 1) IN ('1', '2')    -- 기준단가 적용 제품/반제품 금액
+		                         THEN CONVERT(NUMERIC(30, 6), ISNULL(P2.BASIS_P, 0) )
+		                     ELSE ISNULL(H.AVERAGE_P,0)
+		               END
+		    FROM                T_BIV500SKRV2    A  WITH (NOLOCK)
+		              INNER JOIN BPR200T P2 WITH(NOLOCK) ON P2.COMP_CODE   = A.COMP_CODE
+		                                                AND P2.DIV_CODE    = A.DIV_CODE
+		                                                AND P2.ITEM_CODE   = A.ITEM_CODE
+		            LEFT  JOIN BSA100T  M1 WITH (NOLOCK) ON M1.COMP_CODE   = A.COMP_CODE            -- 단가처리 기준
+		                                                AND M1.MAIN_CODE   = 'B069'
+		                                                AND M1.SUB_CODE    = '1'                    -- 1:기준재고단가 2:원가계산단가
+		                                                AND M1.REF_CODE1   = 'Y'
+		              LEFT  JOIN BIV200T H  WITH(NOLOCK) ON H.COMP_CODE    =  A.COMP_CODE
+		                                                AND H.DIV_CODE     =  A.DIV_CODE
+		                                                AND H.BASIS_YYYYMM =  @BASIS_DATE
+		                                                --AND H.BASIS_YYYYMM =  SUBSTRING(@SaleDateTo, 1, 6)
+		                                                --AND H.WH_CODE      =  B.WH_CODE
+		                                                AND H.ITEM_CODE    =  A.ITEM_CODE
+		    WHERE   A.TYPE_KEY          =  @TypeKey
+
+		--  5-3. 현재고(기준년월 기준)
+		    UPDATE  A
+		    SET     A.STOCK_Q           =  ISNULL(B.STOCK_Q, 0.0)
+		    FROM                T_BIV500SKRV2    A  WITH (NOLOCK)
+		            INNER JOIN  (
+		                        SELECT  B1.COMP_CODE, B1.DIV_CODE, B1.ITEM_CODE
+		                             ,  SUM(B1.STOCK_Q) AS STOCK_Q
+		                        FROM    BIV200T     B1 WITH (NOLOCK)
+		                        WHERE   B1.COMP_CODE        =  @COMP_CODE
+		                        AND     B1.DIV_CODE         =  @DIV_CODE
+		                        AND     B1.BASIS_YYYYMM     =  @BASIS_DATE
+		                        GROUP   BY
+		                                B1.COMP_CODE, B1.DIV_CODE, B1.ITEM_CODE
+		                        ) B                                  ON  B.COMP_CODE        =  A.COMP_CODE
+		                                                            AND  B.DIV_CODE         =  A.DIV_CODE
+		                                                            AND  B.ITEM_CODE        =  A.ITEM_CODE
+		    WHERE   A.TYPE_KEY          =  @TypeKey
+
+		--  5-4. 보유기간별 재고수량(입고일자 기준)
+		    UPDATE  A
+		    SET     A.STOCK_QTY_01          =  ISNULL(B.STOCK_01   , 0.0)
+		         ,  A.STOCK_QTY_02          =  ISNULL(B.STOCK_02   , 0.0)
+		         ,  A.STOCK_QTY_03          =  ISNULL(B.STOCK_03   , 0.0)
+		         ,  A.STOCK_QTY_04          =  ISNULL(B.STOCK_04   , 0.0)
+		         ,  A.STOCK_QTY_05          =  ISNULL(B.STOCK_05   , 0.0)
+		         ,  A.STOCK_QTY_06          =  ISNULL(B.STOCK_06   , 0.0)
+		         ,  A.STOCK_QTY_07          =  ISNULL(B.STOCK_07   , 0.0)
+		         ,  A.STOCK_QTY_08          =  ISNULL(B.STOCK_08   , 0.0)
+		         ,  A.STOCK_QTY_09          =  ISNULL(B.STOCK_09   , 0.0)
+		         ,  A.STOCK_QTY_10          =  ISNULL(B.STOCK_10   , 0.0)
+		         ,  A.STOCK_QTY_11          =  ISNULL(B.STOCK_11   , 0.0)
+		         ,  A.STOCK_QTY_12          =  ISNULL(B.STOCK_12   , 0.0)
+		         ,  A.STOCK_QTY_13          =  ISNULL(B.STOCK_13   , 0.0)
+		         ,  A.STOCK_QTY_14          =  ISNULL(B.STOCK_14   , 0.0)
+		         ,  A.STOCK_QTY_15          =  ISNULL(B.STOCK_15   , 0.0)
+		         ,  A.STOCK_QTY_16          =  ISNULL(B.STOCK_16   , 0.0)
+		         ,  A.STOCK_QTY_17          =  ISNULL(B.STOCK_17   , 0.0)
+		         ,  A.STOCK_QTY_18          =  ISNULL(B.STOCK_18   , 0.0)
+		         ,  A.STOCK_QTY_19          =  ISNULL(B.STOCK_19   , 0.0)
+		         ,  A.STOCK_QTY_20          =  ISNULL(B.STOCK_20   , 0.0)
+		         ,  A.STOCK_QTY_21          =  ISNULL(B.STOCK_21   , 0.0)
+		         ,  A.STOCK_QTY_22          =  ISNULL(B.STOCK_22   , 0.0)
+		         ,  A.STOCK_QTY_23          =  ISNULL(B.STOCK_23   , 0.0)
+		         ,  A.STOCK_QTY_24          =  ISNULL(B.STOCK_24   , 0.0)
+		         ,  A.STOCK_QTY_OVER        =  ISNULL(B.STOCK_OVER , 0.0)
+		         ,  A.STOCK_QTY_TOTAL       =  ISNULL(B.STOCK_TOTAL, 0.0)
+		    FROM                T_BIV500SKRV2    A  WITH (NOLOCK)
+		            INNER JOIN  (
+		                        SELECT  B1.COMP_CODE, B1.DIV_CODE, B1.ITEM_CODE
+		                             ,  SUM(B1.STOCK_01)    AS STOCK_01
+		                             ,  SUM(B1.STOCK_02)    AS STOCK_02
+		                             ,  SUM(B1.STOCK_03)    AS STOCK_03
+		                             ,  SUM(B1.STOCK_04)    AS STOCK_04
+		                             ,  SUM(B1.STOCK_05)    AS STOCK_05
+		                             ,  SUM(B1.STOCK_06)    AS STOCK_06
+		                             ,  SUM(B1.STOCK_07)    AS STOCK_07
+		                             ,  SUM(B1.STOCK_08)    AS STOCK_08
+		                             ,  SUM(B1.STOCK_09)    AS STOCK_09
+		                             ,  SUM(B1.STOCK_10)    AS STOCK_10
+		                             ,  SUM(B1.STOCK_11)    AS STOCK_11
+		                             ,  SUM(B1.STOCK_12)    AS STOCK_12
+		                             ,  SUM(B1.STOCK_13)    AS STOCK_13
+		                             ,  SUM(B1.STOCK_14)    AS STOCK_14
+		                             ,  SUM(B1.STOCK_15)    AS STOCK_15
+		                             ,  SUM(B1.STOCK_16)    AS STOCK_16
+		                             ,  SUM(B1.STOCK_17)    AS STOCK_17
+		                             ,  SUM(B1.STOCK_18)    AS STOCK_18
+		                             ,  SUM(B1.STOCK_19)    AS STOCK_19
+		                             ,  SUM(B1.STOCK_20)    AS STOCK_20
+		                             ,  SUM(B1.STOCK_21)    AS STOCK_21
+		                             ,  SUM(B1.STOCK_22)    AS STOCK_22
+		                             ,  SUM(B1.STOCK_23)    AS STOCK_23
+		                             ,  SUM(B1.STOCK_24)    AS STOCK_24
+		                             ,  SUM(B1.STOCK_OVER)  AS STOCK_OVER
+		                             ,  SUM(B1.STOCK_TOTAL) AS STOCK_TOTAL
+		                        FROM    (
+		                                SELECT  A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.LOT_NO, A.INOUT_DATE
+		                                     ,  DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)                                                  AS DATE_DIFF
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 0  THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_01
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 1  THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_02
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 2  THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_03
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 3  THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_04
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 4  THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_05
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 5  THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_06
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 6  THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_07
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 7  THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_08
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 8  THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_09
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 9  THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_10
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 10 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_11
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 11 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_12
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 12 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_13
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 13 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_14
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 14 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_15
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 15 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_16
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 16 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_17
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 17 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_18
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 18 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_19
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 19 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_20
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 20 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_21
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 21 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_22
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 22 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_23
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE)  = 23 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_24
+		                                     ,  CASE WHEN DATEDIFF(MONTH, A.INOUT_DATE, @START_DATE) >= 24 THEN SUM(A.STOCK_Q) ELSE 0 END   AS STOCK_OVER
+		                                     ,  SUM(A.STOCK_Q)                                                                              AS STOCK_TOTAL
+		                                FROM    T_BIV500SKRV3    A  WITH (NOLOCK) 
+		                                WHERE   A.TYPE_KEY          =  @TypeKey
+		                                GROUP   BY
+		                                        A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, A.LOT_NO, A.INOUT_DATE
+		                                ) B1
+		                        GROUP   BY
+		                                B1.COMP_CODE, B1.DIV_CODE, B1.ITEM_CODE
+		                        ) B                                  ON  B.COMP_CODE        =  A.COMP_CODE
+		                                                            AND  B.DIV_CODE         =  A.DIV_CODE
+		                                                            AND  B.ITEM_CODE        =  A.ITEM_CODE
+		    WHERE   A.TYPE_KEY          =  @TypeKey
+
+		--  [ 6. 데이터 조회 ] ------------------------------------------------------------------------------------------------
+		     SELECT A.COMP_CODE                             AS COMP_CODE
+		         ,  A.DIV_CODE                              AS DIV_CODE
+		         ,  A.DIV                                   AS DIV
+		         ,  A.ITEM_CODE                             AS ITEM_CODE
+		         ,  A.ITEM_NAME                             AS ITEM_NAME
+		         ,  A.AVERAGE_P                             AS AVERAGE_P
+		         ,  A.STOCK_Q                               AS STOCK_Q
+		         ,  A.STOCK_QTY_01                          AS STOCK_QTY_01
+		         ,  A.STOCK_QTY_02                          AS STOCK_QTY_02
+		         ,  A.STOCK_QTY_03                          AS STOCK_QTY_03
+		         ,  A.STOCK_QTY_04                          AS STOCK_QTY_04
+		         ,  A.STOCK_QTY_05                          AS STOCK_QTY_05
+		         ,  A.STOCK_QTY_06                          AS STOCK_QTY_06
+		         ,  A.STOCK_QTY_07                          AS STOCK_QTY_07
+		         ,  A.STOCK_QTY_08                          AS STOCK_QTY_08
+		         ,  A.STOCK_QTY_09                          AS STOCK_QTY_09
+		         ,  A.STOCK_QTY_10                          AS STOCK_QTY_10
+		         ,  A.STOCK_QTY_11                          AS STOCK_QTY_11
+		         ,  A.STOCK_QTY_12                          AS STOCK_QTY_12
+		         ,  A.STOCK_QTY_13                          AS STOCK_QTY_13
+		         ,  A.STOCK_QTY_14                          AS STOCK_QTY_14
+		         ,  A.STOCK_QTY_15                          AS STOCK_QTY_15
+		         ,  A.STOCK_QTY_16                          AS STOCK_QTY_16
+		         ,  A.STOCK_QTY_17                          AS STOCK_QTY_17
+		         ,  A.STOCK_QTY_18                          AS STOCK_QTY_18
+		         ,  A.STOCK_QTY_19                          AS STOCK_QTY_19
+		         ,  A.STOCK_QTY_20                          AS STOCK_QTY_20
+		         ,  A.STOCK_QTY_21                          AS STOCK_QTY_21
+		         ,  A.STOCK_QTY_22                          AS STOCK_QTY_22
+		         ,  A.STOCK_QTY_23                          AS STOCK_QTY_23
+		         ,  A.STOCK_QTY_24                          AS STOCK_QTY_24
+		         ,  A.STOCK_QTY_OVER                        AS STOCK_QTY_OVER
+		         ,  A.STOCK_QTY_TOTAL                       AS STOCK_QTY_TOTAL
+		    FROM    T_BIV500SKRV2    A  WITH (NOLOCK)
+		    WHERE   A.TYPE_KEY          = @TypeKey
+		    AND    ((A.STOCK_Q != 0 AND ISNULL(@STOCK_YN, 'N') = 'N') OR ISNULL(@STOCK_YN, 'N') = 'Y')
+		    ORDER   BY A.COMP_CODE, A.DIV_CODE, A.DIV, A.ITEM_CODE
+		-----------------------------------------------------------------------------------------------------------------------
+
+		    SET ARITHABORT OFF
+		    SET NOCOUNT OFF
+		END
+	</select>
+</mapper>

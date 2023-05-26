@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_biv310skrv_wmServiceImpl">
+<!-- 동적 그리드 구현(공통코드(ZM04)에서 컬럼 가져오는 로직) -->
+	<select id="s_biv310skrv_wmServiceImpl.selectColumns" parameterType="Map" resultType="rMap">
+		/* s_biv310skrv_wmServiceImpl.selectColumns */
+		SELECT A.SUB_CODE
+		     , A.CODE_NAME
+		  FROM BSA100T A WITH(NOLOCK)
+		 WHERE COMP_CODE  = '${compCode}'
+		   AND MAIN_CODE  = 'ZM04'
+		   AND SUB_CODE  != '$'
+		   AND USE_YN     = 'Y'
+		 ORDER BY A.SORT_SEQ, A.SUB_CODE
+	</select>
+
+<!-- 동적 그리드 구현(창고정보 테이블에서 컬럼 가져오는 로직) -->
+	<select id="s_biv310skrv_wmServiceImpl.selectColumns2" parameterType="Map" resultType="rMap">
+		/* s_biv310skrv_wmServiceImpl.selectColumns2 */
+		SELECT A.TREE_CODE
+		     , A.TREE_NAME
+		  FROM BSA220T A WITH(NOLOCK)
+		<if test="@foren.Ognl@isNotEmpty(compCode)">
+		 WHERE COMP_CODE  = '${compCode}'
+		   AND TYPE_LEVEL = '${divCode}'
+		</if>
+		<!-- 조회시 마다 그리드 재 생성하기 위해 추가 -->
+		<if test="@foren.Ognl@isEmpty(compCode)">
+		 WHERE COMP_CODE  = #{S_COMP_CODE}
+		   AND TYPE_LEVEL = #{DIV_CODE}
+		</if>
+	</select>
+
+
+
+	<select id="s_biv310skrv_wmServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* s_biv310skrv_wmServiceImpl.selectList */
+		SELECT Z.COMP_CODE
+		     , Z.DIV_CODE
+		     , Z.ITEM_CODE
+		     , Z.ITEM_NAME
+		     , Z.SPEC
+		     , SUM(Z.REMAIN_ORDER_Q) + 
+		<foreach collection="gsPlannedQArray" item="item" separator="+" close="" open="">
+		       SUM(Z.${item})
+		</foreach>
+		<if test="@foren.Ognl@isNotEmpty(gsOnhandQArray)">
+		     +
+		    <foreach collection="gsOnhandQArray" item="item" separator="+" close="" open="">
+		       MAX(Z.${item})
+		    </foreach>
+		</if>
+		                             AS SUM_QTY
+		     , SUM(Z.REMAIN_ORDER_Q) AS REMAIN_ORDER_Q
+		<foreach collection="gsPlannedQArray" item="item" separator="" close="" open="">
+		     , SUM(Z.${item})        AS ${item}
+		</foreach>
+		<foreach collection="gsOnhandQArray" item="item" separator="" close="" open="">
+		     , MAX(Z.${item})        AS ${item}
+		</foreach>
+		  FROM (
+		        SELECT A.COMP_CODE
+		             , A.DIV_CODE
+		             , A.ITEM_CODE
+		             , C1.ITEM_NAME
+		             , C1.SPEC
+--		             , B.INSPEC_NUM
+--		             , B.INSPEC_SEQ
+--		             , B.GOOD_INSPEC_Q
+--		             , A.RECEIPT_NUM
+--		             , A.RECEIPT_SEQ
+--		             , A.RECEIPT_Q
+		        <!-- 입고예정수량 
+		        	1. 발주		: MPO200T.ORDER_Q – INSTOCK_Q 
+		        	2. 본사/강매	: 검사미입고수량(QMS200T.GOOD_INSPEC_Q – INOUT_Q(검사입고수량)) + 접수미입고수량(QMS100T.RECEIPT_Q – 검사수량(QMS100T.INSPEC_FLAG = 'Y') OR 접수입고수량( = 'N' )
+		        -->
+		             , ISNULL(Y1.REMAIN_ORDER_Q, 0)     AS REMAIN_ORDER_Q
+		        <foreach collection="gsPlannedQArray" item="item" separator="" close="" open="">
+		             , CASE WHEN D.WH_CODE = Y4.${item} THEN ISNULL(B.GOOD_INSPEC_Q, 0) - ISNULL(Y2.INOUT_Q, 0)
+		                                                   + ISNULL(A.RECEIPT_Q, 0) - CASE WHEN A.INSPEC_FLAG = 'Y' THEN ISNULL(B.GOOD_INSPEC_Q, 0)
+		                                                                                   ELSE ISNULL(Y3.INOUT_Q, 0)
+		                                                                              END
+		                    ELSE 0
+		               END                              AS ${item}
+		        </foreach>
+		        <!-- 현 재고 수량 -->
+		        <foreach collection="gsOnhandQArray" item="item" separator="" close="" open="">
+		             , ISNULL(Z2.${item}, 0)            AS ${item}
+		        </foreach>
+		          FROM       QMS100T      A  WITH(NOLOCK)
+		          LEFT  JOIN QMS200T      B  WITH(NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+		                                                 AND B.DIV_CODE     = A.DIV_CODE
+		                                                 AND B.RECEIPT_NUM  = A.RECEIPT_NUM
+		                                                 AND B.RECEIPT_SEQ  = A.RECEIPT_SEQ
+		          LEFT  JOIN S_MPO020T_WM C  WITH(NOLOCK) ON C.COMP_CODE    = A.COMP_CODE
+		                                                 AND C.DIV_CODE     = A.DIV_CODE
+		                                                 AND C.RECEIPT_NUM  = A.BASIS_NUM
+		                                                 AND C.RECEIPT_SEQ  = A.BASIS_SEQ
+		          LEFT  JOIN S_MPO010T_WM D  WITH(NOLOCK) ON D.COMP_CODE    = C.COMP_CODE
+		                                                 AND D.DIV_CODE     = C.DIV_CODE
+		                                                 AND D.RECEIPT_NUM  = C.RECEIPT_NUM
+		          INNER JOIN BPR100T      C1 WITH(NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE
+		                                                 AND C1.ITEM_CODE   = A.ITEM_CODE
+		          INNER JOIN BPR200T      C2 WITH(NOLOCK) ON C2.COMP_CODE   = A.COMP_CODE
+		                                                 AND C2.DIV_CODE    = A.DIV_CODE
+		                                                 AND C2.ITEM_CODE   = A.ITEM_CODE
+		          --입고예정 데이터
+		          --01. 발주 데이터
+		          LEFT  JOIN (
+		                      SELECT COMP_CODE
+		                           , DIV_CODE
+		                           , ITEM_CODE
+		                           , SUM(ISNULL(ORDER_Q, 0))                             AS ORDER_Q
+		                           , SUM(ISNULL(INSTOCK_Q, 0))                           AS INSTOCK_Q
+		                           , SUM(ISNULL(ORDER_Q, 0)) - SUM(ISNULL(INSTOCK_Q, 0)) AS REMAIN_ORDER_Q
+		                        FROM MPO200T WITH(NOLOCK)
+		                       WHERE COMP_CODE = #{S_COMP_CODE}
+		                         AND DIV_CODE  = #{DIV_CODE}
+		                       GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE) Y1 ON Y1.COMP_CODE = A.COMP_CODE
+		                                                                  AND Y1.DIV_CODE  = A.DIV_CODE
+		                                                                  AND Y1.ITEM_CODE = A.ITEM_CODE
+		          --검사입고수량
+		          LEFT  JOIN (
+		                      SELECT COMP_CODE
+		                           , DIV_CODE
+		                           , ITEM_CODE
+		                           , INSPEC_NUM
+		                           , INSPEC_SEQ
+		                           , ITEM_STATUS
+		                           , SUM(INOUT_Q)      AS INOUT_Q
+		                           , SUM(ORDER_UNIT_Q) AS ORDER_UNIT_Q
+		                        FROM BTR100T WITH (NOLOCK)
+		                       WHERE COMP_CODE       = #{S_COMP_CODE}
+		                         AND DIV_CODE        = #{DIV_CODE}
+		                         AND INSPEC_NUM      IS NOT NULL
+		                         AND ITEM_STATUS     = N'1'   -- '1'-양품, '2'-불량
+		                         AND CREATE_LOC      = N'2'
+		                         AND INOUT_CODE_TYPE = N'4'
+		                       GROUP BY COMP_CODE, DIV_CODE, ITEM_STATUS, INSPEC_NUM, INSPEC_SEQ, ITEM_CODE) Y2 ON Y2.COMP_CODE  = B.COMP_CODE
+		                                                                                                       AND Y2.DIV_CODE   = B.DIV_CODE
+		                                                                                                       AND Y2.INSPEC_NUM = B.INSPEC_NUM
+		                                                                                                       AND Y2.INSPEC_SEQ = B.INSPEC_SEQ
+		          --접수입고수량 
+		          LEFT JOIN (
+		                      SELECT COMP_CODE , DIV_CODE , RECEIPT_NUM , RECEIPT_SEQ , SUM(INOUT_Q) AS INOUT_Q
+		                        FROM BTR100T WITH (NOLOCK)
+		                       WHERE COMP_CODE   = #{S_COMP_CODE}
+		                         AND DIV_CODE    = #{DIV_CODE}
+--		                         AND RECEIPT_NUM = '01A20201109001'
+		                         AND INOUT_TYPE  = '1'
+		                       GROUP BY COMP_CODE, DIV_CODE, RECEIPT_NUM, RECEIPT_SEQ) Y3 ON Y3.COMP_CODE   = A.COMP_CODE
+		                                                                                 AND Y3.DIV_CODE    = A.DIV_CODE
+		                                                                                 AND Y3.RECEIPT_NUM = A.RECEIPT_NUM
+		                                                                                 AND Y3.RECEIPT_SEQ = A.RECEIPT_SEQ
+--		                                                                                 AND Y3.INSPEC_FLAG = 'N'
+		          --02. 입고처별 데이터
+		          LEFT  JOIN (
+		                      SELECT COMP_CODE
+		                           , DIV_CODE
+		                           , RECEIPT_NUM
+		        <foreach collection="gsPlannedQArray2" item="item" separator="" close="" open="">
+		                           , MAX([${item}]) AS RECEIPT_PLANNED_${item}
+		        </foreach>
+		                        FROM S_MPO010T_WM A WITH(NOLOCK)
+		                          PIVOT (
+		                                 MAX(WH_CODE) FOR WH_CODE IN (
+		        <foreach collection="gsPlannedQArray2" item="item" separator="," close="" open="">
+		                                                                           [${item}]
+		        </foreach>
+		                                 )
+		                          ) AS PVT
+		                       WHERE COMP_CODE = #{S_COMP_CODE}
+		                         AND DIV_CODE  = #{DIV_CODE}
+		                       GROUP BY COMP_CODE, DIV_CODE, RECEIPT_NUM) Y4 ON Y4.COMP_CODE   = C.COMP_CODE
+		                                                                    AND Y4.DIV_CODE    = C.DIV_CODE
+		                                                                    AND Y4.RECEIPT_NUM = C.RECEIPT_NUM
+		          --현재고 데이터
+		          LEFT  JOIN (
+		                      SELECT COMP_CODE
+		                           , DIV_CODE
+		                           , ITEM_CODE
+		        <foreach collection="gsOnhandQArray2" item="item" separator="" close="" open="">
+		                           , SUM([${item}]) AS ONHAND_STOCK_${item}
+		        </foreach>
+		                        FROM BIV150TV A WITH(NOLOCK)
+		                          PIVOT (
+		                                 SUM(GOOD_STOCK_Q) FOR WH_CODE IN (
+		        <foreach collection="gsOnhandQArray2" item="item" separator="," close="" open="">
+		                                                                           [${item}]
+		        </foreach>
+		                                 )
+		                          ) AS PVT
+		                       WHERE COMP_CODE = #{S_COMP_CODE}
+		                         AND DIV_CODE  = #{DIV_CODE}
+		                       GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE) Z2 ON Z2.COMP_CODE = A.COMP_CODE
+		                                                                  AND Z2.DIV_CODE  = A.DIV_CODE
+		                                                                  AND Z2.ITEM_CODE = A.ITEM_CODE
+		         WHERE A.COMP_CODE     = #{S_COMP_CODE}
+		           AND A.DIV_CODE      = #{DIV_CODE}
+		        <if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+		           AND C2.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		           AND A.ITEM_CODE     LIKE #{ITEM_CODE} + '%'
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(ITEM_NAME)">
+		           AND C1.ITEM_NAME    LIKE #{ITEM_NAME} + '%'
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(TXTLV_L1)">
+		           AND C1.ITEM_LEVEL1  = #{TXTLV_L1}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(TXTLV_L2)">
+		           AND C1.ITEM_LEVEL2  = #{TXTLV_L2}
+		        </if>
+		        <if test="@foren.Ognl@isNotEmpty(TXTLV_L3)">
+		           AND C1.ITEM_LEVEL3  = #{TXTLV_L3}
+		        </if>
+		  ) Z
+		 GROUP BY Z.COMP_CODE, Z.DIV_CODE, Z.ITEM_CODE, Z.ITEM_NAME, Z.SPEC
+
+		HAVING SUM(Z.REMAIN_ORDER_Q) +  SUM(Z.RECEIPT_PLANNED_10) + SUM(Z.RECEIPT_PLANNED_20) + MAX(Z.ONHAND_STOCK_WH10) + MAX(Z.ONHAND_STOCK_WH20)
+		     + MAX(Z.ONHAND_STOCK_WH21) + MAX(Z.ONHAND_STOCK_WH25) + MAX(Z.ONHAND_STOCK_WH30) + MAX(Z.ONHAND_STOCK_WH40) + MAX(Z.ONHAND_STOCK_WH44)
+		     + MAX(Z.ONHAND_STOCK_WH50) + MAX(Z.ONHAND_STOCK_WH55) + MAX(Z.ONHAND_STOCK_WH70) + MAX(Z.ONHAND_STOCK_WH75) + MAX(Z.ONHAND_STOCK_WH76)
+		     + MAX(Z.ONHAND_STOCK_WH80) + MAX(Z.ONHAND_STOCK_WH81) + MAX(Z.ONHAND_STOCK_WH82) + MAX(Z.ONHAND_STOCK_WH90)
+			  != 0		 
+		 
+	</select>
+</mapper>

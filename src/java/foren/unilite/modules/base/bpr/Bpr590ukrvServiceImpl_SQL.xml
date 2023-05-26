@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="bpr590ukrvServiceImpl">
+	
+	<select id="bpr590ukrvServiceImpl.checkAllDiv" parameterType="Map" resultType="rMap">
+SELECT 
+	SUB_CODE
+  FROM BSA100T WITH (NOLOCK)
+ WHERE COMP_CODE = #{S_COMP_CODE}
+   AND MAIN_CODE = 'B910'
+   AND SUB_CODE != '$'
+   AND REF_CODE1 = 'Y'
+	</select>
+	
+	<select id="bpr590ukrvServiceImpl.selectDivList" parameterType="Map" resultType="rMap">
+SELECT 
+	DIV_CODE 
+  FROM BOR120T WITH (NOLOCK)
+ WHERE COMP_CODE = #{S_COMP_CODE}
+   AND USE_YN = 'Y'
+	</select>
+	
+	<select id="bpr590ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+
+			DECLARE @CompCode	    NVARCHAR(08) /* 법인코드				*/
+			      , @UserId		    NVARCHAR(100) /* 사용자ID				*/
+			      , @LangType	    NVARCHAR(2)  /* 언어구분				*/
+			      , @RefItem	    NVARCHAR(01) /* 명칭 참조 유형		    */
+			      , @DateFormat		NVARCHAR(10) /* 날짜 포맷 유형 설정     */
+
+
+		    SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_ID}
+		    SET @LangType = #{S_LANG_CODE}
+
+
+		    /* 명칭 참조 유형 */
+			SELECT TOP 1 @RefItem = REF_ITEM
+			  FROM BSA300T WITH (NOLOCK)
+			 WHERE USER_ID = @UserId
+
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+
+			/* 날짜 포맷 유형 설정 */
+			SELECT TOP 1 @DateFormat = CODE_NAME
+			  FROM BSA100T WITH (NOLOCK)
+			 WHERE COMP_CODE = @CompCode
+			   AND MAIN_CODE = N'B044'
+			   AND REF_CODE1 = N'Y'
+
+			 SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+
+		SELECT A.COMP_CODE
+             , A.DIV_CODE
+             , A.SEQ
+             , A.PROD_ITEM_CODE
+             , R1.ITEM_NAME AS PROD_ITEM_NAME
+             , A.CHILD_ITEM_CODE
+             , A.GROUP_CODE
+			 , C.PROC_DRAW
+             , (CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+	                 WHEN @RefItem = '2' THEN B.ITEM_NAME2
+	                                     ELSE B.ITEM_NAME
+	             END)						AS ITEM_NAME
+             -- 20210323 추가
+	         , A.UNIT_Q
+             , A.REMARK
+             , A.UPDATE_DB_USER
+             , A.UPDATE_DB_TIME
+          FROM            BPR500T A WITH (NOLOCK)
+               INNER JOIN BPR100T B WITH (NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+                                                 AND A.CHILD_ITEM_CODE = B.ITEM_CODE
+			   LEFT JOIN BPR520T C WITH (NOLOCK) ON C.COMP_CODE = A.COMP_CODE
+			   									AND C.DIV_CODE = A.DIV_CODE
+			   									AND C.PROD_ITEM_CODE = A.PROD_ITEM_CODE
+			   									AND C.SEQ = A.SEQ
+			   LEFT JOIN BPR100T R1 WITH(NOLOCK) ON R1.COMP_CODE = A.COMP_CODE
+			   									AND R1.ITEM_CODE = A.PROD_ITEM_CODE
+         WHERE A.COMP_CODE       = @CompCode
+
+		   AND A.PROD_ITEM_CODE = #{PROD_ITEM_CODE}
+			   
+          <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		   AND A.DIV_CODE = #{DIV_CODE}
+		  </if>
+
+           AND ISNULL(A.START_DATE, '19000101')      =  (
+                                    SELECT MAX(ISNULL(START_DATE, '19000101'))
+                                      FROM BPR500T WITH(NOLOCK)
+                                     WHERE COMP_CODE       =  @CompCode
+                                       <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+									   AND DIV_CODE = #{DIV_CODE}
+									   </if>
+
+									   AND PROD_ITEM_CODE = A.PROD_ITEM_CODE
+
+									   AND CHILD_ITEM_CODE = A.CHILD_ITEM_CODE
+									   
+									   AND PATH_CODE = A.PATH_CODE
+
+
+									   AND ISNULL(START_DATE, '19000101') &lt;= CONVERT(VARCHAR(8), GETDATE(), 112)
+
+                                    )
+           AND (
+			   A.STOP_DATE &gt;= CONVERT(VARCHAR(8), GETDATE(), 112)
+           OR  A.STOP_DATE       IS NULL
+               )
+
+         ORDER BY A.SEQ
+
+         	SET NOCOUNT OFF
+	    	SET ARITHABORT OFF
+		END
+	
+</select>
+
+<insert id="bpr590ukrvServiceImpl.insertDetail" parameterType="Map">
+</insert>
+
+<update id="bpr590ukrvServiceImpl.updateDetail" parameterType="Map">
+IF NOT EXISTS(
+	SELECT 
+		COMP_CODE 
+	  FROM BPR520T WITH(NOLOCK) 
+	 WHERE COMP_CODE = #{S_COMP_CODE}
+	   AND DIV_CODE = #{DIV_CODE}
+	   AND PROD_ITEM_CODE = #{PROD_ITEM_CODE}
+	   AND SEQ = #{SEQ}
+)
+	BEGIN
+		INSERT INTO BPR520T(
+			COMP_CODE
+			,DIV_CODE
+			,PROD_ITEM_CODE
+			,SEQ
+			,PROC_DRAW
+			,REMARK
+			,UPDATE_DB_USER
+			,UPDATE_DB_TIME
+			,INSERT_DB_USER
+			,INSERT_DB_TIME
+		)VALUES(
+			#{S_COMP_CODE}
+			,#{DIV_CODE}
+			,#{PROD_ITEM_CODE}
+			,#{SEQ}
+			,#{PROC_DRAW}
+			,#{REMARK}
+			,#{S_USER_ID}
+			,GETDATE()
+			,#{S_USER_ID}
+			,GETDATE()
+		)
+	END
+ELSE
+	BEGIN
+		UPDATE BPR520T
+		   SET PROC_DRAW = #{PROC_DRAW}
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND DIV_CODE = #{DIV_CODE}
+		   AND PROD_ITEM_CODE = #{PROD_ITEM_CODE}
+		   AND SEQ = #{SEQ}
+	END
+
+</update>
+
+<delete id="bpr590ukrvServiceImpl.deleteDetail" parameterType="Map">
+</delete>
+</mapper>

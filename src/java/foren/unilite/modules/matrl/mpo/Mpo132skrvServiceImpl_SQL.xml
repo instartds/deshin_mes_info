@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mpo132skrvServiceImpl">
+
+	<select id="mpo132skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+			DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+			      , @UserId			NVARCHAR(100)	/* 사용자ID	*/
+			      , @LangType		NVARCHAR(2)		/* 언어구분		*/
+		          , @RefItem		NVARCHAR(01)
+		          , @DateFormat		NVARCHAR(10)
+		
+		    SET @CompCode = #{S_COMP_CODE}
+		    SET @UserId   = #{S_USER_ID}
+		    SET @LangType = #{S_LANG_CODE}
+		
+			/* 명칭 참조 유형 */
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		    FROM BSA300T WITH (NOLOCK)
+		    WHERE USER_ID = @UserId
+		
+		    SET @RefItem = ISNULL(@RefItem, N'0')
+		
+			/* 날짜 포맷 유형 설정 */
+		    SELECT TOP 1 @DateFormat = CODE_NAME
+		    FROM BSA100T WITH (NOLOCK)
+		    WHERE COMP_CODE = @CompCode
+				AND MAIN_CODE = N'B044'
+		        AND REF_CODE1 = N'Y'
+		
+		    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		
+			/* 데이터 조회 */
+			SELECT
+				   G.CUSTOM_CODE
+				 , G.CUSTOM_NAME
+				 , E.ORDER_NUM
+				 , E.SER_NO
+				 , E.ITEM_CODE
+				 , F.ITEM_NAME
+				 , E1.ORDER_DATE
+				 , E.DVRY_DATE
+				 , E.ORDER_Q
+				 , A.DIV_CODE
+				 , A.IN_DIV_CODE
+				 , A.ORDER_REQ_NUM
+				 , B.CUSTOM_CODE    AS PUR_CUSTOM_CODE
+	 			 , G1.CUSTOM_NAME   AS PUR_CUSTOM_NAME
+				 , A.ORDER_NUM		AS PUR_ORDER_NUM
+				 , A.ORDER_SEQ		AS PUR_ORDER_SEQ
+				 , A.ITEM_CODE		AS PUR_ITEM_CODE
+				 , C.ITEM_NAME		AS PUR_ITEM_NAME
+				 , A.ORDER_UNIT_Q	AS PUR_ORDER_Q
+				 , A.ORDER_UNIT_P	AS PUR_ORDER_P
+				 , A.ORDER_O		AS PUR_ORDER_O
+				 , A.INSTOCK_Q		AS PUR_INSTOCK_Q
+				 , B.ORDER_DATE		AS PUR_ORDER_DATE
+				 , A.DVRY_DATE		AS PUR_DVRY_DATE
+				 , D1.MIN_RECEIPT_DATE
+				 , D1.MAX_RECEIPT_DATE
+				 , DATEDIFF(DAY, CONVERT(DATE, A.DVRY_DATE), CONVERT(DATE, D1.MIN_RECEIPT_DATE)) AS DELAY
+			  FROM MPO200T A WITH (NOLOCK)
+			  INNER JOIN MPO100T B WITH (NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+								  AND A.DIV_CODE  = B.DIV_CODE
+								  AND A.ORDER_NUM = B.ORDER_NUM
+			  INNER JOIN BPR200T C WITH (NOLOCK) ON A.COMP_CODE = C.COMP_CODE
+								  AND B.DIV_CODE  = C.DIV_CODE
+								  AND A.ITEM_CODE   = C.ITEM_CODE
+			  LEFT JOIN  MRP400T D WITH (NOLOCK) ON A.COMP_CODE   = D.COMP_CODE
+								  AND A.ORDER_REQ_NUM = D.ORDER_REQ_NUM
+								  AND A.ITEM_CODE   = D.ITEM_CODE
+			  LEFT JOIN  (SELECT COMP_CODE, ORDER_NUM, ORDER_SEQ, ITEM_CODE, MIN(RECEIPT_DATE)AS MIN_RECEIPT_DATE, MAX(RECEIPT_DATE) AS MAX_RECEIPT_DATE
+			                FROM QMS100T WITH (NOLOCK)
+			               GROUP BY  COMP_CODE, ORDER_NUM, ORDER_SEQ, ITEM_CODE) D1 ON A.COMP_CODE = D1.COMP_CODE
+																				   AND A.ORDER_NUM = D1.ORDER_NUM
+																				   AND A.ORDER_SEQ = D1.ORDER_SEQ
+																				   AND A.ITEM_CODE = D1.ITEM_CODE
+			   LEFT JOIN  SOF110T E  WITH (NOLOCK) ON A.COMP_CODE   = E.COMP_CODE
+								  AND ISNULL(A.SO_NUM, D.ORDER_NUM)    = E.ORDER_NUM
+								  AND ISNULL(A.SO_SEQ, D.ORDER_SEQ)    = E.SER_NO
+			  INNER JOIN  SOF100T E1 WITH (NOLOCK) ON A.COMP_CODE   = E1.COMP_CODE
+								  AND E.ORDER_NUM    = E1.ORDER_NUM
+			  INNER JOIN BPR200T F WITH (NOLOCK) ON E.COMP_CODE   = F.COMP_CODE
+								  AND E.DIV_CODE    = F.DIV_CODE
+								  AND E.ITEM_CODE   = F.ITEM_CODE
+			  INNER JOIN BCM100T G WITH (NOLOCK) ON E1.COMP_CODE   = G.COMP_CODE
+								  AND E1.CUSTOM_CODE   = G.CUSTOM_CODE
+		      INNER JOIN BCM100T G1 WITH (NOLOCK) ON B.COMP_CODE   = G1.COMP_CODE
+					   			  AND B.CUSTOM_CODE   = G1.CUSTOM_CODE                                          
+		    WHERE  A.COMP_CODE = #{S_COMP_CODE}
+		    	<if test="@foren.Ognl@isNotEmpty(IN_DIV_CODE)">
+		          AND A.IN_DIV_CODE  = #{IN_DIV_CODE}
+		        </if>
+				<if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+				     AND C.ITEM_ACCOUNT   = #{ITEM_ACCOUNT}
+				</if>		          
+		         <if test="@foren.Ognl@isNotEmpty(ORDER_DATE_FR)">
+		          AND E1.ORDER_DATE &gt;= #{ORDER_DATE_FR}
+		         </if>
+		         <if test="@foren.Ognl@isNotEmpty(ORDER_DATE_TO)">
+		          AND E1.ORDER_DATE &lt;= #{ORDER_DATE_TO}
+		         </if>
+				 <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE_FR)">
+			     AND     E1.CUSTOM_CODE      =  #{CUSTOM_CODE_FR}			/* 거래처(FR)	*/
+			     </if>
+			     <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+			     AND E.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+			     </if>
+			     -- AND E.ORDER_UNIT_Q - E.OUTSTOCK_Q &gt; 0
+
+		ORDER BY E.ORDER_NUM, E.SER_NO, A.ORDER_NUM, A.ORDER_SEQ
+		
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+</mapper>

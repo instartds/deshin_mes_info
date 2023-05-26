@@ -1,0 +1,1205 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mpo200ukrvServiceImpl">
+<!-- 구매오더확정  조회 -->
+	<select id="mpo200ukrvServiceImpl.gridUp" parameterType="Map" resultType="rMap">
+		--mpo200ukrv.Cmpo200ukrv[fnMpo200QStd] Query01
+		SET NOCOUNT ON
+
+		DECLARE @COMP_CODE      NVARCHAR(08)    -- (필수) 법인코드
+		      , @USER_ID        NVARCHAR(100)    -- (필수) 사용자ID
+		      , @DIV_CODE       NVARCHAR(08)    -- (필수) 사업장코드
+		      , @ORDER_FR_DATE  NVARCHAR(08)    -- (선택) 발주예정일(FROM)
+		      , @ORDER_TO_DATE  NVARCHAR(08)    -- (선택) 발주예정일(TO)
+		      , @DOM_FORIGN     NVARCHAR(01)    -- (선택) 국내외구분
+		      , @SUPPLY_TYPE    NVARCHAR(01)    -- (선택) 조달구분
+		      , @CUSTOM_CODE    NVARCHAR(08)    -- (선택) 거래처코드
+		      , @CUSTOM_NAME    NVARCHAR(20)    -- (선택) 거래처명
+		      , @LOT_NO         NVARCHAR(20)    -- (선택) LOT번호
+		      , @ORDER_PRSN     NVARCHAR(04)    -- (선택) 구매담당
+		      , @ITEM_CODE      NVARCHAR(20)    -- (선택) 품목코드
+		      , @ITEM_NAME      NVARCHAR(200)   -- (선택) 품목명
+		      , @AgreeCheck     NVARCHAR(1)     -- (선택) 승인방식
+
+		DECLARE @MoneyUnit      NVARCHAR(10)    -- 화폐단위
+		      , @OrderPrsn      NVARCHAR(10)    -- 로그인ID의 구매담당
+		      , @AgreePrsn      NVARCHAR(10)    -- 로그인ID의 승인자ID
+
+		    SET @COMP_CODE      = #{S_COMP_CODE}
+		    SET @USER_ID        = #{S_USER_ID}
+		    SET @DIV_CODE       = #{DIV_CODE}
+		    SET @ORDER_FR_DATE  = #{ORDER_FR_DATE}
+		    SET @ORDER_TO_DATE  = #{ORDER_TO_DATE}
+		    SET @DOM_FORIGN     = #{DOM_FORIGN}
+		    SET @SUPPLY_TYPE    = #{SUPPLY_TYPE}
+		    SET @CUSTOM_CODE    = #{CUSTOM_CODE}
+		    SET @CUSTOM_NAME    = #{CUSTOM_NAME}
+		    SET @LOT_NO         = #{LOT_NO}
+		    SET @ORDER_PRSN     = #{ORDER_PRSN}
+		    SET @ITEM_CODE      = #{ITEM_CODE}
+		    SET @ITEM_NAME      = #{ITEM_NAME}
+
+		-- 공통코드의 화폐단위 조회
+		SELECT TOP 1
+		       @MoneyUnit = ISNULL(SUB_CODE, '')
+		  FROM BSA100T WITH (NOLOCK)
+		 WHERE COMP_CODE  = @COMP_CODE
+		   AND MAIN_CODE  = N'B004'
+		   AND (ISNULL(left(REF_CODE1,1),'') = N'Y'
+		     OR ISNULL(left(REF_CODE1,1),'') = N'y')
+
+		-- 로그인ID의 구매담당자 조회
+		SELECT TOP 1
+		       @OrderPrsn = ISNULL(SUB_CODE, '')
+		     , @AgreePrsn = ISNULL(REF_CODE1, '')
+		  FROM BSA100T WITH (NOLOCK)
+		 WHERE COMP_CODE = @COMP_CODE
+		   AND MAIN_CODE = N'M201'
+		   AND SUB_CODE != N'$'
+		   AND REF_CODE2 = @USER_ID
+		 ORDER BY SUB_CODE
+
+		-- 승인방식 조회
+		SELECT TOP 1
+		       @AgreeCheck = ISNULL(SUB_CODE, '2')
+		  FROM BSA100T WITH(NOLOCK)
+		 WHERE COMP_CODE = @COMP_CODE
+		   AND MAIN_CODE = N'M008'
+		   AND REF_CODE1 = 'Y'
+
+		-- 구매오더확정 마스터 조회
+		SELECT
+		       CAST(' ' AS BIT)           AS CHK
+		     , 'N'                        AS CONFIRM_YN
+		     , A.COMP_CODE                AS COMP_CODE
+		     , A.DIV_CODE                 AS DIV_CODE
+		     , CASE A.CUSTOM_CODE
+		            WHEN '*' THEN ''
+		            ELSE A.CUSTOM_CODE
+		        END                       AS CUSTOM_CODE
+		     , uniLITE.fnCustNameComp(@COMP_CODE, @USER_ID, A.CUSTOM_CODE)  AS CUSTOM_NAME
+		     , GETDATE()        AS ORDER_DATE
+		     , uniLITE.fnGetUserDate(@COMP_CODE, A.ORDER_PLAN_DATE)         AS ORDER_PLAN_DATE
+		     , ''                         AS ORDER_NUM
+		     , ISNULL(A.SUPPLY_TYPE, '')  AS SUPPLY_TYPE
+		     , CASE A.SUPPLY_TYPE
+		            WHEN '1' THEN '1'
+		            WHEN '3' THEN '4'
+		            ELSE '1'
+		        END                       AS ORDER_TYPE
+		     , CASE ISNULL(A.ORDER_PRSN,'')
+		            WHEN '' THEN @OrderPrsn
+		            ELSE A.ORDER_PRSN
+		        END                       AS ORDER_PRSN
+		     , ISNULL(CASE A.ORDER_PRSN
+		                   WHEN '*' THEN ''
+		                   ELSE A.ORDER_PRSN
+		               END, '')           AS ORDER_PRSN1
+		     , ISNULL(C.USER_ID, '')      AS AGREE_PRSN
+		     , ISNULL(C.USER_NAME, '')    AS AGREE_NAME
+		     , ISNULL(B.MONEY_UNIT, @MoneyUnit) AS MONEY_UNIT
+		     , '1'                        AS EXCHG_RATE_O
+		     , ''                         AS ORDER_O
+		     , ISNULL(B.SET_METH, '100')  AS RECEIPT_TYPE
+		     , @AgreeCheck                AS AGREE_STATUS
+		     , ISNULL(A.PROJECT_NO, '')	  AS PROJECT_NO
+		     , ''                         AS CHECKTYPE
+		     , ''                         AS CHECKSEQ
+		     , ISNULL(A.REMARK, '')       AS REMARK
+		     , A.ORDER_REQ_PRSN
+		  FROM            MRP400T A WITH (NOLOCK)
+		       INNER JOIN BCM100T B WITH (NOLOCK)
+		               ON B.COMP_CODE   = A.COMP_CODE
+		              AND B.CUSTOM_CODE = A.CUSTOM_CODE
+		       LEFT  JOIN BSA300T C WITH (NOLOCK)
+		               ON C.COMP_CODE   = A.COMP_CODE
+		              AND C.DIV_CODE    = A.DIV_CODE
+		              AND C.USER_ID     = (SELECT REF_CODE1
+		                                     FROM BSA100T WITH (NOLOCK)
+		                                    WHERE COMP_CODE = A.COMP_CODE
+		                                      AND MAIN_CODE = N'M201'
+		                                      AND SUB_CODE  = CASE ISNULL(A.ORDER_PRSN,'')
+		                                                           WHEN '' THEN @OrderPrsn
+		                                                           ELSE A.ORDER_PRSN
+		                                                       END )
+		       INNER JOIN BPR200T D WITH (NOLOCK)
+		               ON D.COMP_CODE   = A.COMP_CODE
+		              AND D.DIV_CODE    = A.DIV_CODE
+		              AND D.ITEM_CODE   = A.ITEM_CODE
+		 WHERE A.ORDER_YN    = N'N'
+		   AND A.COMP_CODE   = @COMP_CODE
+		   AND A.DIV_CODE    = @DIV_CODE
+		   AND (
+		       (A.ORDER_PLAN_DATE &gt;=       @ORDER_FR_DATE     AND @ORDER_FR_DATE != '') OR (@ORDER_FR_DATE = '')
+		       )
+		   AND (
+		       (A.ORDER_PLAN_DATE &lt;=       @ORDER_TO_DATE     AND @ORDER_TO_DATE != '') OR (@ORDER_TO_DATE = '')
+		       )
+		   AND (
+		       (A.DOM_FORIGN       =       @DOM_FORIGN        AND @DOM_FORIGN    != '') OR (@DOM_FORIGN    = '')
+		       )
+		   AND (
+		       (A.SUPPLY_TYPE      =       @SUPPLY_TYPE       AND @SUPPLY_TYPE   != '') OR (@SUPPLY_TYPE   = '')
+		       )
+			<!--2021.08 표준화 작업 Start-->
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+				AND A.CUSTOM_CODE = @CUSTOM_CODE
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+				AND A.CUSTOM_CODE LIKE @CUSTOM_CODE + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+				AND	(uniLITE.fnCustNameComp(@COMP_CODE, @USER_ID, A.CUSTOM_CODE)  LIKE N'%' + @CUSTOM_NAME + N'%')
+			</if>
+			<!--2021.08 표준화 작업 End-->
+
+		   AND (
+		       (A.LOT_NO        LIKE       @LOT_NO      + '%' AND @LOT_NO        != '') OR (@LOT_NO        = '')
+		       )
+		   AND (
+		       (A.ORDER_PRSN       =       @ORDER_PRSN        AND @ORDER_PRSN    != '') OR (@ORDER_PRSN    = '')
+		       )
+			<!--2021.08 표준화 작업 Start-->
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+				AND A.ITEM_CODE = @ITEM_CODE
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+				AND A.ITEM_CODE LIKE @ITEM_CODE + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+				AND	(D.ITEM_NAME  LIKE N'%' + @ITEM_NAME + N'%')
+			</if>
+			<!--2021.08 표준화 작업 End-->
+
+		<if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+		   AND D.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+		</if>
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE, B.CUSTOM_NAME, B.SET_METH, A.SUPPLY_TYPE, A.ORDER_PRSN
+		        , A.PROJECT_NO, C.USER_ID, C.USER_NAME, B.MONEY_UNIT, A.ORDER_PLAN_DATE, A.ORDER_REQ_PRSN, A.REMARK
+		 ORDER BY A.CUSTOM_CODE
+	</select>
+
+	<select id="mpo200ukrvServiceImpl.gridDown" parameterType="Map" resultType="rMap">
+		--mpo200ukrv.Cmpo200ukrv[fnMpo200QStd] Query02
+		--20200709 조회조건 일괄 수정 - masterData 조회와 동일하게 설정
+		SET NOCOUNT ON
+
+		DECLARE @COMP_CODE      NVARCHAR(08)    -- (필수) 법인코드
+		      , @USER_ID        NVARCHAR(100)    -- (필수) 사용자ID
+		      , @DIV_CODE       NVARCHAR(08)    -- (필수) 사업장코드
+		      , @ORDER_FR_DATE  NVARCHAR(08)    -- (선택) 발주예정일(FROM)
+		      , @ORDER_TO_DATE  NVARCHAR(08)    -- (선택) 발주예정일(TO)
+		      , @DOM_FORIGN     NVARCHAR(01)    -- (선택) 국내외구분
+		      , @SUPPLY_TYPE    NVARCHAR(01)    -- (선택) 조달구분
+		      , @CUSTOM_CODE    NVARCHAR(08)    -- (선택) 거래처코드
+		      , @CUSTOM_NAME    NVARCHAR(20)    -- (선택) 거래처명
+		      , @LOT_NO         NVARCHAR(20)    -- (선택) LOT번호
+		      , @ORDER_PRSN     NVARCHAR(04)    -- (선택) 구매담당
+		      , @ITEM_CODE      NVARCHAR(20)    -- (선택) 품목코드
+		      , @ITEM_NAME      NVARCHAR(200)   -- (선택) 품목명
+			  , @AgreeCheck     NVARCHAR(1)     -- (선택) 승인방식
+
+		DECLARE @MoneyUnit      NVARCHAR(10)    -- 화폐단위
+		      , @OrderPrsn      NVARCHAR(10)    -- 로그인ID의 구매담당
+		      , @AgreePrsn      NVARCHAR(10)    -- 로그인ID의 승인자ID
+
+		    SET @COMP_CODE      = #{S_COMP_CODE}
+		    SET @USER_ID        = #{S_USER_ID}
+		    SET @DIV_CODE       = #{DIV_CODE}
+		    SET @ORDER_FR_DATE  = #{ORDER_FR_DATE}
+		    SET @ORDER_TO_DATE  = #{ORDER_TO_DATE}
+		    SET @DOM_FORIGN     = #{DOM_FORIGN}
+		    SET @SUPPLY_TYPE    = #{SUPPLY_TYPE}
+		    SET @CUSTOM_CODE    = #{CUSTOM_CODE}
+		    SET @CUSTOM_NAME    = #{CUSTOM_NAME}
+		    SET @LOT_NO         = #{LOT_NO}
+		    SET @ORDER_PRSN     = #{ORDER_PRSN}
+		    SET @ITEM_CODE      = #{ITEM_CODE}
+		    SET @ITEM_NAME      = #{ITEM_NAME}
+
+		-- 공통코드의 화폐단위 조회
+		SELECT TOP 1
+		       @MoneyUnit = ISNULL(SUB_CODE, '')
+		  FROM BSA100T WITH (NOLOCK)
+		 WHERE COMP_CODE  = @COMP_CODE
+		   AND MAIN_CODE  = N'B004'
+		   AND (ISNULL(left(REF_CODE1,1),'') = N'Y'
+		     OR ISNULL(left(REF_CODE1,1),'') = N'y')
+
+		-- 로그인ID의 구매담당자 조회
+		SELECT TOP 1
+		       @OrderPrsn = ISNULL(SUB_CODE, '')
+		     , @AgreePrsn = ISNULL(REF_CODE1, '')
+		  FROM BSA100T WITH (NOLOCK)
+		 WHERE COMP_CODE = @COMP_CODE
+		   AND MAIN_CODE = N'M201'
+		   AND SUB_CODE != N'$'
+		   AND REF_CODE2 = @USER_ID
+		 ORDER BY SUB_CODE
+
+		-- 구매오더확정 디테일 조회
+		SELECT
+		       ''                         AS SAVE_FLAG
+		     , A.COMP_CODE                AS COMP_CODE
+		     , A.DIV_CODE                 AS DIV_CODE
+		     , (CASE A.CUSTOM_CODE
+		             WHEN '*' THEN ''
+		             ELSE A.CUSTOM_CODE
+		         END)                     AS CUSTOM_CODE
+		     , ''                         AS ORDER_NUM
+		     , ROW_NUMBER() OVER(PARTITION BY A.CUSTOM_CODE,A.ORDER_PLAN_DATE ORDER BY A.ITEM_CODE) AS ORDER_SEQ
+		     , A.ITEM_CODE
+		     , B.ITEM_NAME
+		     , B.SPEC
+		     , B.STOCK_UNIT
+		     , (A.ORDER_PLAN_Q / CASE ISNULL(C.ORDER_UNIT, D.ORDER_UNIT)
+		                               WHEN B.STOCK_UNIT THEN 1
+		                               ELSE 1
+		                          END)    AS ORDER_UNIT_Q
+		     , ISNULL(C.ORDER_UNIT, D.ORDER_UNIT) AS ORDER_UNIT
+		     , 'Y'                        AS UNIT_PRICE_TYPE
+		     ,  (CASE WHEN ISNULL(C.ITEM_P, 0) != 0
+		                   THEN C.ITEM_P
+		              WHEN ISNULL(H.MONEY_UNIT, @MoneyUnit) = @MoneyUnit
+		                   THEN D.PURCHASE_BASE_P
+		              ELSE 0
+		          END) AS ORDER_UNIT_P
+		     , (A.ORDER_PLAN_Q * CASE @MoneyUnit
+		                              WHEN @MoneyUnit
+		                                   THEN ISNULL(C.ITEM_P, D.PURCHASE_BASE_P)
+		                              ELSE 0
+		                          END)    AS ORDER_O
+		     , uniLITE.fnGetUserDate(@COMP_CODE, A.DVRY_DATE)      AS DVRY_DATE
+		     , D.WH_CODE
+		     , ISNULL(D.INSPEC_YN, 'N')   AS INSPEC_YN
+		     , CASE ISNULL(C.ORDER_UNIT, D.ORDER_UNIT)
+		            WHEN B.STOCK_UNIT THEN 1
+		            ELSE ISNULL(D.TRNS_RATE, 1)
+		        END                       AS TRNS_RATE
+		     , A.ORDER_PLAN_Q
+		         *
+		       (CASE ISNULL(C.ORDER_UNIT, D.ORDER_UNIT)
+		                WHEN B.STOCK_UNIT THEN 1
+		                ELSE ISNULL(D.TRNS_RATE, 1)
+		       END)         AS ORDER_Q
+		     , ISNULL(H.MONEY_UNIT, @MoneyUnit) AS MONEY_UNIT
+		     , (CASE WHEN ISNULL(C.ITEM_P, 0) != 0
+		                 THEN C.ITEM_P
+		            WHEN ISNULL(H.MONEY_UNIT, @MoneyUnit) = @MoneyUnit
+		                 THEN D.PURCHASE_BASE_P
+		            ELSE 0
+		        END) /
+		        (CASE ISNULL(C.ORDER_UNIT, D.ORDER_UNIT)
+		                WHEN B.STOCK_UNIT THEN 1
+		                ELSE ISNULL(D.TRNS_RATE, 1)
+		       END)   AS ORDER_P
+		     , '1'                        AS CONTROL_STATUS
+		     , A.ORDER_REQ_NUM
+		     , D.PURCH_LDTIME
+		     , uniLITE.fnGetUserDate(@COMP_CODE, A.BASIS_DATE)      AS BASIS_DATE
+		     , uniLITE.fnGetUserDate(@COMP_CODE, A.CREATE_DATE)     AS CREATE_DATE
+		     , uniLITE.fnGetUserDate(@COMP_CODE, A.ORDER_PLAN_DATE) AS ORDER_PLAN_DATE
+		     , A.SUPPLY_TYPE
+		     , ''                         AS CHECKSEQ
+		     , ''                         AS UPDATE_DB_USER
+		     , ''                         AS UPDATE_DB_TIME
+		     , CASE WHEN ISNULL(A.ORDER_PRSN,'') = '' THEN @OrderPrsn
+		            ELSE A.ORDER_PRSN
+		        END                       AS ORDER_PRSN
+		     , A.LOT_NO
+		     , A.REMARK
+		     , A.PROJECT_NO
+		     , A.IN_DIV_CODE
+		     , 1 AS EXCHG_RATE_O
+		     , A.ORDER_NUM AS SO_NUM --수주번호
+		     , A.ORDER_SEQ AS SO_SEQ --수주순번
+		     , @DIV_CODE AS OUT_DIV_CODE
+		  FROM            MRP400T A WITH (NOLOCK)
+		       LEFT  JOIN BPR100T B WITH (NOLOCK)
+		               ON B.COMP_CODE   = A.COMP_CODE
+		              AND B.ITEM_CODE   = A.ITEM_CODE
+		       LEFT  JOIN BPR200T D WITH (NOLOCK)
+		               ON D.COMP_CODE   = A.COMP_CODE
+		              AND D.DIV_CODE    = A.DIV_CODE
+		              AND D.ITEM_CODE   = A.ITEM_CODE
+		       LEFT  JOIN (SELECT *
+		                     FROM BPR400T AA WITH (NOLOCK)
+		                    WHERE AA.APLY_START_DATE = (SELECT MAX(APLY_START_DATE)
+		                                               FROM            BPR400T X WITH (NOLOCK)
+		                                                    INNER JOIN BCM100T M WITH (NOLOCK)
+		                                                            ON X.COMP_CODE   = M.COMP_CODE
+		                                                           AND X.CUSTOM_CODE = M.CUSTOM_CODE
+		                                                           AND X.MONEY_UNIT  = ISNULL(M.MONEY_UNIT, @MoneyUnit)
+		                                              WHERE X.TYPE = N'1'
+		                                                AND X.COMP_CODE        = @COMP_CODE
+		                                                AND X.DIV_CODE         = @DIV_CODE
+		                                                AND X.ITEM_CODE        = AA.ITEM_CODE
+		                                                AND X.CUSTOM_CODE      = AA.CUSTOM_CODE
+		                                                AND X.APLY_START_DATE &lt;= @ORDER_TO_DATE)) C
+		               ON C.DIV_CODE    = A.DIV_CODE
+		              AND C.ITEM_CODE   = A.ITEM_CODE
+		              AND C.CUSTOM_CODE = A.CUSTOM_CODE
+		              AND C.TYPE        = N'1'
+		              AND C.ORDER_UNIT  = D.ORDER_UNIT
+		       INNER JOIN BCM100T H WITH (NOLOCK)
+		               ON H.COMP_CODE   = A.COMP_CODE
+		              AND H.CUSTOM_CODE = A.CUSTOM_CODE
+		 WHERE A.ORDER_YN    = N'N'
+		   AND A.CUSTOM_CODE &gt; ''
+		   AND A.COMP_CODE   = @COMP_CODE
+		   AND A.DIV_CODE    = @DIV_CODE
+		   AND (
+		       (A.ORDER_PLAN_DATE &gt;=       @ORDER_FR_DATE     AND @ORDER_FR_DATE != '') OR (@ORDER_FR_DATE = '')
+		       )
+		   AND (
+		       (A.ORDER_PLAN_DATE &lt;=       @ORDER_TO_DATE     AND @ORDER_TO_DATE != '') OR (@ORDER_TO_DATE = '')
+		       )
+		   AND (
+		       (A.DOM_FORIGN       =       @DOM_FORIGN        AND @DOM_FORIGN    != '') OR (@DOM_FORIGN    = '')
+		       )
+		   AND (
+		       (A.SUPPLY_TYPE      =       @SUPPLY_TYPE       AND @SUPPLY_TYPE   != '') OR (@SUPPLY_TYPE   = '')
+		       )
+
+			<!--2021.08 표준화 작업 Start-->
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+				AND A.CUSTOM_CODE = @CUSTOM_CODE
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+				AND A.CUSTOM_CODE LIKE @CUSTOM_CODE + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+				AND	(H.CUSTOM_CODE LIKE N'%' + @CUSTOM_NAME + N'%')
+			</if>
+			<!--2021.08 표준화 작업 End-->
+		   AND (
+		       (A.LOT_NO        LIKE       @LOT_NO      + '%' AND @LOT_NO        != '') OR (@LOT_NO        = '')
+		       )
+		   AND (
+		       (A.ORDER_PRSN       =       @ORDER_PRSN        AND @ORDER_PRSN    != '') OR (@ORDER_PRSN    = '')
+		       )
+			<!--2021.08 표준화 작업 Start-->
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+				AND A.ITEM_CODE = @ITEM_CODE
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+				AND A.ITEM_CODE LIKE @ITEM_CODE + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+				AND	(D.ITEM_NAME  LIKE N'%' + @ITEM_NAME + N'%')
+			</if>
+			<!--2021.08 표준화 작업 End-->
+
+		<if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+		   AND D.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+		</if>
+		 ORDER BY A.ITEM_CODE
+	</select>
+
+<!-- 구매요청정보 조정  조회 -->
+	<select id="mpo200ukrvServiceImpl.selectAdjustList1" parameterType="Map" resultType="rMap">
+		--mpo200ukrv.Cmpo200ukrv[fnMpo201QStd] Query01
+		DECLARE @COMP_CODE      NVARCHAR(08)    -- (필수) 법인코드
+		      , @USER_ID        NVARCHAR(100)    -- (필수) 사용자ID
+		      , @DIV_CODE       NVARCHAR(08)    -- (필수) 사업장코드
+		      , @ORDER_FR_DATE  NVARCHAR(08)    -- (선택) 발주예정일(FROM)
+		      , @ORDER_TO_DATE  NVARCHAR(08)    -- (선택) 발주예정일(TO)
+		      , @DOM_FORIGN     NVARCHAR(01)    -- (선택) 국내외구분
+		      , @SUPPLY_TYPE    NVARCHAR(01)    -- (선택) 조달구분
+		      , @CUSTOM_CODE    NVARCHAR(08)    -- (선택) 거래처코드
+		      , @CUSTOM_NAME    NVARCHAR(20)    -- (선택) 거래처명
+		      , @LOT_NO         NVARCHAR(20)    -- (선택) LOT번호
+		      , @ORDER_PRSN     NVARCHAR(04)    -- (선택) 구매담당
+		      , @ITEM_CODE      NVARCHAR(20)    -- (선택) 품목코드
+		      , @ITEM_NAME      NVARCHAR(200)   -- (선택) 품목명
+
+		    SET @COMP_CODE      = #{S_COMP_CODE}
+		    SET @USER_ID        = #{S_USER_ID}
+		    SET @DIV_CODE       = #{DIV_CODE}
+		    SET @ORDER_FR_DATE  = #{ORDER_FR_DATE}
+		    SET @ORDER_TO_DATE  = #{ORDER_TO_DATE}
+		    SET @DOM_FORIGN     = #{DOM_FORIGN}
+		    SET @SUPPLY_TYPE    = #{SUPPLY_TYPE}
+		    SET @CUSTOM_CODE    = #{CUSTOM_CODE}
+		    SET @CUSTOM_NAME    = #{CUSTOM_NAME}
+		    SET @LOT_NO         = #{LOT_NO}
+		    SET @ORDER_PRSN     = #{ORDER_PRSN}
+		    SET @ITEM_CODE      = #{ITEM_CODE}
+		    SET @ITEM_NAME      = #{ITEM_NAME}
+
+		SELECT TOP 100
+		       A.COMP_CODE          AS COMP_CODE
+		     , A.DIV_CODE           AS DIV_CODE
+		     , A.ORDER_PLAN_DATE    AS ORDER_PLAN_DATE
+		     , A.ITEM_CODE          AS ITEM_CODE
+		 FROM             MRP400T A WITH(NOLOCK)
+		       INNER JOIN BPR200T B WITH(NOLOCK)
+		               ON B.COMP_CODE        = A.COMP_CODE
+		              AND B.DIV_CODE         = A.DIV_CODE
+		              AND B.ITEM_CODE        = A.ITEM_CODE
+		       INNER JOIN BPR100T C WITH(NOLOCK)
+		               ON C.COMP_CODE        = A.COMP_CODE
+		              AND C.ITEM_CODE        = A.ITEM_CODE
+		       LEFT  JOIN BCM100T D WITH(NOLOCK)
+		               ON D.COMP_CODE        = A.COMP_CODE
+		              AND D.CUSTOM_CODE      = A.CUSTOM_CODE
+		 WHERE A.ORDER_YN     = N'N'
+		   AND A.SUPPLY_TYPE != N'2'
+		   AND A.COMP_CODE    =  @COMP_CODE
+		   AND A.DIV_CODE     =  @DIV_CODE
+		   AND (
+		       (A.ORDER_PLAN_DATE &gt;=       @ORDER_FR_DATE     AND @ORDER_FR_DATE != '') OR (@ORDER_FR_DATE = '')
+		       )
+		   AND (
+		       (A.ORDER_PLAN_DATE &lt;=       @ORDER_TO_DATE     AND @ORDER_TO_DATE != '') OR (@ORDER_TO_DATE = '')
+		       )
+		   AND (
+		       (A.DOM_FORIGN       =       @DOM_FORIGN        AND @DOM_FORIGN    != '') OR (@DOM_FORIGN    = '')
+		       )
+		   AND (
+		       (A.SUPPLY_TYPE      =       @SUPPLY_TYPE       AND @SUPPLY_TYPE   != '') OR (@SUPPLY_TYPE   = '')
+		       )
+			<!--2021.08 표준화 작업 Start-->
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+				AND A.CUSTOM_CODE = @CUSTOM_CODE
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+				AND A.CUSTOM_CODE LIKE @CUSTOM_CODE + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+				AND	(D.CUSTOM_NAME LIKE N'%' + @CUSTOM_NAME + N'%')
+			</if>
+			<!--2021.08 표준화 작업 End-->
+		   AND (
+		       (A.LOT_NO        LIKE       @LOT_NO      + '%' AND @LOT_NO        != '') OR (@LOT_NO        = '')
+		       )
+		   AND (
+		       (A.ORDER_PRSN       =       @ORDER_PRSN        AND @ORDER_PRSN    != '') OR (@ORDER_PRSN    = '')
+		       )
+			<!--2021.08 표준화 작업 Start-->
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+				AND A.ITEM_CODE = @ITEM_CODE
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+				AND A.ITEM_CODE LIKE @ITEM_CODE + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+				AND	(C.ITEM_NAME  LIKE N'%' + @ITEM_NAME + N'%')
+			</if>
+			<!--2021.08 표준화 작업 End-->
+
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.ORDER_PLAN_DATE, A.ITEM_CODE
+	</select>
+
+	<select id="mpo200ukrvServiceImpl.selectAdjustList2" parameterType="Map" resultType="rMap">
+		--mpo200ukrv.Cmpo200ukrv[fnMpo201QStd] Query02
+		SET NOCOUNT ON
+
+		--  조회조건
+		DECLARE @COMP_CODE      NVARCHAR(08)    -- (필수) 법인코드
+		      , @USER_ID        NVARCHAR(100)    -- (필수) 사용자ID
+		      , @DIV_CODE       NVARCHAR(08)    -- (필수) 사업장코드
+		      , @ORDER_FR_DATE  NVARCHAR(08)    -- (선택) 발주예정일(FROM)
+		      , @ORDER_TO_DATE  NVARCHAR(08)    -- (선택) 발주예정일(TO)
+		      , @DOM_FORIGN     NVARCHAR(01)    -- (선택) 국내외구분
+		      , @SUPPLY_TYPE    NVARCHAR(01)    -- (선택) 조달구분
+		      , @CUSTOM_CODE    NVARCHAR(08)    -- (선택) 거래처코드
+		      , @CUSTOM_NAME    NVARCHAR(20)    -- (선택) 거래처명
+		      , @LOT_NO         NVARCHAR(20)    -- (선택) LOT번호
+		      , @ORDER_PRSN     NVARCHAR(04)    -- (선택) 구매담당
+		      , @ITEM_CODE      NVARCHAR(20)    -- (선택) 품목코드
+		      , @ITEM_NAME      NVARCHAR(200)   -- (선택) 품목명
+		--  가용재고함수인자
+		      , @BASE_DATE1     VARCHAR(8000)   -- (인자) 기준일자
+		      , @FROM_ITEM      VARCHAR(8000)   -- (인자) 품목코드(FROM)
+		      , @TO_ITEM        NVARCHAR(20)    -- (인자) 품목코드(TO)
+		      , @QRY_TYPE       NVARCHAR(01)    -- (인자) 조회타입
+		--  대체품목함수인자
+		      , @BASE_DATE2     NVARCHAR(08)    -- (인자) 기준일자
+
+		    SET @COMP_CODE      = #{S_COMP_CODE}
+		    SET @USER_ID        = #{S_USER_ID}
+		    SET @DIV_CODE       = #{DIV_CODE}
+		    SET @ORDER_FR_DATE  = #{ORDER_FR_DATE}
+		    SET @ORDER_TO_DATE  = #{ORDER_TO_DATE}
+		    SET @DOM_FORIGN     = #{DOM_FORIGN}
+		    SET @SUPPLY_TYPE    = #{SUPPLY_TYPE}
+		    SET @CUSTOM_CODE    = #{CUSTOM_CODE}
+		    SET @CUSTOM_NAME    = #{CUSTOM_NAME}
+		    SET @LOT_NO         = #{LOT_NO}
+		    SET @ORDER_PRSN     = #{ORDER_PRSN}
+		    SET @ITEM_CODE      = #{ITEM_CODE}
+		    SET @ITEM_NAME      = #{ITEM_NAME}
+		    SET @BASE_DATE1     = #{BASE_DATE}
+		    SET @FROM_ITEM      = #{FROM_ITEM}
+		    SET @TO_ITEM        = N''
+		    SET @QRY_TYPE       = N'5'
+		    SET @BASE_DATE2     = CONVERT(NVARCHAR(08), GETDATE(), 112)
+		-----------------------------------------------------------------------------------------------------------------------
+		    DECLARE @EXChgYN            NVARCHAR(01)
+
+		    SELECT TOP 1 @EXChgYN = SUB_CODE
+		    FROM   BSA100T WITH (NOLOCK)
+		    WHERE  COMP_CODE = @COMP_CODE
+		    AND    MAIN_CODE = 'B081'
+		    AND    REF_CODE1 = 'Y'
+
+		    SET @EXChgYN = ISNULL(@EXChgYN, 'N')
+		-----------------------------------------------------------------------------------------------------------------------
+
+		    IF @EXChgYN = 'Y'
+		        SELECT
+		               A.COMP_CODE                                                  AS COMP_CODE
+		             , A.DIV_CODE                                                   AS DIV_CODE
+		             , uniLITE.fnGetUserDate(A.COMP_CODE, A.ORDER_PLAN_DATE)        AS ORDER_PLAN_DATE
+		             , (CASE A.CUSTOM_CODE WHEN '*' THEN '' ELSE A.CUSTOM_CODE END) AS CUSTOM_CODE
+		             , uniLITE.fnCustNameComp(D.COMP_CODE, @USER_ID, D.CUSTOM_CODE) AS CUSTOM_NAME
+		          --   , ISNULL(F.PROD_ITEM_CODE, '')                                 AS PROD_ITEM_CODE
+		             , ISNULL(A.PROD_ITEM_CODE, '')                                 AS PROD_ITEM_CODE
+		             , R1.ITEM_NAME AS PROD_ITEM_NAME
+		             , ISNULL(A.ITEM_CODE, '')                                      AS ITEM_CODE
+		             , uniLITE.fnItemNameComp(C.COMP_CODE, @USER_ID, C.ITEM_CODE)   AS ITEM_NAME
+		             , ISNULL(C.SPEC, '')                                           AS SPEC
+		             , ISNULL(A.ORDER_PLAN_Q, 0)                                    AS ORDER_PLAN_Q
+		             , ISNULL(C.STOCK_UNIT, '')                                     AS STOCK_UNIT
+		             , uniLITE.fnGetUserDate(A.COMP_CODE, A.BASIS_DATE)             AS BASIS_DATE
+		             , ISNULL(A.REQ_PLAN_Q, 0)                                      AS REQ_PLAN_Q
+		             , (CASE A.SUPPLY_TYPE WHEN '*' THEN '' ELSE A.SUPPLY_TYPE END) AS SUPPLY_TYPE
+		             , ISNULL(H.PAB_STOCK_Q,0)                                      AS PAB_STOCK_Q
+		             , (CASE WHEN ISNULL(G.EXCHG_CNT,0) = 0 THEN 'N' ELSE 'Y' END)  AS EXCHG_EXIST_YN
+		             , ISNULL(A.REF_ITEM_CODE, '')                                  AS REF_ITEM_CODE
+		             , uniLITE.fnItemNameComp(E.COMP_CODE, @USER_ID, E.ITEM_CODE)   AS REF_ITEM_NAME
+		             , ISNULL(A.EXCHG_YN, '')                                       AS EXCHG_YN
+		             , ISNULL(A.DOM_FORIGN, '')                                     AS DOM_FORIGN
+		             , (CASE WHEN A.ORDER_REQ_DEPT_CODE = '*' THEN ''
+		                     ELSE A.ORDER_REQ_DEPT_CODE             END)            AS ORDER_REQ_DEPT_CODE
+		             , (CASE WHEN A.ORDER_PRSN IS NULL THEN CASE B.ORDER_PRSN WHEN '*' THEN '' ELSE B.ORDER_PRSN END
+		                                  ELSE A.ORDER_PRSN END)                    AS ORDER_PRSN
+		             , ISNULL(A.ORDER_YN, '')                                       AS ORDER_YN
+		          --   , ISNULL(F.ORDER_NUM, '')                                      AS ORDER_NUM
+		          --   , F.ORDER_SEQ                                                  AS ORDER_SEQ
+		             , ISNULL(A.ORDER_NUM, '')                                      AS ORDER_NUM
+		             , A.ORDER_SEQ
+		             , ISNULL(A.ORDER_REQ_NUM, '')                                  AS ORDER_REQ_NUM
+		         --    , (CASE WHEN A.MRP_CONTROL_NUM = '*' THEN ''
+		         --            ELSE A.MRP_CONTROL_NUM                 END)          AS MRP_CONTROL_NUM
+		             , A.MRP_CONTROL_NUM
+		             , ISNULL(A.WKORD_NUM, '')                                      AS WKORD_NUM
+		             , ISNULL(B.ITEM_ACCOUNT, '')                                   AS ITEM_ACCOUNT
+		             , ISNULL(B.PURCH_LDTIME, 0)                                    AS PURCH_LDTIME
+		             , ISNULL(A.CREATE_DATE, '')                                    AS CREATE_DATE
+		             , ISNULL(A.MRP_YN, '')                                         AS MRP_YN
+		             , ISNULL(A.LOT_NO, '')                                         AS LOT_NO
+		             , ISNULL(A.REMARK, '')                                         AS REMARK
+		             , ISNULL(A.PROJECT_NO, '')                                     AS PROJECT_NO
+		             , A.DVRY_DATE
+		             , A.IN_DIV_CODE
+		             , B.ORDER_UNIT
+		          FROM            MRP400T A WITH(NOLOCK)
+		               INNER JOIN BPR200T B WITH(NOLOCK)
+		                       ON B.COMP_CODE        = A.COMP_CODE
+		                      AND B.DIV_CODE         = A.DIV_CODE
+		                      AND B.ITEM_CODE        = A.ITEM_CODE
+		               INNER JOIN BPR100T C WITH(NOLOCK)
+		                       ON C.COMP_CODE        = A.COMP_CODE
+		                      AND C.ITEM_CODE        = A.ITEM_CODE
+		               LEFT  JOIN BCM100T D WITH(NOLOCK)
+		                       ON D.COMP_CODE        = A.COMP_CODE
+		                      AND D.CUSTOM_CODE      = A.CUSTOM_CODE
+		               LEFT  JOIN BPR200T E WITH(NOLOCK)
+		                       ON E.COMP_CODE        = A.COMP_CODE
+		                      AND E.DIV_CODE         = A.DIV_CODE
+		                      AND E.ITEM_CODE        = A.REF_ITEM_CODE
+		               LEFT  JOIN MRP350T F WITH(NOLOCK)
+		                       ON A.COMP_CODE        = F.COMP_CODE
+		                      AND A.DIV_CODE         = F.DIV_CODE
+		                      AND A.ORDER_REQ_NUM    = CONVERT(NVARCHAR, F.ITEM_CHECK)
+		               LEFT  JOIN (SELECT COMP_CODE,         DIV_CODE,           PROD_ITEM_CODE
+		                                , CHILD_ITEM_CODE,   COUNT(EXCHG_ITEM_CODE) AS EXCHG_CNT
+		                           FROM   uniLITE.fnValidEXCHG(@COMP_CODE, @DIV_CODE, @BASE_DATE2)
+		                           GROUP BY COMP_CODE, DIV_CODE, PROD_ITEM_CODE, CHILD_ITEM_CODE) G
+		                       ON F.COMP_CODE        = G.COMP_CODE
+		                      AND F.DIV_CODE         = G.DIV_CODE
+		                      AND F.PROD_ITEM_CODE   = G.PROD_ITEM_CODE
+		                      AND F.ITEM_CODE        = G.CHILD_ITEM_CODE
+		               LEFT  JOIN uniLITE.fnGetPABStock(@COMP_CODE, @DIV_CODE, @BASE_DATE1, @FROM_ITEM, @TO_ITEM, @QRY_TYPE) H
+		                       ON A.COMP_CODE        = H.COMP_CODE
+		                      AND A.DIV_CODE         = H.DIV_CODE
+		                      AND A.ITEM_CODE        = H.ITEM_CODE
+		                      AND A.ORDER_PLAN_DATE  = H.BASE_DATE
+		               LEFT JOIN BPR200T R1 WITH(NOLOCK)
+		                       ON R1.COMP_CODE        = A.COMP_CODE
+		                      AND R1.DIV_CODE         = A.DIV_CODE
+		                      AND R1.ITEM_CODE        = A.PROD_ITEM_CODE
+		         WHERE A.ORDER_YN     = 'N'
+		           AND A.SUPPLY_TYPE != '2'
+		           AND A.COMP_CODE    =  @COMP_CODE
+		           AND A.DIV_CODE     =  @DIV_CODE
+		           AND (
+		               (A.ORDER_PLAN_DATE &gt;=       @ORDER_FR_DATE     AND @ORDER_FR_DATE != '') OR (@ORDER_FR_DATE = '')
+		               )
+		           AND (
+		               (A.ORDER_PLAN_DATE &lt;=       @ORDER_TO_DATE     AND @ORDER_TO_DATE != '') OR (@ORDER_TO_DATE = '')
+		               )
+		           AND (
+		               (A.DOM_FORIGN       =       @DOM_FORIGN        AND @DOM_FORIGN    != '') OR (@DOM_FORIGN    = '')
+		               )
+		           AND (
+		               (A.SUPPLY_TYPE      =       @SUPPLY_TYPE       AND @SUPPLY_TYPE   != '') OR (@SUPPLY_TYPE   = '')
+		               )
+					<!--2021.08 표준화 작업 Start-->
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+						AND A.CUSTOM_CODE = @CUSTOM_CODE
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+						AND A.CUSTOM_CODE LIKE @CUSTOM_CODE + '%'
+					</if>
+					<if test="@foren.Ognl@isEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+						AND	(D.CUSTOM_NAME LIKE N'%' + @CUSTOM_NAME + N'%')
+					</if>
+					<!--2021.08 표준화 작업 End-->
+		           AND (
+		               (A.LOT_NO        LIKE       @LOT_NO      + '%' AND @LOT_NO        != '') OR (@LOT_NO        = '')
+		               )
+		           AND (
+		               (A.ORDER_PRSN       =       @ORDER_PRSN        AND @ORDER_PRSN    != '') OR (@ORDER_PRSN    = '')
+		               )
+					<!--2021.08 표준화 작업 Start-->
+					<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+						AND A.ITEM_CODE = @ITEM_CODE
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+						AND A.ITEM_CODE LIKE @ITEM_CODE + '%'
+					</if>
+					<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+						AND	(C.ITEM_NAME  LIKE N'%' + @ITEM_NAME + N'%')
+					</if>
+					<!--2021.08 표준화 작업 End-->
+
+				<if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+		           AND B.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+				</if>
+		         ORDER BY A.ORDER_PLAN_DATE, A.CUSTOM_CODE, A.ITEM_CODE
+		    ELSE
+		        SELECT
+		               A.COMP_CODE                                                  AS COMP_CODE
+		             , A.DIV_CODE                                                   AS DIV_CODE
+		             , uniLITE.fnGetUserDate(A.COMP_CODE, A.ORDER_PLAN_DATE)        AS ORDER_PLAN_DATE
+		             , (CASE A.CUSTOM_CODE WHEN '*' THEN '' ELSE A.CUSTOM_CODE END) AS CUSTOM_CODE
+		             , uniLITE.fnCustNameComp(D.COMP_CODE, @USER_ID, D.CUSTOM_CODE) AS CUSTOM_NAME
+		          --   , ISNULL(F.PROD_ITEM_CODE, '')                                 AS PROD_ITEM_CODE
+		             , ISNULL(A.PROD_ITEM_CODE, '')                                 AS PROD_ITEM_CODE
+		             , R1.ITEM_NAME AS PROD_ITEM_NAME
+		             , ISNULL(A.ITEM_CODE, '')                                      AS ITEM_CODE
+		             , uniLITE.fnItemNameComp(C.COMP_CODE, @USER_ID, C.ITEM_CODE)   AS ITEM_NAME
+		             , ISNULL(C.SPEC, '')                                           AS SPEC
+		             , ISNULL(A.ORDER_PLAN_Q, 0)                                    AS ORDER_PLAN_Q
+		             , ISNULL(C.STOCK_UNIT, '')                                     AS STOCK_UNIT
+		             , uniLITE.fnGetUserDate(A.COMP_CODE, A.BASIS_DATE)             AS BASIS_DATE
+		             , ISNULL(A.REQ_PLAN_Q, 0)                                      AS REQ_PLAN_Q
+		             , (CASE A.SUPPLY_TYPE WHEN '*' THEN '' ELSE A.SUPPLY_TYPE END) AS SUPPLY_TYPE
+		             , 0                                                            AS PAB_STOCK_Q
+		             , (CASE WHEN ISNULL(G.EXCHG_CNT,0) = 0 THEN 'N' ELSE 'Y' END)  AS EXCHG_EXIST_YN
+		             , ISNULL(A.REF_ITEM_CODE, '')                                  AS REF_ITEM_CODE
+		             , uniLITE.fnItemNameComp(E.COMP_CODE, @USER_ID, E.ITEM_CODE)   AS REF_ITEM_NAME
+		             , ISNULL(A.EXCHG_YN, '')                                       AS EXCHG_YN
+		             , ISNULL(A.DOM_FORIGN, '')                                     AS DOM_FORIGN
+		             , (CASE WHEN A.ORDER_REQ_DEPT_CODE = '*' THEN ''
+		                     ELSE A.ORDER_REQ_DEPT_CODE             END)            AS ORDER_REQ_DEPT_CODE
+		             , (CASE WHEN A.ORDER_PRSN IS NULL THEN CASE B.ORDER_PRSN WHEN '*' THEN '' ELSE B.ORDER_PRSN END
+		                                  ELSE A.ORDER_PRSN END)                    AS ORDER_PRSN
+		             , ISNULL(A.ORDER_YN, '')                                       AS ORDER_YN
+		          --   , ISNULL(F.ORDER_NUM, '')                                      AS ORDER_NUM
+		          --   , F.ORDER_SEQ                                                  AS ORDER_SEQ
+		             , ISNULL(A.ORDER_NUM, '')                                      AS ORDER_NUM
+		             , A.ORDER_SEQ
+		             , ISNULL(A.ORDER_REQ_NUM, '')                                  AS ORDER_REQ_NUM
+		          --   , (CASE WHEN A.MRP_CONTROL_NUM = '*' THEN ''
+		          --           ELSE A.MRP_CONTROL_NUM                 END)          AS MRP_CONTROL_NUM
+		             , A.MRP_CONTROL_NUM
+		             , ISNULL(A.WKORD_NUM, '')                                      AS WKORD_NUM
+		             , ISNULL(B.ITEM_ACCOUNT, '')                                   AS ITEM_ACCOUNT
+		             , ISNULL(B.PURCH_LDTIME, 0)                                    AS PURCH_LDTIME
+		             , ISNULL(A.CREATE_DATE, '')                                    AS CREATE_DATE
+		             , ISNULL(A.MRP_YN, '')                                         AS MRP_YN
+		             , ISNULL(A.LOT_NO, '')                                         AS LOT_NO
+		             , ISNULL(A.REMARK, '')                                         AS REMARK
+		             , ISNULL(A.PROJECT_NO, '')                                     AS PROJECT_NO
+		             , A.DVRY_DATE
+		          FROM            MRP400T A WITH(NOLOCK)
+		               INNER JOIN BPR200T B WITH(NOLOCK)
+		                       ON B.COMP_CODE        = A.COMP_CODE
+		                      AND B.DIV_CODE         = A.DIV_CODE
+		                      AND B.ITEM_CODE        = A.ITEM_CODE
+		               INNER JOIN BPR100T C WITH(NOLOCK)
+		                       ON C.COMP_CODE        = A.COMP_CODE
+		                      AND C.ITEM_CODE        = A.ITEM_CODE
+		               LEFT  JOIN BCM100T D WITH(NOLOCK)
+		                       ON D.COMP_CODE        = A.COMP_CODE
+		                      AND D.CUSTOM_CODE      = A.CUSTOM_CODE
+		               LEFT  JOIN BPR200T E WITH(NOLOCK)
+		                       ON E.COMP_CODE        = A.COMP_CODE
+		                      AND E.DIV_CODE         = A.DIV_CODE
+		                      AND E.ITEM_CODE        = A.REF_ITEM_CODE
+		               LEFT  JOIN MRP350T F WITH(NOLOCK)
+		                       ON A.COMP_CODE        = F.COMP_CODE
+		                      AND A.DIV_CODE         = F.DIV_CODE
+		                      AND A.ORDER_REQ_NUM    = CONVERT(NVARCHAR, F.ITEM_CHECK)
+		               LEFT  JOIN (SELECT COMP_CODE,         DIV_CODE,           PROD_ITEM_CODE
+		                                , CHILD_ITEM_CODE,   COUNT(EXCHG_ITEM_CODE) AS EXCHG_CNT
+		                           FROM   uniLITE.fnValidEXCHG(@COMP_CODE, @DIV_CODE, @BASE_DATE2)
+		                           GROUP BY COMP_CODE, DIV_CODE, PROD_ITEM_CODE, CHILD_ITEM_CODE) G
+		                       ON F.COMP_CODE        = G.COMP_CODE
+		                      AND F.DIV_CODE         = G.DIV_CODE
+		                      AND F.PROD_ITEM_CODE   = G.PROD_ITEM_CODE
+		                      AND F.ITEM_CODE        = G.CHILD_ITEM_CODE
+		               LEFT JOIN BPR200T R1 WITH(NOLOCK)
+		                       ON R1.COMP_CODE        = A.COMP_CODE
+		                      AND R1.DIV_CODE         = A.DIV_CODE
+		                      AND R1.ITEM_CODE        = A.PROD_ITEM_CODE
+		         WHERE A.ORDER_YN     = 'N'
+		           AND A.SUPPLY_TYPE != '2'
+		           AND A.COMP_CODE    =  @COMP_CODE
+		           AND A.DIV_CODE     =  @DIV_CODE
+		           AND (
+		               (A.ORDER_PLAN_DATE &gt;=       @ORDER_FR_DATE     AND @ORDER_FR_DATE != '') OR (@ORDER_FR_DATE = '')
+		               )
+		           AND (
+		               (A.ORDER_PLAN_DATE &lt;=       @ORDER_TO_DATE     AND @ORDER_TO_DATE != '') OR (@ORDER_TO_DATE = '')
+		               )
+		           AND (
+		               (A.DOM_FORIGN       =       @DOM_FORIGN        AND @DOM_FORIGN    != '') OR (@DOM_FORIGN    = '')
+		               )
+		           AND (
+		               (A.SUPPLY_TYPE      =       @SUPPLY_TYPE       AND @SUPPLY_TYPE   != '') OR (@SUPPLY_TYPE   = '')
+		               )
+					<!--2021.08 표준화 작업 Start-->
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+						AND A.CUSTOM_CODE = @CUSTOM_CODE
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+						AND A.CUSTOM_CODE LIKE @CUSTOM_CODE + '%'
+					</if>
+					<if test="@foren.Ognl@isEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+						AND	(D.CUSTOM_NAME LIKE N'%' + @CUSTOM_NAME + N'%')
+					</if>
+					<!--2021.08 표준화 작업 End-->
+		           AND (
+		               (A.LOT_NO        LIKE       @LOT_NO      + '%' AND @LOT_NO        != '') OR (@LOT_NO        = '')
+		               )
+		           AND (
+		               (A.ORDER_PRSN       =       @ORDER_PRSN        AND @ORDER_PRSN    != '') OR (@ORDER_PRSN    = '')
+		               )
+					<!--2021.08 표준화 작업 Start-->
+					<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+						AND A.ITEM_CODE = @ITEM_CODE
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+						AND A.ITEM_CODE LIKE @ITEM_CODE + '%'
+					</if>
+					<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+						AND	(C.ITEM_NAME  LIKE N'%' + @ITEM_NAME + N'%')
+					</if>
+					<!--2021.08 표준화 작업 End-->
+
+				<if test="@foren.Ognl@isNotEmpty(ITEM_ACCOUNT)">
+		           AND B.ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+				</if>
+		           AND A.MRP_CONTROL_NUM = (SELECT MAX(MRP_CONTROL_NUM) FROM MRP400T )
+		         ORDER BY A.ORDER_PLAN_DATE, A.CUSTOM_CODE, A.ITEM_CODE
+	</select>
+
+
+
+<!-- 구매요청정보 조정 저장 -->
+	<insert id="mpo200ukrvServiceImpl.insertAdjust" parameterType="Map">
+		INSERT INTO L_MRP400T (
+		    KEY_VALUE,
+		    OPR_FLAG,
+		    COMP_CODE,
+		    DIV_CODE,
+		    ITEM_CODE,
+		    BASIS_DATE,
+		    CREATE_DATE,
+		    DOM_FORIGN,
+		    REQ_PLAN_Q,
+		    ORDER_PLAN_Q,
+		    ORDER_PLAN_DATE,
+		    CUSTOM_CODE,
+		    CUSTOM_NAME,
+		    ORDER_YN,
+		    EXCHG_YN,
+		    PROJECT_NO,
+		    MRP_YN,
+		    REMARK,
+		    INSERT_DB_USER,
+		    INSERT_DB_TIME,
+		    UPDATE_DB_USER,
+		    UPDATE_DB_TIME,
+		    ORDER_REQ_NUM,
+		    MRP_CONTROL_NUM,
+		    SUPPLY_TYPE,
+		    DVRY_DATE,
+		    ORDER_NUM,
+		    ORDER_SEQ
+		)VALUES(
+		    #{KEY_VALUE},
+		    #{OPR_FLAG},
+		    #{S_COMP_CODE},
+		    #{DIV_CODE},
+		    #{ITEM_CODE},
+		    CONVERT(NVARCHAR(08), GETDATE(), 112),
+		    CONVERT(NVARCHAR(08), GETDATE(), 112),
+		    #{DOM_FORIGN},
+		    #{ORDER_PLAN_Q},
+		    #{ORDER_PLAN_Q},
+		    #{ORDER_PLAN_DATE},
+		    #{CUSTOM_CODE},
+		    #{CUSTOM_NAME},
+		    'N',
+		    'N',
+		    #{PROJECT_NO},
+		    'Y',
+		    #{REMARK},
+		    #{S_USER_ID},
+		    GETDATE(),
+		    #{S_USER_ID},
+		    GETDATE(),
+		    #{ORDER_REQ_NUM},
+		    #{MRP_CONTROL_NUM},
+		    #{SUPPLY_TYPE},
+		    #{DVRY_DATE},
+		    #{SO_NUM},
+		    #{SO_SEQ}
+		)
+	</insert>
+
+	<update id="mpo200ukrvServiceImpl.USP_MATRL_MPO070UKRV" parameterType="Map" statementType="CALLABLE">
+		{call USP_MATRL_MPO070UKRV (
+		    #{KeyValue,     mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+		    #{ErrorDesc,    mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update>
+
+	<update id="mpo200ukrvServiceImpl.updateAdjust" parameterType="Map">
+		--mpo200ukrv.Cmpo200ukrv[fnMpo201Save] Query05
+		UPDATE MRP400T
+		   SET COMP_CODE           = #{S_COMP_CODE}
+		     , DIV_CODE            = #{DIV_CODE}
+		     , ORDER_PLAN_DATE     = #{ORDER_PLAN_DATE}
+		     , CUSTOM_CODE         = #{CUSTOM_CODE}
+		     , CUSTOM_NAME         = #{CUSTOM_NAME}
+		     , ITEM_CODE           = #{ITEM_CODE}
+		     , ORDER_PLAN_Q        = #{ORDER_PLAN_Q}
+		     , BASIS_DATE          = #{BASIS_DATE}
+		     , REQ_PLAN_Q          = #{REQ_PLAN_Q}
+		     , SUPPLY_TYPE         = #{SUPPLY_TYPE}
+		     , REF_ITEM_CODE       = #{REF_ITEM_CODE}
+		     , EXCHG_YN            = #{EXCHG_YN}
+		     , DOM_FORIGN          = #{DOM_FORIGN}
+		     , ORDER_REQ_DEPT_CODE = #{ORDER_REQ_DEPT_CODE}
+		     , ORDER_PRSN          = #{ORDER_PRSN}
+		     , ORDER_YN            = #{ORDER_YN}
+		     , MRP_CONTROL_NUM     = #{MRP_CONTROL_NUM}
+		     , WKORD_NUM           = #{WKORD_NUM}
+		     , CREATE_DATE         = #{CREATE_DATE}
+		     , MRP_YN              = #{MRP_YN}
+		     , LOT_NO              = #{LOT_NO}
+		     , REMARK              = #{REMARK}
+		     , PROJECT_NO          = #{PROJECT_NO}
+		     , UPDATE_DB_USER      = #{S_USER_ID}
+		     , UPDATE_DB_TIME      = GETDATE()
+		     ,DVRY_DATE = #{DVRY_DATE}
+		     ,IN_DIV_CODE = #{IN_DIV_CODE}
+		 WHERE COMP_CODE           = #{COMP_CODE}
+		   AND DIV_CODE            = #{DIV_CODE}
+		   AND ORDER_REQ_NUM       = #{ORDER_REQ_NUM}
+	</update>
+
+	<delete id="mpo200ukrvServiceImpl.deleteAdjust" parameterType="Map">
+		/* mpo200ukrvServiceImpl.deleteAdjust */
+		DELETE MRP400T
+		 WHERE COMP_CODE      = #{COMP_CODE}
+		   AND DIV_CODE       = #{DIV_CODE}
+		   AND ORDER_REQ_NUM  = #{ORDER_REQ_NUM}
+	</delete>
+
+
+
+<!-- 구매오더 확정 저장 -->
+	<update id="mpo200ukrvServiceImpl.insertLogMaster" parameterType="Map">
+<!-- L_MPO200T거래처 / ORDER_PLAN_DATE에 따라 KEY_VALUE 다시 생성하여 KEY_VALUE_1에 UPDATE -->
+		UPDATE A
+		   SET A.KEY_VALUE = CONVERT(NUMERIC(30, 0), A.KEY_VALUE_1) + C.RANKING
+		     , A.ORDER_SEQ = C.ORDER_SEQ
+		  FROM       L_MPO200T A WITH(NOLOCK)
+		  INNER JOIN MRP400T   B WITH(NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+		                                     AND B.DIV_CODE       = A.DIV_CODE
+		                                     AND B.ORDER_REQ_NUM  = A.ORDER_REQ_NUM
+		  INNER JOIN (
+		               SELECT A.KEY_VALUE
+		                    , A.CUSTOM_CODE
+		                    , A.ORDER_REQ_NUM
+		                    , RANK() OVER(ORDER BY B.CUSTOM_CODE, B.ORDER_PLAN_DATE)                                AS RANKING
+		                    , ROW_NUMBER() OVER(PARTITION BY B.CUSTOM_CODE, B.ORDER_PLAN_DATE ORDER BY B.ITEM_CODE) AS ORDER_SEQ
+		                 FROM       L_MPO200T A WITH(NOLOCK)
+		                 INNER JOIN MRP400T   B WITH(NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+		                                                    AND B.DIV_CODE       = A.DIV_CODE
+		                                                    AND B.ORDER_REQ_NUM  = A.ORDER_REQ_NUM
+		                WHERE KEY_VALUE = #{KEY_VALUE}
+		  ) C ON C.KEY_VALUE     = A.KEY_VALUE
+		     AND C.CUSTOM_CODE   = B.CUSTOM_CODE
+		     AND C.ORDER_REQ_NUM = B.ORDER_REQ_NUM
+		 WHERE A.KEY_VALUE_1 = #{KEY_VALUE}
+
+		INSERT INTO L_MPO100T(
+		       KEY_VALUE,
+		       KEY_VALUE_1,
+		       OPR_FLAG,
+		       COMP_CODE,
+		       DIV_CODE,
+		       CUSTOM_CODE,
+		       ORDER_NUM,
+		       ORDER_TYPE,
+		       ORDER_PRSN,
+		       ORDER_DATE,
+		       MONEY_UNIT,
+		       EXCHG_RATE_O,
+		       RECEIPT_TYPE,
+		       PROJECT_NO,
+		       REMARK,
+		       AGREE_STATUS,
+		       AGREE_PRSN,
+		       INSERT_DB_USER,
+		       INSERT_DB_TIME,
+		       UPDATE_DB_USER,
+		       UPDATE_DB_TIME
+		)
+		SELECT KEY_VALUE,
+		       KEY_VALUE_1,
+		       OPR_FLAG,
+		       COMP_CODE,
+		       DIV_CODE,
+		       CUSTOM_CODE,
+		       ORDER_NUM,
+		       ORDER_TYPE,
+		       ORDER_PRSN,
+		       ORDER_DATE,
+		       MONEY_UNIT,
+		       EXCHG_RATE_O,
+		       RECEIPT_TYPE,
+		       PROJECT_NO,
+		       REMARK,
+		       AGREE_STATUS,
+		       AGREE_PRSN,
+		       INSERT_DB_USER,
+		       INSERT_DB_TIME,
+		       UPDATE_DB_USER,
+		       UPDATE_DB_TIME
+		  FROM L_MPO200T WITH(NOLOCK)
+		 WHERE KEY_VALUE_1 = #{KEY_VALUE}
+		   AND ORDER_SEQ = 1
+	</update>
+
+	<update id="mpo200ukrvServiceImpl.insertLogDetail" parameterType="Map">
+		INSERT INTO L_MPO200T(
+		    KEY_VALUE,
+		    KEY_VALUE_1,
+		    OPR_FLAG,
+		    COMP_CODE,
+		    DIV_CODE,
+		    CUSTOM_CODE,
+		    ORDER_NUM,
+		    ORDER_SEQ,
+		    ITEM_CODE,
+		    ORDER_UNIT,
+		    DVRY_DATE,
+		    INIT_DVRY_DATE,
+		    TRNS_RATE,
+		    ORDER_Q,
+		    ORDER_UNIT_Q,
+		    ORDER_P,
+		    ORDER_UNIT_P,
+		    ORDER_O,
+		    ORDER_LOC_P,
+		    ORDER_LOC_O,
+		    WH_CODE,
+		    ORDER_REQ_NUM,
+		    CONTROL_STATUS,
+		    UNIT_PRICE_TYPE,
+		    UPDATE_DB_USER,
+		    UPDATE_DB_TIME,
+		    LOT_NO,
+		    REMARK,
+		    PROJECT_NO,
+		    INSPEC_FLAG,
+		    MONEY_UNIT,
+		    EXCHG_RATE_O,
+		    IN_DIV_CODE,
+		    SO_NUM,       --20190909 수주번호, 순번 추가
+		    SO_SEQ,
+		    OUT_DIV_CODE, --20191023 출고사업장 추가, 신환용이지만 이상 없으면 표준도 사용예정
+		    OUT_DATE,     --20191023  출고일 추가, 신환용이지만 이상 없으면 표준도 사용예정
+		    --20200713 추가
+		    ORDER_TYPE,
+		    ORDER_PRSN,
+		    ORDER_DATE,
+		    RECEIPT_TYPE,
+		    AGREE_STATUS,
+		    AGREE_PRSN
+		)VALUES(
+		    #{KEY_VALUE},
+		    #{KEY_VALUE},
+		    #{OPR_FLAG},
+		    #{S_COMP_CODE},
+		    #{DIV_CODE},
+		    #{CUSTOM_CODE},
+		    #{ORDER_NUM},
+		    #{ORDER_SEQ},
+		    #{ITEM_CODE},
+		    #{ORDER_UNIT},
+		    #{DVRY_DATE},
+		    #{DVRY_DATE},
+		    #{TRNS_RATE},
+		    #{ORDER_Q},
+		    #{ORDER_UNIT_Q},
+		    #{ORDER_P},
+		    #{ORDER_UNIT_P},
+		    #{ORDER_O},
+		    #{ORDER_UNIT_P} * #{EXCHG_RATE_O},
+		    #{ORDER_UNIT_Q} * #{ORDER_UNIT_P} * #{EXCHG_RATE_O},
+		    #{WH_CODE},
+		    #{ORDER_REQ_NUM},
+		    #{CONTROL_STATUS},
+		    #{UNIT_PRICE_TYPE},
+		    #{UPDATE_DB_USER},
+		    #{UPDATE_DB_TIME},
+		    #{LOT_NO},
+		    #{REMARK},
+		    #{PROJECT_NO},
+		    #{INSPEC_YN},
+		    #{MONEY_UNIT},
+		    #{EXCHG_RATE_O},
+		    #{IN_DIV_CODE},
+		    #{SO_NUM},
+		    #{SO_SEQ},
+		    #{OUT_DIV_CODE},--20191023 출고사업장 추가, 신환용이지만 이상 없으면 표준도 사용예정
+		    #{OUT_DATE},    --20191023  출고일 추가, 신환용이지만 이상 없으면 표준도 사용예정
+		    --20200713 추가
+		    #{ORDER_TYPE},
+		    #{ORDER_PRSN1},
+		    #{ORDER_DATE},
+		    #{RECEIPT_TYPE},
+		    #{AGREE_STATUS},
+		    #{AGREE_PRSN}
+		)
+	</update>
+
+	<select id="mpo200ukrvServiceImpl.getOrderConfirmList" parameterType="Map" resultType="rMap">
+		/* mpo200ukrvServiceImpl.getOrderConfirmList */
+		SELECT KEY_VALUE AS KeyValue
+		  FROM L_MPO100T WITH(NOLOCK)
+		 WHERE KEY_VALUE_1 = #{KEY_VALUE}
+	</select>
+
+	<update id="mpo200ukrvServiceImpl.USP_MATRL_Mpo200ukr" parameterType="Map" statementType="CALLABLE">
+		{call USP_MATRL_Mpo200ukr (
+		    #{KeyValue,  mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+		    #{OrderNum,  mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String},
+		    #{ErrorDesc, mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+		)}
+	</update>
+
+
+
+<!-- 엑셀업로드 -->
+	<insert id="mpo200ukrvServiceImpl.insertExcelMpo200ukrv" parameterType="Map">
+		/*mpo200ukrvServiceImpl.insertExcelMpo200ukrv*/
+		INSERT INTO MPO200UKRV_EXCEL(
+		    _EXCEL_JOBID
+		   ,_EXCEL_ROWNUM
+		   ,_EXCEL_HAS_ERROR
+		   ,_EXCEL_ERROR_MSG
+		   , CUSTOM_CODE
+		   , ITEM_CODE
+		   , ORDER_PLAN_Q
+		   , ORDER_PLAN_DATE
+		   , DVRY_DATE
+		   ,INSERT_DB_USER
+		   ,INSERT_DB_TIME
+		   ,UPDATE_DB_USER
+		   ,UPDATE_DB_TIME
+		)VALUES(
+		   #{_EXCEL_JOBID}
+		   ,#{_EXCEL_ROWNUM}
+		   ,#{_EXCEL_HAS_ERROR}
+		   ,#{_EXCEL_ERROR_MSG}
+		   ,#{CUSTOM_CODE}
+		   ,#{ITEM_CODE}
+		   ,#{ORDER_PLAN_Q}
+		   ,#{ORDER_PLAN_DATE}
+		   ,#{DVRY_DATE}
+		   ,#{S_USER_ID}
+		   ,GETDATE()
+		   ,#{S_USER_ID}
+		   ,GETDATE()
+		)
+	</insert>
+
+	<update id="excelValidate" >
+		/* mpo200ukrvServiceImpl.excelValidate */
+		/* 거래처정보가 존재하지 않습니다. */
+		UPDATE   A
+		   SET
+		           A._EXCEL_HAS_ERROR = (CASE WHEN B.CUSTOM_CODE IS NULL
+		                                      THEN 'Y'
+		                                 ELSE A._EXCEL_HAS_ERROR
+		                                 END),
+		           A._EXCEL_ERROR_MSG = (CASE WHEN B.CUSTOM_CODE IS NULL
+		                                      THEN ISNULL(_EXCEL_ERROR_MSG,'') + '거래처정보가 존재하지 않습니다. '
+		                                 ELSE A._EXCEL_ERROR_MSG END)
+		   FROM MPO200UKRV_EXCEL A
+		   LEFT JOIN  BCM100T B    ON B.COMP_CODE= #{S_COMP_CODE}
+		                          AND B.CUSTOM_CODE = A.CUSTOM_CODE
+		   WHERE A._EXCEL_JOBID = #{_EXCEL_JOBID}
+
+
+	/* 사업장에 대한 품목정보가 존재하지 않습니다. */
+		UPDATE   A
+		   SET
+		           A._EXCEL_HAS_ERROR = (CASE WHEN B.ITEM_CODE IS NULL
+		                                      THEN 'Y'
+		                                 ELSE A._EXCEL_HAS_ERROR
+		                                 END),
+		           A._EXCEL_ERROR_MSG = (CASE WHEN B.ITEM_CODE IS NULL
+		                                      THEN ISNULL(_EXCEL_ERROR_MSG,'') + '사업장에 대한 품목정보가 존재하지 않습니다. '
+		                                 ELSE A._EXCEL_ERROR_MSG END)
+		   FROM MPO200UKRV_EXCEL A
+		   LEFT JOIN  BPR200T B    ON B.COMP_CODE= #{S_COMP_CODE}
+		                          AND B.DIV_CODE = #{DIV_CODE}
+		                          AND B.ITEM_CODE = A.ITEM_CODE
+		   WHERE A._EXCEL_JOBID = #{_EXCEL_JOBID}
+	</update>
+
+	<select id="mpo200ukrvServiceImpl.selectExcelUploadSheet1" parameterType="Map" resultType="rMap">
+		/* mpo200ukrvServiceImpl.selectExcelUploadSheet1 */
+		SELECT A._EXCEL_JOBID
+		     , A._EXCEL_ROWNUM
+		     , A._EXCEL_HAS_ERROR
+		     , A._EXCEL_ERROR_MSG
+		     , A.CUSTOM_CODE
+		     , R1.CUSTOM_NAME
+		     , A.ITEM_CODE
+		     , R2.ITEM_NAME
+		     , A.ORDER_PLAN_Q
+		     , A.ORDER_PLAN_DATE
+		     , A.DVRY_DATE
+		  FROM      MPO200UKRV_EXCEL A  WITH (NOLOCK)
+		  LEFT JOIN BCM100T          R1 WITH(NOLOCK) ON R1.COMP_CODE = #{S_COMP_CODE}
+		                                            AND R1.CUSTOM_CODE = A.CUSTOM_CODE
+		  LEFT JOIN BPR100T          R2 WITH(NOLOCK) ON R2.COMP_CODE = #{S_COMP_CODE}
+		                                            AND R2.ITEM_CODE = A.ITEM_CODE
+		 WHERE A._EXCEL_JOBID = #{_EXCEL_JOBID}
+		 ORDER BY A._EXCEL_JOBID, A._EXCEL_ROWNUM
+	</select>
+</mapper>

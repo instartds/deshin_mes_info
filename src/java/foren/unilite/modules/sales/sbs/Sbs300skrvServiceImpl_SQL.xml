@@ -1,0 +1,376 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sbs300skrvServiceImpl">
+	<select id="sbs300skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* sbs300skrv.Csbs300skrv[fnsbs300q] Query01 */
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+		
+			DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+				  , @UserId			NVARCHAR(100)	/* 사용자ID	*/
+				  , @LangType		NVARCHAR(2)		/* 언어구분		*/
+				  , @RefItem		NVARCHAR(01)
+				  , @DateFormat		NVARCHAR(10)
+				  , @Price_Type		NVARCHAR(01)
+		
+			SET @CompCode	= #{S_COMP_CODE}
+			SET @UserId		= #{S_USER_ID}
+			SET @LangType	= #{S_LANG_CODE}
+			SET @Price_Type	= '2'
+		
+			/* 명칭 참조 유형 */
+			SELECT TOP 1 @RefItem = REF_ITEM
+			  FROM BSA300T WITH (NOLOCK)
+			 WHERE USER_ID = @UserId
+		
+			SET @RefItem = ISNULL(@RefItem, N'0')
+		
+			/* 날짜 포맷 유형 설정 */
+			SELECT TOP 1 @DateFormat = CODE_NAME
+			  FROM BSA100T WITH (NOLOCK)
+			 WHERE COMP_CODE = @CompCode
+			   AND MAIN_CODE = N'B044'
+			   AND REF_CODE1 = N'Y'
+		
+			SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		
+			/* 데이터 조회 */
+			<if test = "OPT_APT_PRICE == &quot;C&quot;">
+			/* 현재적용단가 */
+			SELECT B.ITEM_CODE																	AS ITEM_CODE
+				 , B.ITEM_NAME																	AS ITEM_NAME 
+				 , B.ITEM_NAME1
+				 , ISNULL(B.SPEC,' ')															AS SPEC
+				 , B.STOCK_UNIT																	AS STOCK_UNIT
+				 , A.CUSTOM_CODE																AS CUSTOM_CODE
+				 , B.CUSTOM_NAME																AS CUSTOM_NAME 
+				 , (CASE WHEN ISNULL(B.APLY_START_DATE, '') = ''
+					 	 THEN ''
+					 	 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY'	, SUBSTRING(B.APLY_START_DATE, 1, 4))
+						   										 , 'MM'		, SUBSTRING(B.APLY_START_DATE, 5, 2))
+																 , 'DD'		, SUBSTRING(B.APLY_START_DATE, 7, 2))
+					 END) 																		AS APLY_START_DATE
+				 , B.MONEY_UNIT																	AS MONEY_UNIT
+				 , B.CODE_NAME																	AS CODE_NAME
+				 , B.ORDER_UNIT																	AS ORDER_UNIT
+				 , A.ITEM_P																		AS ITEM_P
+				 , B.CUSTOM_CODE																AS CUSTOM_CODE
+				 , A.REMARK																		AS REMARK
+				 , B.ITEM_CODE + B.CUSTOM_CODE													AS SORT
+			  FROM BPR400T A
+				 , (SELECT A.TYPE																AS TYPE
+						 , A.COMP_CODE
+						 , A.ITEM_CODE															AS ITEM_CODE
+						 , MAX((CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+									 WHEN @RefItem = '2' THEN B.ITEM_NAME2
+														 ELSE B.ITEM_NAME
+								 END))															AS ITEM_NAME
+						 , MAX(B.ITEM_NAME1)													AS ITEM_NAME1
+						 , B.SPEC																AS SPEC
+						 , B.STOCK_UNIT															AS STOCK_UNIT
+						 , A.CUSTOM_CODE														AS CUSTOM_CODE
+						 , MAX((CASE WHEN @RefItem = '1' THEN C.CUSTOM_NAME1
+									 WHEN @RefItem = '2' THEN C.CUSTOM_NAME2
+														 ELSE C.CUSTOM_NAME
+								END))															AS CUSTOM_NAME 
+						 , A.MONEY_UNIT															AS MONEY_UNIT
+						 , (CASE WHEN @LangType = 'KR' THEN D.CODE_NAME
+								 WHEN @LangType = 'EN' THEN D.CODE_NAME_EN
+								 WHEN @LangType = 'CN' THEN D.CODE_NAME_CN
+								 WHEN @LangType = 'JP' THEN D.CODE_NAME_JP
+													   ELSE D.CODE_NAME
+							 END)																AS CODE_NAME
+						 , A.ORDER_UNIT															AS ORDER_UNIT
+						 , MAX(A.APLY_START_DATE)												AS APLY_START_DATE
+						 --, ISNULL(A.REMARK, '')													AS REMARK
+					  FROM			 BPR400T A  WITH (NOLOCK)
+							INNER JOIN BPR100T B  WITH (NOLOCK) ON B.ITEM_CODE		= A.ITEM_CODE
+															   AND B.COMP_CODE		= A.COMP_CODE
+							INNER JOIN BCM100T C  WITH (NOLOCK) ON C.CUSTOM_CODE	= A.CUSTOM_CODE
+															   AND C.COMP_CODE		= A.COMP_CODE
+							LEFT  JOIN BSA100T D  WITH (NOLOCK) ON D.COMP_CODE		= A.COMP_CODE
+															   AND D.MAIN_CODE		= 'B004'
+															   AND D.SUB_CODE		= A.MONEY_UNIT
+							LEFT  JOIN BPR100T X  WITH (NOLOCK) ON X.COMP_CODE		= B.COMP_CODE
+															   AND X.ITEM_CODE		= B.ITEM_GROUP
+					WHERE A.COMP_CODE		= @CompCode							/* 법인코드			*/
+					  AND A.TYPE			= @Price_Type						/* TYPE			*/
+					  
+					<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+					  AND A.ITEM_CODE		= #{ITEM_CODE}						/* 품목코드  */
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+					   AND A.ITEM_CODE		LIKE #{ITEM_CODE} + '%'			/* 품목코드  */
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(ITEM_NAME) and @foren.Ognl@isEmpty(ITEM_CODE)">
+					  AND CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+							   WHEN @RefItem = '2' THEN B.ITEM_NAME2
+												   ELSE B.ITEM_NAME
+								 END		LIKE '%' + #{ITEM_NAME} + '%'		/* 품목명  */
+					</if>
+					
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+					  AND A.CUSTOM_CODE		 = #{CUSTOM_CODE}					/* 고객코드  */
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+					  AND A.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 고객코드  */
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+					  AND CASE WHEN @RefItem = '1' THEN C.CUSTOM_NAME1
+							   WHEN @RefItem = '2' THEN C.CUSTOM_NAME2
+												   ELSE C.CUSTOM_NAME
+								END			 LIKE '%' + #{CUSTOM_NAME} + '%'	/* 고객명  */
+					</if>
+					
+					<if test="@foren.Ognl@isNotEmpty(ITEM_GROUP_CODE)">
+						AND B.ITEM_GROUP	LIKE #{ITEM_GROUP_CODE}+'%'			/* 대표모델CD		*/
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(ITEM_GROUP_NAME)">
+						AND X.ITEM_NAME		LIKE #{ITEM_GROUP_NAME}+'%'			/* 대표모델NM		*/
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)">
+						AND B.ITEM_LEVEL1	= #{ITEM_LEVEL1}					/* 품목레벨(대분류)	*/
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL2)">
+						AND B.ITEM_LEVEL2	= #{ITEM_LEVEL2}					/* 품목레벨(중분류)	*/
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL3)">
+						AND B.ITEM_LEVEL3	= #{ITEM_LEVEL3}					/* 품목레벨(소분류)	*/
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+						AND C.AGENT_TYPE	= #{AGENT_TYPE}						/* 고객분류			*/
+					</if>
+					
+					  AND A.APLY_START_DATE &lt;=   CONVERT(NVARCHAR(8), GETDATE(),112)
+					GROUP BY A.COMP_CODE	, A.TYPE		, A.ITEM_CODE	, B.SPEC			, B.STOCK_UNIT
+						   , A.CUSTOM_CODE	, A.MONEY_UNIT	, D.CODE_NAME	, D.CODE_NAME_EN	, D.CODE_NAME_JP
+						   , D.CODE_NAME_CN	, A.ORDER_UNIT	/*, A.REMARK */) B
+			 WHERE A.COMP_CODE			= B.COMP_CODE
+			   AND A.TYPE				= B.TYPE
+			   AND A.ITEM_CODE			= B.ITEM_CODE
+			   AND A.CUSTOM_CODE		= B.CUSTOM_CODE
+			   AND A.MONEY_UNIT			= B.MONEY_UNIT
+			   AND A.ORDER_UNIT			= B.ORDER_UNIT
+			   AND A.APLY_START_DATE	= B.APLY_START_DATE
+			 ORDER BY B.ITEM_CODE, CUSTOM_NAME, B.APLY_START_DATE, B.MONEY_UNIT
+			</if>
+			
+			<if test = "OPT_APT_PRICE == &quot;D&quot;">
+			/* 기준일자 기준 */
+			SELECT B.ITEM_CODE																	AS ITEM_CODE
+				 , B.ITEM_NAME																	AS ITEM_NAME
+				 , B.ITEM_NAME1
+				 , ISNULL(B.SPEC,' ')															AS SPEC
+				 , B.STOCK_UNIT																	AS STOCK_UNIT
+				 , A.CUSTOM_CODE																AS CUSTOM_CODE
+				 , B.CUSTOM_NAME																AS CUSTOM_NAME 
+				 , (CASE WHEN ISNULL(B.APLY_START_DATE, '') = ''
+					 	 THEN ''
+					 	 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY'	, SUBSTRING(B.APLY_START_DATE, 1, 4))
+						   										 , 'MM'		, SUBSTRING(B.APLY_START_DATE, 5, 2))
+																 , 'DD'		, SUBSTRING(B.APLY_START_DATE, 7, 2))
+					 END) 																		AS APLY_START_DATE
+				 , B.MONEY_UNIT																	AS MONEY_UNIT
+				 , B.CODE_NAME																	AS CODE_NAME
+				 , B.ORDER_UNIT																	AS ORDER_UNIT
+				 , A.ITEM_P																		AS ITEM_P
+				 , B.CUSTOM_CODE																AS CUSTOM_CODE
+				 , A.REMARK																		AS REMARK
+				 , B.ITEM_CODE + B.CUSTOM_CODE													AS SORT
+			  FROM BPR400T A
+				 , (SELECT A.TYPE																AS TYPE
+						 , A.COMP_CODE
+						 , A.ITEM_CODE															AS ITEM_CODE
+						 , MAX((CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+									 WHEN @RefItem = '2' THEN B.ITEM_NAME2
+														 ELSE B.ITEM_NAME
+								 END))															AS ITEM_NAME
+						 , MAX(B.ITEM_NAME1)													AS ITEM_NAME1
+						 , B.SPEC																AS SPEC
+						 , B.STOCK_UNIT															AS STOCK_UNIT
+						 , A.CUSTOM_CODE														AS CUSTOM_CODE
+						 , MAX((CASE WHEN @RefItem = '1' THEN C.CUSTOM_NAME1
+									 WHEN @RefItem = '2' THEN C.CUSTOM_NAME2
+														 ELSE C.CUSTOM_NAME
+								END))															AS CUSTOM_NAME 
+						 , A.MONEY_UNIT															AS MONEY_UNIT
+						 , (CASE WHEN @LangType = 'KR' THEN D.CODE_NAME
+								 WHEN @LangType = 'EN' THEN D.CODE_NAME_EN
+								 WHEN @LangType = 'CN' THEN D.CODE_NAME_CN
+								 WHEN @LangType = 'JP' THEN D.CODE_NAME_JP
+													   ELSE D.CODE_NAME
+							 END)																AS CODE_NAME
+						 , A.ORDER_UNIT															AS ORDER_UNIT
+						 , MAX(A.APLY_START_DATE)												AS APLY_START_DATE
+						 --, ISNULL(A.REMARK, '')													AS REMARK
+					  FROM			 BPR400T A  WITH (NOLOCK)
+							INNER JOIN BPR100T B  WITH (NOLOCK) ON B.ITEM_CODE		= A.ITEM_CODE
+															   AND B.COMP_CODE		= A.COMP_CODE
+							INNER JOIN BCM100T C  WITH (NOLOCK) ON C.CUSTOM_CODE	= A.CUSTOM_CODE
+															   AND C.COMP_CODE		= A.COMP_CODE
+							LEFT  JOIN BSA100T D  WITH (NOLOCK) ON D.COMP_CODE		= A.COMP_CODE
+															   AND D.MAIN_CODE		= 'B004'
+															   AND D.SUB_CODE		= A.MONEY_UNIT
+							LEFT  JOIN BPR100T X  WITH (NOLOCK) ON X.COMP_CODE		= B.COMP_CODE
+															   AND X.ITEM_CODE		= B.ITEM_GROUP
+					WHERE A.COMP_CODE		= @CompCode							/* 법인코드			*/
+					  AND A.TYPE			= @Price_Type						/* TYPE			*/
+					  
+					<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+					  AND A.ITEM_CODE		= #{ITEM_CODE}						/* 품목코드  */
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+					   AND A.ITEM_CODE		LIKE #{ITEM_CODE} + '%'			/* 품목코드  */
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(ITEM_NAME) and @foren.Ognl@isEmpty(ITEM_CODE)">
+					  AND CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+							   WHEN @RefItem = '2' THEN B.ITEM_NAME2
+												   ELSE B.ITEM_NAME
+								 END		LIKE '%' + #{ITEM_NAME} + '%'		/* 품목명  */
+					</if>
+					
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+					  AND A.CUSTOM_CODE		 = #{CUSTOM_CODE}					/* 고객코드  */
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+					  AND A.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 고객코드  */
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+					  AND CASE WHEN @RefItem = '1' THEN C.CUSTOM_NAME1
+							   WHEN @RefItem = '2' THEN C.CUSTOM_NAME2
+												   ELSE C.CUSTOM_NAME
+								END			 LIKE '%' + #{CUSTOM_NAME} + '%'	/* 고객명  */
+					</if>
+					
+					<if test="@foren.Ognl@isNotEmpty(ITEM_GROUP_CODE)">
+						AND B.ITEM_GROUP	LIKE #{ITEM_GROUP_CODE}+'%'			/* 대표모델CD		*/
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(ITEM_GROUP_NAME)">
+						AND X.ITEM_NAME		LIKE #{ITEM_GROUP_NAME}+'%'			/* 대표모델NM		*/
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)">
+						AND B.ITEM_LEVEL1	= #{ITEM_LEVEL1}					/* 품목레벨(대분류)	*/
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL2)">
+						AND B.ITEM_LEVEL2	= #{ITEM_LEVEL2}					/* 품목레벨(중분류)	*/
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL3)">
+						AND B.ITEM_LEVEL3	= #{ITEM_LEVEL3}					/* 품목레벨(소분류)	*/
+					</if>
+					<if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+						AND C.AGENT_TYPE	= #{AGENT_TYPE}						/* 고객분류			*/
+					</if>
+						AND A.APLY_START_DATE	&lt;=   CONVERT(NVARCHAR(8), #{BASIS_DATE},112)
+						--AND A.APLY_END_DATE	&gt;=   CONVERT(NVARCHAR(8), BASIS_DATE,112)
+					GROUP BY A.COMP_CODE	, A.TYPE		, A.ITEM_CODE	, B.SPEC			, B.STOCK_UNIT
+						   , A.CUSTOM_CODE	, A.MONEY_UNIT	, D.CODE_NAME	, D.CODE_NAME_EN	, D.CODE_NAME_JP
+						   , D.CODE_NAME_CN	, A.ORDER_UNIT	/*, A.REMARK */) B
+			 WHERE A.COMP_CODE			= B.COMP_CODE
+			   AND A.TYPE				= B.TYPE
+			   AND A.ITEM_CODE			= B.ITEM_CODE
+			   AND A.CUSTOM_CODE		= B.CUSTOM_CODE
+			   AND A.MONEY_UNIT			= B.MONEY_UNIT
+			   AND A.ORDER_UNIT			= B.ORDER_UNIT
+			   AND A.APLY_START_DATE	= B.APLY_START_DATE
+			 ORDER BY B.ITEM_CODE, CUSTOM_NAME, B.APLY_START_DATE, B.MONEY_UNIT
+			</if>
+			
+			<if test = "OPT_APT_PRICE == &quot;A&quot;"> 
+			/* 전체 */
+			SELECT A.ITEM_CODE															AS ITEM_CODE
+				 , (CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+						 WHEN @RefItem = '2' THEN B.ITEM_NAME2
+											 ELSE B.ITEM_NAME
+					 END)																AS ITEM_NAME
+				 , B.ITEM_NAME1
+				 , ISNULL(B.SPEC,' ')													AS SPEC
+				 , B.STOCK_UNIT															AS STOCK_UNIT
+				 , A.CUSTOM_CODE														AS CUSTOM_CODE
+				 , (CASE WHEN @RefItem = '1' THEN C.CUSTOM_NAME1
+						 WHEN @RefItem = '2' THEN C.CUSTOM_NAME2
+											 ELSE C.CUSTOM_NAME
+					 END)																AS CUSTOM_NAME 
+				 , (CASE WHEN ISNULL(A.APLY_START_DATE, '') = ''
+						 THEN ''
+						 ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY'	, SUBSTRING(A.APLY_START_DATE, 1, 4))
+						   										 , 'MM'		, SUBSTRING(A.APLY_START_DATE, 5, 2))
+																 , 'DD'		, SUBSTRING(A.APLY_START_DATE, 7, 2))
+					END) 																AS APLY_START_DATE
+				 , A.MONEY_UNIT															AS MONEY_UNIT
+				 , (CASE WHEN @LangType = 'KR' THEN D.CODE_NAME
+						 WHEN @LangType = 'EN' THEN D.CODE_NAME_EN
+						 WHEN @LangType = 'CN' THEN D.CODE_NAME_CN
+						 WHEN @LangType = 'JP' THEN D.CODE_NAME_JP
+											   ELSE D.CODE_NAME
+					 END)																AS CODE_NAME
+				 , A.ORDER_UNIT															AS ORDER_UNIT
+				 , A.ITEM_P																AS ITEM_P
+				 , A.CUSTOM_CODE														AS CUSTOM_CODE
+				 , ISNULL(A.REMARK, '')													AS REMARK
+				 , A.ITEM_CODE + A.CUSTOM_CODE											AS SORT			
+			  FROM			 BPR400T A  WITH (NOLOCK)
+					INNER JOIN BPR100T B  WITH (NOLOCK) ON B.ITEM_CODE		= A.ITEM_CODE
+													   AND B.COMP_CODE		= A.COMP_CODE
+					INNER JOIN BCM100T C  WITH (NOLOCK) ON C.CUSTOM_CODE	= A.CUSTOM_CODE
+													   AND C.COMP_CODE		= A.COMP_CODE
+					LEFT  JOIN BSA100T D  WITH (NOLOCK) ON D.COMP_CODE		= A.COMP_CODE
+													   AND D.MAIN_CODE		= 'B004'
+													   AND D.SUB_CODE		= A.MONEY_UNIT
+					LEFT  JOIN BPR100T X  WITH (NOLOCK) ON X.COMP_CODE		= B.COMP_CODE
+													   AND X.ITEM_CODE		= B.ITEM_GROUP
+			WHERE A.COMP_CODE		= @CompCode							/* 법인코드			*/
+			  AND A.TYPE			 = @Price_Type						/* TYPE			*/
+			  
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+			  AND A.ITEM_CODE		= #{ITEM_CODE}						/* 품목코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+			   AND A.ITEM_CODE		LIKE #{ITEM_CODE} + '%'			/* 품목코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_NAME) and @foren.Ognl@isEmpty(ITEM_CODE)">
+			  AND CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+					   WHEN @RefItem = '2' THEN B.ITEM_NAME2
+										   ELSE B.ITEM_NAME
+						 END		LIKE '%' + #{ITEM_NAME} + '%'		/* 품목명  */
+			</if>
+			
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			  AND A.CUSTOM_CODE		 = #{CUSTOM_CODE}					/* 고객코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">
+			  AND A.CUSTOM_CODE 	LIKE  #{CUSTOM_CODE} + '%'			/* 고객코드  */
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME) and @foren.Ognl@isEmpty(CUSTOM_CODE)">
+			  AND CASE WHEN @RefItem = '1' THEN C.CUSTOM_NAME1
+					   WHEN @RefItem = '2' THEN C.CUSTOM_NAME2
+										   ELSE C.CUSTOM_NAME
+						END			 LIKE '%' + #{CUSTOM_NAME} + '%'	/* 고객명  */
+			</if>
+			
+			<if test="@foren.Ognl@isNotEmpty(ITEM_GROUP_CODE)">
+				AND B.ITEM_GROUP	LIKE #{ITEM_GROUP_CODE}+'%'			/* 대표모델CD		*/
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_GROUP_NAME)">
+				AND X.ITEM_NAME		LIKE #{ITEM_GROUP_NAME}+'%'			/* 대표모델NM		*/
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL1)">
+			  AND B.ITEM_LEVEL1	  = #{ITEM_LEVEL1}						/* 품목레벨(대분류)	*/
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL2)">
+			  AND B.ITEM_LEVEL2	  = #{ITEM_LEVEL2}						/* 품목레벨(중분류)	*/
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_LEVEL3)">
+			  AND B.ITEM_LEVEL3	  = #{ITEM_LEVEL3}						/* 품목레벨(소분류)	*/
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+			  AND C.AGENT_TYPE	   = #{AGENT_TYPE}						/* 고객분류			*/
+			</if>
+				
+			ORDER BY A.ITEM_CODE, CUSTOM_NAME, A.APLY_START_DATE, A.MONEY_UNIT
+			</if>
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+ 	</select>
+</mapper>

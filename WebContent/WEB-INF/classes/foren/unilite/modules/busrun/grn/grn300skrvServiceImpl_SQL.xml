@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="grn300skrvServiceImpl">
+	<select id="grn300skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		DECLARE @CompCode               NVARCHAR(10)    /* 법인코드     */
+		      , @DivCode                NVARCHAR(10)    /* 사업장코드   */
+		      , @OperationDateFr        NVARCHAR(08)    /* 운행일(시작) */
+		      , @OperationDateTo        NVARCHAR(08)    /* 운행일(종료) */
+		      , @RouteGroup             NVARCHAR(20)    /* 노선그룹     */
+		      , @RouteCode              NVARCHAR(20)    /* 노선코드     */
+		
+		SET @CompCode        = #{S_COMP_CODE}
+		SET @DivCode         = #{DIV_CODE}
+		SET @OperationDateFr = #{OPERATION_DATE_FR}
+		SET @OperationDateTo = #{OPERATION_DATE_TO}
+		SET @RouteGroup      = #{ROUTE_GROUP}
+		SET @RouteCode       = #{ROUTE_CODE}
+
+		
+		/* 상단-데이터 */
+		SELECT A.COMP_CODE                                                  /* 법인코드         */
+		     , A.DIV_CODE                                                   /* 사업장           */
+		     , A.ROUTE_GROUP                                                /* 노선그룹         */
+		     , A.ROUTE_CODE                                                 /* 노선코드         */
+		     , A.ROUTE_NUM                                                  /* 노선번호         */
+		     , A.OPERATION_DATE                                             /* 운행일           */
+		     , COUNT(*) AS TOTAL_RUN_COUNT                                  /* 총운행횟수       */
+		     , (CASE WHEN COUNT(*) = 0
+		             THEN ''
+		             ELSE RIGHT('00' + CONVERT(NVARCHAR(6),ROUND((SUM(A.RUN_INTERVAL_TIME) / COUNT(*)) / 3600,0)), 2) + ':'
+		                + RIGHT('00' + CONVERT(NVARCHAR(6),ROUND(((SUM(A.RUN_INTERVAL_TIME) / COUNT(*)) - (ROUND((SUM(A.RUN_INTERVAL_TIME) / COUNT(*)) / 3600,0) * 3600)) / 60,0)), 2) + ':'
+		                + RIGHT('00' + CONVERT(NVARCHAR(6),(SUM(A.RUN_INTERVAL_TIME) / COUNT(*)) - (ROUND((SUM(A.RUN_INTERVAL_TIME) / COUNT(*)) / 3600,0) * 3600) - ((((SUM(A.RUN_INTERVAL_TIME) / COUNT(*)) - (ROUND((SUM(A.RUN_INTERVAL_TIME) / COUNT(*)) / 3600,0) * 3600)) / 60) * 60)), 2)
+		         END) AS AVERAGE_INTERVAL                                   /* 평균배차간격     */
+		     , '' AS REMARK                                                 /* 비고             */
+		  FROM (SELECT A.COMP_CODE                                                  /* 법인코드         */
+		             , A.DIV_CODE                                                   /* 사업장           */
+		             , A.ROUTE_GROUP                                                /* 노선그룹         */
+		             , A.ROUTE_CODE                                                 /* 노선코드         */
+		             , C.ROUTE_NUM                                                  /* 노선번호         */
+		             , A.OPERATION_DATE                                             /* 운행일           */
+		             , A.OPERATION_COUNT                                            /* 운행순번         */
+		             , A.RUN_COUNT                                                  /* 운행회차         */
+		             , A.VEHICLE_CODE                                               /* 차량코드         */
+		             , ISNULL(D.VEHICLE_REGIST_NO,'')   AS VEHICLE_REGIST_NO        /* 차량번호         */
+		             , A.DRIVER_CODE                                                /* 기사코드         */ 
+		             , ISNULL(E.NAME,'')                AS NAME                     /* 기사명           */
+		             , ISNULL(B.RUN_DEPARTURE_DATE,'')  AS PREV_RUN_DEPARTURE_DATE  /* 앞차실제출발일자 */
+		             , ISNULL(B.RUN_DEPARTURE_TIME,'')  AS PREV_RUN_DEPARTURE_TIME  /* 앞차실제출발시간 */
+		             , A.RUN_DEPARTURE_DATE                                         /* 실제출발일자     */
+		             , A.RUN_DEPARTURE_TIME                                         /* 실제출발시간     */
+		             , (CASE WHEN ISDATE(B.RUN_DEPARTURE_DATE + ' ' + SUBSTRING(B.RUN_DEPARTURE_TIME,1,2) + ':' + SUBSTRING(B.RUN_DEPARTURE_TIME,3,2) + ':' + SUBSTRING(B.RUN_DEPARTURE_TIME,5,2)) = 1
+		                      AND ISDATE(A.RUN_DEPARTURE_DATE + ' ' + SUBSTRING(A.RUN_DEPARTURE_TIME,1,2) + ':' + SUBSTRING(A.RUN_DEPARTURE_TIME,3,2) + ':' + SUBSTRING(A.RUN_DEPARTURE_TIME,5,2)) = 1
+		                     THEN DATEDIFF(SS, CONVERT(DATETIME, B.RUN_DEPARTURE_DATE + ' ' + SUBSTRING(B.RUN_DEPARTURE_TIME,1,2) + ':' + SUBSTRING(B.RUN_DEPARTURE_TIME,3,2) + ':' + SUBSTRING(B.RUN_DEPARTURE_TIME,5,2))
+		                                     , CONVERT(DATETIME, A.RUN_DEPARTURE_DATE + ' ' + SUBSTRING(A.RUN_DEPARTURE_TIME,1,2) + ':' + SUBSTRING(A.RUN_DEPARTURE_TIME,3,2) + ':' + SUBSTRING(A.RUN_DEPARTURE_TIME,5,2)))
+		                     ELSE 0
+		                END) AS RUN_INTERVAL_TIME                                   /* 차량배차간격     */
+		          FROM (SELECT ROW_NUMBER() OVER (PARTITION BY A.COMP_CODE, A.DIV_CODE, A.OPERATION_DATE, A.ROUTE_CODE
+		                                    ORDER BY CONVERT(NUMERIC(10),A.RUN_COUNT), CONVERT(NUMERIC(10),A.OPERATION_COUNT)) AS REF_NUM
+		                     , A.COMP_CODE
+		                     , A.DIV_CODE
+		                     , A.OPERATION_DATE
+		                     , A.ROUTE_GROUP
+		                     , A.ROUTE_CODE
+		                     , A.VEHICLE_CODE      
+		                     , A.DRIVER_CODE       
+		                     , A.OPERATION_COUNT
+		                     , A.RUN_COUNT
+		                     , A.RUN_DEPARTURE_DATE
+		                     , A.RUN_DEPARTURE_TIME
+		                  FROM GOP300T A WITH (NOLOCK)
+		                 WHERE A.COMP_CODE        = @CompCode
+		                   AND A.DIV_CODE         = @DivCode
+		                   AND A.OPERATION_DATE  &gt;= @OperationDateFr
+		                   AND A.OPERATION_DATE  &lt;= @OperationDateTo
+		                   AND ((A.ROUTE_GROUP    = @RouteGroup AND @RouteGroup != '') OR (@RouteGroup = ''))
+		                   AND ((A.ROUTE_CODE     = @RouteCode  AND @RouteCode  != '') OR (@RouteCode  = ''))
+		                   AND A.OTHER_VEHICLE_YN = 'N'
+		                   AND A.NOTINSERVICE_YN  = 'N') A
+		               LEFT  JOIN 
+		               (SELECT ROW_NUMBER() OVER (PARTITION BY A.COMP_CODE, A.DIV_CODE, A.OPERATION_DATE, A.ROUTE_CODE
+		                                          ORDER BY CONVERT(NUMERIC(10),A.RUN_COUNT), CONVERT(NUMERIC(10),A.OPERATION_COUNT)) + 1 AS REF_NUM
+		                     , A.COMP_CODE
+		                     , A.DIV_CODE
+		                     , A.OPERATION_DATE
+		                     , A.ROUTE_CODE
+		                     , A.RUN_DEPARTURE_DATE
+		                     , A.RUN_DEPARTURE_TIME
+		                  FROM GOP300T A WITH (NOLOCK)
+		                 WHERE A.COMP_CODE        = @CompCode
+		                   AND A.DIV_CODE         = @DivCode
+		                   AND A.OPERATION_DATE  &gt;= @OperationDateFr
+		                   AND A.OPERATION_DATE  &lt;= @OperationDateTo
+		                   AND ((A.ROUTE_GROUP    = @RouteGroup AND @RouteGroup != '') OR (@RouteGroup = ''))
+		                   AND ((A.ROUTE_CODE     = @RouteCode  AND @RouteCode  != '') OR (@RouteCode  = ''))
+		                   AND A.OTHER_VEHICLE_YN = 'N'
+		                   AND A.NOTINSERVICE_YN  = 'N') B ON B.COMP_CODE       = A.COMP_CODE
+		                                                  AND B.DIV_CODE        = A.DIV_CODE
+		                                                  AND B.OPERATION_DATE  = A.OPERATION_DATE
+		                                                  AND B.ROUTE_CODE      = A.ROUTE_CODE 
+		                                                  AND B.REF_NUM         = A.REF_NUM 
+		               LEFT  JOIN GRT100T C WITH (NOLOCK) ON C.COMP_CODE    = A.COMP_CODE
+		                                                 AND C.DIV_CODE     = A.DIV_CODE
+		                                                 AND C.ROUTE_CODE   = A.ROUTE_CODE
+		               LEFT  JOIN GVE100T D WITH (NOLOCK) ON D.COMP_CODE    = A.COMP_CODE
+		                                                 AND D.DIV_CODE     = A.DIV_CODE
+		                                                 AND D.VEHICLE_CODE = A.VEHICLE_CODE
+		               LEFT  JOIN HUM100T E WITH (NOLOCK) ON E.COMP_CODE    = A.COMP_CODE
+		                                                 AND E.DIV_CODE     = A.DIV_CODE
+		                                                 AND E.PERSON_NUMB  = A.DRIVER_CODE) A
+		 GROUP BY A.COMP_CODE, A.DIV_CODE, A.ROUTE_GROUP, A.ROUTE_CODE, A.ROUTE_NUM, A.OPERATION_DATE
+		 ORDER BY A.COMP_CODE, A.DIV_CODE, A.ROUTE_GROUP, A.ROUTE_NUM , A.OPERATION_DATE
+	</select>
+	<select id="grn300skrvServiceImpl.selectDetailList" parameterType="Map" resultType="rMap">
+		DECLARE @CompCode               NVARCHAR(10)    /* 법인코드     */
+		      , @DivCode                NVARCHAR(10)    /* 사업장코드   */
+		      , @OperationDateFr        NVARCHAR(08)    /* 운행일(시작) */
+		      , @OperationDateTo        NVARCHAR(08)    /* 운행일(종료) */
+		      , @RouteGroup             NVARCHAR(20)    /* 노선그룹     */
+		      , @RouteCode              NVARCHAR(20)    /* 노선코드     */
+		
+		SET @CompCode        = #{S_COMP_CODE}
+		SET @DivCode         = #{DIV_CODE}
+		SET @OperationDateFr = #{OPERATION_DATE_FR}
+		SET @OperationDateTo = #{OPERATION_DATE_TO}
+		SET @RouteGroup      = #{ROUTE_GROUP}
+		SET @RouteCode       = #{ROUTE_CODE}
+		
+		SELECT A.COMP_CODE                                                  /* 법인코드         */
+		     , A.DIV_CODE                                                   /* 사업장           */
+		     , A.ROUTE_GROUP                                                /* 노선그룹         */
+		     , A.ROUTE_CODE                                                 /* 노선코드         */
+		     , C.ROUTE_NUM                                                  /* 노선번호         */
+		     , A.OPERATION_DATE                                             /* 운행일           */
+		     , A.OPERATION_COUNT                                            /* 운행순번         */
+		     , A.RUN_COUNT                                                  /* 운행회차         */
+		     , A.VEHICLE_CODE                                               /* 차량코드         */
+		     , ISNULL(D.VEHICLE_REGIST_NO,'')   AS VEHICLE_REGIST_NO        /* 차량번호         */
+		     , ISNULL(D.VEHICLE_NAME,'')		AS VEHICLE_NAME				/* 차량		         */
+		     , A.DRIVER_CODE                                                /* 기사코드         */ 
+		     , ISNULL(E.NAME,'')                AS NAME                     /* 기사명           */
+		     , ISNULL(B.RUN_DEPARTURE_DATE,'')  AS PREV_RUN_DEPARTURE_DATE  /* 앞차실제출발일자 */
+		     , ISNULL(B.RUN_DEPARTURE_TIME,'')  AS PREV_RUN_DEPARTURE_TIME  /* 앞차실제출발시간 */
+		     , A.RUN_DEPARTURE_DATE                                         /* 실제출발일자     */
+		     , A.RUN_DEPARTURE_TIME                                         /* 실제출발시간     */
+		     , (CASE WHEN ISDATE(B.RUN_DEPARTURE_DATE + ' ' + SUBSTRING(B.RUN_DEPARTURE_TIME,1,2) + ':' + SUBSTRING(B.RUN_DEPARTURE_TIME,3,2) + ':' + SUBSTRING(B.RUN_DEPARTURE_TIME,5,2)) = 1
+		              AND ISDATE(A.RUN_DEPARTURE_DATE + ' ' + SUBSTRING(A.RUN_DEPARTURE_TIME,1,2) + ':' + SUBSTRING(A.RUN_DEPARTURE_TIME,3,2) + ':' + SUBSTRING(A.RUN_DEPARTURE_TIME,5,2)) = 1
+		             THEN DATEDIFF(SS, CONVERT(DATETIME, B.RUN_DEPARTURE_DATE + ' ' + SUBSTRING(B.RUN_DEPARTURE_TIME,1,2) + ':' + SUBSTRING(B.RUN_DEPARTURE_TIME,3,2) + ':' + SUBSTRING(B.RUN_DEPARTURE_TIME,5,2))
+		                             , CONVERT(DATETIME, A.RUN_DEPARTURE_DATE + ' ' + SUBSTRING(A.RUN_DEPARTURE_TIME,1,2) + ':' + SUBSTRING(A.RUN_DEPARTURE_TIME,3,2) + ':' + SUBSTRING(A.RUN_DEPARTURE_TIME,5,2)))
+		             ELSE 0
+		        END) AS RUN_INTERVAL_TIME                                   /* 차량배차간격     */
+		     , ROW_NUMBER() OVER ( ORDER BY A.COMP_CODE, A.DIV_CODE, A.OPERATION_DATE, A.ROUTE_CODE, CONVERT(NUMERIC(10),A.RUN_COUNT), CONVERT(NUMERIC(10),A.OPERATION_COUNT) ) AS ROW_NUM
+       		 
+		  FROM (SELECT ROW_NUMBER() OVER (PARTITION BY A.COMP_CODE, A.DIV_CODE, A.OPERATION_DATE, A.ROUTE_CODE
+		                            ORDER BY CONVERT(NUMERIC(10),A.RUN_COUNT), CONVERT(NUMERIC(10),A.OPERATION_COUNT)) AS REF_NUM
+		             , A.COMP_CODE
+		             , A.DIV_CODE
+		             , A.OPERATION_DATE
+		             , A.ROUTE_GROUP
+		             , A.ROUTE_CODE
+		             , A.VEHICLE_CODE      
+		             , A.DRIVER_CODE       
+		             , A.OPERATION_COUNT
+		             , A.RUN_COUNT
+		             , A.RUN_DEPARTURE_DATE
+		             , A.RUN_DEPARTURE_TIME
+		          FROM GOP300T A WITH (NOLOCK)
+		         WHERE A.COMP_CODE        = @CompCode
+		           AND A.DIV_CODE         = @DivCode
+		           AND A.OPERATION_DATE  &gt;= @OperationDateFr
+		           AND A.OPERATION_DATE  &lt;= @OperationDateTo
+		           AND ((A.ROUTE_GROUP    = @RouteGroup AND @RouteGroup != '') OR (@RouteGroup = ''))
+		           AND ((A.ROUTE_CODE     = @RouteCode  AND @RouteCode  != '') OR (@RouteCode  = ''))
+		           AND A.OTHER_VEHICLE_YN = 'N'
+		           AND A.NOTINSERVICE_YN  = 'N') A
+		       LEFT  JOIN 
+		       (SELECT ROW_NUMBER() OVER (PARTITION BY A.COMP_CODE, A.DIV_CODE, A.OPERATION_DATE, A.ROUTE_CODE
+		                                  ORDER BY CONVERT(NUMERIC(10),A.RUN_COUNT), CONVERT(NUMERIC(10),A.OPERATION_COUNT)) + 1 AS REF_NUM
+		             , A.COMP_CODE
+		             , A.DIV_CODE
+		             , A.OPERATION_DATE
+		             , A.ROUTE_CODE
+		             , A.RUN_DEPARTURE_DATE
+		             , A.RUN_DEPARTURE_TIME
+		          FROM GOP300T A WITH (NOLOCK)
+		         WHERE A.COMP_CODE        = @CompCode
+		           AND A.DIV_CODE         = @DivCode
+		           AND A.OPERATION_DATE  &gt;= @OperationDateFr
+		           AND A.OPERATION_DATE  &lt;= @OperationDateTo
+		           AND ((A.ROUTE_GROUP    = @RouteGroup AND @RouteGroup != '') OR (@RouteGroup = ''))
+		           AND ((A.ROUTE_CODE     = @RouteCode  AND @RouteCode  != '') OR (@RouteCode  = ''))
+		           AND A.OTHER_VEHICLE_YN = 'N'
+		           AND A.NOTINSERVICE_YN  = 'N') B ON B.COMP_CODE       = A.COMP_CODE
+		                                          AND B.DIV_CODE        = A.DIV_CODE
+		                                          AND B.OPERATION_DATE  = A.OPERATION_DATE
+		                                          AND B.ROUTE_CODE      = A.ROUTE_CODE 
+		                                          AND B.REF_NUM         = A.REF_NUM 
+		       LEFT  JOIN GRT100T C WITH (NOLOCK) ON C.COMP_CODE    = A.COMP_CODE
+		                                         AND C.DIV_CODE     = A.DIV_CODE
+		                                         AND C.ROUTE_CODE   = A.ROUTE_CODE
+		       LEFT  JOIN GVE100T D WITH (NOLOCK) ON D.COMP_CODE    = A.COMP_CODE
+		                                         AND D.DIV_CODE     = A.DIV_CODE
+		                                         AND D.VEHICLE_CODE = A.VEHICLE_CODE
+		       LEFT  JOIN HUM100T E WITH (NOLOCK) ON E.COMP_CODE    = A.COMP_CODE
+		                                         AND E.DIV_CODE     = A.DIV_CODE
+		                                         AND E.PERSON_NUMB  = A.DRIVER_CODE
+		 ORDER BY A.COMP_CODE, A.DIV_CODE, A.OPERATION_DATE, A.ROUTE_CODE, CONVERT(NUMERIC(10),A.RUN_COUNT), CONVERT(NUMERIC(10),A.OPERATION_COUNT) 
+
+	</select>
+</mapper>

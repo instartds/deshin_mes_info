@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ssa810skrvServiceImpl">
+	
+	<select id="ssa810skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">		
+	
+--부서별매출상세
+	BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+DECLARE @START_TIME DATETIME
+      , @END_TIME   DATETIME
+      , @DIFF_TIME  NUMERIC(10, 0)
+
+SET @START_TIME = GETDATE()
+
+/*  1. 임시 테이블 처리  */
+    DECLARE     @TypeKey                NVARCHAR(20)
+
+    SET @TypeKey  = REPLACE(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(30), GETDATE(), 121), '-', ''), ':', ''), '.', ''), ' ', '')
+
+    IF NOT EXISTS   (
+                    SELECT TOP 1 1
+                    FROM   T_SSA810SKRV1 WITH (NOLOCK)
+                    WHERE  TYPE_KEY LIKE LEFT(@TypeKey, 8) + '%'
+                    )
+    BEGIN
+        TRUNCATE TABLE T_SSA810SKRV1
+    END
+
+/*  2.데이터 생성  */
+    /*  1.1 부서별매출실적  */
+    INSERT  INTO T_SSA810SKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE, STORE_CODE, STORE_NAME
+                            , PURCHASE_CUSTOM_CODE ,PURCHASE_CUSTOM_NAME, ITEM_CODE, ITEM_NAME, TAX_TYPE
+                            , GROSS_SALES, DISCOUNT_O, NET_SALES, SALE_AMT_O, TAX_AMT_O, SALE_Q)
+    SELECT @TypeKey                                                                 AS TYPE_KEY
+         , N'0'                                                                     AS TYPE_FLAG
+         , A.COMP_CODE
+         , A.DIV_CODE
+         , A1.TREE_CODE AS STORE_CODE
+         , A1.TREE_NAME AS STORE_NAME
+         , ISNULL(C.PURCHASE_CUSTOM_CODE,'')                                        AS PURCHASE_CUSTOM_CODE     --매입처
+         , ISNULL(C1.CUSTOM_NAME,'')                                                AS PURCHASE_CUSTOM_NAME     --매입처명
+         , B.ITEM_CODE                                                              AS ITEM_CODE                --품목
+         , B1.ITEM_NAME                                                             AS ITEM_NAME                --품목명
+         , B.TAX_TYPE
+         , SUM(B.SALE_AMT_O + B.TAX_AMT_O + (ISNULL(B.DISCOUNT_P, 0) * B.SALE_Q))   AS GROSS_SALES      -- 총매출액=총판매금액
+         , SUM(ISNULL(B.DISCOUNT_P, 0) * B.SALE_Q)                                  AS DISCOUNT_O       -- 할인(에누리)
+         , SUM(B.SALE_AMT_O + B.TAX_AMT_O)                                          AS NET_SALES        -- 순매출액(총매출액 - 할인(에누리))
+
+         , (CASE WHEN B.TAX_TYPE = '1' THEN SUM(ROUND((B.SALE_AMT_O + B.TAX_AMT_O)/ 1.1, 0))
+                                       ELSE SUM(B.SALE_AMT_O + B.TAX_AMT_O)
+             END)                                                                   AS SALE_AMT_O       -- [계산-반올림]공급가액
+         , (CASE WHEN B.TAX_TYPE = '1' THEN SUM(B.SALE_AMT_O + B.TAX_AMT_O) - SUM(ROUND((B.SALE_AMT_O + B.TAX_AMT_O)/ 1.1, 0))
+                                       ELSE 0
+             END)                                                                   AS TAX_AMT_O        -- [계산-반올림]세액
+         , SUM(B.SALE_Q) 															AS SALE_Q           -- 판매수량
+      FROM	          SSA100T A  WITH(NOLOCK)
+           INNER JOIN SSA110T B  WITH(NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+                                             AND B.DIV_CODE     = A.DIV_CODE
+                                             AND B.BILL_NUM     = A.BILL_NUM
+           LEFT  JOIN BTR100T C  WITH(NOLOCK) ON C.COMP_CODE    = B.COMP_CODE
+                                             AND C.DIV_CODE     = B.DIV_CODE
+                                             AND C.INOUT_NUM    = B.INOUT_NUM
+                                             AND C.INOUT_SEQ    = B.INOUT_SEQ
+                                             AND C.INOUT_TYPE   = B.INOUT_TYPE
+           INNER JOIN BSA210T A1 WITH(NOLOCK) ON A1.COMP_CODE   = A.COMP_CODE
+                                             AND A1.TYPE_LEVEL  = A.DIV_CODE 
+                                             AND A1.TREE_CODE   = A.DEPT_CODE
+           INNER JOIN BPR200T B1 WITH(NOLOCK) ON B1.COMP_CODE   = B.COMP_CODE
+                                             AND B1.DIV_CODE    = B.DIV_CODE
+                                             AND B1.ITEM_CODE   = B.ITEM_CODE
+                                             AND B1.ITEM_ACCOUNT NOT IN ('02','03','04','05')
+           LEFT  JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE   = C.COMP_CODE
+                                             AND C1.CUSTOM_CODE = C.PURCHASE_CUSTOM_CODE
+     WHERE  A.COMP_CODE  = #{S_COMP_CODE}
+       AND  A.DIV_CODE	 = #{DIV_CODE}
+    <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">  
+	   AND  B.ITEM_CODE  = #{ITEM_CODE}
+	</if>  
+	   AND  A.SALE_DATE  &gt;= #{SALE_DATE_FR} 				 				      
+	   AND  A.SALE_DATE  &lt;= #{SALE_DATE_TO}
+	<if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">  
+	   AND A1.TREE_LEVEL  LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =A1.COMP_CODE AND TYPE_LEVEL=A1.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'		           
+	</if> 
+    <if test="TAX_TYPE == &quot;1&quot;">
+	   AND	B.TAX_TYPE		= '1'
+	</if>
+    <if test="TAX_TYPE == &quot;2&quot;">
+	   AND	B.TAX_TYPE		= '2'
+	</if>      
+--       AND ISNULL(C.INOUT_Q,0) != 0     
+	GROUP BY A.COMP_CODE, A.DIV_CODE, A1.TREE_CODE, A1.TREE_NAME, B.TAX_TYPE, ISNULL(C.PURCHASE_CUSTOM_CODE,''), ISNULL(C1.CUSTOM_NAME,''), B.ITEM_CODE, B1.ITEM_NAME 
+     
+     /* HAVING SUM(B.SALE_AMT_O + B.TAX_AMT_O + (ISNULL(B.DISCOUNT_P, 0) * B.SALE_Q)) != 0 OR SUM(ISNULL(B.DISCOUNT_P, 0) * B.SALE_Q) != 0 */
+
+<if test="TAX_TYPE != &quot;2&quot;">
+    INSERT  INTO T_SSA810SKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE, STORE_CODE, STORE_NAME
+                            , PURCHASE_CUSTOM_CODE ,PURCHASE_CUSTOM_NAME, ITEM_CODE, ITEM_NAME, TAX_TYPE
+                            , GROSS_SALES, DISCOUNT_O, NET_SALES, SALE_AMT_O, TAX_AMT_O, SALE_Q)
+    SELECT @TypeKey                                                                 AS TYPE_KEY
+         , N'0'                                                                     AS TYPE_FLAG
+         , A.COMP_CODE
+         , A.DIV_CODE
+         , A1.TREE_CODE AS STORE_CODE
+         , A1.TREE_NAME AS STORE_NAME
+         , ISNULL(C.PURCHASE_CUSTOM_CODE,'')                                        AS PURCHASE_CUSTOM_CODE     --매입처
+         , ISNULL(C1.CUSTOM_NAME,'')                                                AS PURCHASE_CUSTOM_NAME     --매입처명
+         , B.ITEM_CODE                                                              AS ITEM_CODE                --품목
+         , B1.ITEM_NAME                                                             AS ITEM_NAME                --품목명
+         , ISNULL(A1.TAX_TYPE, '1')                                                 AS TAX_TYPE
+         , SUM(B.CONSIGNMENT_FEE * ABS(B.SALE_Q))                                   AS GROSS_SALES      -- 총매출액=총판매금액
+         , 0                                                                        AS DISCOUNT_O       -- 할인(에누리)
+         , SUM(B.CONSIGNMENT_FEE * ABS(B.SALE_Q))                                   AS NET_SALES        -- 순매출액(총매출액 - 할인(에누리))
+         , CASE WHEN ISNULL(A1.TAX_TYPE, '1') = '1' THEN SUM(ROUND(B.CONSIGNMENT_FEE * ABS(B.SALE_Q)/ 1.1, 0))
+         											ELSE SUM(ROUND(B.CONSIGNMENT_FEE * ABS(B.SALE_Q), 0)) END AS SALE_AMT_O       -- [계산-반올림]공급가액
+         , CASE WHEN ISNULL(A1.TAX_TYPE, '1') = '1' THEN SUM(B.CONSIGNMENT_FEE * ABS(B.SALE_Q)) - SUM(ROUND(B.CONSIGNMENT_FEE * ABS(B.SALE_Q)/ 1.1, 0))
+         											ELSE 0 END 						AS TAX_AMT_O       -- [계산-반올림]세액
+		 , SUM(B.SALE_Q) 															AS SALE_Q          -- 판매수량  											
+      FROM	          SSA100T A  WITH(NOLOCK)
+           INNER JOIN SSA110T B  WITH(NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+                                             AND B.DIV_CODE     = A.DIV_CODE
+                                             AND B.BILL_NUM     = A.BILL_NUM
+           LEFT  JOIN BTR100T C  WITH(NOLOCK) ON C.COMP_CODE    = B.COMP_CODE
+                                             AND C.DIV_CODE     = B.DIV_CODE
+                                             AND C.INOUT_NUM    = B.INOUT_NUM
+                                             AND C.INOUT_SEQ    = B.INOUT_SEQ
+                                             AND C.INOUT_TYPE   = B.INOUT_TYPE
+           INNER JOIN BSA210T A1 WITH(NOLOCK) ON A1.COMP_CODE   = A.COMP_CODE
+                                             AND A1.TYPE_LEVEL  = A.DIV_CODE 
+                                             AND A1.TREE_CODE   = A.DEPT_CODE
+           INNER JOIN BPR200T B1 WITH(NOLOCK) ON B1.COMP_CODE   = B.COMP_CODE
+                                             AND B1.DIV_CODE    = B.DIV_CODE
+                                             AND B1.ITEM_CODE   = B.ITEM_CODE
+                                             AND B1.ITEM_ACCOUNT IN ('02','04')
+           LEFT  JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE   = C.COMP_CODE
+                                             AND C1.CUSTOM_CODE = C.PURCHASE_CUSTOM_CODE
+     WHERE  A.COMP_CODE  = #{S_COMP_CODE}
+       AND  A.DIV_CODE	 = #{DIV_CODE}
+    <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">  
+	   AND  B.ITEM_CODE  = #{ITEM_CODE}
+	</if>   
+	   AND  A.SALE_DATE  &gt;= #{SALE_DATE_FR}				 				      
+	   AND  A.SALE_DATE  &lt;= #{SALE_DATE_TO}
+	<if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">  
+	   AND A1.TREE_LEVEL  LIKE  (SELECT TREE_LEVEL FROM BSA210T WITH(NOLOCK) WHERE COMP_CODE =A1.COMP_CODE AND TYPE_LEVEL=A1.TYPE_LEVEL AND TREE_CODE = #{DEPT_CODE}) + '%'		           
+	</if> 
+--       AND ISNULL(C.INOUT_Q,0) != 0     
+	GROUP BY A.COMP_CODE, A.DIV_CODE, A1.TREE_CODE, A1.TREE_NAME, ISNULL(A1.TAX_TYPE, '1'), ISNULL(C.PURCHASE_CUSTOM_CODE,''), ISNULL(C1.CUSTOM_NAME,''), B.ITEM_CODE, B1.ITEM_NAME 
+    HAVING SUM(B.CONSIGNMENT_FEE * ABS(B.SALE_Q)) != 0
+</if>      
+
+    /*  1.2 부서별매출실적 합계 */
+    INSERT  INTO T_SSA810SKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE, STORE_CODE, STORE_NAME
+                            , PURCHASE_CUSTOM_CODE ,PURCHASE_CUSTOM_NAME, ITEM_CODE, ITEM_NAME, TAX_TYPE
+                            , GROSS_SALES, DISCOUNT_O, NET_SALES, SALE_AMT_O, TAX_AMT_O, SALE_Q)
+    SELECT @TypeKey             AS TYPE_KEY
+         , N'1'                 AS TYPE_FLAG
+         , COMP_CODE
+         , DIV_CODE
+         , '9999'               AS STORE_CODE
+         , '총계'               	AS STORE_NAME
+         , ''                   AS PURCHASE_CUSTOM_CODE
+         , ''                   AS PURCHASE_CUSTOM_NAME
+         , ''                   AS ITEM_CODE
+         , ''                   AS ITEM_NAME
+         , TAX_TYPE
+         , SUM(GROSS_SALES)     AS GROSS_SALES
+         , SUM(DISCOUNT_O)      AS DISCOUNT_O
+         , SUM(NET_SALES)       AS NET_SALES
+         , SUM(SALE_AMT_O)      AS SALE_AMT_O
+         , SUM(TAX_AMT_O)       AS TAX_AMT_O
+         , SUM(SALE_Q)       	AS SALE_Q
+     FROM  T_SSA810SKRV1
+     WHERE TYPE_KEY  = @TypeKey
+     AND   TYPE_FLAG = '0'
+     GROUP BY COMP_CODE, DIV_CODE, TAX_TYPE
+
+/*  3.Main Query  */
+    SELECT A.COMP_CODE
+         , A.DIV_CODE
+         , A.STORE_CODE
+         , A.STORE_NAME
+         , A.PURCHASE_CUSTOM_CODE
+         , A.PURCHASE_CUSTOM_NAME
+         , A.ITEM_CODE
+         , A.ITEM_NAME
+         , A.TAX_TYPE
+         , A.GROSS_SALES
+         , A.DISCOUNT_O
+         , A.NET_SALES
+         , A.SALE_AMT_O
+         , A.TAX_AMT_O
+         , A.SALE_Q
+         , ISNULL(B.SALE_BASIS_P, 0) AS SALE_BASIS_P
+     FROM 		T_SSA810SKRV1 A WITH(NOLOCK)
+     LEFT JOIN  BPR100T 	  B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE 
+     									    AND A.ITEM_CODE = B.ITEM_CODE
+     
+     WHERE TYPE_KEY  = @TypeKey
+     
+     ORDER BY A.COMP_CODE, A.DIV_CODE, A.TYPE_FLAG, A.STORE_CODE, A.STORE_NAME, ISNULL(A.PURCHASE_CUSTOM_CODE,''), ISNULL(A.ITEM_CODE, ''), A.TAX_TYPE
+		
+		
+SET @END_TIME   = GETDATE()
+
+SET @DIFF_TIME = DATEDIFF(S, @START_TIME, @END_TIME)
+
+EXEC uniLITE.SP_QRY_TIME 'ssa810skrv', '부서별 매출현황 상세', #{SALE_DATE_FR}, #{SALE_DATE_TO}, @DIFF_TIME
+
+			
+    SET NOCOUNT OFF
+    SET ARITHABORT OFF
+END
+
+    </select>	
+	
+</mapper>

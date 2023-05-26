@@ -1,0 +1,330 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mainBoardServiceImpl">
+	
+	<select id="mainBoardServiceImpl.goplist" parameterType="Map" resultType="rMap">
+		DECLARE @CompCode   NVARCHAR(8)
+		      , @UserId     NVARCHAR(100)
+		
+		DECLARE @OfficeCode NVARCHAR(20)
+		      , @Date      NVARCHAR(8)
+		      , @Time      NVARCHAR(4)
+		
+		SET @CompCode = #{S_COMP_CODE}
+		SET @UserId = #{S_USER_ID}
+		
+		SELECT @OfficeCode = OFFICE_CODE
+	      FROM BSA370T WITH (NOLOCK)
+	     WHERE COMP_CODE = @CompCode
+	       AND USER_ID   = @UserId
+	       AND USE_YN    = 'Y'
+		
+		SET @OfficeCode = ISNULL(@OfficeCode,'')
+		
+		/* SET @OfficeCode = '030' 데이터 들어가면 삭제*/
+		
+		SET @Date = CONVERT(NVARCHAR(8), GETDATE(),112)
+		SET @Time = LEFT(REPLACE(CONVERT(NVARCHAR(8), GETDATE(),114),':',''),4)
+		
+		SELECT PVT1.ROUTE_NUM				 , ROW_NUMBER() OVER(ORDER BY PVT1.ROUTE_NUM) AS ROW_NUM		 , PVT1.DEPARTURE_DATE 
+			 , PVT1.DEPARTURE_TIME1			 , PVT1.DEPARTURE_TIME2			 , PVT1.DEPARTURE_TIME3			 , PVT1.DEPARTURE_TIME4			 , PVT1.DEPARTURE_TIME5
+			 , PVT2.VEHICLE_NAME1			 , PVT2.VEHICLE_NAME2			 , PVT2.VEHICLE_NAME3			 , PVT2.VEHICLE_NAME4			 , PVT2.VEHICLE_NAME5
+			 , PVT3.DRIVER_NAME1			 , PVT3.DRIVER_NAME2			 , PVT3.DRIVER_NAME3			 , PVT3.DRIVER_NAME4			 , PVT3.DRIVER_NAME5
+			 
+		FROM(SELECT ROUTE_NUM, DEPARTURE_DATE
+			 , PVT.[1] AS DEPARTURE_TIME1	 , PVT.[2] AS DEPARTURE_TIME2	 , PVT.[3] AS DEPARTURE_TIME3	 , PVT.[4] AS DEPARTURE_TIME4	 , PVT.[5] AS DEPARTURE_TIME5
+			 FROM
+				(
+					SELECT A.RANK_ROUTE_NUM
+						 , A.ROUTE_NUM
+						 , A.DEPARTURE_TIME
+						 , A.DEPARTURE_DATE
+					  FROM (SELECT R.ROUTE_NUM                                                              AS ROUTE_NUM        /* 노선번호     */
+								 , LEFT(A.DEPARTURE_TIME,2) + ':' + RIGHT(A.DEPARTURE_TIME,2)               AS DEPARTURE_TIME   /* 출발시간     */
+								 , (ROW_NUMBER() OVER(PARTITION BY R.ROUTE_NUM ORDER BY A.DEPARTURE_TIME))  AS RANK_ROUTE_NUM
+								 , MIN(A.DEPARTURE_DATE) OVER() AS DEPARTURE_DATE
+							  FROM            GOP300T A  WITH (NOLOCK)
+								   INNER JOIN GRT100T R  WITH (NOLOCK) ON R.COMP_CODE         = A.COMP_CODE
+																	  AND R.DIV_CODE          = A.DIV_CODE
+																	  AND R.ROUTE_CODE        = A.ROUTE_CODE
+								   INNER JOIN GRT110T RH WITH (NOLOCK) ON RH.COMP_CODE         = R.COMP_CODE
+																	  AND RH.DIV_CODE          = R.DIV_CODE
+																	  AND RH.ROUTE_CODE        = R.ROUTE_CODE
+																	  AND RH.ROUTE_START_DATE &lt;= @Date
+		                                                  AND RH.ROUTE_END_DATE   &gt;= @Date
+							 WHERE A.COMP_CODE        = @CompCode
+							   AND A.OPERATION_DATE   = @Date
+							   AND A.OFFICE_CODE      = @OfficeCode
+							   AND A.OTHER_VEHICLE_YN = 'N'
+							   AND A.NOTINSERVICE_YN  = 'N'
+							   AND A.DEPARTURE_DATE + A.DEPARTURE_TIME >= @Date + @Time) A
+					 WHERE A.RANK_ROUTE_NUM &lt;= 5
+				 ) A
+				 PIVOT (MAX(DEPARTURE_TIME) FOR RANK_ROUTE_NUM IN   ([1],[2],[3],[4],[5]  )) PVT
+		 )  PVT1
+		 LEFT JOIN (
+			SELECT ROUTE_NUM
+			 , PVT.[1] AS VEHICLE_NAME1	 , PVT.[2] AS VEHICLE_NAME2	 , PVT.[3] AS VEHICLE_NAME3	 , PVT.[4] AS VEHICLE_NAME4	 , PVT.[5] AS VEHICLE_NAME5
+			 FROM
+				(
+					SELECT A.RANK_ROUTE_NUM
+						 , A.ROUTE_NUM
+						 , A.VEHICLE_NAME
+					  FROM (SELECT R.ROUTE_NUM                                                              AS ROUTE_NUM        /* 노선번호     */
+								 , LEFT(A.DEPARTURE_TIME,2) + ':' + RIGHT(A.DEPARTURE_TIME,2)               AS DEPARTURE_TIME   /* 출발시간     */
+								 , V.VEHICLE_NAME                                                           AS VEHICLE_NAME     /* 차량명       */
+								 
+								 , (ROW_NUMBER() OVER(PARTITION BY R.ROUTE_NUM ORDER BY A.DEPARTURE_TIME))  AS RANK_ROUTE_NUM
+							  FROM            GOP300T A  WITH (NOLOCK)
+								   INNER JOIN GRT100T R  WITH (NOLOCK) ON R.COMP_CODE         = A.COMP_CODE
+																	  AND R.DIV_CODE          = A.DIV_CODE
+																	  AND R.ROUTE_CODE        = A.ROUTE_CODE
+								   INNER JOIN GRT110T RH WITH (NOLOCK) ON RH.COMP_CODE         = R.COMP_CODE
+																	  AND RH.DIV_CODE          = R.DIV_CODE
+																	  AND RH.ROUTE_CODE        = R.ROUTE_CODE
+																	  AND RH.ROUTE_START_DATE &lt;= @Date
+		                                                  AND RH.ROUTE_END_DATE   &gt;= @Date
+								   LEFT JOIN GVE100T V  WITH (NOLOCK) ON V.COMP_CODE           = A.COMP_CODE
+																	 AND V.DIV_CODE            = A.DIV_CODE
+																	 AND V.VEHICLE_CODE        = A.VEHICLE_CODE
+
+							 WHERE A.COMP_CODE        = @CompCode
+							   AND A.OPERATION_DATE   = @Date
+							   AND A.OFFICE_CODE      = @OfficeCode
+							   AND A.OTHER_VEHICLE_YN = 'N'
+							   AND A.NOTINSERVICE_YN  = 'N'
+							   AND A.DEPARTURE_DATE + A.DEPARTURE_TIME >= @Date + @Time) A
+					 WHERE A.RANK_ROUTE_NUM &lt;= 5
+				 ) A
+				 PIVOT (MAX(VEHICLE_NAME) FOR RANK_ROUTE_NUM IN   ([1],[2],[3],[4],[5]  )) PVT
+		 
+		 )PVT2 ON PVT2.ROUTE_NUM = PVT1.ROUTE_NUM
+		 
+		 LEFT JOIN (
+			SELECT ROUTE_NUM
+			 , PVT.[1] AS DRIVER_NAME1	 , PVT.[2] AS DRIVER_NAME2	 , PVT.[3] AS DRIVER_NAME3	 , PVT.[4] AS DRIVER_NAME4	 , PVT.[5] AS DRIVER_NAME5
+			 FROM
+				(
+					SELECT A.RANK_ROUTE_NUM
+						 , A.ROUTE_NUM
+						 , A.DRIVER_NAME
+					  FROM (SELECT R.ROUTE_NUM                                                              AS ROUTE_NUM        /* 노선번호     */
+								 , LEFT(A.DEPARTURE_TIME,2) + ':' + RIGHT(A.DEPARTURE_TIME,2)               AS DEPARTURE_TIME   /* 출발시간     */
+								 , H1.NAME                                                                  AS DRIVER_NAME      /* 기사명       */
+								 , (ROW_NUMBER() OVER(PARTITION BY R.ROUTE_NUM ORDER BY A.DEPARTURE_TIME))  AS RANK_ROUTE_NUM
+							  FROM            GOP300T A  WITH (NOLOCK)
+								   INNER JOIN GRT100T R  WITH (NOLOCK) ON R.COMP_CODE         = A.COMP_CODE
+																	  AND R.DIV_CODE          = A.DIV_CODE
+																	  AND R.ROUTE_CODE        = A.ROUTE_CODE
+								   INNER JOIN GRT110T RH WITH (NOLOCK) ON RH.COMP_CODE         = R.COMP_CODE
+																	  AND RH.DIV_CODE          = R.DIV_CODE
+																	  AND RH.ROUTE_CODE        = R.ROUTE_CODE
+																	  AND RH.ROUTE_START_DATE &lt;= @Date
+		                                                  AND RH.ROUTE_END_DATE   &gt;= @Date
+								   LEFT JOIN HUM100T H1 WITH (NOLOCK) ON H1.COMP_CODE          = A.COMP_CODE
+																	 AND H1.DIV_CODE           = A.DIV_CODE
+																	 AND H1.PERSON_NUMB        = A.DRIVER_CODE
+							 WHERE A.COMP_CODE        = @CompCode
+							   AND A.OPERATION_DATE   = @Date
+							   AND A.OFFICE_CODE      = @OfficeCode
+							   AND A.OTHER_VEHICLE_YN = 'N'
+							   AND A.NOTINSERVICE_YN  = 'N'
+							   AND A.DEPARTURE_DATE + A.DEPARTURE_TIME >= @Date + @Time) A
+					 WHERE A.RANK_ROUTE_NUM &lt;= 5
+				 ) A
+				 PIVOT (MAX(DRIVER_NAME) FOR RANK_ROUTE_NUM IN   ([1],[2],[3],[4],[5]  )) PVT
+		 
+		 )PVT3 ON PVT3.ROUTE_NUM = PVT1.ROUTE_NUM
+		 ORDER BY PVT1.ROUTE_NUM
+	</select>
+	<select id="mainBoardServiceImpl.gttlist" parameterType="Map" resultType="rMap">
+	BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+		
+			DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+			      , @DivCode		NVARCHAR(08)	/* 사업장코드	*/
+			      , @UserId			NVARCHAR(100)	/* 사용자ID		*/
+			      , @LangType		NVARCHAR(2)		/* 언어구분		*/
+		
+		    DECLARE @GopToday       NVARCHAR(10)    /* 조회일(당일) */     
+		          , @AttToday       NVARCHAR(10)    /* 조회일(당일) */     
+		          , @OfficeCode     NVARCHAR(08)    /* 영업소       */
+		
+		    SET @CompCode = #{S_COMP_CODE}
+		    SET @DivCode  = #{S_DIV_CODE}
+		    SET @UserId   = #{S_USER_ID}
+		    SET @LangType = #{S_LANG_CODE}
+		
+		    SET @GopToday = CONVERT(NVARCHAR(10), GETDATE(), 112)
+		    SET @AttToday = CONVERT(NVARCHAR(10), GETDATE(), 120)
+		
+		    SELECT @OfficeCode = OFFICE_CODE
+		      FROM BSA370T WITH (NOLOCK)
+		     WHERE COMP_CODE = @CompCode
+		       AND USER_ID   = @UserId
+		       AND USE_YN    = 'Y'
+		
+			SET @OfficeCode = ISNULL(@OfficeCode,'')
+		   /*  SET @OfficeCode = '' 데이터 들어가면 삭제*/
+		
+		    SELECT PERSON_NUMB
+		         , REPLACE(ATT_DATE,'-','') AS ATT_DATE
+		         , IN_TIME
+		         , OUT_TIME 
+		         , CARD_IN_TIME
+		         , CARD_OUT_TIME
+		         , FP_IN_TIME
+		         , FP_OUT_TIME
+		      INTO #AttTimeBusV
+		      FROM AttTimeBusV
+		     WHERE ATT_DATE = @AttToday
+		
+		    SELECT O.OFFICE_CODE
+		         , O.ROUTE_CODE
+		         , R.ROUTE_NUM
+		         , O.VEHICLE_CODE
+		         , V.VEHICLE_NAME
+		         , O.DRIVER_CODE
+		         , H1.NAME AS DRIVER_NAME
+		         , O.OPERATION_COUNT
+		         , LEFT(O.DUTY_FR_TIME,5) AS DUTY_FR_TIME
+		         , CONVERT(NVARCHAR(5), G.IN_TIME , 114) AS IN_TIME
+		         , (CASE WHEN O.DUTY_FR_TIME = ''        THEN 'CASE1'  /*근태기준데이터 없음(추후결정)  */
+		                 WHEN ISNULL(G.IN_TIME,'') = ''  THEN 'CASE2'  /*미출근(파란색) 				*/
+		                 WHEN O.DUTY_FR_TIME > G.IN_TIME THEN 'CASE3'  /*지각(빨간색)					*/
+		                                                 ELSE 'CASE4'  /*정상출근(검은색)				*/
+		             END) AS CASE_FLAG
+		         , ROW_NUMBER() OVER(PARTITION BY  R.ROUTE_NUM ORDER BY R.ROUTE_NUM, CONVERT(NUMERIC(3,0), O.OPERATION_COUNT)) AS ROUTE_ROW_NUM
+	          	 , (ROW_NUMBER() OVER(ORDER BY R.ROUTE_NUM, CONVERT(NUMERIC(3,0), O.OPERATION_COUNT))) + (DENSE_RANK() OVER(ORDER BY R.ROUTE_NUM))  AS ROW_NUM
+		      FROM (SELECT A.COMP_CODE
+		                 , A.DIV_CODE
+		                 , A.OPERATION_DATE
+		                 , A.OFFICE_CODE
+		                 , A.ROUTE_CODE
+		                 , A.VEHICLE_CODE
+		                 , A.DRIVER_CODE
+		                 , A.OPERATION_COUNT
+		                 , A.DUTY_FR_DATE
+		                 , (CASE WHEN ISNULL(A.DUTY_FR_TIME,'') != '' THEN LEFT(A.DUTY_FR_TIME, 2) + ':' + SUBSTRING(A.DUTY_FR_TIME,3,2) + ':' + (CASE WHEN LEN(A.DUTY_FR_TIME) = 6 THEN SUBSTRING(A.DUTY_FR_TIME,5,2) ELSE '00' END)  ELSE '' END) AS DUTY_FR_TIME
+		              FROM            GOP300T A WITH (NOLOCK) 
+		                   INNER JOIN (SELECT COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT, RUN_COUNT
+		                                 FROM (SELECT COMP_CODE
+		                                            , DIV_CODE
+		                                            , OPERATION_DATE
+		                                            , ROUTE_CODE
+		                                            , OPERATION_COUNT
+		                                            , RUN_COUNT
+		                                            , NOTINSERVICE_YN
+		                                            , RANK() OVER(PARTITION BY COMP_CODE, DIV_CODE, OPERATION_DATE, ROUTE_CODE, OPERATION_COUNT ORDER BY CONVERT(NUMERIC(10,0),RUN_COUNT) DESC) AS RNK
+		                                         FROM GOP300T WITH (NOLOCK)
+		                                        WHERE COMP_CODE         = @CompCode
+		                                          AND DIV_CODE          = @DivCode
+		                                          AND OFFICE_CODE       = @OfficeCode
+		                                          AND OPERATION_DATE    = @GopToday
+		                                          AND OTHER_VEHICLE_YN != 'Y') L
+		                                WHERE RNK              = 1
+		                                  AND NOTINSERVICE_YN != 'Y') B ON B.COMP_CODE       = A.COMP_CODE
+		                                                               AND B.DIV_CODE        = A.DIV_CODE
+		                                                               AND B.OPERATION_DATE  = A.OPERATION_DATE
+		                                                               AND B.ROUTE_CODE      = A.ROUTE_CODE
+		                                                               AND B.OPERATION_COUNT = A.OPERATION_COUNT
+		                                                               AND B.RUN_COUNT       = A.RUN_COUNT
+		            WHERE A.COMP_CODE         = @CompCode
+		              AND A.DIV_CODE          = @DivCode
+		              AND A.OFFICE_CODE       = @OfficeCode
+		              AND A.OPERATION_DATE    = @GopToday
+		              AND A.OTHER_VEHICLE_YN != 'Y'
+		              AND A.NOTINSERVICE_YN  != 'Y') O 
+		           LEFT  JOIN #AttTimeBusV G           ON O.DRIVER_CODE    = G.PERSON_NUMB
+		                                              AND O.OPERATION_DATE = G.ATT_DATE
+		           LEFT  JOIN HUM100T H1 WITH (NOLOCK) ON O.COMP_CODE      = H1.COMP_CODE
+		                                              AND O.DIV_CODE       = H1.DIV_CODE
+		                                              AND O.DRIVER_CODE    = H1.PERSON_NUMB
+		           LEFT  JOIN GRT100T R  WITH (NOLOCK) ON O.COMP_CODE      = R.COMP_CODE
+		                                              AND O.DIV_CODE       = R.DIV_CODE
+		                                              AND O.ROUTE_CODE     = R.ROUTE_CODE
+		           LEFT  JOIN GVE100T V  WITH (NOLOCK) ON O.COMP_CODE      = V.COMP_CODE
+		                                              AND O.DIV_CODE       = V.DIV_CODE
+		                                              AND O.VEHICLE_CODE   = V.VEHICLE_CODE
+		     WHERE O.COMP_CODE = @CompCode
+		       AND O.DIV_CODE  = @DivCode
+		     ORDER BY R.ROUTE_NUM, CONVERT(NUMERIC(3,0), O.OPERATION_COUNT)
+		
+		    DROP TABLE #AttTimeBusV
+		
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+		</select>
+		<select id="mainBoardServiceImpl.noticelist" parameterType="Map" resultType="rMap">
+			BEGIN
+				SET NOCOUNT ON
+				SET ARITHABORT ON
+			
+				DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+				      , @UserId			NVARCHAR(100)	/* 사용자ID		*/
+				      , @LangType		NVARCHAR(2)		/* 언어구분		*/
+			
+			    DECLARE @Today          NVARCHAR(10)    /* 조회일(당일) */     
+				      , @DivCode		NVARCHAR(08)	/* 사업장코드	*/
+				      , @DeptCode       NVARCHAR(08)	/* 부서코드     */
+			          , @OfficeCode     NVARCHAR(08)    /* 영업소       */
+			
+			    DECLARE @Notice         NVARCHAR(MAX)   /* 공지사항     */
+			          , @CurRefCode2    NVARCHAR(50)    /* 커서-공지사항유형    */
+			          , @CurTitle       NVARCHAR(100)   /* 커서-공지사항제목    */
+			
+			    SET @CompCode = #{S_COMP_CODE}
+			    SET @UserId   = #{S_USER_ID}
+			    SET @LangType = #{S_LANG_CODE}
+			
+			    SET @Today = CONVERT(NVARCHAR(10), GETDATE(), 112)
+			
+			    SELECT @DivCode    = DIV_CODE
+			         , @DeptCode   = DEPT_CODE
+			         , @OfficeCode = OFFICE_CODE
+			      FROM BSA370T WITH (NOLOCK)
+			     WHERE COMP_CODE = @CompCode
+			       AND USER_ID   = @UserId
+			       AND USE_YN    = 'Y'
+			
+			    SET @DivCode    = ISNULL(@DivCode   ,'ZZZ')
+			    SET @DeptCode   = ISNULL(@DeptCode  ,'ZZZ') 
+			    SET @OfficeCode = ISNULL(@OfficeCode,'ZZZ') 
+			
+			    DECLARE CUR_001 CURSOR LOCAL FOR
+			        SELECT C1.REF_CODE2, A.TITLE
+			          FROM (SELECT COMP_CODE, TYPE_FLAG, TITLE FROM BSA600T WITH (NOLOCK) WHERE COMP_CODE = @CompCode AND AUTH_FLAG = '1' AND FROM_DATE &lt;= @Today AND TO_DATE &gt;= @Today
+			                UNION 
+			                SELECT COMP_CODE, TYPE_FLAG, TITLE FROM BSA600T WITH (NOLOCK) WHERE COMP_CODE = @CompCode AND AUTH_FLAG = '2' AND FROM_DATE &lt;= @Today AND TO_DATE &gt;= @Today AND DIV_CODE    = @DivCode
+			                UNION 
+			                SELECT COMP_CODE, TYPE_FLAG, TITLE FROM BSA600T WITH (NOLOCK) WHERE COMP_CODE = @CompCode AND AUTH_FLAG = '3' AND FROM_DATE &lt;= @Today AND TO_DATE &gt;= @Today AND DEPT_CODE   = @DeptCode
+			                UNION 
+			                SELECT COMP_CODE, TYPE_FLAG, TITLE FROM BSA600T WITH (NOLOCK) WHERE COMP_CODE = @CompCode AND AUTH_FLAG = '4' AND FROM_DATE &lt;= @Today AND TO_DATE &gt;= @Today AND OFFICE_CODE = @OfficeCode) A
+			               INNER JOIN BSA100T C1 WITH (NOLOCK) ON C1.COMP_CODE = A.COMP_CODE
+			                                                  AND C1.MAIN_CODE = 'B602'
+			                                                  AND C1.SUB_CODE  = A.TYPE_FLAG
+			    SET @Notice = ''
+			
+			    OPEN CUR_001
+			    FETCH NEXT FROM CUR_001 INTO @CurRefCode2, @CurTitle
+			    WHILE (@@FETCH_STATUS = 0)
+			    BEGIN
+			        SET @Notice = (CASE WHEN ISNULL(@Notice,'') = '' THEN '' ELSE @Notice + ', ' END)
+			
+			        SET @Notice = @Notice + ISNULL(@CurRefCode2,'') + ' ' + ISNULL(@CurTitle,'')
+			
+			        FETCH NEXT FROM CUR_001 INTO @CurRefCode2, @CurTitle
+			    END
+			    CLOSE CUR_001
+			    DEALLOCATE CUR_001
+			
+			    SELECT @Notice AS NOTICE
+			
+				SET NOCOUNT OFF
+				SET ARITHABORT OFF
+			END
+		
+	</select>
+</mapper>

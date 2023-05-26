@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="arc500ukrServiceImpl">
+					
+	<select id="arc500ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	/* arc500ukr[fnArc500QStd] Query01 수수료청구자동기표 조회 */
+		BEGIN
+			SET NOCOUNT ON
+			SET ARITHABORT ON
+		
+			DECLARE @CompCode		NVARCHAR(08)	/* 법인코드  */
+			      , @UserId			NVARCHAR(100)	/* 사용자ID */
+			      , @LangType		NVARCHAR(2)		/* 언어구분 */
+			      , @RefItem		NVARCHAR(01)
+			      , @DateFormat		NVARCHAR(10)
+		
+			SET @CompCode = #{S_COMP_CODE}
+			SET @UserId   = #{S_USER_ID}
+			SET @LangType = #{S_LANG_CODE}
+		
+			/* 명칭 참조 유형 */
+			SELECT TOP 1 @RefItem = REF_ITEM
+			  FROM BSA300T WITH (NOLOCK)
+			 WHERE USER_ID = @UserId
+		
+			SET @RefItem = ISNULL(@RefItem, N'0')
+		
+			/* 날짜 포맷 유형 설정 */
+			SELECT TOP 1 @DateFormat = CODE_NAME
+			  FROM BSA100T WITH (NOLOCK)
+			 WHERE COMP_CODE = @CompCode
+			   AND MAIN_CODE = N'B044'
+			   AND REF_CODE1 = N'Y'
+		
+			SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		
+			/* 데이터 조회 */
+			SELECT ROW_NUMBER() OVER (ORDER BY A.COMP_CODE, A.CONF_CHARGE_NO) AS RNUM
+			     , A.COMP_CODE
+			     , (CASE WHEN ISNULL(A.CONF_CHARGE_DATE, '') = ''
+			             THEN ''
+			             ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.CONF_CHARGE_DATE, 1, 4))
+			                                                     , 'MM'  , SUBSTRING(A.CONF_CHARGE_DATE, 5, 2))
+			                                                     , 'DD'  , SUBSTRING(A.CONF_CHARGE_DATE, 7, 2))
+			         END)                      AS CONF_CHARGE_DATE
+			     , A.CONF_CHARGE_NO
+			     , A.RECE_COMP_CODE
+				 , Y.COMP_NAME                 AS RECE_COMP_NAME
+				 , ISNULL(X1.REF_CODE1, '')    AS CUSTOM_CODE
+			     , (CASE WHEN @RefItem = '1' THEN V.CUSTOM_NAME1
+			             WHEN @RefItem = '2' THEN V.CUSTOM_NAME2
+			                                 ELSE V.CUSTOM_NAME
+			         END)                      AS CUSTOM_NAME
+				 , ISNULL(A.CHARGE_TOT_AMT, 0) AS CHARGE_TOT_AMT
+				 , ISNULL(A.BASE_AMT, 0)       AS BASE_AMT
+				 , ISNULL(A.CHARGE_TOT_AMT, 0) + ISNULL(A.BASE_AMT, 0)     AS SUPPLY_AMT
+				 , ROUND((ISNULL(A.CHARGE_TOT_AMT, 0) + ISNULL(A.BASE_AMT, 0)) / 100, 0)  AS TAX_AMT
+				 , ISNULL(A.CHARGE_TOT_AMT, 0) + ISNULL(A.BASE_AMT, 0)
+				 + ROUND((ISNULL(A.CHARGE_TOT_AMT, 0) + ISNULL(A.BASE_AMT, 0)) / 100, 0)  AS TOT_SALE_AMT
+			     , (CASE WHEN ISNULL(A.EX_DATE, '') = ''
+			             THEN ''
+			             ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.EX_DATE, 1, 4))
+			                                                     , 'MM'  , SUBSTRING(A.EX_DATE, 5, 2))
+			                                                     , 'DD'  , SUBSTRING(A.EX_DATE, 7, 2))
+			         END)                      AS EX_DATE
+			     , (CASE WHEN ISNULL(A.EX_NUM, 0) = 0
+			             THEN NULL
+			             ELSE A.EX_NUM
+			         END)                      AS EX_NUM
+			     , B.AP_STS
+				 , X2.CODE_NAME	               AS AP_STS_NAME
+				 
+				 ,''   AS      CONF_RECE_NO      
+				 
+			  FROM            ARC500T A  WITH (NOLOCK)
+			       LEFT  JOIN (SELECT COMP_CODE
+                                    , AC_DATE
+                                    , SLIP_NUM
+                                    , '1' AS AP_STS
+                               FROM   AGJ210T WITH (NOLOCK)
+                               WHERE  COMP_CODE = @CompCode
+                               AND   (MOD_DIVI IS NULL OR MOD_DIVI = '')
+                               GROUP BY COMP_CODE, AC_DATE, SLIP_NUM
+                              )       B                ON B.COMP_CODE      = A.COMP_CODE
+                                                      AND B.AC_DATE        = A.EX_DATE
+                                                      AND B.SLIP_NUM       = A.EX_NUM
+			       LEFT  JOIN BSA100T X1 WITH (NOLOCK) ON X1.COMP_CODE     = A.COMP_CODE
+				                                      AND X1.MAIN_CODE     = 'J509'
+				                                      AND X1.SUB_CODE      = A.RECE_COMP_CODE
+			       LEFT  JOIN BSA100T X2 WITH (NOLOCK) ON X2.COMP_CODE     = B.COMP_CODE
+				                                      AND X2.MAIN_CODE     = 'A014'
+				                                      AND X2.SUB_CODE      = B.AP_STS
+			       LEFT  JOIN BCM100T V  WITH (NOLOCK) ON V.COMP_CODE      = X1.COMP_CODE
+			                                          AND V.CUSTOM_CODE    = X1.REF_CODE1
+			       LEFT  JOIN BOR100T Y  WITH (NOLOCK) ON Y.COMP_CODE      = A.RECE_COMP_CODE
+			 WHERE A.COMP_CODE = @CompCode
+			 
+			 <if test="@foren.Ognl@isNotEmpty(CONF_CHARGE_DATE_FR)">
+		       AND A.CONF_CHARGE_DATE       &gt;= #{CONF_CHARGE_DATE_FR}			-- 청구확정일
+		     </if>
+		     <if test="@foren.Ognl@isNotEmpty(CONF_CHARGE_DATE_TO)">
+		       AND A.CONF_CHARGE_DATE       &lt;= #{CONF_CHARGE_DATE_TO}
+		     </if>
+		     <if test="@foren.Ognl@isNotEmpty(RECE_COMP_CODE)">
+		       AND A.RECE_COMP_CODE     = #{RECE_COMP_CODE}
+		     </if>
+		     <if test="@foren.Ognl@isNotEmpty(RECE_COMP_NAME)">      
+               AND Y.COMP_NAME LIKE  #{RECE_COMP_NAME} + '%'
+             </if>
+		     <if test="ACCEPT_STATUS == &quot;1&quot;">
+		       AND	  ISNULL(A.EX_DATE, '') = '' -- 청구여부(미청구)
+		     </if>
+		     <if test="ACCEPT_STATUS == &quot;2&quot;">
+		       AND	  ISNULL(A.EX_DATE, '') != '' -- 청구여부(청구)
+		     </if>
+			 ORDER BY A.COMP_CODE, A.CONF_CHARGE_NO
+		
+			SET NOCOUNT OFF
+			SET ARITHABORT OFF
+		END
+
+	</select>
+
+	
+<insert id="arc500ukrServiceImpl.insertLogDetail" parameterType="Map">     
+INSERT INTO L_ARC500T
+    (
+    KEY_VALUE
+   ,OPR_FLAG
+   ,COMP_CODE             
+   ,CONF_RECE_NO          
+   ,CONF_CHARGE_NO        
+   ,CONF_CHARGE_DATE      
+   ,RECE_COMP_CODE        
+   ,RECE_COMP_NAME        
+   ,CUSTOM_CODE           
+   ,CUSTOM_NAME           
+   ,CHARGE_TOT_AMT        
+   ,BASE_AMT              
+   ,TOT_AMT               
+   ,TAX_AMT               
+   ,SUPPLY_AMT_I          
+   ,EX_DATE 
+   <if test="@foren.Ognl@isNotEmpty(EX_NUM)">              
+   ,EX_NUM                
+   </if>
+   ,AP_STS
+   ,WORK_DATE
+   ,INSERT_DB_USER
+   ,INSERT_DB_TIME
+   ,UPDATE_DB_USER
+   ,UPDATE_DB_TIME
+    )
+    VALUES
+    (
+    #{KEY_VALUE}  
+   ,#{OPR_FLAG}        
+   ,#{COMP_CODE}        
+   ,#{CONF_RECE_NO}     
+   ,#{CONF_CHARGE_NO}   
+   ,#{CONF_CHARGE_DATE}
+   ,#{RECE_COMP_CODE}   
+   ,#{RECE_COMP_NAME}   
+   ,#{CUSTOM_CODE}      
+   ,#{CUSTOM_NAME}      
+   ,#{CHARGE_TOT_AMT}   
+   ,#{BASE_AMT}         
+   ,#{CHARGE_TOT_AMT} + #{BASE_AMT}          
+   ,#{TAX_AMT}          
+   ,#{CHARGE_TOT_AMT} + #{BASE_AMT} + #{TAX_AMT}
+   ,#{EX_DATE} 
+   <if test="@foren.Ognl@isNotEmpty(EX_NUM)">         
+   ,#{EX_NUM}           
+   </if>
+   ,#{AP_STS}  
+   ,#{WORK_DATE}         
+   ,#{S_USER_ID}  
+   ,GETDATE()   
+   ,#{S_USER_ID}   
+   ,GETDATE() 
+    )        
+
+
+</insert>             
+<update id="spUspAccntAutoSlip90" parameterType="Map" statementType="CALLABLE">
+
+    {call USP_ACCNT_AutoSlip90 (
+        #{S_COMP_CODE, mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+        #{KEY_VALUE,  mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+        #{S_GUBUN,  mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+        #{S_LANG_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+        #{S_USER_ID,  mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+        #{ErrorDesc,   mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+    )}
+</update>   
+<update id="spUspAccntAutoSlip90Cancel" parameterType="Map" statementType="CALLABLE">
+
+    {call USP_ACCNT_AutoSlip90Cancel (
+        #{S_COMP_CODE, mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+        #{KEY_VALUE,  mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+        #{S_GUBUN,  mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+        #{S_LANG_CODE, mode=IN, jdbcType=VARCHAR, javaType=java.lang.String},
+        #{S_USER_ID,  mode=IN,  jdbcType=VARCHAR, javaType=java.lang.String},
+        #{ErrorDesc,   mode=OUT, jdbcType=VARCHAR, javaType=java.lang.String}
+    )}
+</update>   
+</mapper>

@@ -1,0 +1,811 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="afb510ukrServiceImpl">
+<select id="afb510ukrServiceImpl.selectBudgName" parameterType="Map" resultType="rMap">		/* BUDG_NAME 컬럼수*/
+--UAccntPopupKrv.CAccntPopupKR[fnGetBudgCode] Query02
+<!-- BEGIN -->
+    <!-- DECLARE         @COMP_CODE          NVARCHAR(08) -->
+
+--  [ 변수 값 할당 ] ------------------------------------------------------------------------------------------
+    SET @COMP_CODE  = #{S_COMP_CODE}
+--  [ 데이터 조회 ] -------------------------------------------------------------------------------------------
+    SELECT  *
+    FROM    fnGetBudgLevelName(@COMP_CODE, #{ST_DATE})
+<!-- END -->	
+<!-- SP생성필요 -->
+
+
+</select>	
+
+<select id="afb510ukrServiceImpl.selectList" parameterType="Map" resultType="rMap">		/* 메인 조회*/
+--afb510ukr.Cafb510ukr[fnAfb510QStd] Query02
+BEGIN
+
+    IF EXISTS (select * from (SELECT * FROM tempdb..sysobjects  WHERE id=object_id('tempdb..#TMP_AFB510T'))  TOPT where rownum = 1)
+        DROP TABLE #TMP_AFB510T
+
+    CREATE TABLE #TMP_AFB510T 
+                (
+                     COMP_CODE         NVARCHAR(08)    NOT NULL
+                   , BUDG_YYYYMM       NVARCHAR(08)    NOT NULL
+                   , DEPT_CODE         NVARCHAR(08)    NOT NULL
+                   , BUDG_CODE         NVARCHAR(30)    NOT NULL
+                   , BUDG_GUBUN        NVARCHAR(01)    NOT NULL
+                   , BUDG_I            NUMERIC(30,6)       NULL
+                   , BUDG_CONF_I       NUMERIC(30,6)       NULL
+                   , GUBUN             NVARCHAR(10)    NOT NULL
+                   , CAL_DIVI          NVARCHAR(01)    NOT NULL DEFAULT '1'
+                   , INSERT_DB_USER    NVARCHAR(10)        NULL
+                   , INSERT_DB_TIME    SMALLDATETIME       NULL
+                   , UPDATE_DB_USER    NVARCHAR(10)        NULL
+                   , UPDATE_DB_TIME    SMALLDATETIME       NULL
+
+                    PRIMARY KEY ( COMP_CODE, BUDG_YYYYMM, DEPT_CODE, BUDG_CODE, BUDG_GUBUN, GUBUN )
+                )
+
+    SET @COMP_CODE    = #{S_COMP_CODE}      
+    SET @AC_YYYY      = #{AC_YYYY}          
+    SET @DEPT_CODE    = #{DEPT_CODE}        
+    SET @FR_BUDG_CODE = #{BUDG_CODE_FR}     
+    SET @TO_BUDG_CODE = #{BUDG_CODE_TO}     
+    SET @BUDG_TYPE    = #{BUDG_TYPE}        
+
+    SET @BUDG_GUBUN   = '1'    --1:본월예산, 2:이월예산
+
+    --회계기간 가져오기
+    SELECT @FnDate = SUBSTR(FN_DATE, 5, 2)
+      FROM BOR100T  
+     WHERE COMP_CODE = @COMP_CODE
+
+    --사업년도의 첫번째,마지막 예산년월 계산
+    SET @FrBudgYyyyMm = @AC_YYYY + @FnDate + '01'
+    <!-- SET @ToBudgYyyyMm =CONVERT(NVARCHAR,DATEADD(DD, -1, DATEADD(MM, 12, @FrBudgYyyyMm)),112) -->
+    SET @ToBudgYyyyMm = TO_CHAR(ADDDATE(ADD_MONTHS(@FrBudgYyyyMm , 12) , -1), 'YYYYMMDD')
+    
+
+    --예산확정테이블의 데이터 존재여부 확인
+    SELECT @DataType = CASE WHEN COUNT(1) &gt; 0 THEN '' ELSE 'N' END
+      FROM AFB510T  
+     WHERE COMP_CODE    = @COMP_CODE
+       AND BUDG_YYYYMM &gt;= LEFT(@FrBudgYyyyMm, 6)
+       AND BUDG_YYYYMM &lt;= LEFT(@ToBudgYyyyMm, 6)
+       AND DEPT_CODE    = @DEPT_CODE
+       AND ((BUDG_CODE &gt;= @FR_BUDG_CODE AND @FR_BUDG_CODE != '') OR (@FR_BUDG_CODE = ''))
+       AND ((BUDG_CODE &lt;= @TO_BUDG_CODE AND @TO_BUDG_CODE != '') OR (@TO_BUDG_CODE = ''))
+       AND BUDG_GUBUN   = @BUDG_GUBUN
+
+    SET @DataType = NVL(@DataType, 'N')
+
+
+    --예산편성정보와 예산확정정보를 합쳐 임시테이블 생성
+    INSERT INTO #TMP_AFB510T ( COMP_CODE     , BUDG_YYYYMM   , DEPT_CODE     , BUDG_CODE     , BUDG_GUBUN
+                             , BUDG_I        , BUDG_CONF_I   , GUBUN         , CAL_DIVI
+                             , INSERT_DB_USER, INSERT_DB_TIME, UPDATE_DB_USER, UPDATE_DB_TIME
+                             )
+    SELECT T.COMP_CODE
+         , CASE WHEN NVL(T.BUDG_YYYYMM,'') = ''
+                THEN LEFT(@FrBudgYyyyMm, 6)
+                ELSE T.BUDG_YYYYMM
+            END AS BUDG_YYYYMM
+         , T.DEPT_CODE
+         , T.BUDG_CODE
+         , T.BUDG_GUBUN
+         , T.BUDG_I
+         , T.BUDG_CONF_I
+         , T.GUBUN
+         , CASE WHEN NVL(T.CAL_DIVI,'') = ''
+                THEN '1'
+                ELSE T.CAL_DIVI
+            END AS CAL_DIVI
+         , T.INSERT_DB_USER
+         , T.INSERT_DB_TIME
+         , T.UPDATE_DB_USER
+         , T.UPDATE_DB_TIME
+      FROM (
+            -- 예산확정정보
+            SELECT M.COMP_CODE
+                 , A.BUDG_YYYYMM
+                 , M.DEPT_CODE
+                 , M.BUDG_CODE
+                 , NVL(A.BUDG_GUBUN, @BUDG_GUBUN) AS BUDG_GUBUN
+                 , NVL(A.BUDG_I, 0)               AS BUDG_I
+                 , NVL(A.BUDG_CONF_I, 0)          AS BUDG_CONF_I
+                 , CASE WHEN NVL(A.BUDG_CODE, '') = '' THEN 'AFB500T' ELSE 'AFB510T' END AS GUBUN
+                 , A.CAL_DIVI
+                 , A.INSERT_DB_USER
+                 , A.INSERT_DB_TIME
+                 , A.UPDATE_DB_USER
+                 , A.UPDATE_DB_TIME
+              FROM            AFB410T AS M 
+                   LEFT  JOIN (SELECT CASE WHEN B.COMP_CODE   IS NULL THEN A.COMP_CODE   ELSE B.COMP_CODE   END AS COMP_CODE
+                                    , CASE WHEN B.BUDG_YYYYMM IS NULL THEN A.BUDG_YYYYMM ELSE B.BUDG_YYYYMM END AS BUDG_YYYYMM
+                                    , CASE WHEN B.DEPT_CODE   IS NULL THEN A.DEPT_CODE   ELSE B.DEPT_CODE   END AS DEPT_CODE
+                                    , CASE WHEN B.BUDG_CODE   IS NULL THEN A.BUDG_CODE   ELSE B.BUDG_CODE   END AS BUDG_CODE
+                                    , CASE WHEN B.BUDG_GUBUN  IS NULL THEN @BUDG_GUBUN   ELSE B.BUDG_GUBUN  END AS BUDG_GUBUN
+                                    , CASE WHEN B.BUDG_I      IS NULL THEN A.BUDG_I      ELSE B.BUDG_I      END AS BUDG_I
+                                    , CASE WHEN B.BUDG_CONF_I IS NULL THEN A.BUDG_I      ELSE B.BUDG_CONF_I END AS BUDG_CONF_I
+                                    , CASE WHEN B.CAL_DIVI    IS NULL THEN A.CAL_DIVI    ELSE B.CAL_DIVI    END AS CAL_DIVI
+                                    , B.INSERT_DB_USER
+                                    , B.INSERT_DB_TIME
+                                    , B.UPDATE_DB_USER
+                                    , B.UPDATE_DB_TIME
+                                    , CASE WHEN NVL(B.BUDG_CODE, '') = ''
+                                           THEN ''
+                                           ELSE '1'
+                                       END  AS GUBUN
+                                 FROM                 AFB500T AS A 
+                                      FULL OUTER JOIN AFB510T AS B  ON B.COMP_CODE   = A.COMP_CODE
+                                                                                AND B.BUDG_YYYYMM = A.BUDG_YYYYMM
+                                                                                AND B.DEPT_CODE   = A.DEPT_CODE
+                                                                                AND B.BUDG_CODE   = A.BUDG_CODE
+                                WHERE B.BUDG_GUBUN = @BUDG_GUBUN
+                              ) AS A ON A.COMP_CODE    = M.COMP_CODE
+                                    AND A.BUDG_YYYYMM &gt;= LEFT(@FrBudgYyyyMm, 6)
+                                    AND A.BUDG_YYYYMM &lt;= LEFT(@ToBudgYyyyMm, 6)
+                                    AND A.DEPT_CODE    = M.DEPT_CODE
+                                    AND A.BUDG_CODE    = M.BUDG_CODE
+             WHERE M.COMP_CODE    = @COMP_CODE
+               AND M.AC_YYYY      = @AC_YYYY
+               AND M.DEPT_CODE    = @DEPT_CODE
+               AND M.USE_YN       = 'Y'
+               AND ((M.BUDG_CODE &gt;= @FR_BUDG_CODE AND @FR_BUDG_CODE != '') OR (@FR_BUDG_CODE = ''))
+               AND ((M.BUDG_CODE &lt;= @TO_BUDG_CODE AND @TO_BUDG_CODE != '') OR (@TO_BUDG_CODE = ''))
+           ) AS T
+     ORDER BY T.BUDG_YYYYMM, T.BUDG_CODE, T.GUBUN
+
+
+    --임시테이블(#TMP_AFB510T)에서 데이터 조회하여 그리드 포맷에 맞춰 임시테이블 생성
+    --(예산코드명을 레벨순서대로 펼침, 예산금액을 12개월로 펼침)
+    IF EXISTS (select * from (SELECT * FROM tempdb..sysobjects  WHERE id = OBJECT_ID('tempdb..#TMP_AFB510T_090211'))  TOPT where rownum = 1)
+        DROP TABLE #TMP_AFB510T_090211
+
+    SELECT A.COMP_CODE
+         , A.AC_YYYY
+         , B.BUDG_YYYYMM
+         , A.DEPT_CODE
+         , A.BUDG_CODE
+    
+    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index" >
+         , CASE WHEN L${budgNameInfoList.size}.CODE_LEVEL &gt;= ${index+1}
+                THEN L${index+1}.BUDG_NAME
+                ELSE ''
+            END AS BUDG_NAME_L${index+1}
+    </foreach>
+    
+         , B.BUDG_GUBUN
+         , CASE WHEN NVL(B.CAL_DIVI,'') = ''
+                THEN '1'
+                ELSE B.CAL_DIVI
+            END AS CAL_DIVI
+         , B.GUBUN
+         , B.BUDG_CONF_I
+    	 , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 0), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I01
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 1), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I02
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 2), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I03
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 3), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I04
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 4), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I05
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 5), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I06
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 6), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I07
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 7), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I08
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 8), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I09
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 9), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I10
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 10), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I11
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 11), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I12
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 0), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I01
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 1), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I02
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 2), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I03
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 3), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I04
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 4), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I05
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 5), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I06
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 6), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I07
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 7), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I08
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 8), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I09
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 9), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I10
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 10), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I11
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 11), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I12
+        
+         , B.INSERT_DB_USER
+         , B.INSERT_DB_TIME
+         , B.UPDATE_DB_USER
+         , B.UPDATE_DB_TIME
+      INTO #TMP_AFB510T_090211
+      FROM            AFB410T      AS A  
+           LEFT  JOIN #TMP_AFB510T AS B    ON B.COMP_CODE      = A.COMP_CODE
+                                        AND B.BUDG_YYYYMM   &gt;= LEFT(@FrBudgYyyyMm, 6)
+                                        AND B.BUDG_YYYYMM   &lt;= LEFT(@ToBudgYyyyMm, 6)
+                                        AND B.DEPT_CODE      = A.DEPT_CODE
+                                        AND B.BUDG_CODE      = A.BUDG_CODE
+    
+           INNER JOIN AFB400T      AS L${budgNameInfoList.size}
+                                   ON L${budgNameInfoList.size}.COMP_CODE     = A.COMP_CODE
+                                  AND L${budgNameInfoList.size}.AC_YYYY       = A.AC_YYYY
+                                  AND L${budgNameInfoList.size}.BUDG_CODE     = A.BUDG_CODE
+    
+    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index">
+	    <if test="index+1 &lt; budgNameInfoList.size">
+           INNER JOIN AFB400T      AS L${budgNameInfoList.size-(index+1)}
+                                   ON L${budgNameInfoList.size-(index+1)}.COMP_CODE     = L${budgNameInfoList.size-(index)}.COMP_CODE
+                                  AND L${budgNameInfoList.size-(index+1)}.AC_YYYY       = L${budgNameInfoList.size-(index)}.AC_YYYY
+                                  AND L${budgNameInfoList.size-(index+1)}.BUDG_CODE     = L${budgNameInfoList.size-(index)}.TREE_LEVEL
+                                  AND L${budgNameInfoList.size-(index+1)}.CODE_LEVEL    = L${budgNameInfoList.size-(index)}.CODE_LEVEL - 1
+    	</if>
+	</foreach>
+    
+     WHERE A.COMP_CODE     = @COMP_CODE
+       AND A.AC_YYYY       = @AC_YYYY
+       AND A.DEPT_CODE     = @DEPT_CODE
+       AND A.USE_YN        = 'Y'
+       AND ((A.BUDG_CODE  &gt;= @FR_BUDG_CODE AND @FR_BUDG_CODE != '') OR (@FR_BUDG_CODE = ''))
+       AND ((A.BUDG_CODE  &lt;= @TO_BUDG_CODE AND @TO_BUDG_CODE != '') OR (@TO_BUDG_CODE = ''))
+       AND ((L${budgNameInfoList.size}.BUDG_TYPE  = @BUDG_TYPE    AND @BUDG_TYPE    != '') OR (@BUDG_TYPE    = ''))
+       AND L${budgNameInfoList.size}.GROUP_YN     = 'N'
+
+
+    --임시테이블(#TMP_AFB510T_090211)에서 데이터 조회
+    -- (LIST로 나열)
+    SELECT COMP_CODE
+         , AC_YYYY
+         , DEPT_CODE
+         , BUDG_CODE
+    	<foreach collection="budgNameInfoList" item="budgNameInfo" index="index">
+         , MAX(BUDG_NAME_L${index+1}) AS BUDG_NAME_L${index+1}
+    	</foreach>
+         , MAX(CAL_DIVI)   AS CAL_DIVI
+         , BUDG_GUBUN
+         , GUBUN
+         , fngetTxt('A0275')	AS GUBUN_NAME
+    	 , SUM(BUDG_CONF_I)     AS BUDG_CONF_I
+    	 , SUM(BUDG_CONF_I01)   AS BUDG_CONF_I01
+         , SUM(BUDG_CONF_I02)   AS BUDG_CONF_I02
+         , SUM(BUDG_CONF_I03)   AS BUDG_CONF_I03
+         , SUM(BUDG_CONF_I04)   AS BUDG_CONF_I04
+         , SUM(BUDG_CONF_I05)   AS BUDG_CONF_I05
+         , SUM(BUDG_CONF_I06)   AS BUDG_CONF_I06
+         , SUM(BUDG_CONF_I07)   AS BUDG_CONF_I07
+         , SUM(BUDG_CONF_I08)   AS BUDG_CONF_I08
+         , SUM(BUDG_CONF_I09)   AS BUDG_CONF_I09
+         , SUM(BUDG_CONF_I10)   AS BUDG_CONF_I10
+         , SUM(BUDG_CONF_I11)   AS BUDG_CONF_I11
+         , SUM(BUDG_CONF_I12)   AS BUDG_CONF_I12
+         , SUM(BUDG_I01)   AS BUDG_I01
+         , SUM(BUDG_I02)   AS BUDG_I02
+         , SUM(BUDG_I03)   AS BUDG_I03
+         , SUM(BUDG_I04)   AS BUDG_I04
+         , SUM(BUDG_I05)   AS BUDG_I05
+         , SUM(BUDG_I06)   AS BUDG_I06
+         , SUM(BUDG_I07)   AS BUDG_I07
+         , SUM(BUDG_I08)   AS BUDG_I08
+         , SUM(BUDG_I09)   AS BUDG_I09
+         , SUM(BUDG_I10)   AS BUDG_I10
+         , SUM(BUDG_I11)   AS BUDG_I11
+         , SUM(BUDG_I12)   AS BUDG_I12
+    
+         , MAX(INSERT_DB_USER) AS INSERT_DB_USER
+         , MAX(INSERT_DB_TIME) AS INSERT_DB_TIME
+         , MAX(UPDATE_DB_USER) AS UPDATE_DB_USER
+         , MAX(UPDATE_DB_USER) AS UPDATE_DB_TIME
+         , @FrBudgYyyyMm       AS FR_BUDG_YYYYMM
+         , @DataType           AS DATA_TYPE
+      FROM #TMP_AFB510T_090211  
+     GROUP BY COMP_CODE, AC_YYYY, DEPT_CODE, BUDG_CODE, BUDG_GUBUN, GUBUN
+
+    <!-- SET NOCOUNT OFF -->
+END
+</select>
+
+<select id="afb510ukrServiceImpl.selectList2" parameterType="Map" resultType="rMap">		/* 참조 조회*/
+--afb510ukr.Cafb510ukr[fnAfb510QRef] Query02
+BEGIN
+
+
+    IF EXISTS (select * from (SELECT * FROM tempdb..sysobjects  WHERE id=object_id('tempdb..#TMP_AFB500T'))  TOPT where rownum = 1)
+        DROP TABLE #TMP_AFB500T
+
+    CREATE TABLE #TMP_AFB500T 
+                (
+                     COMP_CODE         NVARCHAR(08)    NOT NULL
+                   , BUDG_YYYYMM       NVARCHAR(08)    NOT NULL
+                   , DEPT_CODE         NVARCHAR(08)    NOT NULL
+                   , BUDG_CODE         NVARCHAR(30)    NOT NULL
+                   , BUDG_I            NUMERIC(30,6)       NULL
+                   , BUDG_CONF_I       NUMERIC(30,6)       NULL
+                   , GUBUN             NVARCHAR(10)    NOT NULL
+                   , CAL_DIVI          NVARCHAR(01)    NOT NULL DEFAULT '1'
+                   , INSERT_DB_USER    NVARCHAR(10)        NULL
+                   , INSERT_DB_TIME    SMALLDATETIME       NULL
+                   , UPDATE_DB_USER    NVARCHAR(10)        NULL
+                   , UPDATE_DB_TIME    SMALLDATETIME       NULL
+
+                    PRIMARY KEY ( COMP_CODE, BUDG_YYYYMM, DEPT_CODE, BUDG_CODE, GUBUN )
+                )
+
+    SET @COMP_CODE    = #{S_COMP_CODE}
+    SET @AC_YYYY      = #{AC_YYYY}
+    SET @DEPT_CODE    = #{DEPT_CODE}
+    SET @FR_BUDG_CODE = #{BUDG_CODE_FR}
+    SET @TO_BUDG_CODE = #{BUDG_CODE_TO}
+    SET @BUDG_TYPE    = #{BUDG_TYPE}
+
+    SET @BUDG_GUBUN   = '1'   --1:본월예산, 2:이월예산
+
+    --회계기간 가져오기
+    SELECT @FnDate = SUBSTR(FN_DATE, 5, 2)
+      FROM BOR100T  
+     WHERE COMP_CODE = @COMP_CODE
+
+    --사업년도의 첫번째,마지막 예산년월 계산
+    SET @FrBudgYyyyMm = @AC_YYYY + @FnDate + '01'
+    SET @ToBudgYyyyMm = TO_CHAR(ADDDATE(ADD_MONTHS(@FrBudgYyyyMm , 12) , -1), 'YYYYMMDD')
+
+    --예산확정테이블의 데이터 존재여부 확인
+    SELECT @DataType = CASE WHEN COUNT(1) &gt; 0 THEN '' ELSE 'N' END
+      FROM AFB510T  
+     WHERE COMP_CODE    = @COMP_CODE
+       AND BUDG_YYYYMM &gt;= LEFT(@FrBudgYyyyMm, 6)
+       AND BUDG_YYYYMM &lt;= LEFT(@ToBudgYyyyMm, 6)
+       AND DEPT_CODE    = @DEPT_CODE
+       AND ((BUDG_CODE &gt;= @FR_BUDG_CODE AND @FR_BUDG_CODE != '') OR (@FR_BUDG_CODE = ''))
+       AND ((BUDG_CODE &lt;= @TO_BUDG_CODE AND @TO_BUDG_CODE != '') OR (@TO_BUDG_CODE = ''))
+       AND BUDG_GUBUN   = @BUDG_GUBUN
+
+    SET @DataType = NVL(@DataType, 'N')
+
+
+    --예산편성정보와 예산확정정보를 합쳐 임시테이블 생성
+    INSERT INTO #TMP_AFB500T ( COMP_CODE     , BUDG_YYYYMM   , DEPT_CODE     , BUDG_CODE
+                             , BUDG_I        , BUDG_CONF_I   , GUBUN         , CAL_DIVI
+                             , INSERT_DB_USER, INSERT_DB_TIME, UPDATE_DB_USER, UPDATE_DB_TIME
+                             )
+    SELECT T.COMP_CODE
+         , CASE WHEN NVL(T.BUDG_YYYYMM,'') = ''
+                THEN LEFT(@FrBudgYyyyMm, 6)
+                ELSE T.BUDG_YYYYMM
+            END AS BUDG_YYYYMM
+         , T.DEPT_CODE
+         , T.BUDG_CODE
+         , T.BUDG_I
+         , T.BUDG_CONF_I
+         , T.GUBUN
+         , CASE WHEN NVL(T.CAL_DIVI,'') = ''
+                THEN '1'
+                ELSE T.CAL_DIVI
+            END AS CAL_DIVI
+         , T.INSERT_DB_USER
+         , T.INSERT_DB_TIME
+         , T.UPDATE_DB_USER
+         , T.UPDATE_DB_TIME
+      FROM (
+            -- 예산편성정보
+            SELECT M.COMP_CODE
+                 , A.BUDG_YYYYMM
+                 , M.DEPT_CODE
+                 , M.BUDG_CODE
+                 , NVL(A.BUDG_I,0) AS BUDG_I
+                 , NVL(A.BUDG_I,0) AS BUDG_CONF_I
+                 , 'AFB500T'          AS GUBUN
+                 , A.CAL_DIVI
+                 , A.INSERT_DB_USER
+                 , A.INSERT_DB_TIME
+                 , A.UPDATE_DB_USER
+                 , A.UPDATE_DB_TIME
+              FROM            AFB410T AS M 
+                   LEFT  JOIN AFB500T AS A  ON A.COMP_CODE    = M.COMP_CODE
+                                                        AND A.BUDG_YYYYMM &gt;= LEFT(@FrBudgYyyyMm, 6)
+                                                        AND A.BUDG_YYYYMM &lt;= LEFT(@ToBudgYyyyMm, 6)
+                                                        AND A.DEPT_CODE    = M.DEPT_CODE
+                                                        AND A.BUDG_CODE    = M.BUDG_CODE
+             WHERE M.COMP_CODE    = @COMP_CODE
+               AND M.AC_YYYY      = @AC_YYYY
+               AND M.DEPT_CODE    = @DEPT_CODE
+               AND M.USE_YN       = 'Y'
+               AND ((M.BUDG_CODE &gt;= @FR_BUDG_CODE AND @FR_BUDG_CODE != '') OR (@FR_BUDG_CODE = ''))
+               AND ((M.BUDG_CODE &lt;= @TO_BUDG_CODE AND @TO_BUDG_CODE != '') OR (@TO_BUDG_CODE = ''))
+           ) AS T
+     ORDER BY T.BUDG_YYYYMM, T.BUDG_CODE, T.GUBUN
+
+
+    --임시테이블(#TMP_AFB500T)에서 데이터 조회하여 그리드 포맷에 맞춰 임시테이블 생성
+    --(예산코드명을 레벨순서대로 펼침, 예산금액을 12개월로 펼침)
+    IF EXISTS (select * from (SELECT * FROM tempdb..sysobjects  WHERE id = OBJECT_ID('tempdb..#TMP_AFB500T_090211'))  TOPT where rownum = 1)
+        DROP TABLE #TMP_AFB500T_090211
+
+    SELECT A.COMP_CODE
+         , A.AC_YYYY
+         , B.BUDG_YYYYMM
+         , A.DEPT_CODE
+         , A.BUDG_CODE
+    
+    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index" >
+         , CASE WHEN L${budgNameInfoList.size}.CODE_LEVEL &gt;= ${index+1}
+                THEN L${index+1}.BUDG_NAME
+                ELSE ''
+            END AS BUDG_NAME_L${index+1}
+    </foreach>
+    
+         , CASE WHEN NVL(B.CAL_DIVI,'') = ''
+                THEN '1'
+                ELSE B.CAL_DIVI
+            END AS CAL_DIVI
+         , B.GUBUN
+    
+         , CASE WHEN B.GUBUN = 'AFB500T'
+                THEN B.BUDG_I
+                ELSE B.BUDG_CONF_I
+            END AS BUDG_CONF_I
+    	 , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 0), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I01
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 1), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I02
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 2), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I03
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 3), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I04
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 4), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I05
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 5), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I06
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 6), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I07
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 7), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I08
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 8), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I09
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 9), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I10
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 10), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I11
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 11), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_CONF_I,0)
+                     ELSE 0
+            END AS BUDG_CONF_I12
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 0), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I01
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 1), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I02
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 2), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I03
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 3), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I04
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 4), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I05
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 5), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I06
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 6), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I07
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 7), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I08
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 8), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I09
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 9), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I10
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 10), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I11
+         , CASE WHEN B.BUDG_YYYYMM = LEFT(to_char(ADD_MONTHS(@FrBudgYyyyMm, 11), 'YYYYMM'), 6)
+                     THEN NVL(B.BUDG_I,0)
+                     ELSE 0
+            END AS BUDG_I12
+         , B.INSERT_DB_USER
+         , B.INSERT_DB_TIME
+         , B.UPDATE_DB_USER
+         , B.UPDATE_DB_TIME
+      INTO #TMP_AFB500T_090211
+      FROM            AFB410T      AS A  
+           LEFT  JOIN #TMP_AFB500T AS B    ON B.COMP_CODE      = A.COMP_CODE
+                                        AND B.BUDG_YYYYMM   &gt;= LEFT(@FrBudgYyyyMm, 6)
+                                        AND B.BUDG_YYYYMM   &lt;= LEFT(@ToBudgYyyyMm, 6)
+                                        AND B.DEPT_CODE      = A.DEPT_CODE
+                                        AND B.BUDG_CODE      = A.BUDG_CODE
+    
+           INNER JOIN AFB400T      AS L${budgNameInfoList.size}
+                                   ON L${budgNameInfoList.size}.COMP_CODE     = A.COMP_CODE
+                                  AND L${budgNameInfoList.size}.AC_YYYY       = A.AC_YYYY
+                                  AND L${budgNameInfoList.size}.BUDG_CODE     = A.BUDG_CODE
+    
+    <foreach collection="budgNameInfoList" item="budgNameInfo" index="index">
+	    <if test="index+1 &lt; budgNameInfoList.size">
+           INNER JOIN AFB400T      AS L${budgNameInfoList.size-(index+1)}
+                                   ON L${budgNameInfoList.size-(index+1)}.COMP_CODE     = L${budgNameInfoList.size-(index)}.COMP_CODE
+                                  AND L${budgNameInfoList.size-(index+1)}.AC_YYYY       = L${budgNameInfoList.size-(index)}.AC_YYYY
+                                  AND L${budgNameInfoList.size-(index+1)}.BUDG_CODE     = L${budgNameInfoList.size-(index)}.TREE_LEVEL
+                                  AND L${budgNameInfoList.size-(index+1)}.CODE_LEVEL    = L${budgNameInfoList.size-(index)}.CODE_LEVEL - 1
+    	</if>
+	</foreach>
+    
+     WHERE A.COMP_CODE     = @COMP_CODE
+       AND A.AC_YYYY       = @AC_YYYY
+       AND A.DEPT_CODE     = @DEPT_CODE
+       AND A.USE_YN        = 'Y'
+       AND ((A.BUDG_CODE  &gt;= @FR_BUDG_CODE AND @FR_BUDG_CODE != '') OR (@FR_BUDG_CODE = ''))
+       AND ((A.BUDG_CODE  &lt;= @TO_BUDG_CODE AND @TO_BUDG_CODE != '') OR (@TO_BUDG_CODE = ''))
+       AND ((L${budgNameInfoList.size}.BUDG_TYPE  = @BUDG_TYPE    AND @BUDG_TYPE    != '') OR (@BUDG_TYPE    = ''))
+       AND L${budgNameInfoList.size}.GROUP_YN     = 'N'
+
+
+    --임시테이블(#TMP_AFB500T_090211)에서 데이터 조회
+    -- (LIST로 나열)
+    SELECT CAST(0 AS BIT) AS CHOICE
+         , COMP_CODE
+         , AC_YYYY
+         , DEPT_CODE
+         , BUDG_CODE
+    	<foreach collection="budgNameInfoList" item="budgNameInfo" index="index">
+         , MAX(BUDG_NAME_L${index+1}) AS BUDG_NAME_L${index+1}
+    	</foreach>
+         , MAX(CAL_DIVI)   AS CAL_DIVI
+         , GUBUN
+         , fngetTxt('A0274')	AS GUBUN_NAME
+    	 , SUM(BUDG_CONF_I)     AS BUDG_CONF_I
+    	 , SUM(BUDG_CONF_I01)   AS BUDG_CONF_I01
+         , SUM(BUDG_CONF_I02)   AS BUDG_CONF_I02
+         , SUM(BUDG_CONF_I03)   AS BUDG_CONF_I03
+         , SUM(BUDG_CONF_I04)   AS BUDG_CONF_I04
+         , SUM(BUDG_CONF_I05)   AS BUDG_CONF_I05
+         , SUM(BUDG_CONF_I06)   AS BUDG_CONF_I06
+         , SUM(BUDG_CONF_I07)   AS BUDG_CONF_I07
+         , SUM(BUDG_CONF_I08)   AS BUDG_CONF_I08
+         , SUM(BUDG_CONF_I09)   AS BUDG_CONF_I09
+         , SUM(BUDG_CONF_I10)   AS BUDG_CONF_I10
+         , SUM(BUDG_CONF_I11)   AS BUDG_CONF_I11
+         , SUM(BUDG_CONF_I12)   AS BUDG_CONF_I12
+         , SUM(BUDG_I01)   AS BUDG_I01
+         , SUM(BUDG_I02)   AS BUDG_I02
+         , SUM(BUDG_I03)   AS BUDG_I03
+         , SUM(BUDG_I04)   AS BUDG_I04
+         , SUM(BUDG_I05)   AS BUDG_I05
+         , SUM(BUDG_I06)   AS BUDG_I06
+         , SUM(BUDG_I07)   AS BUDG_I07
+         , SUM(BUDG_I08)   AS BUDG_I08
+         , SUM(BUDG_I09)   AS BUDG_I09
+         , SUM(BUDG_I10)   AS BUDG_I10
+         , SUM(BUDG_I11)   AS BUDG_I11
+         , SUM(BUDG_I12)   AS BUDG_I12
+    
+         , MAX(INSERT_DB_USER) AS INSERT_DB_USER
+         , MAX(INSERT_DB_TIME) AS INSERT_DB_TIME
+         , MAX(UPDATE_DB_USER) AS UPDATE_DB_USER
+         , MAX(UPDATE_DB_USER) AS UPDATE_DB_TIME
+         , @FrBudgYyyyMm       AS FR_BUDG_YYYYMM
+         , @DataType           AS DATA_TYPE
+      FROM #TMP_AFB500T_090211  
+     GROUP BY COMP_CODE, AC_YYYY, DEPT_CODE, BUDG_CODE, GUBUN
+
+    <!-- SET NOCOUNT OFF -->
+END
+</select>
+
+<select id="afb510ukrServiceImpl.selectBudgCloseFg" parameterType="Map" resultType="rMap">			/* 예산마감정보(AFB010T)에서 마감여부 체크 */
+--afb510ukr.Cafb510ukr[fnAfb510Save] Query02
+SELECT BUDG_CLOSE_FG
+  FROM AFB010T  
+ WHERE COMP_CODE  = #{S_COMP_CODE}
+   AND CLOSE_DATE = #{FR_BUDG_YYYYMM}
+</select>
+
+<select id="afb510ukrServiceImpl.dataExistenceCheck" parameterType="Map" resultType="rMap">					/* 예산확정(AFB510T)에서 실적 데이터 존재여부 체크 */
+--afb510ukr.Cafb510ukr[fnAfb510Save] Query01
+SELECT NVL(BUDG_CONV_I,0)     AS BUDG_CONV_I
+     , NVL(BUDG_ASGN_I,0)     AS BUDG_ASGN_I
+     , NVL(BUDG_SUPP_I,0)     AS BUDG_SUPP_I
+     , NVL(EX_AMT_I ,0)       AS EX_AMT_I
+     , NVL(AC_AMT_I ,0)       AS AC_AMT_I
+     , NVL(DRAFT_AMT,0)       AS DRAFT_AMT
+     , NVL(ORDER_AMT,0)       AS ORDER_AMT
+     , NVL(REQ_AMT  ,0)       AS REQ_AMT
+     , ABS(NVL(BUDG_CONV_I,0))
+     + ABS(NVL(BUDG_ASGN_I,0))
+     + ABS(NVL(BUDG_SUPP_I,0))
+     + ABS(NVL(EX_AMT_I ,0))
+     + ABS(NVL(AC_AMT_I ,0))
+     + ABS(NVL(DRAFT_AMT,0))
+     + ABS(NVL(ORDER_AMT,0))
+     + ABS(NVL(REQ_AMT  ,0))  AS ACTUAL_AMT_I
+  FROM AFB510T  
+ WHERE COMP_CODE      = #{S_COMP_CODE}
+   AND BUDG_YYYYMM    = #{AC_YYYY}
+   AND DEPT_CODE      = #{DEPT_CODE}
+   AND BUDG_CODE      = #{BUDG_CODE}
+   AND BUDG_GUBUN     = #{BUDG_GUBUN}
+</select>
+
+<delete id="afb510ukrServiceImpl.deleteDetail" parameterType="Map">								/* 삭제 */
+--afb510ukr.Cafb510ukr[fnAfb510Save] Query03
+-- 변수 선언
+
+
+-- 변수값 설정
+SET @COMP_CODE   = #{S_COMP_CODE}
+SET @BUDG_YYYYMM = #{AC_YYYY}
+SET @DEPT_CODE   = #{DEPT_CODE}
+SET @BUDG_CODE   = #{BUDG_CODE}
+SET @USER_ID     = #{S_USER_ID}
+
+DELETE FROM AFB510T
+ WHERE COMP_CODE   = @COMP_CODE
+   AND BUDG_YYYYMM = @BUDG_YYYYMM
+   AND DEPT_CODE   = @DEPT_CODE
+   AND BUDG_CODE   = @BUDG_CODE
+   AND BUDG_GUBUN  = '1'	
+</delete>
+
+<update id="afb510ukrServiceImpl.updateDetail" parameterType="Map">								/* 수정,입력 */		
+--afb510ukr.Cafb510ukr[fnAfb510Save] Query04
+-- 변수 선언
+
+
+-- 변수값 설정
+SET @COMP_CODE   = #{S_COMP_CODE}
+SET @BUDG_YYYYMM = #{AC_YYYY}
+SET @DEPT_CODE   = #{DEPT_CODE}
+SET @BUDG_CODE   = #{BUDG_CODE}
+SET @CAL_DIVI    = #{CAL_DIVI}
+SET @BUDG_I      = #{BUDG_I}
+SET @BUDG_CONF_I = #{BUDG_CONF_I}
+SET @USER_ID     = #{S_USER_ID}
+SET @WORK_FLAG   = #{WORK_FLAG}
+
+-- 계산방법의 기본값은 '1'로 설정
+IF (@CAL_DIVI = '')
+    SET @CAL_DIVI = '1'
+
+-- 예산구분의 기본값은 '1 본월예산'로 설정
+SET @BUDG_GUBUN = '1'
+
+    UPDATE AFB510T
+       SET BUDG_CONF_I    = @BUDG_CONF_I
+         , UPDATE_DB_USER = @USER_ID
+         , UPDATE_DB_TIME = SYSDATETIME
+     WHERE COMP_CODE   = @COMP_CODE
+       AND BUDG_YYYYMM = @BUDG_YYYYMM
+       AND DEPT_CODE   = @DEPT_CODE
+       AND BUDG_CODE   = @BUDG_CODE
+       AND BUDG_GUBUN  = @BUDG_GUBUN
+IF ( @@ROWCOUNT = 0 )
+BEGIN
+    INSERT INTO AFB510T (
+                          COMP_CODE
+                        , BUDG_YYYYMM
+                        , DEPT_CODE
+                        , BUDG_CODE
+                        , BUDG_GUBUN
+                        , BUDG_I
+                        , BUDG_CONF_I
+                        , CAL_DIVI
+                        , INSERT_DB_USER
+                        , INSERT_DB_TIME
+                        , UPDATE_DB_USER
+                        , UPDATE_DB_TIME
+                        )
+                 VALUES (
+                          @COMP_CODE
+                        , @BUDG_YYYYMM
+                        , @DEPT_CODE
+                        , @BUDG_CODE
+                        , @BUDG_GUBUN
+                        , @BUDG_I
+                        , @BUDG_CONF_I
+                        , @CAL_DIVI
+                        , @USER_ID
+                        , SYSDATETIME
+                        , @USER_ID
+                        , SYSDATETIME
+                        )
+END
+</update>
+
+</mapper>

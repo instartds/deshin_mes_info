@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="bid100rkrServiceImpl">
+	<select id="selectPrimaryDataList" parameterType="Map" resultType="rMap" >	
+			BEGIN
+				SET NOCOUNT ON
+				SET ARITHABORT ON
+					
+				DECLARE @CompCode   NVARCHAR(08)	/* 법인코드  */
+					   ,@ItemLevel1 NVARCHAR(08)
+					   ,@ItemLevel2 NVARCHAR(08)
+					   ,@ItemLevel3 NVARCHAR(08)
+					   ,@LEVEL_NAME1 NVARCHAR(40) 
+					   ,@LEVEL_NAME2 NVARCHAR(40) 
+					   ,@LEVEL_NAME3 NVARCHAR(40) 
+					  
+				
+				    SET @CompCode   = #{COMP_CODE}
+				    SET @ItemLevel1 = #{TXTLV_L1}
+				    SET @ItemLevel2 = #{TXTLV_L2}
+				    SET @ItemLevel3 = #{TXTLV_L3}
+				    	
+				   SELECT @LEVEL_NAME1 = LEVEL_NAME FROM BPR000T WHERE LEVEL1 = @ItemLevel1 AND LEVEL2 = '*' 		 AND LEVEL3 ='*'
+				   SELECT @LEVEL_NAME2 = LEVEL_NAME FROM BPR000T WHERE LEVEL1 = @ItemLevel1 AND LEVEL2 = @ItemLevel2 AND LEVEL3 ='*'
+				   SELECT @LEVEL_NAME3 = LEVEL_NAME FROM BPR000T WHERE LEVEL1 = @ItemLevel1	AND LEVEL2 = @ItemLevel2 AND LEVEL3 =@ItemLevel3
+				    
+				   PRINT @LEVEL_NAME1
+				   PRINT @LEVEL_NAME2
+				   PRINT @LEVEL_NAME3 	
+				    	
+
+			/* 조회  */
+			SELECT A.COMP_CODE				 
+			     , ISNULL(A.PURCHASE_CUSTOM_CODE, '')						AS PURCHASE_CUSTOM_CODE		/*거래처*/
+			     , A.DIV_CODE												AS DIV_CODE			/*사업부*/
+                 , F.TREE_NAME                                              AS WH_CODE
+
+			     --, A.WH_CODE												AS WH_CODE			/*창고*/
+			     , D.ITEM_LEVEL1											AS ITEM_LEVEL1		/*대분류*/
+				 , D.ITEM_LEVEL2											AS ITEM_LEVEL2		/*중분류*/
+				 , D.ITEM_LEVEL3											AS ITEM_LEVEL3		/*소분류*/
+			     , A.ITEM_CODE												AS ITEM_CODE		/*품목*/
+				 , B.ITEM_NAME												AS ITEM_NAME		/*품명*/
+                 , ISNULL(D.PUBLISHER, '')									AS PUBL_NM			/*출판사*/
+                 , ISNULL(A.PURCHASE_CUSTOM_CODE, '')						AS CUSTOM_CODE
+                 , ISNULL(E.CUSTOM_NAME, '')								AS CUSTOM_NAME		/*거래처명*/
+                 , ISNULL(A.PURCHASE_TYPE, '')								AS PURCHASE_TYPE	/*매입유형*/
+                 , ISNULL(I.CODE_NAME, '')									AS SALES_TYPE		/*매출형태*/
+			     , ISNULL(D.SALE_BASIS_P, 0)								AS SALE_BASIS_P		/*판매가*/
+			     , ISNULL(A.PURCHASE_P, 0)									AS PURCHASE_P		/*매입가*/
+			     , ISNULL(A.PURCHASE_RATE, 0.0) 							AS PURCHASE_RATE	/*매입율*/
+			     , SUM(ISNULL(A.STOCK_Q,0))								    AS STOCK_Q			/*현재고*/ 
+			     , SUM(ISNULL(A.STOCK_Q,0) * ISNULL(A.PURCHASE_P,0))        AS STOCK_COST		/*재고원가*/
+                 , G.COMP_NAME
+
+			      
+			  FROM 
+					(SELECT A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE, B.PURCHASE_CUSTOM_CODE, 
+					        B.PURCHASE_P, B.PURCHASE_RATE, B.PURCHASE_TYPE, B.SALES_TYPE, 
+					        A.STOCK_Q AS STOCK_Q
+					 FROM BIV150T A WITH(NOLOCK)
+					 LEFT JOIN BIV350T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+													AND A.DIV_CODE = B.DIV_CODE
+													AND A.LOT_NO = B.LOT_NO
+													AND A.WH_CODE = B.WH_CODE
+													AND A.ITEM_CODE = B.ITEM_CODE
+					WHERE	A.COMP_CODE  =	@CompCode
+					  
+					  <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+						AND	 A.DIV_CODE	 	= #{DIV_CODE}
+					  </if>
+					  <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+						AND	 A.WH_CODE	 	= #{WH_CODE}
+					  </if>		
+					  
+					 UNION ALL
+					  												
+					 SELECT A.COMP_CODE, A.DIV_CODE, A.WH_CODE, A.ITEM_CODE, A.PURCHASE_CUSTOM_CODE,
+					 		A.PURCHASE_P, A.PURCHASE_RATE, A.PURCHASE_TYPE, A.SALES_TYPE, 
+					        A.STOCK_Q AS STOCK_Q
+					 FROM UNILITE.VGetDailyStock A WITH(NOLOCK)
+					 ) A
+			 			  
+		 			  
+			      INNER JOIN BPR200T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+							                       AND B.DIV_CODE  = A.DIV_CODE
+					        	   				   AND B.ITEM_CODE = A.ITEM_CODE
+				  INNER JOIN BPR100T D WITH(NOLOCK) ON D.COMP_CODE = A.COMP_CODE
+			        	   						   AND D.ITEM_CODE = A.ITEM_CODE
+			        	   						   AND ISNULL(D.STOCK_CARE_YN,'N') = 'Y'                                      /* 2015.10.02 추가 */
+				  LEFT  JOIN BCM100T E WITH(NOLOCK) ON E.COMP_CODE   = A.COMP_CODE
+											   	   AND E.CUSTOM_CODE = A.PURCHASE_CUSTOM_CODE
+                  INNER  JOIN BSA220T F WITH(NOLOCK) ON F.COMP_CODE   = A.COMP_CODE
+                                                    AND F.TREE_CODE   = A.WH_CODE
+                  LEFT  JOIN BOR100T  G	WITH(NOLOCK) ON A.COMP_CODE = G.COMP_CODE		          
+				  LEFT JOIN BSA100T  I WITH(NOLOCK)   ON A.COMP_CODE = I.COMP_CODE
+				        							 AND I.MAIN_CODE = 'YP09'
+				        							 AND I.SUB_CODE != '$'
+				        							 AND A.SALES_TYPE = I.SUB_CODE	
+		          
+				  WHERE	A.COMP_CODE  =	@CompCode
+					  
+				  <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+					AND	 A.DIV_CODE	 	= #{DIV_CODE}
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(WH_CODE)">
+					AND	 A.WH_CODE	 	= #{WH_CODE}
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(TXTLV_L1)">
+		            AND  D.ITEM_LEVEL1   = #{TXTLV_L1}       /* 대분류*/
+			      </if>
+			      <if test="@foren.Ognl@isNotEmpty(TXTLV_L2)">
+			        AND  D.ITEM_LEVEL2   = #{TXTLV_L2}       /* 중분류*/
+			      </if>
+			      <if test="@foren.Ognl@isNotEmpty(TXTLV_L3)">
+			        AND  D.ITEM_LEVEL3   = #{TXTLV_L3}       /* 소분류*/
+			      </if>
+		          <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+					AND	 A.PURCHASE_CUSTOM_CODE	= #{CUSTOM_CODE}
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+					AND	 E.CUSTOM_NAME			= #{CUSTOM_NAME}
+				  </if>
+				  <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+			 		AND E.AGENT_TYPE = #{AGENT_TYPE}
+			      </if>
+	
+		    	  GROUP BY A.COMP_CODE, A.DIV_CODE, F.TREE_NAME, A.WH_CODE, A.ITEM_CODE, B.ITEM_NAME, D.PUBLISHER, D.TAX_TYPE, A.PURCHASE_CUSTOM_CODE, E.CUSTOM_NAME, 
+		    	  		   A.PURCHASE_TYPE, ISNULL(I.CODE_NAME, ''), D.SALE_BASIS_P, A.PURCHASE_P, A.PURCHASE_RATE, D.ITEM_LEVEL1, D.ITEM_LEVEL2, D.ITEM_LEVEL3
+		    	  		   ,G.COMP_NAME
+		    	  
+		    	  <if test="STOCK_ZERO == &quot;N&quot;">   
+	 			  HAVING SUM(A.STOCK_Q) != 0
+	 			  </if>	   
+		    	  		   
+	 			  ORDER BY A.COMP_CODE, A.DIV_CODE, E.CUSTOM_NAME, B.ITEM_NAME
+	 			  
+			SET ARITHABORT OFF
+		    SET NOCOUNT OFF
+		END      
+	</select>
+
+	<select id="DS_SUB01" parameterType="Map" resultType="rMap" >	
+	/* mrt100rkrServiceImpl.DS_SUB01  */	
+	
+	</select>
+</mapper>

@@ -1,0 +1,311 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="agb270skrServiceImpl">
+	<select id="agb270skrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		 --agb270skr.Cagb270SKr[fnAgb270QStd] Query02
+		/*******************************************************************************************
+		 거래처별 채권채무 현황
+		*******************************************************************************************/
+		BEGIN
+		    DECLARE @COMP_CODE       NVARCHAR(08)       -- (필수) 법인코드
+		          , @AC_DATE         NVARCHAR(08)       -- (필수) 기준일
+		          , @DIV_CODE        NVARCHAR(4000)     -- (선택) 사업장코드
+		          , @DIV_NAME        NVARCHAR(4000)     -- (선택) 사업장명
+		          , @CUSTOM_CODE     NVARCHAR(08)       -- (선택) 거래처코드
+		          , @CUSTOM_NAME     NVARCHAR(20)       -- (선택) 거래처명
+		          , @MONEY_UNIT      NVARCHAR(03)       -- (선택) 화폐단위
+		          , @ST_DATE         NVARCHAR(06)       -- (필수) 당기시작년월
+		          , @AGENT_TYPE      NVARCHAR(08)       -- (선택) 고객분류
+		          , @AREA_TYPE       NVARCHAR(03)       -- (선택) 지역
+		          , @USER_ID         NVARCHAR(100)       -- (필수) 사용자ID
+		          , @CUSTOM          NVARCHAR(10)       -- (필수) 거래처(일반거래처GCustom/집계거래처MCustom)
+		
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		    SET     @COMP_CODE      = #{S_COMP_CODE}
+		    SET     @AC_DATE        = #{AC_DATE}
+		    SET     @DIV_CODE       = ''
+		    SET     @CUSTOM_CODE    = #{CUSTOM_CODE}
+		    SET     @CUSTOM_NAME    = #{CUSTOM_NAME}
+		    SET     @MONEY_UNIT     = #{MONEY_UNIT}
+		    SET     @ST_DATE        = #{ST_DATE}
+		    SET     @AGENT_TYPE     = #{AGENT_TYPE}
+		    SET     @AREA_TYPE      = #{AREA_TYPE}
+		    SET     @USER_ID        = #{S_USER_ID}
+		    SET     @CUSTOM         = #{radio1}
+		
+		----1. 사용자 참조명칭 가져오기----------------------------------------------------------
+		    DECLARE @RefItem         NVARCHAR(01)
+		
+		    SELECT TOP 1 @RefItem = REF_ITEM
+		      FROM BSA300T  WITH (NOLOCK)
+		     WHERE USER_ID = @USER_ID
+		
+		    SET @RefItem = ISNULL(@RefItem, '')
+		
+		----2. 자국화폐단위 가져오기-------------------------------------------------------------
+		    DECLARE @LocalCurrency   NVARCHAR(03)
+		
+		    SELECT TOP 1 @LocalCurrency = SUB_CODE
+		      FROM BSA100T  WITH (NOLOCK)
+		     WHERE COMP_CODE = @COMP_CODE
+		       AND MAIN_CODE = N'B004'
+		       AND REF_CODE1 = N'Y'
+		
+		    SET @LocalCurrency = ISNULL(@LocalCurrency, N'KRW')
+		
+		----3. @화폐단위에 대해 자국화폐단위 여부 설정-------------------------------------------
+		    DECLARE @LocalCurrencyYN NVARCHAR(01)
+		
+		    IF (@MONEY_UNIT = @LocalCurrency)
+		        BEGIN
+		            SET @LocalCurrencyYN = 'Y'
+		            SET @MONEY_UNIT      = ''   --조회조건 '화폐단위'가 자국화폐이면, 화폐단위에 상관없이 모든 데이터를 자국화폐로 표현한다.
+		        END
+		    ELSE
+		        BEGIN
+		            SET @LocalCurrencyYN = 'N'
+		        END
+
+		-----------------------------------------------------------------------------------------
+
+		    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects   WHERE id=object_id('tempdb..#UNILITE5_AGB270_081023'))
+		       DROP TABLE #UNILITE5_AGB270_081023
+
+		    SELECT 
+		            GT.CUSTOM_CODE
+		         ,  CASE WHEN @RefItem = '1' THEN N1.CUSTOM_NAME1
+		                 WHEN @RefItem = '2' THEN N1.CUSTOM_NAME2
+		                 ELSE N1.CUSTOM_NAME
+		            END AS CUSTOM_NAME
+		         ,  N1.COMPANY_NUM                               --20210819 추가
+		         ,  GT.MONEY_UNIT_VIEW
+		         ,  GT.MONEY_UNIT
+		         ,  GT.AR_AMT_I
+		         ,  GT.AP_AMT_I
+		         ,  GT.JAN_AMT_I
+		         ,  GT.ACCNT
+		         ,  GT.ACCNT_DIVI
+		    INTO    #UNILITE5_AGB270_081023
+		    FROM   (
+		            SELECT T.COMP_CODE
+		                 , CASE WHEN @CUSTOM = 'MCUSTOM'
+		                        THEN ISNULL(D.CUSTOM_CODE, T.CUSTOM_CODE)
+		                        ELSE T.CUSTOM_CODE
+		                    END AS CUSTOM_CODE
+		                 , CASE WHEN @LocalCurrencyYN = 'Y'
+		                        THEN @LocalCurrency
+		                        ELSE T.MONEY_UNIT
+		                    END AS MONEY_UNIT_VIEW
+		                 , T.MONEY_UNIT
+		                 , CASE WHEN T.ACCNT_DIVI = '1' THEN (CASE WHEN T.FOR_YN = 'N' OR @LocalCurrencyYN = 'Y' THEN uniLITE.fnFormat(T.COMP_CODE, T.BLN_I    , 'A_FSET_I')
+		                                                           WHEN T.FOR_YN = 'Y'                           THEN uniLITE.fnFormat(T.COMP_CODE, T.BLN_FOR_I, 'A_FSET_O')
+		                                                       END)
+		                        ELSE 0
+		                    END AS AR_AMT_I
+		                 , CASE WHEN T.ACCNT_DIVI = '2' THEN (CASE WHEN T.FOR_YN = 'N' OR @LocalCurrencyYN = 'Y' THEN uniLITE.fnFormat(T.COMP_CODE, T.BLN_I    , 'A_FSET_I')
+		                                                           WHEN T.FOR_YN = 'Y'                           THEN uniLITE.fnFormat(T.COMP_CODE, T.BLN_FOR_I, 'A_FSET_O')
+		                                                       END)
+		                        ELSE 0
+		                    END AS AP_AMT_I
+		                 , (CASE WHEN T.FOR_YN = 'N' OR @LocalCurrencyYN = 'Y' THEN uniLITE.fnFormat(T.COMP_CODE, T.BLN_I    , 'A_FSET_I')
+		                         WHEN T.FOR_YN = 'Y'                           THEN uniLITE.fnFormat(T.COMP_CODE, T.BLN_FOR_I, 'A_FSET_O')
+		                     END) * (CASE WHEN T.ACCNT_DIVI = '1' THEN 1 ELSE (-1) END) AS JAN_AMT_I
+		                 , T.ACCNT
+		                 , T.ACCNT_DIVI
+		              FROM (
+		                    SELECT A.COMP_CODE
+		                         , A.ACCNT
+		                         , A.MONEY_UNIT
+		                         , CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+		                                WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2
+		                            END AS CUSTOM_CODE
+		                         , CASE WHEN B1.JAN_DIVI  = '1' THEN ISNULL(A.DR_AMT_I    ,0) - ISNULL(A.CR_AMT_I    ,0)
+		                                WHEN B1.JAN_DIVI  = '2' THEN ISNULL(A.CR_AMT_I    ,0) - ISNULL(A.DR_AMT_I    ,0)
+		                            END AS BLN_I
+		                         , CASE WHEN B1.JAN_DIVI  = '1' THEN ISNULL(A.DR_FOR_AMT_I,0) - ISNULL(A.CR_FOR_AMT_I,0)
+		                                WHEN B1.JAN_DIVI  = '2' THEN ISNULL(A.CR_FOR_AMT_I,0) - ISNULL(A.DR_FOR_AMT_I,0)
+		                            END AS BLN_FOR_I
+		                         , B1.ACCNT_DIVI
+		                         , B1.FOR_YN
+		                      FROM            AGB200T AS A  WITH (NOLOCK)
+		                           LEFT  JOIN ABA400T AS B1 WITH (NOLOCK) ON B1.COMP_CODE   = A.COMP_CODE
+		                                                                 AND B1.ACCNT       = A.ACCNT
+		                           LEFT  JOIN BOR120T AS B2 WITH (NOLOCK) ON B2.COMP_CODE   = A.COMP_CODE
+		                                                                 AND B2.DIV_CODE    = A.DIV_CODE
+		                     WHERE A.COMP_CODE    = @COMP_CODE
+		                       AND A.AC_DATE     &gt;= @ST_DATE
+		                       AND A.AC_DATE     &lt;= @AC_DATE
+		                       AND A.ACCNT       IN 
+		                       <foreach collection="ACCNTS" item="item" separator="," close=")" open="(">
+		                           #{item}
+		                       </foreach>
+		                       AND (A.BOOK_CODE1  = 'A4' OR A.BOOK_CODE2 = 'A4')
+		                       AND B1.ACCNT_DIVI  IN ('1','2')
+		                       <if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">
+		                       AND     A.DIV_CODE IN
+		                           <foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+		                            #{item}
+		                           </foreach>
+		                       </if>
+		                       AND ((A.MONEY_UNIT =  @MONEY_UNIT        AND @MONEY_UNIT != '') OR (@MONEY_UNIT = ''))
+		                   ) T
+		                   LEFT  JOIN BCM100T AS C WITH (NOLOCK) ON C.COMP_CODE   = T.COMP_CODE
+		                                                        AND C.CUSTOM_CODE = T.CUSTOM_CODE
+		                   LEFT  JOIN BCM100T AS D WITH (NOLOCK) ON D.COMP_CODE   = C.COMP_CODE
+		                                                        AND D.CUSTOM_CODE = C.MANAGE_CUSTOM
+		           ) AS GT
+		            LEFT  JOIN BCM100T AS N1 WITH (NOLOCK)  ON  N1.COMP_CODE   = GT.COMP_CODE
+		                                                    AND N1.CUSTOM_CODE = GT.CUSTOM_CODE
+		     WHERE ((GT.CUSTOM_CODE           = @CUSTOM_CODE       AND @CUSTOM_CODE != ''  AND  @CUSTOM_NAME != '') OR 
+		            (GT.CUSTOM_CODE  LIKE       @CUSTOM_CODE + '%' AND @CUSTOM_CODE != ''  AND  @CUSTOM_NAME  = '') OR
+		            ((N1.CUSTOM_NAME  LIKE '%' + @CUSTOM_NAME + '%' AND @RefItem     =  '0' AND  @CUSTOM_NAME != '') OR
+		             (N1.CUSTOM_NAME1 LIKE '%' + @CUSTOM_NAME + '%' AND @RefItem     =  '1' AND  @CUSTOM_NAME != '') OR
+		             (N1.CUSTOM_NAME2 LIKE '%' + @CUSTOM_NAME + '%' AND @RefItem     =  '2' AND  @CUSTOM_NAME != '')) OR
+		            (@CUSTOM_CODE = '' AND @CUSTOM_NAME   = ''))
+		       AND ((N1.AGENT_TYPE      = @AGENT_TYPE        AND @AGENT_TYPE  != '') OR (@AGENT_TYPE  =  ''))
+		       AND ((N1.AREA_TYPE       = @AREA_TYPE         AND @AREA_TYPE   != '') OR (@AREA_TYPE   =  ''))
+		     ORDER BY GT.CUSTOM_CODE, GT.MONEY_UNIT, GT.ACCNT
+
+		-----------------------------------------------------------------------------------------
+
+		    SELECT *
+		      FROM (
+		        ---- 거래처별, 화폐단위별 금액 집계
+		            SELECT CONVERT(NVARCHAR(01), 'D')        AS DATA_TYPE
+		                 , G.CUSTOM_NAME
+		                 , (SUBSTRING(G.COMPANY_NUM,1,3) + '-'
+		                  + SUBSTRING(G.COMPANY_NUM,4,2) + '-'
+		                  + SUBSTRING(G.COMPANY_NUM,6,5))    AS COMPANY_NUM    --20210819 추가
+		                 , G.CUSTOM_CODE
+		                 , G.MONEY_UNIT_VIEW
+		                 , G.MONEY_UNIT
+		                 , SUM(ISNULL(G.AR_AMT_I , 0))       AS AR_AMT_I
+		                 , SUM(ISNULL(G.AP_AMT_I , 0))       AS AP_AMT_I
+		                 , SUM(ISNULL(G.JAN_AMT_I, 0))       AS JAN_AMT_I
+		                 <foreach collection="ACCNTS" item="item" separator="" close="" open="">
+		                 , SUM(ISNULL(G.AMT${item}, 0))      AS AMT${item}
+		                 </foreach>
+		              FROM (
+		                     SELECT CUSTOM_NAME
+		                          , COMPANY_NUM                        --20210819 추가
+		                          , CUSTOM_CODE
+		                          , MONEY_UNIT_VIEW
+		                          , MONEY_UNIT
+		                          , AR_AMT_I
+		                          , AP_AMT_I
+		                          , JAN_AMT_I
+		                          <foreach collection="ACCNTS" item="item" separator="" close="" open="">
+		                          , CASE WHEN ACCNT_DIVI = '1' THEN CASE ACCNT WHEN #{item} THEN AR_AMT_I ELSE 0 END
+		                                 ELSE  CASE ACCNT WHEN #{item} THEN AP_AMT_I ELSE 0 END
+		                            END  AS AMT${item}
+		                          </foreach>
+		                       FROM #UNILITE5_AGB270_081023  WITH (NOLOCK)
+		                   ) AS G
+		             GROUP BY G.CUSTOM_NAME, G.CUSTOM_CODE, G.MONEY_UNIT_VIEW, G.MONEY_UNIT, G.COMPANY_NUM   --20210819 추가: , G.COMPANY_NUM
+
+		            UNION ALL
+
+		        ---- 화폐단위별 금액 집계
+		            SELECT CONVERT(NVARCHAR(01), 'S')                        AS DATA_TYPE
+		                 , CONVERT(NVARCHAR(08), N'합계')                      AS CUSTOM_NAME
+		                 , ''                                                AS COMPANY_NUM   --20210819 추가
+		                 , ''                                                AS CUSTOM_CODE
+		                 , G.MONEY_UNIT_VIEW
+		                 , G.MONEY_UNIT
+		                 , SUM(ISNULL(G.AR_AMT_I , 0)) AS AR_AMT_I
+		                 , SUM(ISNULL(G.AP_AMT_I , 0)) AS AP_AMT_I
+		                 , SUM(ISNULL(G.JAN_AMT_I, 0)) AS JAN_AMT_I
+		                 <foreach collection="ACCNTS" item="item" separator="" close="" open="">
+		                 , SUM(ISNULL(G.AMT${item}, 0)) AS AMT${item}
+		                 </foreach>
+		              FROM (
+		                     SELECT CUSTOM_NAME
+		                          , CUSTOM_CODE
+		                          , ''              AS COMPANY_NUM   --20210819 추가
+		                          , MONEY_UNIT_VIEW
+		                          , MONEY_UNIT
+		                          , AR_AMT_I
+		                          , AP_AMT_I
+		                          , JAN_AMT_I
+		                          <foreach collection="ACCNTS" item="item" separator="" close="" open="">
+		                          , CASE WHEN ACCNT_DIVI = '1' THEN CASE ACCNT WHEN #{item} THEN AR_AMT_I ELSE 0 END
+		                                 ELSE CASE ACCNT WHEN #{item} THEN AP_AMT_I ELSE 0 END
+		                            END  AS AMT${item}
+		                          </foreach>
+		                       FROM #UNILITE5_AGB270_081023  WITH (NOLOCK)
+		                   ) AS G
+		             GROUP BY G.MONEY_UNIT_VIEW, G.MONEY_UNIT
+		           ) AS TBL
+		     WHERE 
+		        <foreach collection="ACCNTS" item="item" separator="OR" close="" open="">
+		            AMT${item} != 0
+		        </foreach> 
+
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+
+
+	<select id="agb270skrServiceImpl.unSelectQuery" parameterType="Map" resultType="rMap">
+	/* 거래처별 채권 채무 현황(미선택계정) 조회쿼리 */
+	--agb270skr.Cagb270SKR[SetAgb270] Query03
+	DECLARE @COMP_CODE NVARCHAR(08)             -- (필수) 법인코드
+        
+        SET @COMP_CODE = #{S_COMP_CODE}
+        
+        SELECT ACCNT
+             , ACCNT_NAME
+             , ACCNT_DIVI
+             , CASE WHEN BOOK_CODE1 = 'A4' THEN 'BOOK_CODE1'
+                    WHEN BOOK_CODE2 = 'A4' THEN 'BOOK_CODE2'
+                END BOOK_CODE
+          FROM ABA400T  WITH (NOLOCK)
+         WHERE COMP_CODE   = @COMP_CODE
+           AND ACCNT_DIVI IN ('1', '2')
+           AND (BOOK_CODE1 = 'A4'
+            OR  BOOK_CODE2 = 'A4')
+           AND SPEC_DIVI NOT IN ('G1', 'D1', 'J1', 'D3')
+	</select>	
+
+	<select id="agb270skrServiceImpl.selectQuery" parameterType="Map" resultType="rMap">
+	/* 거래처별 채권 채무 현황(선택계정) 조회쿼리 */
+	DECLARE @COMP_CODE NVARCHAR(08)             -- (필수) 법인코드 
+        SET @COMP_CODE = #{S_COMP_CODE}
+        
+        SELECT ACCNT
+             , ACCNT_NAME
+             , ACCNT_DIVI
+             , CASE WHEN BOOK_CODE1 = 'A4' THEN 'BOOK_CODE1'
+                    WHEN BOOK_CODE2 = 'A4' THEN 'BOOK_CODE2'
+                END BOOK_CODE
+          FROM ABA400T  WITH (NOLOCK)
+         WHERE COMP_CODE   = @COMP_CODE
+           AND ACCNT_DIVI IN ('1', '2')
+           AND (BOOK_CODE1 = 'A4'
+            OR  BOOK_CODE2 = 'A4')
+           AND SPEC_DIVI  IN ('G1', 'D1', 'J1', 'D3')
+	</select>
+	
+	<select id="agb270skrServiceImpl.getAccntName" parameterType="Map" resultType="rMap">
+		SELECT ACCNT
+             , ACCNT_NAME
+             , ACCNT_DIVI
+             , CASE WHEN BOOK_CODE1 = 'A4' THEN 'BOOK_CODE1'
+                    WHEN BOOK_CODE2 = 'A4' THEN 'BOOK_CODE2'
+                END BOOK_CODE
+          FROM ABA400T  WITH (NOLOCK)
+         WHERE COMP_CODE   = #{S_COMP_CODE}
+           AND ACCNT	   = #{ACCNT}
+	</select>
+
+	<select id="agb270skrServiceImpl.fnAgb270Init" parameterType="Map" resultType="rMap">
+		SELECT *
+	      FROM BSA310T WITH (NOLOCK)
+	     WHERE COMP_CODE = #{S_COMP_CODE}
+	       AND (USER_ID  = #{S_USER_ID} OR USER_ID = '$')
+	       AND (PGM_ID   = #{PGM_ID} OR PGM_ID  = '$')
+	</select>
+</mapper>

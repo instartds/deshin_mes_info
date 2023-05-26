@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="vmi100skrvServiceImpl">
+	
+	<select id="vmi100skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		SET NOCOUNT ON 
+			DECLARE @COMP_CODE 		NVARCHAR(8) 
+			      ,@DIV_CODE  		NVARCHAR(2) 
+			      ,@TO_DATE 		NVARCHAR(8) 
+				  ,@FR_DATE 		NVARCHAR(8)
+			      ,@CUSTOM_CODE 	NVARCHAR(20)
+			      ,@FLOOR     		NVARCHAR(5)  
+			
+			SET @COMP_CODE = #{S_COMP_CODE}
+			SET @DIV_CODE  = #{DIV_CODE} 
+			SET @TO_DATE   = #{TO_DATE}
+			SET @FR_DATE   = CONVERT(varchar(8), DATEADD(DD, -6,#{TO_DATE}),112)     
+			SET @CUSTOM_CODE = #{CUSTOM_CODE}
+			SET @FLOOR     = #{FLOOR}
+			
+			SELECT  
+			       A.COMP_CODE
+			     , A.DIV_CODE
+			     , A.ITEM_CODE
+			     , D.ITEM_NAME
+			     , B.DEPT_CODE
+			     , B.WH_CODE
+			     , D.STOCK_UNIT
+			     , E.TREE_NAME AS DEPT_NAME
+			     , F.TREE_NAME AS WH_NAME
+			     , ISNULL(C.STOCK_Q, 0) AS STOCK_Q
+			     /*
+			     , SUM(CASE WHEN D.STOCK_CARE_YN = 'N' THEN 0
+			            ELSE ISNULL(C.STOCK_Q, 0) END)  AS STOCK_Q
+			    */        
+			     , SUM(CASE WHEN B.SALE_DATE = CONVERT(varchar(8), DATEADD(DD, -6,@TO_DATE),112) THEN B.SALE_Q ELSE 0 END) AS BEFORE_SIX
+			     , SUM(CASE WHEN B.SALE_DATE = CONVERT(varchar(8), DATEADD(DD, -5,@TO_DATE),112) THEN B.SALE_Q ELSE 0 END) AS BEFORE_FIVE
+			     , SUM(CASE WHEN B.SALE_DATE = CONVERT(varchar(8), DATEADD(DD, -4,@TO_DATE),112) THEN B.SALE_Q ELSE 0 END) AS BEFORE_FOUR
+			     , SUM(CASE WHEN B.SALE_DATE = CONVERT(varchar(8), DATEADD(DD, -3,@TO_DATE),112) THEN B.SALE_Q ELSE 0 END) AS BEFROE_THREE
+			     , SUM(CASE WHEN B.SALE_DATE = CONVERT(varchar(8), DATEADD(DD, -2,@TO_DATE),112) THEN B.SALE_Q ELSE 0 END) AS BEFORE_TWO
+			     , SUM(CASE WHEN B.SALE_DATE = CONVERT(varchar(8), DATEADD(DD, -1,@TO_DATE),112) THEN B.SALE_Q ELSE 0 END) AS BEFORE_ONE
+			     , SUM(CASE WHEN B.SALE_DATE = @TO_DATE THEN B.SALE_Q ELSE 0 END) 										   AS TO_QTY
+				 , SUM(CASE WHEN B.SALE_DATE &gt;= CONVERT(varchar(8), DATEADD(DD, -6,@TO_DATE),112) AND B.SALE_DATE &lt;= @TO_DATE THEN B.SALE_Q ELSE 0 END) AS WEEK_TOTAL			 
+			 FROM  BPR400T A  WITH(NOLOCK) 
+			  LEFT JOIN ( 
+			           SELECT A.COMP_CODE,  A.DIV_CODE, B.ITEM_CODE, A.DEPT_CODE, B.WH_CODE, A.SALE_DATE, SUM(ISNULL(B.SALE_Q, 0.0)) AS SALE_Q	-- 2015.07.25추가수정
+			             FROM SSA100T A WITH (NOLOCK, INDEX(SSA100T_IDX01)) /*  ---> COMP_CODE, DIV_CODE, SALE_DATE INDEX 타도록 추가 */
+			                   INNER JOIN SSA110T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+																AND A.DIV_CODE  = B.DIV_CODE
+																AND A.BILL_NUM  = B.BILL_NUM
+																AND B.PURCHASE_CUSTOM_CODE = @CUSTOM_CODE		-- 2015.07.25추가수정
+			            
+			                      
+			           WHERE A.COMP_CODE   =  @COMP_CODE
+			             AND A.DIV_CODE    =  @DIV_CODE
+			             AND A.SALE_DATE  &gt;=  CONVERT(varchar(8), DATEADD(DD, -6,#{TO_DATE}),112)    
+			             AND A.SALE_DATE  &lt;=  #{TO_DATE}
+			           GROUP BY A.COMP_CODE,  A.DIV_CODE, B.ITEM_CODE, A.DEPT_CODE, B.WH_CODE, A.SALE_DATE
+			           ) B ON  A.COMP_CODE = B.COMP_CODE
+			           AND A.DIV_CODE  = B.DIV_CODE
+			           AND A.ITEM_CODE = B.ITEM_CODE
+			      /*     
+			       LEFT  JOIN BIV100T C WITH(NOLOCK)  ON B.COMP_CODE = C.COMP_CODE
+													 AND B.DIV_CODE  = C.DIV_CODE
+													 AND B.WH_CODE	 = C.WH_CODE 
+													 AND B.ITEM_CODE = C.ITEM_CODE
+				 */
+
+			       LEFT  JOIN (
+								SELECT 
+									A.COMP_CODE, A.DIV_CODE, A.DEPT_CODE, A.WH_CODE, A.ITEM_CODE, A.CUSTOM_CODE, SUM(ISNULL(A.STOCK_Q, 0)) AS STOCK_Q
+								FROM
+								 (
+				                   SELECT A.COMP_CODE, A.DIV_CODE, B.DEPT_CODE, A.WH_CODE, A.ITEM_CODE, A.CUSTOM_CODE, (ISNULL(A.STOCK_Q, 0)) AS STOCK_Q
+				                             FROM			BIV150T  A WITH(NOLOCK)
+											 INNER JOIN	BSA220T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE= B.TYPE_LEVEL AND A.WH_CODE = B.TREE_CODE
+								   WHERE A.COMP_CODE 	= @COMP_CODE
+									 AND A.DIV_CODE 	= @DIV_CODE
+									 AND A.CUSTOM_CODE  = @CUSTOM_CODE
+									 
+                                   UNION ALL
+                                    
+                                   SELECT A.COMP_CODE, A.DIV_CODE, B.DEPT_CODE, A.WH_CODE, A.ITEM_CODE, A.PURCHASE_CUSTOM_CODE, (ISNULL(A.STOCK_Q, 0)) AS STOCK_Q
+								                FROM VGetDailyStock A WITH(NOLOCK)
+								    INNER JOIN	BSA220T B WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE= B.TYPE_LEVEL AND A.WH_CODE = B.TREE_CODE
+								   WHERE A.COMP_CODE 	= @COMP_CODE
+									 AND A.DIV_CODE 	= @DIV_CODE
+									 AND A.PURCHASE_CUSTOM_CODE  = @CUSTOM_CODE
+									) A 
+									GROUP BY A.COMP_CODE, A.DIV_CODE, A.DEPT_CODE, A.WH_CODE, A.ITEM_CODE, A.CUSTOM_CODE
+
+								 ) C ON A.COMP_CODE   = C.COMP_CODE 
+								    AND A.DIV_CODE	  = C.DIV_CODE 
+								    AND B.WH_CODE	  = C.WH_CODE 
+									AND B.ITEM_CODE   = C.ITEM_CODE
+				                    AND C.CUSTOM_CODE = @CUSTOM_CODE
+									AND A.CUSTOM_CODE = C.CUSTOM_CODE
+									AND B.DEPT_CODE   = C.DEPT_CODE
+									AND B.ITEM_CODE IN (SELECT ITEM_CODE FROM BPR100T WITH(NOLOCK) WHERE COMP_CODE = B.COMP_CODE AND STOCK_CARE_YN = 'Y')
+									 				 									 	
+				   INNER JOIN BPR100T D WITH(NOLOCK)  ON A.COMP_CODE = D.COMP_CODE		-- 2015.07.25추가수정
+ 								 					 AND A.ITEM_CODE = D.ITEM_CODE		-- 2015.07.25추가수정
+ 								 					 AND D.USE_YN	 = 'Y'				-- 2015.07.25추가수정							  								 					 
+ 				   LEFT JOIN BSA210T E WITH(NOLOCK) ON B.COMP_CODE = E.COMP_CODE
+												   AND B.DIV_CODE  = E.TYPE_LEVEL
+												   AND B.DEPT_CODE = E.TREE_CODE
+				   LEFT JOIN BSA220T F WITH(NOLOCK) ON B.COMP_CODE = F.COMP_CODE
+												   AND B.DIV_CODE  = F.TYPE_LEVEL
+												   AND B.WH_CODE   = F.TREE_CODE			 					 
+		 
+			 WHERE A.COMP_CODE = @COMP_CODE
+			  AND A.DIV_CODE   = @DIV_CODE
+			  AND A.TYPE = '1'
+			  AND A.CUSTOM_CODE   = @CUSTOM_CODE
+			  AND A.APLY_END_DATE = '29991231' 
+			  
+			       
+			GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, B.DEPT_CODE, B.WH_CODE , D.ITEM_NAME, D.STOCK_UNIT, E.TREE_NAME, F.TREE_NAME, ISNULL(C.STOCK_Q, 0)
+			<if test="FLOOR == &quot;on&quot;">
+			HAVING  
+			      SUM(CASE WHEN B.SALE_DATE = CONVERT(varchar(8), DATEADD(DD, -6,@TO_DATE),112) THEN B.SALE_Q ELSE 0 END) &gt; 0 OR
+			      SUM(CASE WHEN B.SALE_DATE = CONVERT(varchar(8), DATEADD(DD, -5,@TO_DATE),112) THEN B.SALE_Q ELSE 0 END) &gt; 0 OR
+			      SUM(CASE WHEN B.SALE_DATE = CONVERT(varchar(8), DATEADD(DD, -4,@TO_DATE),112) THEN B.SALE_Q ELSE 0 END) &gt; 0 OR
+			      SUM(CASE WHEN B.SALE_DATE = CONVERT(varchar(8), DATEADD(DD, -3,@TO_DATE),112) THEN B.SALE_Q ELSE 0 END) &gt; 0 OR
+			      SUM(CASE WHEN B.SALE_DATE = CONVERT(varchar(8), DATEADD(DD, -2,@TO_DATE),112) THEN B.SALE_Q ELSE 0 END) &gt; 0 OR
+			      SUM(CASE WHEN B.SALE_DATE = CONVERT(varchar(8), DATEADD(DD, -1,@TO_DATE),112) THEN B.SALE_Q ELSE 0 END) &gt; 0 OR
+			      SUM(CASE WHEN B.SALE_DATE = @TO_DATE THEN B.SALE_Q ELSE 0 END) &gt; 0 								
+			</if>
+			                         
+			SET NOCOUNT OFF 
+		
+    </select>
+</mapper>

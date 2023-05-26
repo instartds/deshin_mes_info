@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="nboxDocLineService">
+	
+<select id="nboxDocLineService.selects" parameterType="Map" resultType="rMap">
+		SELECT 
+		 l.DocumentID
+		,l.LineType
+		,l.Seq
+		,CASE WHEN l.SignType = 'A' then 0 ELSE 1 END as SignType
+		
+		/* VIEW */
+		<if test="@foren.Ognl@isNotEmpty(LineType) != '' ">
+			,CASE WHEN l.Seq = 1 
+			      THEN ISNULL(uniLITE.nfnGetCommonCodeName(#{S_COMP_CODE}, 'NA09', 'Z', #{S_LANG_CODE}), '')
+				  ELSE ISNULL(uniLITE.nfnGetCommonCodeName(#{S_COMP_CODE}, 'NA09', l.SignType, #{S_LANG_CODE}), '')
+			 END AS SignTypeName			
+		</if>
+		/* EDIT */
+		<if test="@foren.Ognl@isNotEmpty(LineType) == '' ">
+			,CASE WHEN l.LineType = 'A'
+			      THEN 
+				      CASE WHEN l.Seq = 1 
+				      	   THEN ISNULL(uniLITE.nfnGetCommonCodeName(#{S_COMP_CODE}, 'NA09', 'Z', #{S_LANG_CODE}), '')
+					       ELSE ISNULL(uniLITE.nfnGetCommonCodeName(#{S_COMP_CODE}, 'NA09', l.SignType, #{S_LANG_CODE}), '')
+				 	  END
+				  ELSE
+				  	  ISNULL(uniLITE.nfnGetCommonCodeName(#{S_COMP_CODE}, 'NA09', 'F', #{S_LANG_CODE}), '')
+			 END AS SignTypeName			
+		</if>
+		,l.SignUserID
+		,l.SignUserName
+		,l.SignUserDeptName
+		,(Case when ISNULL(l.SignUserRoleName,'') = '' Then l.SignUserPosName Else l.SignUserRoleName End) as SignUserPosName
+		,l.SignDate
+		,#{CPATH}  + '/nboxfile/myinfosign/' +  
+		 (CASE WHEN l.Status = 'C' THEN ISNULL(l.SignImgUrl, 'X0007')
+		  	   WHEN l.Status = 'R' THEN 'X0006' ELSE 'X0005' END) as SignImgUrl		
+		,l.SignFlag
+		,l.LastFlag
+		,d.FormSubject As FormName
+		,case when bl.DocumentID is null then 'N' else 'Y' end AS DoubleLineFirstFlag
+		FROM   tbApprovalDocLine l
+		INNER JOIN tbApprovalDoc d ON l.DocumentID = d.DocumentID
+		LEFT OUTER JOIN (
+					SELECT l1.*
+					FROM   tbApprovalDocLine l1
+					WHERE  l1.DocumentID = #{DocumentID}
+					AND    l1.LineType = 'B'
+					AND    l1.Seq = ( SELECT Min(l2.Seq) 
+									  FROM   tbApprovalDocLine l2 
+									  WHERE  l1.DocumentID = l2.DocumentID 
+									  AND    l1.LineType = l2.LineType )) bl on l.DocumentID = bl.DocumentID and l.seq = bl.seq		 
+		WHERE l.DocumentID = #{DocumentID}
+		<if test="@foren.Ognl@isNotEmpty(LineType) != '' ">
+			AND   l.LineType = #{LineType}
+		</if>
+        <if test="@foren.Ognl@isNotEmpty(SignType) != '' ">
+            AND   l.SignType = #{SignType}
+        </if>
+		ORDER BY l.Seq
+	</select>
+	
+    <select id="nboxDocLineService.selectEmpty" parameterType="Map" resultType="rMap">
+        SELECT
+         null               as DocumentID
+        ,'A'                as LineType
+        ,1                  as Seq
+        ,0                  as SignType
+        ,ISNULL(uniLITE.nfnGetCommonCodeName(#{S_COMP_CODE}, 'NA09', 'Z', #{S_LANG_CODE}), '') as SignTypeName
+        ,BSA300T.USER_ID    as SignUserID
+        ,BSA300T.USER_NAME  as SignUserName
+        ,BSA210T.TREE_NAME  as SignUserDeptName 
+        ,BSA100T.CODE_NAME  as SignUserPosName
+        ,getdate()          as SignDate
+        ,'' + uniLITE.nfnGetCommonCodeValue(#{S_COMP_CODE}, 'NXA0', 'X0005') as SignImgUrl
+        ,'N'                as SignFlag
+        ,'N'                as LastFlag
+        ,null               as FormName
+        FROM  BSA300T   
+        left outer join BSA210T ON BSA300T.COMP_CODE = BSA210T.COMP_CODE AND BSA300T.DEPT_CODE = BSA210T.TREE_CODE
+        left outer join BSA100T ON BSA300T.COMP_CODE = BSA100T.COMP_CODE AND BSA100T.MAIN_CODE = 'H005' AND BSA300T.POST_CODE = BSA100T.SUB_CODE
+        WHERE  USER_ID = #{S_USER_ID}
+    </select>
+    
+    <insert id="nboxDocLineService.insert" parameterType="Map">
+    
+        
+            Declare 
+             @uUserName nvarchar(50)
+            ,@uPosName nvarchar(50)
+            ,@uDeptName nvarchar(50)
+            ,@uSeq int
+            ,@uLineType nvarchar(5)
+            ,@uSignType nvarchar(5)
+            ,@uSignImgUrl nvarchar(20)
+            
+            SET @uUserName = uniLITE.nfnGetUserName(#{S_COMP_CODE}, #{SignUserID})
+            SET @uPosName = uniLITE.nfnGetUserPosName(#{S_COMP_CODE},#{SignUserID}, #{S_LANG_CODE})
+            SET @uDeptName = uniLITE.nfnGetUserDeptName(#{S_COMP_CODE}, #{SignUserID} )
+            SET @uSignImgUrl = 'X0005'
+            
+            select @uSeq = isnull(max(seq), 0) + 1 from tbApprovalDocLine where  DocumentID = #{DocumentID}
+            
+            SET @uSignType = 'A'
+            <if test="@foren.Ognl@isNotEmpty(SignType) != '' ">
+                SET @uSignType = case when #{SignType} = 'true' or #{SignType} = 1 then 'B' else 'A' end
+            </if>  
+                
+            INSERT INTO tbApprovalDocLine (
+                 DocumentID
+                ,LineType
+                ,Seq
+                ,SignType
+                ,SignUserID
+                ,SignUserName
+                ,SignUserDeptName
+                ,SignUserPosName
+                ,SignDate
+                ,SignImgUrl
+                ,Status
+                ,SignFlag
+                ,LastFlag
+                ,InsertUserID
+                ,InsertDate
+                ,UpdateUserID
+                ,UpdateDate)
+            VALUES
+            (
+                 #{DocumentID}  
+                ,#{LineType}
+                ,@uSeq          
+                ,@uSignType
+                ,#{SignUserID}
+                ,@uUserName
+                ,@uDeptName
+                ,@uPosName
+                ,null
+                ,@uSignImgUrl
+                ,'A'
+                ,#{SignFlag}
+                ,case when @uSeq = #{Length} then 'Y' else 'N' end  
+                ,#{S_USER_ID}
+                ,getdate()
+                ,#{S_USER_ID}
+                ,getdate() ) 
+    </insert>
+    
+    <delete id="nboxDocLineService.deletes" parameterType="Map">
+        DELETE FROM tbApprovalDocLine
+        WHERE DocumentID = #{DocumentID}
+        <if test="@foren.Ognl@isNotEmpty(LineType) != '' ">
+            AND LineType = #{LineType}
+        </if> 
+    </delete>
+	
+</mapper>

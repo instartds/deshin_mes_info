@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mtr150skrvServiceImpl">
+	<select id="mtr150skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	/* mtr150skrv.Cmtr150skrv[fnmtr210q1]Query01 */
+BEGIN
+    SET NOCOUNT ON
+    SET ARITHABORT ON
+
+	DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+	      , @UserId			NVARCHAR(100)	/* 사용자ID		*/
+	      , @LangType		NVARCHAR(2)		/* 언어구분		*/
+          , @RefItem		NVARCHAR(01)
+          , @DateFormat		NVARCHAR(10)
+
+    SET @CompCode = #{S_COMP_CODE}
+    SET @UserId   = #{S_USER_ID}
+    SET @LangType = #{LANGUAGE}
+
+	/* 명칭 참조 유형 */
+    SELECT TOP 1 @RefItem = REF_ITEM
+    FROM BSA300T WITH (NOLOCK)
+    WHERE USER_ID = @UserId
+
+    SET @RefItem = ISNULL(@RefItem, N'0')
+
+	/* 날짜 포맷 유형 설정 */
+    SELECT TOP 1 @DateFormat = CODE_NAME
+    FROM BSA100T WITH (NOLOCK)
+    WHERE COMP_CODE = @CompCode
+		AND MAIN_CODE = N'B044'
+        AND REF_CODE1 = N'Y'
+
+    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+	/* 데이터 조회	*/
+    SELECT	A.ITEM_CODE
+          , CASE WHEN @RefItem = '1' THEN B.ITEM_NAME1
+                 WHEN @RefItem = '2' THEN B.ITEM_NAME2
+                 ELSE B.ITEM_NAME
+            END					AS ITEM_NAME
+          , B.SPEC
+          , B.STOCK_UNIT
+          , CASE WHEN ISNULL(A.OUTSTOCK_REQ_DATE, '') = '' THEN ''
+                 ELSE REPLACE(
+                      REPLACE(
+                      REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.OUTSTOCK_REQ_DATE, 1, 4))
+                                         , 'MM',   SUBSTRING(A.OUTSTOCK_REQ_DATE, 5, 2))
+                                         , 'DD',   SUBSTRING(A.OUTSTOCK_REQ_DATE, 7, 2))
+            END                 AS OUTSTOCK_REQ_DATE
+          , A.OUTSTOCK_NUM
+          , I.DIV_NAME			AS DIV_NM
+          , K.TREE_NAME			AS WORK_SHOP_NAME
+          , A.OUTSTOCK_REQ_Q
+		  , ISNULL(A.OUTSTOCK_Q, 0) AS OUTSTOCK_Q 
+          , ISNULL(A.OUTSTOCK_REQ_Q - A.OUTSTOCK_Q, 0) AS NOT_Q
+          , (SELECT  SUM(E.GOOD_STOCK_Q ) 
+				FROM BIV100T E  WITH (NOLOCK)
+             WHERE  E.ITEM_CODE = A.ITEM_CODE 
+				AND E.COMP_CODE = A.COMP_CODE
+				AND E.DIV_CODE  = A.DIV_CODE) AS STOCK_Q
+		  , Z1.CUSTOM_NAME	AS CUSTOM_NAME
+          , A.REMARK                   
+          , A.PROJECT_NO
+	FROM			PMP300T A WITH (NOLOCK)
+		INNER JOIN  BPR100T B WITH (NOLOCK)  ON B.COMP_CODE = A.COMP_CODE
+											AND B.ITEM_CODE = A.ITEM_CODE
+		LEFT JOIN	BOR120T I WITH (NOLOCK)  ON I.COMP_CODE = A.COMP_CODE 
+											AND I.DIV_CODE  = A.DIV_CODE
+		LEFT JOIN	BSA230T K WITH (NOLOCK)  ON K.COMP_CODE  = A.COMP_CODE
+										    AND K.TYPE_LEVEL = A.DIV_CODE
+										    AND K.TREE_CODE  = A.WORK_SHOP_CODE
+		LEFT JOIN PMP100T X WITH(NOLOCK) ON X.COMP_CODE = A.COMP_CODE
+                                            AND X.DIV_CODE = A.DIV_CODE
+                                            AND X.WKORD_NUM = REF_WKORD_NUM
+                                            AND X.LINE_END_YN = 'Y'
+        LEFT JOIN PPL100T Y WITH(NOLOCK) ON Y.COMP_CODE = X.COMP_CODE
+                                        AND Y.DIV_CODE = X.DIV_CODE
+                                        AND Y.WK_PLAN_NUM = X.WK_PLAN_NUM
+        LEFT JOIN SOF100T Z WITH(NOLOCK) ON Z.COMP_CODE = Y.COMP_CODE
+                                        AND Z.DIV_CODE = Y.DIV_CODE
+                                        AND Z.ORDER_NUM = Y.ORDER_NUM
+        LEFT JOIN BCM100T Z1 WITH(NOLOCK) ON Z1.COMP_CODE = Z.COMP_CODE
+                                         AND Z1.CUSTOM_CODE = Z.CUSTOM_CODE
+    
+    WHERE A.OUTSTOCK_REQ_Q > A.OUTSTOCK_Q
+       AND A.CONTROL_STATUS NOT IN ('8','9')
+    <if test="@foren.Ognl@isNotEmpty(S_COMP_CODE)">   
+		AND A.COMP_CODE          = @CompCode
+    </if>
+	<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+		AND A.DIV_CODE           = #{DIV_CODE}
+	</if>
+	<if test="@foren.Ognl@isNotEmpty(OUTSTOCK_REQ_DATE_FR)">
+		AND A.OUTSTOCK_REQ_DATE &gt;= #{OUTSTOCK_REQ_DATE_FR}
+	</if>
+	<if test="@foren.Ognl@isNotEmpty(OUTSTOCK_REQ_DATE_TO)">
+		AND A.OUTSTOCK_REQ_DATE &lt;= #{OUTSTOCK_REQ_DATE_TO}
+	</if>
+
+		/* 선택 조건 Start	*/
+	<if test="@foren.Ognl@isNotEmpty(WORK_SHOP_CODE)">
+		AND A.WORK_SHOP_CODE  LIKE #{WORK_SHOP_CODE} + '%'
+	</if>
+	<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+		AND A.ITEM_CODE       LIKE #{ITEM_CODE} + '%'
+	</if>
+	<!--2021.08 표준화 작업 Start-->
+	/* 품목코드			*/
+	<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+		AND A.ITEM_CODE = #{ITEM_CODE}
+	</if>
+	<if test="@foren.Ognl@isNotEmpty(ITEM_CODE) and @foren.Ognl@isEmpty(ITEM_NAME)">
+		AND A.ITEM_CODE LIKE #{ITEM_CODE} + '%'
+	</if>
+	<if test="@foren.Ognl@isEmpty(ITEM_CODE) and @foren.Ognl@isNotEmpty(ITEM_NAME)">
+		AND		(@RefItem       = N'0' AND B.ITEM_NAME  LIKE N'%' + #{ITEM_NAME} + N'%')
+			OR	(@RefItem       = N'1' AND B.ITEM_NAME1 LIKE N'%' + #{ITEM_NAME} + N'%')
+			OR	(@RefItem       = N'2' AND B.ITEM_NAME2 LIKE N'%' + #{ITEM_NAME} + N'%')
+	</if>
+	<!--2021.08 표준화 작업 End-->
+	<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+		AND Z1.CUSTOM_CODE  =  CUSTOM_CODE
+	</if>
+	<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+		AND Z1.CUSTOM_NAME    LIKE	#{ITEM_CODE} + '%'
+	</if>
+	
+		/* 선택 조건 End	*/ 
+
+	/* 품목별 조회 */
+	ORDER BY  1,5
+
+    SET NOCOUNT OFF
+    SET ARITHABORT OFF
+END
+
+	</select>
+	
+	
+	<select id="mtr150skrvServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+		--mtr150skrv.Cmtr150skrv[fnmtr210q2]Query01
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+    SELECT
+            I.DIV_NAME                                              AS DIV_NM
+         ,  K.TREE_NAME                                             AS WORK_SHOP_NAME
+         ,  uniLITE.fnGetUserDate(A.COMP_CODE,A.OUTSTOCK_REQ_DATE)  AS OUTSTOCK_REQ_DATE
+         ,  A.OUTSTOCK_NUM                                          AS OUTSTOCK_NUM
+         ,  A.ITEM_CODE                                             AS ITEM_CODE
+         ,  uniLITE.fnItemNameComp(#{S_COMP_CODE}, #{S_USER_ID},B.ITEM_CODE) AS ITEM_NAME
+         ,  B.SPEC                                                  AS SPEC
+         ,  B.STOCK_UNIT                                            AS STOCK_UNIT
+         ,  A.OUTSTOCK_REQ_Q                                        AS OUTSTOCK_REQ_Q
+         ,  ISNULL(A.OUTSTOCK_Q, 0)                                 AS OUTSTOCK_Q
+         ,  ISNULL(A.OUTSTOCK_REQ_Q - A.OUTSTOCK_Q, 0)              AS NOT_Q
+         , (SELECT SUM(E.GOOD_STOCK_Q)
+              FROM BIV100T E
+             WHERE E.ITEM_CODE = A.ITEM_CODE
+               AND A.COMP_CODE = E.COMP_CODE
+               AND A.DIV_CODE  = E.DIV_CODE)                        AS STOCK_Q
+         ,  Z1.CUSTOM_NAME                                          AS CUSTOM_NAME
+         ,  A.REMARK                                                AS REMARK
+         ,  A.PROJECT_NO                                            AS PROJECT_NO
+    FROM    PMP300T A WITH(NOLOCK)
+            INNER JOIN BPR100T B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+                                             AND B.ITEM_CODE = A.ITEM_CODE
+            LEFT OUTER JOIN BOR120T I WITH(NOLOCK)
+                        ON I.DIV_CODE  = A.DIV_CODE
+                        AND I.COMP_CODE = A.COMP_CODE
+            LEFT OUTER JOIN BSA230T K WITH(NOLOCK)
+                        ON K.TYPE_LEVEL = A.DIV_CODE
+                        AND K.COMP_CODE  = A.COMP_CODE
+                        AND K.TREE_CODE  = A.WORK_SHOP_CODE
+            LEFT JOIN PMP100T X WITH(NOLOCK) ON X.COMP_CODE = A.COMP_CODE
+                                            AND X.DIV_CODE = A.DIV_CODE
+                                            AND X.WKORD_NUM = REF_WKORD_NUM
+                                            AND X.LINE_END_YN = 'Y'
+            LEFT JOIN PPL100T Y WITH(NOLOCK) ON Y.COMP_CODE = X.COMP_CODE
+                                            AND Y.DIV_CODE = X.DIV_CODE
+                                            AND Y.WK_PLAN_NUM = X.WK_PLAN_NUM
+            LEFT JOIN SOF100T Z WITH(NOLOCK) ON Z.COMP_CODE = Y.COMP_CODE
+                                            AND Z.DIV_CODE = Y.DIV_CODE
+                                            AND Z.ORDER_NUM = Y.ORDER_NUM
+            LEFT JOIN BCM100T Z1 WITH(NOLOCK) ON Z1.COMP_CODE = Z.COMP_CODE
+                                             AND Z1.CUSTOM_CODE = Z.CUSTOM_CODE
+                                    
+     WHERE A.OUTSTOCK_REQ_Q > A.OUTSTOCK_Q
+       AND A.CONTROL_STATUS NOT IN ('8','9')
+	   <if test="@foren.Ognl@isNotEmpty(S_COMP_CODE)">
+	   	AND A.COMP_CODE          = #{S_COMP_CODE}
+	   </if>
+		<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+			AND A.DIV_CODE           = #{DIV_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(OUTSTOCK_REQ_DATE_FR)">
+			AND A.OUTSTOCK_REQ_DATE >= #{OUTSTOCK_REQ_DATE_FR}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(OUTSTOCK_REQ_DATE_TO)">
+			AND A.OUTSTOCK_REQ_DATE &lt;= #{OUTSTOCK_REQ_DATE_TO}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(WORK_SHOP_CODE)">
+			AND A.WORK_SHOP_CODE  LIKE #{WORK_SHOP_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+			AND A.ITEM_CODE       LIKE #{ITEM_CODE} + '%'
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+			AND Z1.CUSTOM_CODE    =	 #{CUSTOM_CODE}
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			AND Z1.CUSTOM_NAME    LIKE #{CUSTOM_NAME} + '%'
+		</if>
+    ORDER BY  1,2,3
+	</select>
+	
+	
+	
+	
+	
+	
+	
+
+</mapper>

@@ -1,0 +1,310 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sco170skrvServiceImpl">
+	<select id="sco170skrvServiceImpl.getColumn" parameterType="Map" resultType="rMap">
+		SELECT TOP 12 UNILITE.fnGetUserDate(COMP_CODE, LEFT(CAL_DATE, 6)) AS CAL_DATE
+		  FROM BCM400T WITH(NOLOCK)
+		 WHERE COMP_CODE = #{S_COMP_CODE}
+		   AND CAL_TYPE  = '1'
+		   AND CAL_DATE BETWEEN #{FR_SALE_YYMM} + '01' AND #{TO_SALE_YYMM} + '31'
+		 GROUP BY COMP_CODE, LEFT(CAL_DATE, 6)
+		 ORDER BY UNILITE.fnGetUserDate(COMP_CODE, LEFT(CAL_DATE, 6))
+	</select>
+
+	<select id="sco170skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* sco170skrvServiceImpl.selectList */
+		DECLARE   @COMP_CODE         NVARCHAR(08)          -- (필수) 법인
+		        , @DIV_CODE          NVARCHAR(08)          -- (필수) 사업장
+		        , @FROM_YYMM         NVARCHAR(08)          -- 매출기준월(FROM)
+		        , @TO_YYMM           NVARCHAR(08)          -- 매출기준월(TO)
+		        , @CUSTOM_CODE       NVARCHAR(08)          -- 매출처코드
+		        , @CUSTOM_NAME       NVARCHAR(40)          -- 매출처명
+		        , @USER_ID           NVARCHAR(10)          -- 사용자
+		        , @REF_ITEM          CHAR(1)
+
+		SET  @COMP_CODE   = #{S_COMP_CODE}
+		SET  @DIV_CODE    = #{DIV_CODE}
+		SET  @FROM_YYMM   = #{FR_SALE_YYMM}
+		SET  @TO_YYMM     = #{TO_SALE_YYMM}
+		SET  @CUSTOM_CODE = #{CUSTOM_CODE}
+		SET  @CUSTOM_NAME = #{CUSTOM_NAME} -- 사용하는곳 없음
+		SET  @USER_ID     = #{S_USER_ID}
+
+		SET NOCOUNT ON
+
+		    DECLARE @CALENDAR TABLE (
+		            KEY_ID        INTEGER IDENTITY(1, 1),
+		            COMP_CODE     NVARCHAR(08) ,
+		            CAL_YYYYMM    NVARCHAR(06)
+		    )
+
+		    INSERT INTO  @CALENDAR
+		    SELECT COMP_CODE, LEFT(CAL_DATE, 6)
+		      FROM BCM400T
+		     WHERE COMP_CODE = @COMP_CODE
+		       AND CAL_DATE BETWEEN @FROM_YYMM + '01' AND @TO_YYMM + '31'
+		       AND CAL_TYPE  = '1'
+		     GROUP BY COMP_CODE, LEFT(CAL_DATE, 6)
+
+		    -- LYK 추가 - 차대변 중복건을 제거하기 위한 기준테이블
+		    --            선수금의 경우 차대변이 둘다 있는경우 기존 쿼리에서는 매출과 수금에 양쪽다 합산이 된다.. 이러면안됨~
+		    DECLARE @DUP_ACCNT TABLE (
+		            COMP_CODE   NVARCHAR(08) ,
+		            ACCNT_CD    NVARCHAR(16)
+		    )
+
+		    INSERT INTO @DUP_ACCNT
+		    SELECT @COMP_CODE, REF_CODE1
+		      FROM BSA100T WITH(NOLOCK)
+		     WHERE COMP_CODE = @COMP_CODE
+		       AND MAIN_CODE = 'Z001'
+		       AND SUB_CODE != '$'
+		       AND USE_YN    = 'Y'
+
+		    SELECT @REF_ITEM = REF_ITEM
+		      FROM BSA300T
+		     WHERE USER_ID = @USER_ID
+
+
+		    SELECT M2.REF_CODE3   AS SALE_OFFICE
+		         , M2.CODE_NAME   AS BUSI_PRSN
+		         , A.CUSTOM_CODE
+		         , CASE  @REF_ITEM   WHEN '0' THEN M1.CUSTOM_NAME
+		                             WHEN '1' THEN M1.CUSTOM_NAME1
+		                             WHEN '2' THEN M1.CUSTOM_NAME2
+		                             ELSE M1.CUSTOM_NAME
+		           END            AS SALE_CUSTOM_NAME
+		         , M1.SET_METH
+		         , M3.CODE_NAME   AS DAY
+		         , M1.RECEIPT_DAY
+		         , SUM(TRANSFER_REMAIN_AMT) AS TRANSFER_REMAIN_AMT
+		         , SUM(DR_AMT_01) AS DR_AMT_01
+		         , SUM(DR_AMT_02) AS DR_AMT_02
+		         , SUM(DR_AMT_03) AS DR_AMT_03
+		         , SUM(DR_AMT_04) AS DR_AMT_04
+		         , SUM(DR_AMT_05) AS DR_AMT_05
+		         , SUM(DR_AMT_06) AS DR_AMT_06
+		         , SUM(DR_AMT_07) AS DR_AMT_07
+		         , SUM(DR_AMT_08) AS DR_AMT_08
+		         , SUM(DR_AMT_09) AS DR_AMT_09
+		         , SUM(DR_AMT_10) AS DR_AMT_10
+		         , SUM(DR_AMT_11) AS DR_AMT_11
+		         , SUM(DR_AMT_12) AS DR_AMT_12
+		         , SUM(TRANSFER_REMAIN_AMT)
+		             + SUM(DR_AMT_01) + SUM(DR_AMT_02) + SUM(DR_AMT_03)+ SUM(DR_AMT_04)+ SUM(DR_AMT_05)+ SUM(DR_AMT_06)
+		             + SUM(DR_AMT_07) + SUM(DR_AMT_08) +SUM(DR_AMT_09) + SUM(DR_AMT_10) +SUM(DR_AMT_11) + SUM(DR_AMT_12) AS TOTAL_BOND
+		         , SUM(CR_AMT_01) AS CR_AMT_01
+		         , SUM(CR_AMT_02) AS CR_AMT_02
+		         , SUM(CR_AMT_03) AS CR_AMT_03
+		         , SUM(CR_AMT_04) AS CR_AMT_04
+		         , SUM(CR_AMT_05) AS CR_AMT_05
+		         , SUM(CR_AMT_06) AS CR_AMT_06
+		         , SUM(CR_AMT_07) AS CR_AMT_07
+		         , SUM(CR_AMT_08) AS CR_AMT_08
+		         , SUM(CR_AMT_09) AS CR_AMT_09
+		         , SUM(CR_AMT_10) AS CR_AMT_10
+		         , SUM(CR_AMT_11) AS CR_AMT_11
+		         , SUM(CR_AMT_12) AS CR_AMT_12
+		         , SUM(CR_AMT_01) + SUM(CR_AMT_02) + SUM(CR_AMT_03)+ SUM(CR_AMT_04)+ SUM(CR_AMT_05)+ SUM(CR_AMT_06)
+		             + SUM(CR_AMT_07) + SUM(CR_AMT_08) +SUM(CR_AMT_09) + SUM(CR_AMT_10) +SUM(CR_AMT_11) + SUM(CR_AMT_12) AS TOTAL_COLLECT
+		         , (SUM(TRANSFER_REMAIN_AMT)
+		             + (SUM(DR_AMT_01) + SUM(DR_AMT_02) + SUM(DR_AMT_03)+ SUM(DR_AMT_04)+ SUM(DR_AMT_05)+ SUM(DR_AMT_06)
+		                 + SUM(DR_AMT_07) + SUM(DR_AMT_08) +SUM(DR_AMT_09) + SUM(DR_AMT_10) +SUM(DR_AMT_11) + SUM(DR_AMT_12) )
+		             - (SUM(CR_AMT_01) + SUM(CR_AMT_02) + SUM(CR_AMT_03)+ SUM(CR_AMT_04)+ SUM(CR_AMT_05)+ SUM(CR_AMT_06)
+		                 + SUM(CR_AMT_07) + SUM(CR_AMT_08) +SUM(CR_AMT_09) + SUM(CR_AMT_10) +SUM(CR_AMT_11) + SUM(CR_AMT_12)) ) AS UNCOLLECT
+		         , M1.COLLECT_DAY
+		      FROM (
+		                -- 전기이월매출, 전기이월수금
+		                SELECT COMP_CODE
+		                     , CASE WHEN BOOK_CODE1 ='A4' THEN  BOOK_DATA1  ELSE BOOK_DATA2 END CUSTOM_CODE
+		                     , SUM(DR_AMT_I) - SUM(CR_AMT_I )  AS TRANSFER_REMAIN_AMT
+		                     , 0 AS DR_AMT_01 , 0 AS DR_AMT_02 , 0 AS DR_AMT_03 , 0 AS DR_AMT_04 , 0 AS DR_AMT_05 , 0 AS DR_AMT_06
+		                     , 0 AS DR_AMT_07 , 0 AS DR_AMT_08 , 0 AS DR_AMT_09 , 0 AS DR_AMT_10 , 0 AS DR_AMT_11 , 0 AS DR_AMT_12
+		                     , 0 AS CR_AMT_01 , 0 AS CR_AMT_02 , 0 AS CR_AMT_03 , 0 AS CR_AMT_04 , 0 AS CR_AMT_05 , 0 AS CR_AMT_06
+		                     , 0 AS CR_AMT_07 , 0 AS CR_AMT_08 , 0 AS CR_AMT_09 , 0 AS CR_AMT_10 , 0 AS CR_AMT_11 , 0 AS CR_AMT_12
+		                  FROM AGB200T  WITH(NOLOCK)
+		                 WHERE COMP_CODE = @COMP_CODE
+		                   AND DIV_CODE = @DIV_CODE
+		                   AND ACCNT IN (SELECT ACCNT FROM ABA400T
+		                                   WHERE SPEC_DIVI = 'G1')
+		                   AND (AC_DATE = LEFT(@FROM_YYMM,4) + '01' OR LEN(AC_DATE) != 6 )
+		                   AND AC_DATE &gt;= LEFT(@FROM_YYMM,4) + '01'
+		                   AND AC_DATE &lt; LEFT(@FROM_YYMM,6) + '01'
+		                 GROUP BY COMP_CODE ,CASE WHEN BOOK_CODE1 ='A4' THEN  BOOK_DATA1  ELSE BOOK_DATA2 END
+
+		                UNION ALL
+
+		                -- 매출, 수금
+		                SELECT C1.COMP_CODE
+		                     , C1.CUSTOM_CODE
+		                     , 0 AS TRANSFER_REMAIN_AMT
+		                     , SUM(CASE WHEN  C2.KEY_ID = 1 AND LEFT(C3.SALE_DATE, 6)  = C2.CAL_YYYYMM  THEN  C3.SUM_SALE_AMT_WON ELSE 0 END) AS DR_AMT_01
+							 , SUM(CASE WHEN  C2.KEY_ID = 2 AND LEFT(C3.SALE_DATE, 6)  = C2.CAL_YYYYMM  THEN  C3.SUM_SALE_AMT_WON ELSE 0 END) AS DR_AMT_02
+							 , SUM(CASE WHEN  C2.KEY_ID = 3 AND LEFT(C3.SALE_DATE, 6)  = C2.CAL_YYYYMM  THEN  C3.SUM_SALE_AMT_WON ELSE 0 END) AS DR_AMT_03
+							 , SUM(CASE WHEN  C2.KEY_ID = 4 AND LEFT(C3.SALE_DATE, 6)  = C2.CAL_YYYYMM  THEN  C3.SUM_SALE_AMT_WON ELSE 0 END) AS DR_AMT_04
+							 , SUM(CASE WHEN  C2.KEY_ID = 5 AND LEFT(C3.SALE_DATE, 6)  = C2.CAL_YYYYMM  THEN  C3.SUM_SALE_AMT_WON ELSE 0 END) AS DR_AMT_05
+							 , SUM(CASE WHEN  C2.KEY_ID = 6 AND LEFT(C3.SALE_DATE, 6)  = C2.CAL_YYYYMM  THEN  C3.SUM_SALE_AMT_WON ELSE 0 END) AS DR_AMT_06
+							 , SUM(CASE WHEN  C2.KEY_ID = 7 AND LEFT(C3.SALE_DATE, 6)  = C2.CAL_YYYYMM  THEN  C3.SUM_SALE_AMT_WON ELSE 0 END) AS DR_AMT_07
+							 , SUM(CASE WHEN  C2.KEY_ID = 8 AND LEFT(C3.SALE_DATE, 6)  = C2.CAL_YYYYMM  THEN  C3.SUM_SALE_AMT_WON ELSE 0 END) AS DR_AMT_08
+							 , SUM(CASE WHEN  C2.KEY_ID = 9 AND LEFT(C3.SALE_DATE, 6)  = C2.CAL_YYYYMM  THEN  C3.SUM_SALE_AMT_WON ELSE 0 END) AS DR_AMT_09
+							 , SUM(CASE WHEN  C2.KEY_ID = 10 AND LEFT(C3.SALE_DATE, 6) = C2.CAL_YYYYMM  THEN  C3.SUM_SALE_AMT_WON ELSE 0 END) AS DR_AMT_10
+							 , SUM(CASE WHEN  C2.KEY_ID = 11 AND LEFT(C3.SALE_DATE, 6) = C2.CAL_YYYYMM  THEN  C3.SUM_SALE_AMT_WON ELSE 0 END) AS DR_AMT_11
+							 , SUM(CASE WHEN  C2.KEY_ID = 12 AND LEFT(C3.SALE_DATE, 6) = C2.CAL_YYYYMM  THEN  C3.SUM_SALE_AMT_WON ELSE 0 END) AS DR_AMT_12
+		                     , SUM(CASE WHEN  C2.KEY_ID = 1 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '2' THEN  C1.AMT_I ELSE 0 END) AS CR_AMT_01
+		                     , SUM(CASE WHEN  C2.KEY_ID = 2 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '2' THEN  C1.AMT_I ELSE 0 END) AS CR_AMT_02
+		                     , SUM(CASE WHEN  C2.KEY_ID = 3 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '2' THEN  C1.AMT_I ELSE 0 END) AS CR_AMT_03
+		                     , SUM(CASE WHEN  C2.KEY_ID = 4 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '2' THEN  C1.AMT_I ELSE 0 END) AS CR_AMT_04
+		                     , SUM(CASE WHEN  C2.KEY_ID = 5 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '2' THEN  C1.AMT_I ELSE 0 END) AS CR_AMT_05
+		                     , SUM(CASE WHEN  C2.KEY_ID = 6 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '2' THEN  C1.AMT_I ELSE 0 END) AS CR_AMT_06
+		                     , SUM(CASE WHEN  C2.KEY_ID = 7 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '2' THEN  C1.AMT_I ELSE 0 END) AS CR_AMT_07
+		                     , SUM(CASE WHEN  C2.KEY_ID = 8 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '2' THEN  C1.AMT_I ELSE 0 END) AS CR_AMT_08
+		                     , SUM(CASE WHEN  C2.KEY_ID = 9 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '2' THEN  C1.AMT_I ELSE 0 END) AS CR_AMT_09
+		                     , SUM(CASE WHEN  C2.KEY_ID = 10 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '2' THEN  C1.AMT_I ELSE 0 END) AS CR_AMT_10
+		                     , SUM(CASE WHEN  C2.KEY_ID = 11 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '2' THEN  C1.AMT_I ELSE 0 END) AS CR_AMT_11
+		                     , SUM(CASE WHEN  C2.KEY_ID = 12 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '2' THEN  C1.AMT_I ELSE 0 END) AS CR_AMT_12
+		                  FROM  ( SELECT COMP_CODE
+						               , DIV_CODE
+									   , CASE WHEN BOOK_CODE1 ='A4' THEN  BOOK_DATA1  ELSE BOOK_DATA2 END AS CUSTOM_CODE
+									   , AC_DATE
+									   , DR_CR
+									   , SUM(AMT_I)AS AMT_I
+						          FROM  AGJ210T  WITH(NOLOCK)
+								  WHERE COMP_CODE = @COMP_CODE
+								  AND ACCNT IN (SELECT ACCNT FROM ABA400T WITH(NOLOCK)
+		                                        WHERE SPEC_DIVI = 'G1')
+								  AND AC_DATE >=  @FROM_YYMM + '01'
+								  AND AC_DATE <![CDATA[<=]]> @TO_YYMM + '31'
+								  AND ISNULL(MOD_DIVI,'') = ''
+								  GROUP BY COMP_CODE
+								         , DIV_CODE
+								         , CASE WHEN BOOK_CODE1 ='A4' THEN  BOOK_DATA1  ELSE BOOK_DATA2 END
+										 , AC_DATE
+										 , DR_CR
+						        ) C1
+		                  INNER JOIN @CALENDAR  C2 ON C1.AC_DATE BETWEEN C2.CAL_YYYYMM + '01' AND C2.CAL_YYYYMM + '31' -- ON  LEFT(AC_DATE, 6) = C2.CAL_YYYYMM
+						  LEFT JOIN (SELECT  A.COMP_CODE
+						                    ,A.DIV_CODE
+											,SUM(B.SALE_AMT_O) AS SALE_AMT_O
+											,SUM(B.SALE_LOC_AMT_I) + SUM(B.TAX_AMT_O) AS SUM_SALE_AMT_WON
+											,A.SALE_CUSTOM_CODE
+											,A.SALE_DATE
+										FROM SSA100T A WITH(NOLOCK)
+										INNER JOIN SSA110T B  WITH(NOLOCK) ON A.COMP_CODE = B.COMP_CODE
+																		  AND A.DIV_CODE  = B.DIV_CODE
+																		  AND A.BILL_NUM  = B.BILL_NUM
+										WHERE A.COMP_CODE =  @COMP_CODE
+										AND   A.DIV_CODE  =  @DIV_CODE
+										AND   A.SALE_DATE >= @FROM_YYMM + '01'
+										AND   A.SALE_DATE <![CDATA[<=]]> @TO_YYMM + '31'
+										GROUP BY A.COMP_CODE,  A.DIV_CODE, A.SALE_CUSTOM_CODE, A.SALE_DATE
+									) C3 ON C1.COMP_CODE   = C3.COMP_CODE
+									    AND C1.CUSTOM_CODE = C3.SALE_CUSTOM_CODE
+										AND C1.AC_DATE     = C3.SALE_DATE
+		                 WHERE C1.COMP_CODE = @COMP_CODE
+		                   AND C1.DIV_CODE = @DIV_CODE
+
+		                 GROUP BY C1.COMP_CODE, C1.CUSTOM_CODE
+
+		    -- LYK 추가 시작----------------------
+
+		                UNION ALL
+
+		                -- 선수금 차변에 외상매출금 대변인 경우는 제거
+		                -- 매출, 수금 자료에 중복이 되므로 (-)처리
+		                SELECT C1.COMP_CODE
+		                     , CASE WHEN C1.BOOK_CODE1 ='A4' THEN  C1.BOOK_DATA1  ELSE C1.BOOK_DATA2 END CUSTOM_CODE
+		                     , 0 AS TRANSFER_REMAIN_AMT
+		                     , SUM(CASE WHEN  C2.KEY_ID = 1 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS DR_AMT_01
+		                     , SUM(CASE WHEN  C2.KEY_ID = 2 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS DR_AMT_02
+		                     , SUM(CASE WHEN  C2.KEY_ID = 3 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS DR_AMT_03
+		                     , SUM(CASE WHEN  C2.KEY_ID = 4 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS DR_AMT_04
+		                     , SUM(CASE WHEN  C2.KEY_ID = 5 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS DR_AMT_05
+		                     , SUM(CASE WHEN  C2.KEY_ID = 6 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS DR_AMT_06
+		                     , SUM(CASE WHEN  C2.KEY_ID = 7 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS DR_AMT_07
+		                     , SUM(CASE WHEN  C2.KEY_ID = 8 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS DR_AMT_08
+		                     , SUM(CASE WHEN  C2.KEY_ID = 9 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS DR_AMT_09
+		                     , SUM(CASE WHEN  C2.KEY_ID = 10 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS DR_AMT_10
+		                     , SUM(CASE WHEN  C2.KEY_ID = 11 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS DR_AMT_11
+		                     , SUM(CASE WHEN  C2.KEY_ID = 12 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS DR_AMT_12
+		                     -- 차대변이 동일하게 차변기준으로 금액이 빠져야한다.
+		                     , SUM(CASE WHEN  C2.KEY_ID = 1 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS CR_AMT_01
+		                     , SUM(CASE WHEN  C2.KEY_ID = 2 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS CR_AMT_02
+		                     , SUM(CASE WHEN  C2.KEY_ID = 3 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS CR_AMT_03
+		                     , SUM(CASE WHEN  C2.KEY_ID = 4 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS CR_AMT_04
+		                     , SUM(CASE WHEN  C2.KEY_ID = 5 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS CR_AMT_05
+		                     , SUM(CASE WHEN  C2.KEY_ID = 6 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS CR_AMT_06
+		                     , SUM(CASE WHEN  C2.KEY_ID = 7 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS CR_AMT_07
+		                     , SUM(CASE WHEN  C2.KEY_ID = 8 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS CR_AMT_08
+		                     , SUM(CASE WHEN  C2.KEY_ID = 9 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS CR_AMT_09
+		                     , SUM(CASE WHEN  C2.KEY_ID = 10 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS CR_AMT_10
+		                     , SUM(CASE WHEN  C2.KEY_ID = 11 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS CR_AMT_11
+		                     , SUM(CASE WHEN  C2.KEY_ID = 12 AND LEFT(C1.AC_DATE, 6) = C2.CAL_YYYYMM AND  C1.DR_CR = '1' THEN  -(C1.AMT_I) ELSE 0 END) AS CR_AMT_12
+		                  FROM  AGJ210T C1 WITH(NOLOCK)
+		                  INNER JOIN @CALENDAR  C2 ON C1.AC_DATE BETWEEN C2.CAL_YYYYMM + '01' AND C2.CAL_YYYYMM + '31' -- ON  LEFT(AC_DATE, 6) = C2.CAL_YYYYMM
+		                  INNER JOIN @DUP_ACCNT D -- 차변발생에 중복계정 목록
+		                                           ON C1.COMP_CODE = D.COMP_CODE AND C1.ACCNT = D.ACCNT_CD AND C1.DR_CR = '1'
+		                  INNER JOIN -- 차변발생에 중복계정이 있는경우 확인을 위해 대변자료 집계
+		                    (
+		                     SELECT DISTINCT COMP_CODE, DIV_CODE, AC_DATE, SLIP_NUM, CUSTOM_CODE
+		                       FROM AGJ210T WITH(NOLOCK)
+		                      WHERE COMP_CODE = @COMP_CODE
+		                        AND DIV_CODE = @DIV_CODE
+		                        AND AC_DATE &gt;=  @FROM_YYMM + '01'
+		                        AND AC_DATE &lt;= @TO_YYMM + '31'
+		                        AND ISNULL(MOD_DIVI,'') = ''
+		                        AND DR_CR = '2'
+		                        AND ACCNT IN (SELECT ACCNT FROM ABA400T WITH(NOLOCK)
+		                                       WHERE SPEC_DIVI = 'G1')
+		                    ) C3  ON C1.COMP_CODE = C3.COMP_CODE
+		                         AND C1.DIV_CODE = C3.DIV_CODE
+		                         AND C1.AC_DATE = C3.AC_DATE
+		                         AND C1.SLIP_NUM = C3.SLIP_NUM
+		                         AND C1.DR_CR = '1'
+		                         AND C1.ACCNT IN (SELECT ACCNT FROM ABA400T  WITH(NOLOCK)
+		                                             WHERE SPEC_DIVI = 'G1')
+		                         AND C1.CUSTOM_CODE = C3.CUSTOM_CODE
+		                 WHERE C1.COMP_CODE = @COMP_CODE
+		                   AND C1.DIV_CODE  = @DIV_CODE
+		                   AND C1.AC_DATE  &gt;=  @FROM_YYMM + '01'
+		                   AND C1.AC_DATE  &lt;= @TO_YYMM + '31'
+		                   AND ISNULL(C1.MOD_DIVI,'') = ''
+		                 GROUP BY C1.COMP_CODE, CASE WHEN C1.BOOK_CODE1 ='A4' THEN  C1.BOOK_DATA1  ELSE C1.BOOK_DATA2 END
+		    -- LYK 추가 끝----------------------
+		            ) A
+		                        INNER  JOIN  BCM100T  M1 WITH(NOLOCK) ON M1.COMP_CODE    =  A.COMP_CODE
+		                                                             AND M1.CUSTOM_CODE  =  A.CUSTOM_CODE
+		                        LEFT  JOIN  BSA100T   M2 WITH(NOLOCK) ON M2.COMP_CODE    = M1.COMP_CODE
+		                                                             AND M2.MAIN_CODE    = 'S010'
+		                                                             AND M2.SUB_CODE     = M1.BUSI_PRSN
+		                        LEFT  JOIN BSA100T    M3 WITH(NOLOCK) ON M3.COMP_CODE    = M1.COMP_CODE
+		                                                             AND M3.MAIN_CODE    = 'B033'
+		                                                             AND M3.SUB_CODE    != '$'
+		                                                             AND M3.SUB_CODE     = M1.TRANS_CLOSE_DAY
+		    WHERE 1 = 1
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+			   AND A.CUSTOM_CODE LIKE @CUSTOM_CODE +'%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			   AND CASE  @REF_ITEM   WHEN '0' THEN M1.CUSTOM_NAME
+		                             WHEN '1' THEN M1.CUSTOM_NAME1
+		                             WHEN '2' THEN M1.CUSTOM_NAME2
+		                             ELSE M1.CUSTOM_NAME
+		           END LIKE @CUSTOM_NAME +'%'
+			</if>
+		    GROUP BY M2.REF_CODE3, M2.CODE_NAME,  A.CUSTOM_CODE
+		                , CASE  @REF_ITEM  WHEN '0' THEN M1.CUSTOM_NAME
+		                                   WHEN '1' THEN M1.CUSTOM_NAME1
+		                                   WHEN '2' THEN M1.CUSTOM_NAME2
+		                                   ELSE M1.CUSTOM_NAME END
+		                , M1.SET_METH
+		                , M1.RECEIPT_DAY
+		                , M1.COLLECT_DAY
+		                , M3.CODE_NAME
+		    HAVING SUM(TRANSFER_REMAIN_AMT)
+		                + SUM(DR_AMT_01) + SUM(DR_AMT_02) + SUM(DR_AMT_03)+ SUM(DR_AMT_04)+ SUM(DR_AMT_05)+ SUM(DR_AMT_06)
+		                + SUM(DR_AMT_07) + SUM(DR_AMT_08) +SUM(DR_AMT_09) + SUM(DR_AMT_10) +SUM(DR_AMT_11) + SUM(DR_AMT_12)
+		                + SUM(CR_AMT_01) + SUM(CR_AMT_02) + SUM(CR_AMT_03)+ SUM(CR_AMT_04)+ SUM(CR_AMT_05)+ SUM(CR_AMT_06)
+		                + SUM(CR_AMT_07) + SUM(CR_AMT_08) +SUM(CR_AMT_09) + SUM(CR_AMT_10) +SUM(CR_AMT_11) + SUM(CR_AMT_12) != 0
+		SET NOCOUNT OFF
+	</select>
+</mapper>

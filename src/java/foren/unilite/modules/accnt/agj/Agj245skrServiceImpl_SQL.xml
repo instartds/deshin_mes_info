@@ -1,0 +1,629 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="agj245skrServiceImpl">
+	
+	<select id="agj245skrServiceImpl.selectList" parameterType="Map" resultType="rMap">		
+	--agj245skr.Cagj245skr[fnAgj245Qst1] Query2
+    BEGIN
+       SET NOCOUNT ON
+       SET ARITHABORT ON
+    
+       /*-- 1. 날짜 포맷 유형 설정 ------------------------------------------------------------------------------------------*/
+       DECLARE @DateFormat         NVARCHAR(01)
+             , @TimeFormat         NVARCHAR(01)    
+    
+       SELECT TOP 1 @DateFormat = SUBSTRING(CODE_NAME, 5, 1)
+       FROM   BSA100T   WITH (NOLOCK)
+       WHERE  COMP_CODE  = #{S_COMP_CODE}
+       AND    MAIN_CODE  = 'B044'
+       AND    REF_CODE1  = 'Y'
+    
+       SET @DateFormat = ISNULL(@DateFormat, '.')
+       SET @TimeFormat = ISNULL(@TimeFormat, ':')
+    
+       /*-- 2. 부서코드 레벨*/
+       DECLARE @TREE_LEVEL         NVARCHAR(08)   -- 부서코드레벨       
+    
+       SELECT @TREE_LEVEL = TREE_LEVEL
+         FROM BSA210T   WITH (NOLOCK)
+        WHERE COMP_CODE   = #{S_COMP_CODE}
+          AND TREE_CODE   = #{DEPT_CODE}
+          AND USE_YN      = 'Y'
+       /*-- 3. 임시테이블 선언 ------------------------------------------------------------------------------------------*/
+       IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#AGJ245SKR_120228'))
+           DROP TABLE #AGJ245SKR_120228
+    
+       CREATE TABLE #AGJ245SKR_120228 ( GUBUN            NVARCHAR(01)
+                                      , AC_DATE          NVARCHAR(10)
+                                      , SLIP_NUM         NUMERIC(7,0)
+                                      , DR_AMT_I         NUMERIC(30, 6)
+                                      , CR_AMT_I         NUMERIC(30, 6)
+                                      , DIV_CODE         NVARCHAR(08)
+                                      , REMARK           NVARCHAR(100)
+                                      , INPUT_PATH       NVARCHAR(02)
+                                      , INPUT_PATH_NAME  NVARCHAR(30)
+                                      , EX_DATE          NVARCHAR(10)
+                                      , EX_NUM           NUMERIC(7,0)
+                                      , CHARGE_CODE      NVARCHAR(30)
+                                      , CHARGE_NAME      NVARCHAR(30)
+                                      , INPUT_DATE       NVARCHAR(10)
+                                      , AP_CHARGE_NAME   NVARCHAR(30)
+                                      , AP_DATE          NVARCHAR(10)
+                                      , MOD_DIVI         NVARCHAR(01)
+                                      , INPUT_DIVI       NVARCHAR(02)
+                                      , POSTIT_YN		 NVARCHAR(01)
+                                      , KEY_STRING    AS RTRIM(GUBUN) + RTRIM(AC_DATE) + RTRIM(CONVERT(NVARCHAR(7), SLIP_NUM))
+                                      , SLIP_TYPE		 NVARCHAR(01)
+                                      , AP_STS		 NVARCHAR(01)
+                                      )
+    
+       /*-- 3.1 전표내역 INSERT ------------------------------------------------------------------------------------------*/
+       INSERT INTO #AGJ245SKR_120228
+       SELECT '1'                                                       AS GUBUN
+            , CASE WHEN ISNULL(A.AC_DATE, '') = '' THEN NULL
+                   ELSE SUBSTRING(A.AC_DATE, 1, 4) + @DateFormat + 
+                        SUBSTRING(A.AC_DATE, 5, 2) + @DateFormat + 
+                        SUBSTRING(A.AC_DATE, 7, 2)
+               END                                                      AS AC_DATE
+            , A.SLIP_NUM
+            , SUM(A.DR_AMT_I)                                           AS DR_AMT_I
+            , SUM(A.CR_AMT_I)                                           AS CR_AMT_I
+            , MIN(A.DIV_CODE)                                           AS DIV_CODE
+            , '  ' + MIN(A.REMARK)                                      AS REMARK
+            , A.INPUT_PATH
+            , M3.CODE_NAME                                              AS INPUT_PATH_NAME
+            , CASE WHEN ISNULL(A.EX_DATE, '') = '' THEN NULL
+                   ELSE SUBSTRING(A.EX_DATE, 1, 4) + @DateFormat + 
+                        SUBSTRING(A.EX_DATE, 5, 2) + @DateFormat + 
+                        SUBSTRING(A.EX_DATE, 7, 2)
+               END                                                      AS EX_DATE
+            , A.EX_NUM
+            , A.CHARGE_CODE  
+            , M1.CODE_NAME                                              AS CHARGE_NAME 
+            , SUBSTRING(A.INPUT_DATE, 1, 4) + @DateFormat + 
+              SUBSTRING(A.INPUT_DATE, 5, 2) + @DateFormat + 
+              SUBSTRING(A.INPUT_DATE, 7, 2)                             AS INPUT_DATE
+            , M2.CODE_NAME                                              AS AP_CHARGE_NAME
+            , CASE WHEN ISNULL(A.AP_DATE, '') = '' THEN NULL
+                   ELSE SUBSTRING(A.AP_DATE, 1, 4) + @DateFormat + 
+                        SUBSTRING(A.AP_DATE, 5, 2) + @DateFormat + 
+                        SUBSTRING(A.AP_DATE, 7, 2)
+               END                                                      AS AP_DATE
+            , ISNULL(A.MOD_DIVI, '')                                   AS MOD_DIVI
+            , A.INPUT_DIVI
+            , A.POSTIT_YN
+            , MAX(A.SLIP_TYPE) AS SLIP_TYPE
+            , MAX(A.AP_STS) AS AP_STS
+        FROM    (
+        <if test="SLIP_DIVI == &quot;2&quot;">
+           SELECT 
+                    A.COMP_CODE
+                  , A.EX_DATE                                           AS AC_DATE
+                  , A.EX_NUM                                            AS SLIP_NUM
+                  , CASE WHEN A.DR_CR = '1' THEN A.AMT_I ELSE 0 END     AS DR_AMT_I
+                  , CASE WHEN A.DR_CR = '2' THEN A.AMT_I ELSE 0 END     AS CR_AMT_I
+                  , A.DIV_CODE
+                  , A.REMARK
+                  , A.INPUT_PATH
+                  , A.AC_DATE                                           AS EX_DATE
+                  , A.SLIP_NUM                                          AS EX_NUM
+                  , A.CHARGE_CODE
+                  , A.INPUT_DATE
+                  , A.AP_CHARGE_CODE
+                  , A.AP_DATE
+                  , A.MOD_DIVI
+                  , A.INPUT_DIVI
+                  , A.POSTIT_YN
+                  ,'2' AS SLIP_TYPE 	--전표구분
+			      , A.AP_STS			--승인여부
+            FROM                AGJ110T   A    WITH (NOLOCK)
+                    LEFT  JOIN  BOR120T   B    WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                             AND B.DIV_CODE    = A.DIV_CODE
+                    LEFT  JOIN  ABA400T   C    WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                             AND C.ACCNT       = A.ACCNT
+                    LEFT  JOIN BSA210T    D    WITH (NOLOCK) ON D.COMP_CODE   = A.COMP_CODE
+                                                             AND D.TREE_CODE   = A.IN_DEPT_CODE
+                    LEFT  JOIN BSA210T    E    WITH (NOLOCK) ON E.COMP_CODE   = A.COMP_CODE
+                                                             AND E.TREE_CODE   = A.DEPT_CODE
+                    LEFT  JOIN  BCM100T   F  WITH (NOLOCK)   ON F.COMP_CODE   = A.COMP_CODE
+                                                            AND F.CUSTOM_CODE = A.CUSTOM_CODE                                                             
+            WHERE   A.COMP_CODE        = #{S_COMP_CODE}
+		    AND   A.EX_DATE    &gt;= #{AC_DATE_FR}
+		    AND   A.EX_DATE    &lt;= #{AC_DATE_TO}
+			<if test="@foren.Ognl@isNotEmpty(AP_STS)">
+				AND   A.AP_STS = #{AP_STS}
+			</if>
+        </if>
+        <if test="SLIP_DIVI != &quot;2&quot;">
+            SELECT 
+                    A.COMP_CODE
+                  , A.AC_DATE
+                  , A.SLIP_NUM
+                  , CASE WHEN A.DR_CR = '1' THEN A.AMT_I ELSE 0 END     AS DR_AMT_I
+                  , CASE WHEN A.DR_CR = '2' THEN A.AMT_I ELSE 0 END     AS CR_AMT_I
+                  , A.DIV_CODE
+                  , A.REMARK
+                  , A.INPUT_PATH
+                  , A.EX_DATE
+                  , A.EX_NUM
+                  , A.CHARGE_CODE
+                  , A.INPUT_DATE
+                  , A.AP_CHARGE_CODE
+                  , A.AP_DATE
+                  , A.MOD_DIVI
+                  , A.INPUT_DIVI
+                  , A.POSTIT_YN
+                  ,'1' AS SLIP_TYPE 	--전표구분
+                  , '' AS AP_STS		--승인여부
+            FROM                AGJ210T   A  WITH (NOLOCK)  
+                    LEFT  JOIN  BOR120T   B  WITH (NOLOCK)   ON B.COMP_CODE   = A.COMP_CODE
+                                                            AND B.DIV_CODE    = A.DIV_CODE
+                    LEFT  JOIN  ABA400T   C  WITH (NOLOCK)   ON C.COMP_CODE   = A.COMP_CODE
+                                                            AND C.ACCNT       = A.ACCNT
+                    LEFT  JOIN  BSA210T   D  WITH (NOLOCK)   ON D.COMP_CODE   = A.COMP_CODE
+                                                            AND D.TREE_CODE   = A.IN_DEPT_CODE
+                    LEFT  JOIN  BSA210T   E  WITH (NOLOCK)   ON E.COMP_CODE   = A.COMP_CODE
+                                                            AND E.TREE_CODE   = A.DEPT_CODE
+                    LEFT  JOIN  BCM100T   F  WITH (NOLOCK)   ON F.COMP_CODE   = A.COMP_CODE
+                                                            AND F.CUSTOM_CODE = A.CUSTOM_CODE
+            WHERE   A.COMP_CODE        = #{S_COMP_CODE}
+            AND     A.AC_DATE         &gt;= #{AC_DATE_FR}
+            AND     A.AC_DATE         &lt;= #{AC_DATE_TO}
+        </if>
+		    /*'입력일*/
+			<if test="@foren.Ognl@isNotEmpty(INPUT_DATE_FR)">
+				AND   A.INPUT_DATE &gt;= #{INPUT_DATE_FR}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(INPUT_DATE_TO)">
+				AND   A.INPUT_DATE &lt;= #{INPUT_DATE_TO}
+			</if>
+
+		    /*'입력부서*/
+			<if test="@foren.Ognl@isNotEmpty(IN_DEPT_CODE)">
+				<if test="@foren.Ognl@isNotEmpty(IN_DEPT_NAME)">
+					AND   A.IN_DEPT_CODE     = #{IN_DEPT_CODE}
+				</if>
+				<if test="@foren.Ognl@isEmpty(IN_DEPT_NAME)">	
+					AND   A.IN_DEPT_CODE  LIKE '%' + #{IN_DEPT_CODE} + '%'
+				</if>
+			</if>
+			<if test="@foren.Ognl@isEmpty(IN_DEPT_CODE)">
+				<if test="@foren.Ognl@isNotEmpty(IN_DEPT_NAME)">
+					AND   E.TREE_NAME     LIKE '%' + #{IN_DEPT_NAME} + '%'
+				</if>
+			</if>
+		
+		    /*거래처*/
+		    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+					AND   A.CUSTOM_CODE     = #{CUSTOM_CODE}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE) and @foren.Ognl@isEmpty(CUSTOM_NAME)">	
+					AND   A.CUSTOM_CODE  LIKE  #{CUSTOM_CODE} + '%'
+			</if>
+			<if test="@foren.Ognl@isEmpty(CUSTOM_CODE) and @foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+					AND   F.CUSTOM_NAME  LIKE '%' + #{CUSTOM_NAME} + '%'
+			</if>
+
+		    /*'사업장*/
+			<if test="@foren.Ognl@isNotEmpty(DIV_CODE)">     
+				AND A.DIV_CODE IN
+				<foreach collection="DIV_CODE" item="item" separator="," close=")" open="(">
+					#{item}
+				</foreach>         
+			</if>
+		
+		    /*'수정삭제이력표시*/
+			<if test="INCLUDE_DELETE == &quot;N&quot;">
+				AND (A.MOD_DIVI IS NULL OR A.MOD_DIVI = '')
+			</if>
+		
+		    /*'각주*/
+			<if test="POSTIT_YN == &quot;Y&quot;">
+				AND   A.POSTIT_YN    = 'Y'
+				AND   A.POSTIT    LIKE '%' + #{POSTIT} + '%'
+			</if>
+			
+		    /*'회계번호*/
+			<if test="@foren.Ognl@isNotEmpty(SLIP_NUM_FR)">
+				AND   A.SLIP_NUM &gt;=  #{SLIP_NUM_FR}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(SLIP_NUM_TO)">
+				AND   A.SLIP_NUM &lt;=  #{SLIP_NUM_TO}
+			</if>
+		    
+		    /*'결의번호*/
+			<if test="@foren.Ognl@isNotEmpty(EX_NUM_FR)">
+				AND   A.EX_NUM &gt;=  #{EX_NUM_FR}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(EX_NUM_TO)">
+				AND   A.EX_NUM &lt;=  #{EX_NUM_TO}
+			</if>
+		
+		    /*'입력경로*/
+			<if test="@foren.Ognl@isNotEmpty(INPUT_PATH)">
+				AND   A.INPUT_PATH    = #{INPUT_PATH}
+			</if>
+		
+		    /*'금액*/
+			<if test="@foren.Ognl@isNotEmpty(AMT_I_FR)">
+				 AND   ISNULL(A.AMT_I,0.0) &gt;= #{AMT_I_FR}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(AMT_I_TO)">
+				 AND   ISNULL(A.AMT_I,0.0) &lt;= #{AMT_I_TO}
+			</if>
+		
+		    /*'외화금액*/
+			<if test="@foren.Ognl@isNotEmpty(FOR_AMT_I_FR)">
+				 AND   ISNULL(A.FOR_AMT_I,0.0) &gt;= #{FOR_AMT_I_FR}
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(FOR_AMT_I_TO)">
+				 AND   ISNULL(A.FOR_AMT_I,0.0) &lt;= #{FOR_AMT_I_TO}
+			</if>
+		
+		    /*'계정과목*/
+			<if test="@foren.Ognl@isNotEmpty(ACCNT)">
+				<if test="@foren.Ognl@isNotEmpty(ACCNT_NAME)">
+					AND   A.ACCNT            = #{ACCNT}
+				</if>
+				<if test="@foren.Ognl@isEmpty(ACCNT_NAME)">
+					AND   A.ACCNT     LIKE '%' + #{ACCNT} + '%'
+				</if>
+			</if>
+			<if test="@foren.Ognl@isEmpty(ACCNT)">
+				<if test="@foren.Ognl@isNotEmpty(ACCNT_NAME)">
+					AND   A.ACCNT_NAME     LIKE '%' + #{ACCNT_NAME} + '%'
+				</if>	
+			</if>
+
+		    /*'입력자*/
+			<if test="@foren.Ognl@isNotEmpty(CHARGE_CODE)">
+					 AND   A.CHARGE_CODE    = #{CHARGE_CODE}
+			</if>
+		
+		    /*'적요*/
+			<if test="@foren.Ognl@isNotEmpty(REMARK)">
+                     AND   A.REMARK    LIKE '%' + #{REMARK} + '%'
+            </if>
+
+		    /*'귀속부서*/
+		    /*둘다 값이 있으면,*/
+			<if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+				<if test="@foren.Ognl@isNotEmpty(DEPT_CODE)">
+					<if test="INCLUD_YN == &quot;Y&quot;">
+						AND (	A.DEPT_CODE        = #{DEPT_CODE} 
+						 	OR	D.TREE_LEVEL LIKE @TREE_LEVEL + '%')
+					</if>
+					<if test="INCLUD_YN == &quot;N&quot;">
+						AND   A.DEPT_CODE        = #{DEPT_CODE}
+					</if>
+				</if>
+				<if test="@foren.Ognl@isEmpty(DEPT_NAME)">
+					AND   A.DEPT_CODE     LIKE #{DEPT_CODE}
+				</if>
+			</if>
+			<if test="@foren.Ognl@isEmpty(DEPT_CODE)">
+				<if test="@foren.Ognl@isNotEmpty(DEPT_NAME)">
+					AND   A.DEPT_NAME     LIKE #{DEPT_NAME}
+				</if>
+			</if> 
+	               ) A
+	                LEFT  JOIN BSA100T AS M1 WITH (NOLOCK) ON M1.COMP_CODE = A.COMP_CODE
+	                                                      AND M1.MAIN_CODE = 'A009'
+	                                                      AND M1.SUB_CODE  = A.CHARGE_CODE
+	                LEFT  JOIN BSA100T AS M2 WITH (NOLOCK) ON M2.COMP_CODE = A.COMP_CODE
+	                                                      AND M2.MAIN_CODE = 'A009'
+	                                                      AND M2.SUB_CODE  = A.AP_CHARGE_CODE
+	                LEFT  JOIN BSA100T AS M3 WITH (NOLOCK) ON M3.COMP_CODE = A.COMP_CODE
+	                                                      AND M3.MAIN_CODE = 'A011'
+	                                                      AND M3.SUB_CODE  = A.INPUT_PATH
+	        GROUP   BY  A.AC_DATE   , A.SLIP_NUM  , A.INPUT_PATH, M3.CODE_NAME, A.EX_DATE , A.EX_NUM, A.CHARGE_CODE
+	                  , M1.CODE_NAME, A.INPUT_DATE, M2.CODE_NAME, A.AP_DATE   , A.MOD_DIVI, A.INPUT_DIVI, A.POSTIT_YN
+	        ORDER   BY  A.AC_DATE, A.SLIP_NUM
+	    
+	       /*-- 3.2 합계 INSERT ------------------------------------------------------------------------------------------*/
+	       /*INSERT INTO #AGJ245SKR_120228(GUBUN, AC_DATE, DR_AMT_I, CR_AMT_I)											  */
+	       /*SELECT 																									  */
+	       /*       '2' AS GUBUN																						  */
+	       /*     , uniLITE.fnGetTxtLang('KOREAN', 'A0149') AS AC_DATE													  */
+	       /*     , ISNULL(SUM(DR_AMT_I),0) AS DR_AMT_I																	  */
+	       /*     , ISNULL(SUM(CR_AMT_I),0) AS DR_AMT_I																	  */
+	       /*  FROM #AGJ245SKR_120228 																		  */
+	       /*HAVING (ISNULL(SUM(DR_AMT_I),0) != 0 OR ISNULL(SUM(CR_AMT_I),0) != 0)										  */
+	    
+	       /*-- 4. 쿼리 ------------------------------------------------------------------------------------------*/
+	       SELECT 
+	              AC_DATE
+	            , SLIP_NUM
+	            , DR_AMT_I
+	            , CR_AMT_I
+	            , DIV_CODE
+	            , REMARK
+	            , INPUT_PATH
+	            , INPUT_PATH_NAME
+	            , EX_DATE
+	            , EX_NUM
+	            , CHARGE_CODE
+	            , CHARGE_NAME
+	            , INPUT_DATE
+	            , AP_CHARGE_NAME
+	            , AP_DATE
+	            , MOD_DIVI
+	            , INPUT_DIVI
+	            , GUBUN
+	            , POSTIT_YN
+	            , SLIP_TYPE
+	            , AP_STS
+	         FROM #AGJ245SKR_120228   WITH (NOLOCK)
+	         ORDER BY GUBUN, AC_DATE, SLIP_NUM
+	    
+	       SET ARITHABORT OFF
+	       SET NOCOUNT OFF
+	    END
+	    
+	    DROP TABLE #AGJ245SKR_120228   
+	</select>
+
+	<select id="agj245skrServiceImpl.selectList2" parameterType="Map" resultType="rMap">		
+		/*--agj245skr.Cagj245skr[fnAgj245Qst2] Query6*/
+		SELECT 
+        <if test="SLIP_DIVI == &quot;2&quot;">
+			   EX_SEQ															AS EX_SEQ
+        </if>
+        <if test="SLIP_DIVI != &quot;2&quot;">
+        	   SLIP_SEQ															AS EX_SEQ
+        </if>
+		     , M1.CODE_NAME                                                     AS SLIP_DIVI_NM
+		     , A.ACCNT
+		     , M3.ACCNT_NAME
+		     , A.CUSTOM_CODE 
+		     , CASE WHEN ISNULL(A.CUSTOM_NAME,'') = '' THEN M4.CUSTOM_NAME
+					ELSE ISNULL(A.CUSTOM_NAME,'') 
+				END                                                             AS CUSTOM_NAME
+		     , A.AMT_I
+		     , ISNULL(A.MONEY_UNIT,'')                                          AS MONEY_UNIT
+		     , A.EXCHG_RATE_O
+		     , A.FOR_AMT_I
+		     , ISNULL(A.REMARK,'')                                              AS REMARK
+		     , A.DEPT_NAME
+		     , M5.DIV_NAME
+		     , M2.CODE_NAME                                                     AS PROOF_KIND_NM
+		     , uniLITE.fnCipherDecrypt(A.CREDIT_NUM, 'RC')                      AS CREDIT_NUM
+		     , M6.CODE_NAME                                                     AS REASON_CODE
+		     , ISNULL(A.POSTIT_YN,'N')                                          AS POSTIT_YN
+		     , ISNULL(A.POSTIT,'')                                              AS POSTIT
+		     , ISNULL(A.POSTIT_USER_ID, '')                                     AS POSTIT_USER_ID
+		     , A.AUTO_NUM 
+		     , ISNULL(A.AC_CODE1,'')                                            AS AC_CODE1
+		     , ISNULL(A.AC_CODE2,'')                                            AS AC_CODE2
+		     , ISNULL(A.AC_CODE3,'')                                            AS AC_CODE3
+		     , ISNULL(A.AC_CODE4,'')                                            AS AC_CODE4
+		     , ISNULL(A.AC_CODE5,'')                                            AS AC_CODE5
+		     , ISNULL(A.AC_CODE6,'')                                            AS AC_CODE6
+		     , ISNULL(A.AC_DATA1,'')                                            AS AC_DATA1
+		     , ISNULL(A.AC_DATA2,'')                                            AS AC_DATA2
+		     , ISNULL(A.AC_DATA3,'')                                            AS AC_DATA3
+		     , ISNULL(A.AC_DATA4,'')                                            AS AC_DATA4
+		     , ISNULL(A.AC_DATA5,'')                                            AS AC_DATA5
+		     , ISNULL(A.AC_DATA6,'')                                            AS AC_DATA6
+		     , ISNULL(A.AC_DATA_NAME1,'')                                       AS AC_DATA_NAME1
+		     , ISNULL(A.AC_DATA_NAME2,'')                                       AS AC_DATA_NAME2
+		     , ISNULL(A.AC_DATA_NAME3,'')                                       AS AC_DATA_NAME3
+		     , ISNULL(A.AC_DATA_NAME4,'')                                       AS AC_DATA_NAME4
+		     , ISNULL(A.AC_DATA_NAME5,'')                                       AS AC_DATA_NAME5
+		     , ISNULL(A.AC_DATA_NAME6,'')                                       AS AC_DATA_NAME6
+		     , ISNULL(N1.AC_NAME,'')                                            AS AC_NAME1
+		     , ISNULL(N2.AC_NAME,'')                                            AS AC_NAME2
+		     , ISNULL(N3.AC_NAME,'')                                            AS AC_NAME3
+		     , ISNULL(N4.AC_NAME,'')                                            AS AC_NAME4
+		     , ISNULL(N5.AC_NAME,'')                                            AS AC_NAME5
+		     , ISNULL(N6.AC_NAME,'')                                            AS AC_NAME6
+		    
+		     , ISNULL(N1.DT_TYPE,0 )                                            AS AC_TYPE1
+		     , ISNULL(N2.DT_TYPE,0 )                                            AS AC_TYPE2
+		     , ISNULL(N3.DT_TYPE,0 )                                            AS AC_TYPE3
+		     , ISNULL(N4.DT_TYPE,0 )                                            AS AC_TYPE4
+		     , ISNULL(N5.DT_TYPE,0 )                                            AS AC_TYPE5
+		     , ISNULL(N6.DT_TYPE,0 )                                            AS AC_TYPE6
+		    
+		     , ISNULL(N1.DT_FMT,'0')                                            AS AC_FORMAT1
+		     , ISNULL(N2.DT_FMT,'0')                                            AS AC_FORMAT2
+		     , ISNULL(N3.DT_FMT,'0')                                            AS AC_FORMAT3
+		     , ISNULL(N4.DT_FMT,'0')                                            AS AC_FORMAT4
+		     , ISNULL(N5.DT_FMT,'0')                                            AS AC_FORMAT5
+		     , ISNULL(N6.DT_FMT,'0')                                            AS AC_FORMAT6
+		     
+	         , ISNULL(N1.DT_POPUP,'0')        									AC_POPUP1
+		     , ISNULL(N2.DT_POPUP,'0')      									AC_POPUP2
+		     , ISNULL(N3.DT_POPUP,'0')        									AC_POPUP3
+		     , ISNULL(N4.DT_POPUP,'0')        									AC_POPUP4
+		     , ISNULL(N5.DT_POPUP,'0')    									    AC_POPUP5
+		     , ISNULL(N6.DT_POPUP,'0')        									AC_POPUP6
+
+		<if test="SLIP_DIVI == &quot;1&quot;"> 
+			FROM	AGJ210T AS A   WITH (NOLOCK)
+		</if>
+		<if test="SLIP_DIVI == &quot;2&quot;">
+			FROM	AGJ110T AS A   WITH (NOLOCK)
+		</if>
+		    LEFT  JOIN ABA200T  AS N1 WITH (NOLOCK) ON  N1.COMP_CODE   = A.COMP_CODE
+		                                            AND N1.AC_CD       = A.AC_CODE1
+		    LEFT  JOIN ABA200T  AS N2 WITH (NOLOCK) ON  N2.COMP_CODE   = A.COMP_CODE
+		                                            AND N2.AC_CD       = A.AC_CODE2
+		    LEFT  JOIN ABA200T  AS N3 WITH (NOLOCK) ON  N3.COMP_CODE   = A.COMP_CODE
+		                                            AND N3.AC_CD       = A.AC_CODE3
+		    LEFT  JOIN ABA200T  AS N4 WITH (NOLOCK) ON  N4.COMP_CODE   = A.COMP_CODE
+		                                            AND N4.AC_CD       = A.AC_CODE4
+		    LEFT  JOIN ABA200T  AS N5 WITH (NOLOCK) ON  N5.COMP_CODE   = A.COMP_CODE
+		                                            AND N5.AC_CD       = A.AC_CODE5
+		    LEFT  JOIN ABA200T  AS N6 WITH (NOLOCK) ON  N6.COMP_CODE   = A.COMP_CODE
+		                                            AND N6.AC_CD       = A.AC_CODE6
+		    LEFT  JOIN BSA100T  AS M1 WITH (NOLOCK) ON  M1.COMP_CODE   = A.COMP_CODE
+		                                            AND M1.MAIN_CODE   = 'A001'
+		                                            AND M1.SUB_CODE    = A.DR_CR
+		    LEFT  JOIN BSA100T  AS M2 WITH (NOLOCK) ON  M2.COMP_CODE   = A.COMP_CODE
+		                                            AND M2.MAIN_CODE   = 'A022'
+		                                            AND M2.SUB_CODE    = A.PROOF_KIND
+		    LEFT  JOIN ABA400T  AS M3 WITH (NOLOCK) ON  M3.COMP_CODE   = A.COMP_CODE
+		                                            AND M3.ACCNT       = A.ACCNT
+		    LEFT  JOIN BCM100T  AS M4 WITH (NOLOCK) ON  M4.COMP_CODE   = A.COMP_CODE
+		                                            AND M4.CUSTOM_CODE = A.CUSTOM_CODE
+		    LEFT  JOIN BOR120T  AS M5 WITH (NOLOCK) ON  M5.COMP_CODE   = A.COMP_CODE
+		                                            AND M5.DIV_CODE    = A.DIV_CODE
+		    LEFT  JOIN BSA100T  AS M6 WITH (NOLOCK) ON  M6.COMP_CODE   = A.COMP_CODE
+		                                            AND M6.MAIN_CODE   = 'A070'
+		                                            AND M6.SUB_CODE    = A.REASON_CODE
+		WHERE A.COMP_CODE	= #{S_COMP_CODE}
+		<if test="SLIP_DIVI == &quot;1&quot;"> 
+			AND AC_DATE	= #{AC_DATE_MASTER}
+		</if>
+		<if test="SLIP_DIVI == &quot;2&quot;"> 
+			AND EX_DATE	= #{AC_DATE_MASTER}
+		</if>
+		
+		<if test="@foren.Ognl@isEmpty(SLIP_NUM_MASTER)">
+			<if test="SLIP_DIVI == &quot;1&quot;"> 
+				AND SLIP_NUM	= 0
+			</if>
+			<if test="SLIP_DIVI == &quot;2&quot;"> 
+				AND EX_NUM		= 0
+			</if>
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(SLIP_NUM_MASTER)">
+			<if test="SLIP_DIVI == &quot;1&quot;"> 
+				AND SLIP_NUM	= #{SLIP_NUM_MASTER}
+			</if>
+			<if test="SLIP_DIVI == &quot;2&quot;"> 
+				AND EX_NUM		= #{SLIP_NUM_MASTER}
+			</if>
+		</if>
+		
+		<if test="SLIP_DIVI == &quot;2&quot;">
+			<if test="@foren.Ognl@isEmpty(AP_DATE)">
+				AND AP_STS = '1'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(AP_DATE)">
+				AND AP_STS = '2'
+			</if>
+		</if>
+		
+			AND INPUT_PATH 	= #{INPUT_PATH_MASTER}
+			
+		<if test="INCLUDE_DELETE	== &quot;N&quot;">
+			AND ISNULL(MOD_DIVI,'') = ''
+		</if>
+		<if test="INCLUDE_DELETE	== &quot;Y&quot;">
+			AND ISNULL(MOD_DIVI,'') != ''
+		</if>
+		
+		<if test="SLIP_DIVI == &quot;1&quot;"> 
+			ORDER BY  SLIP_SEQ
+		</if>
+		<if test="SLIP_DIVI == &quot;2&quot;"> 
+			ORDER BY  EX_SEQ
+		</if>
+	</select>
+
+	<select id="agj245skrServiceImpl.getPostIt" parameterType="Map" resultType="rMap">
+		--UAccntPopUpKrv.CAccntPopupKR[fnGetPostIt] Query01
+		BEGIN
+		   SET NOCOUNT ON
+		   SET ARITHABORT ON
+		
+		   DECLARE @SLIP_DIVI   NVARCHAR(01)   -- 전표구분
+		
+		   SET     @SLIP_DIVI = #{SLIP_DIVI}
+		
+		   IF (@SLIP_DIVI = '2')
+		      BEGIN
+		         SELECT POSTIT
+		           FROM AGJ110T  WITH (NOLOCK)
+		          WHERE COMP_CODE = #{S_COMP_CODE}
+		            AND AUTO_NUM  = #{AUTO_NUM}
+		            AND EX_NUM    = #{EX_NUM} 
+		            AND EX_SEQ    = #{EX_SEQ}
+		            AND EX_DATE   = #{EX_DATE}
+		      END
+		   ELSE
+		      BEGIN
+		         SELECT POSTIT
+		           FROM AGJ210T  WITH (NOLOCK)
+		          WHERE COMP_CODE = #{S_COMP_CODE}
+		            AND AUTO_NUM  = #{AUTO_NUM}
+		            AND SLIP_NUM  = #{SLIP_NUM} 
+		            AND SLIP_SEQ  = #{SLIP_SEQ}
+		            AND AC_DATE   = #{EX_DATE}
+		      END
+		   SET ARITHABORT OFF
+		   SET NOCOUNT OFF
+		END
+	</select>	
+
+	<select id="agj245skrServiceImpl.updatePostIt" parameterType="Map" resultType="rMap">
+		--UAccntPopUpKrv.CAccntPopupKR[fnUpdatePostIt] Query 02
+		BEGIN
+		   DECLARE @SLIP_DIVI   NVARCHAR(01)   -- 전표구분
+		
+		   SET     @SLIP_DIVI = #{SLIP_DIVI}
+		
+		   IF (@SLIP_DIVI = '2')
+		      BEGIN
+		         UPDATE AGJ110T
+		            SET POSTIT_YN      = 'Y'
+		              , POSTIT         = #{POSTIT}
+		              , POSTIT_USER_ID = #{S_USER_ID}
+		          WHERE COMP_CODE = #{S_COMP_CODE}
+		            AND AUTO_NUM  = #{AUTO_NUM}
+		            AND EX_NUM    = #{EX_NUM} 
+		            AND EX_SEQ    = #{EX_SEQ}
+		            AND EX_DATE   = #{EX_DATE}
+		      END
+		   ELSE
+		      BEGIN
+		         UPDATE AGJ210T
+		            SET POSTIT_YN      = 'Y'
+		              , POSTIT         = #{POSTIT}
+		              , POSTIT_USER_ID = #{S_USER_ID}
+		          WHERE COMP_CODE = #{S_COMP_CODE}
+		            AND AUTO_NUM  = #{AUTO_NUM}
+		            AND SLIP_NUM  = #{SLIP_NUM} 
+		            AND SLIP_SEQ  = #{SLIP_SEQ}
+		            AND AC_DATE   = #{EX_DATE}
+		      END
+		END
+	</select>
+	
+	<select id="agj245skrServiceImpl.deletePostIt" parameterType="Map" resultType="rMap">
+		--UAccntPopUpKrv.CAccntPopupKR[fnUpdatePostIt] Query 02
+		BEGIN
+		   DECLARE @SLIP_DIVI   NVARCHAR(01)   -- 전표구분
+		
+		   SET     @SLIP_DIVI = #{SLIP_DIVI}
+		
+		   IF (@SLIP_DIVI = '2')
+		      BEGIN
+		         UPDATE AGJ110T
+		            SET POSTIT_YN      = 'N'
+		              , POSTIT         = ''
+		              , POSTIT_USER_ID = ''
+		          WHERE COMP_CODE = #{S_COMP_CODE}
+		            AND AUTO_NUM  = #{AUTO_NUM}
+		            AND EX_NUM    = #{EX_NUM} 
+		            AND EX_SEQ    = #{EX_SEQ}
+		            AND EX_DATE   = #{EX_DATE}
+		      END
+		   ELSE
+		      BEGIN
+		         UPDATE AGJ210T
+		            SET POSTIT_YN      = 'N'
+		              , POSTIT         = ''
+		              , POSTIT_USER_ID = ''
+		          WHERE COMP_CODE = #{S_COMP_CODE}
+		            AND AUTO_NUM  = #{AUTO_NUM}
+		            AND SLIP_NUM  = #{SLIP_NUM} 
+		            AND SLIP_SEQ  = #{SLIP_SEQ}
+		            AND AC_DATE   = #{EX_DATE}
+		      END
+		END
+	</select>
+
+</mapper>

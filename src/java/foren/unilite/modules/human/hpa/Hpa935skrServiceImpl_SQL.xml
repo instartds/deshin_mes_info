@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="hpa935skrServiceImpl">
+	<select id="hpa935skrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	--hpa935skrServiceImpl.selectList [Query01] 
+	BEGIN
+	   SET NOCOUNT ON
+	   SET ARITHABORT ON
+	   
+	   -- 1. 임시테이블 선언 ------------------------------------------------------------------------------------------
+	   IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#HPA935SKR_190814'))
+	       DROP TABLE #HPA935SKR_190814
+	
+	   CREATE TABLE #HPA935SKR_190814 ( GUBUN            NVARCHAR(01)
+	                                  , COMP_CODE        NVARCHAR(10)
+	                                  , PERSON_NUMB      NVARCHAR(10)
+	                                  , REAL_AMOUNT_I    NUMERIC(30, 6)
+	                                  )
+	
+	   -- 2.1 급여내역 INSERT ------------------------------------------------------------------------------------------
+	   INSERT INTO #HPA935SKR_190814
+	   SELECT '1'                  AS GUBUN
+	        , A.COMP_CODE
+	        , A.PERSON_NUMB
+	        , SUM(A.REAL_AMOUNT_I) AS REAL_AMOUNT_I
+	   FROM              HPA600T A WITH (NOLOCK)
+	          LEFT  JOIN CBM600T B WITH (NOLOCK) ON B.COMP_CODE      = A.COMP_CODE
+	                                            AND B.COST_POOL_CODE = A.COST_KIND
+	   WHERE  A.COMP_CODE   = #{S_COMP_CODE}
+	     AND  uniLITE.fnCheckCompDivAuth(A.COMP_CODE, A.DIV_CODE, #{S_USER_ID}) = 'Y'
+	     AND  A.PAY_YYYYMM  = #{PAY_YYYYMM}
+	     AND  A.SUPP_TYPE   = '1'
+	     <if test=" @foren.Ognl@isNotEmpty(DIV_CODE) ">     
+		 	AND  A.DIV_CODE = #{DIV_CODE}
+	     </if>
+	   GROUP BY A.COMP_CODE, A.PERSON_NUMB
+	   HAVING SUM(A.REAL_AMOUNT_I) != 0
+	
+	   -- 2.2 월별복지지원내역 INSERT ------------------------------------------------------------------------------------------
+	   INSERT INTO #HPA935SKR_190814
+	   SELECT '1'                AS GUBUN
+	        , A.COMP_CODE
+	        , A.PERSON_NUMB
+	        , SUM(ISNULL(A.GIVE_I, 0)) AS REAL_AMOUNT_I
+	   FROM   HWE010T A WITH (NOLOCK)
+	          LEFT  JOIN HWE100T B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+	                                            AND B.WEL_LEVEL1  = A.WEL_LEVEL1
+	                                            AND B.WEL_LEVEL2  = A.WEL_LEVEL2
+	                                            AND B.WEL_CODE    = A.WEL_CODE
+	                                            AND B.APPLY_YYMM  = A.APPLY_YYMM
+	          LEFT  JOIN HUM100T C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+	                                            AND C.PERSON_NUMB = A.PERSON_NUMB
+	   WHERE  A.COMP_CODE    = #{S_COMP_CODE}
+	     AND  uniLITE.fnCheckCompDivAuth(C.COMP_CODE, C.DIV_CODE, #{S_USER_ID}) = 'Y'
+	     AND  A.PAY_YYYYMM   = #{PAY_YYYYMM}
+	     AND  A.CASH_SEND    = 'N'
+	     AND  A.PAY_APPLY_YN = 'N'
+	     AND  B.PAY_YN       = 'Y'
+	     AND  B.TAX_CODE    != '4'
+	     <if test=" @foren.Ognl@isNotEmpty(DIV_CODE) ">     
+		 	AND  C.DIV_CODE = #{DIV_CODE}
+	     </if>
+	      
+	   GROUP BY A.COMP_CODE, A.PERSON_NUMB
+	   HAVING SUM(ISNULL(A.GIVE_I, 0)) != 0
+	
+	   -- 3. 합계 INSERT ------------------------------------------------------------------------------------------
+	   INSERT INTO #HPA935SKR_190814
+	   SELECT '2'                AS GUBUN
+	        , A.COMP_CODE
+	        , A.PERSON_NUMB
+	        , SUM(A.REAL_AMOUNT_I) AS REAL_AMOUNT_I
+	   FROM   #HPA935SKR_190814 A WITH (NOLOCK)
+	   WHERE  A.GUBUN = '1'
+	   GROUP BY A.COMP_CODE, A.PERSON_NUMB
+	
+	   -- 4. Main Query
+	   SELECT A.COMP_CODE
+	        , A.PERSON_NUMB                                  AS PERSON_NUMB
+	        , B.NAME                                         AS NAME
+	        , CASE WHEN ISNULL(B.BANKBOOK_NAME, '') = '' 
+			       THEN B.NAME
+	               ELSE B.BANKBOOK_NAME
+	           END                                           AS BANKBOOK_NAME
+	        , CASE WHEN ISNULL(B.BANK_CODE1, '') = ''
+			       THEN '정보없음'
+				   ELSE RIGHT(B.BANK_CODE1, 3) 
+			   END											 AS BANK_CODE
+	        , ISNULL(C1.CUSTOM_NAME, '')                     AS BANK_NAME
+	        , unilite.fnCipherDecrypt(B.BANK_ACCOUNT1, 'B')  AS BANK_ACCOUNT
+	        , SUM(ISNULL(A.REAL_AMOUNT_I, 0))                AS REAL_AMOUNT_I
+	   FROM    #HPA935SKR_190814 A  WITH (NOLOCK)
+	          INNER JOIN HUM100T B  WITH (NOLOCK) ON B.COMP_CODE    = A.COMP_CODE
+	                                             AND B.PERSON_NUMB  = A.PERSON_NUMB
+	          LEFT  JOIN BCM100T C1 WITH (NOLOCK) ON C1.COMP_CODE   = B.COMP_CODE
+	                                             AND C1.CUSTOM_CODE = B.BANK_CODE1
+	                                             AND C1.CUSTOM_TYPE = '4'
+	          LEFT  JOIN BCM100T C2 WITH (NOLOCK) ON C2.COMP_CODE   = B.COMP_CODE
+	                                             AND C2.CUSTOM_CODE = B.BANK_CODE2
+	                                             AND C2.CUSTOM_TYPE = '4'
+	   WHERE  A.COMP_CODE = #{S_COMP_CODE}
+	     AND  A.GUBUN     = '2'
+	    
+	   GROUP BY A.COMP_CODE, A.PERSON_NUMB, B.NAME
+	          , B.BANK_CODE1, C1.CUSTOM_NAME          
+	          , unilite.fnCipherDecrypt(B.REPRE_NUM, 'R')
+			  , B.BANKBOOK_NAME
+	          , unilite.fnCipherDecrypt(B.BANK_ACCOUNT1, 'B')
+	          , CASE WHEN ISNULL(B.BANKBOOK_NAME, '') = '' 
+			         THEN B.NAME
+	                 ELSE B.BANKBOOK_NAME
+	             END
+	    
+			ORDER BY RIGHT(B.BANK_CODE1, 3), A.PERSON_NUMB
+		 
+	   SET NOCOUNT OFF
+	   SET ARITHABORT OFF
+	
+	END 
+	
+	</select>
+</mapper>

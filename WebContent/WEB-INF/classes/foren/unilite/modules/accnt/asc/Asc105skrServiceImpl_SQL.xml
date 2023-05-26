@@ -1,0 +1,389 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="asc105skrServiceImpl">
+	<select id="asc105skrServiceImpl.selectList" parameterType="Map" resultType="rMap">
+	/*--asc105skr.Casc105skr[fnAsc105Qstd] Query01*/
+	BEGIN
+	    SET NOCOUNT ON
+	    SET ARITHABORT ON
+	
+	    DECLARE             @FR_DPR_YYMM            NVARCHAR(06)
+	                      , @TO_DPR_YYMM            NVARCHAR(06)
+	
+	    SET @FR_DPR_YYMM    = #{DVRY_DATE_FR}
+	    SET @TO_DPR_YYMM    = #{DVRY_DATE_TO}
+	
+	    /*-- 1. 임시테이블 선언 ------------------------------------------------------------------------------------------*/
+	    IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE id=object_id('tempdb..#ASC105SKR_120703'))
+	        DROP TABLE #ASC105SKR_120703
+	
+	    CREATE TABLE #ASC105SKR_120703 ( GUBUN            NVARCHAR(01)
+	                                   , ACCNT_DIVI       NVARCHAR(25)
+	                                   , ACCNT            NVARCHAR(25)
+	                                   , ACCNT_NAME       NVARCHAR(100)
+	                                   , ASST             NVARCHAR(25)
+	                                   , ASST_NAME        NVARCHAR(100)
+	                                   , ACQ_AMT_I        NUMERIC(30, 6)
+	                                   , ACQ_DATE         NVARCHAR(10)
+	                                   , DRB_YEAR         NUMERIC(5, 0)
+	                                   , DPR_STS          NVARCHAR(10)
+	                                   , ACQ_Q            NUMERIC(30, 6)               /*	취득수량		*/
+	                                   , DRAFT_BALN_AMT   NUMERIC(30, 6)               /*	기초잔액		*/
+	                                   , CUR_IN_AMT       NUMERIC(30, 6)               /*	당기증가액		*/
+	                                   , CUR_DEC_AMT      NUMERIC(30, 6)               /*	당기장부감소액	*/
+	                                   , CUR_DEC_AMT2     NUMERIC(30, 6)               /*	당기실처분액	*/
+	                                   , FINAL_BALN_AMT   NUMERIC(30, 6)               /*	기말잔액		*/
+	                                   , FINAL_BALN_TOT   NUMERIC(30, 6)               /*	전기말상각누계액*/
+	                                   , CUR_DPR_AMT      NUMERIC(30, 6)               /*	당기상각액		*/
+	                                   , CUR_DPR_DEC_AMT  NUMERIC(30, 6)               /*	당기상각감소액	*/
+	                                   , FINAL_DPR_TOT    NUMERIC(30, 6)               /*	당기말상각누계액*/
+	                                   , DPR_BALN_AMT     NUMERIC(30, 6)               /*	미상각잔액		*/
+	                                   , WASTE_YYYYMM     NVARCHAR(08)                 /*	매각/폐기년월	*/
+	                                   , COST_POOL_NAME   NVARCHAR(100)
+	                                   , COST_DIRECT      NVARCHAR(01)
+	                                   , ITEMLEVEL1_NAME  NVARCHAR(100)
+	                                   , ITEMLEVEL2_NAME  NVARCHAR(100)
+	                                   , ITEMLEVEL3_NAME  NVARCHAR(100)
+	                                   , REMARK           NVARCHAR(100)
+	                                   , KEY_STRING    AS RTRIM(ACCNT_DIVI) + RTRIM(GUBUN) + RTRIM(ASST)
+	                                   )
+	
+	    /*-- 2. 상각비명세서 INSERT ------------------------------------------------------------------------------------------*/
+	    INSERT INTO #ASC105SKR_120703
+	    SELECT  
+	           '1'                 AS GUBUN
+	         , ZZ.ACCNT            AS ACCNT_DIVI
+	         , ZZ.ACCNT
+	         , ZZ.ACCNT_NAME
+	         , ZZ.ASST
+	         , ZZ.ASST_NAME
+	         , ZZ.ACQ_AMT_I
+	         , ZZ.ACQ_DATE
+	         , ZZ.DRB_YEAR
+	         , M1.CODE_NAME        AS DPR_STS
+	         , ZZ.ACQ_Q																							
+	         , ZZ.DRAFT_BALN_AMT															/*'기초잔액			*/
+	         , ZZ.CUR_IN_AMT																/*'당기증가액		*/
+	         , ZZ.CUR_DEC_AMT																/*'당기장부감소액	*/
+	         , ZZ.CUR_DEC_AMT2																/*'당기실처분액		*/
+	         , (ZZ.DRAFT_BALN_AMT + ZZ.CUR_IN_AMT - ZZ.CUR_DEC_AMT) AS FINAL_BALN_AMT		/*'기말잔액			*/
+	         , ZZ.FINAL_BALN_TOT															/*'전기말상각누계액	*/
+	         , ZZ.CUR_DPR_AMT																/*'당기상각액		*/
+	         , ZZ.CUR_DPR_DEC_AMT															/*'당기상각감소액	*/
+	         , ZZ.FINAL_DPR_TOT																/*'당기말상각누계액	*/
+	         , ZZ.DPR_BALN_AMT																/*'미상각잔액		*/
+	         , ZZ.WASTE_YYYYMM																/*'매각/폐기년월	*/
+	         , ZZ.COST_POOL_NAME																		
+	         , ZZ.COST_DIRECT
+	         , ZZ.ITEMLEVEL1_NAME
+	         , ZZ.ITEMLEVEL2_NAME
+	         , ZZ.ITEMLEVEL3_NAME
+	         , '' AS REMARK																	/*'마지막 필드에 빈 값 추가*/
+	    FROM   (
+	           SELECT  DISTINCT
+	                   A.COMP_CODE
+	                 , A.ACCNT 
+	                 , C.ACCNT_NAME
+	                 , A.ASST
+	                 , A.ASST_NAME
+	                 , A.ACQ_AMT_I
+	                 , unilite.fnGetUserDateComp(A.COMP_CODE, A.ACQ_DATE)                                                  AS ACQ_DATE
+	                 , A.DRB_YEAR
+	                 , CASE WHEN ISNULL(A.DPR_STS2,'N') = 'Y' AND ISNULL(A.DPR_YYYYMM,'999999') &lt;= @TO_DPR_YYMM
+	                        THEN 'Y' 
+	                        ELSE 'N'
+	                   END                                                                                                 AS DPR_STS
+	                 , A.ACQ_Q
+	    /*'-----------------------------------------------------------------			*/
+	    /*'기초잔액 : 전월까지의 자산잔액(취득가액 - 매각폐기금액 + 자본적지출금액)		*/
+	    /*'-----------------------------------------------------------------			*/
+	                 , CASE WHEN A.USE_DATE > @FR_DPR_YYMM AND A.USE_DATE &lt; S4.MIN_DPR_YYMM
+	                        THEN 0
+	                        ELSE ISNULL((CASE WHEN A.USE_DATE &gt;= @FR_DPR_YYMM + '01' AND A.USE_DATE &lt;= @TO_DPR_YYMM + '31'
+	                                          THEN 0 
+	                                          ELSE A.ACQ_AMT_I
+	                                     END),0)
+	                             + (ISNULL(A.FI_CAPI_TOT_I    ,0) - ISNULL(S1.TM_CPT_I   ,0))
+	                             - (ISNULL(A.FI_SALE_TOT_I    ,0) - ISNULL(S1.TM_SALE_I  ,0))
+	                             - (ISNULL(A.FI_SALE_DPR_TOT_I,0) - ISNULL(S1.TM_REDUCE_I,0))
+	                   END                                                                                                 AS DRAFT_BALN_AMT
+	    /*'-----------------------------------------------------------------	*/
+	    /*'당기증가액															*/
+	    /*'-----------------------------------------------------------------	*/
+	                 , ISNULL((CASE WHEN A.USE_DATE &gt;= @FR_DPR_YYMM + '01' AND A.USE_DATE &lt;= @TO_DPR_YYMM + '31' 
+	                                THEN A.ACQ_AMT_I 
+	                                ELSE 0 
+	                           END),0)
+	                   + ISNULL(S2.TM_CPT_I,0)                                                                             AS CUR_IN_AMT
+	    /*'-----------------------------------------------------------------	*/
+	    /*'당기감소액															*/
+	    /*'-----------------------------------------------------------------	*/
+	                 , ISNULL(S2.TM_SALE_I,0) + ISNULL(S2.TM_REDUCE_I,0)                                                   AS CUR_DEC_AMT
+	                 , ISNULL(S3.ALTER_AMT_I,0)                                                                            AS CUR_DEC_AMT2
+	    /*'-----------------------------------------------------------------	*/
+	    /*'기말잔액																*/
+	    /*'-----------------------------------------------------------------	*/
+	                 , 0                                                                                                   AS FINAL_BALN_AMT
+	    /*'-----------------------------------------------------------------	*/
+	    /*'전기말상각누계액														*/
+	    /*'-----------------------------------------------------------------	*/
+	                 , CASE WHEN ISNULL(WASTE_SW,'N') = 'Y' AND ISNULL(WASTE_YYYYMM,'999999') &lt; @FR_DPR_YYMM
+	                        THEN 0
+	                        ELSE ISNULL(A.FI_DPR_TOT_I,0)  - (ISNULL(S1.TM_DPR_I,0) - ISNULL(S1.TM_REDUCE_I,0)) 
+	                   END                                                                                                 AS FINAL_BALN_TOT
+	    /*'-----------------------------------------------------------------	*/
+	    /*'당기상각액															*/
+	    /*'-----------------------------------------------------------------	*/
+	                 , ISNULL(S2.TM_DPR_I,0)                                                                               AS CUR_DPR_AMT
+	    /*'-----------------------------------------------------------------	*/
+	    /*'당기상각감소액														*/
+	    /*'-----------------------------------------------------------------	*/
+	                 , ISNULL(S2.TM_REDUCE_I,0)                                                                            AS CUR_DPR_DEC_AMT
+	    /*'-----------------------------------------------------------------	*/
+	    /*'당기말상각누계액														*/
+	    /*'-----------------------------------------------------------------	*/
+	                 , CASE WHEN ISNULL(WASTE_SW,'N') = 'Y' AND ISNULL(WASTE_YYYYMM,'999999') &lt;= @TO_DPR_YYMM
+	                        THEN 0
+	                        ELSE (ISNULL(A.FI_DPR_TOT_I,0) - (ISNULL(S1.TM_DPR_I,0) - ISNULL(S1.TM_REDUCE_I,0)))
+	                               + (ISNULL(S2.TM_DPR_I,0) - ISNULL(S2.TM_REDUCE_I,0))
+	                  END                                                                                                  AS FINAL_DPR_TOT
+	    /*'----------------------------------------------------------------		*/
+	    /*'미상각잔액 : 기말잔액 - 당기말상각누계액								*/
+	    /*'-----------------------------------------------------------------	*/
+	                 , 0                                                                                                   AS DPR_BALN_AMT 
+	                 , A.WASTE_YYYYMM 
+	                 , D.COST_POOL_NAME
+	                 , CASE WHEN ISNULL(A.COST_DIRECT, '') = 'Y' THEN E.CODE_NAME
+	                        ELSE ''
+	                   END                                                                                                 AS COST_DIRECT
+	                 , M1.LEVEL_NAME                                                                                       AS ITEMLEVEL1_NAME
+	                 , M2.LEVEL_NAME                                                                                       AS ITEMLEVEL2_NAME
+	                 , M3.LEVEL_NAME                                                                                       AS ITEMLEVEL3_NAME
+	           FROM                ASS300T   A  WITH (NOLOCK)
+	                   LEFT  JOIN  ASC100T   B  WITH (NOLOCK) ON B.COMP_CODE        = A.COMP_CODE
+	                                                         AND B.ASST             = A.ASST
+	                                                         AND B.DPR_YYMM        &gt;= #{DVRY_DATE_FR}
+	                                                         AND B.DPR_YYMM        &lt;= #{DVRY_DATE_TO}
+	                   LEFT  JOIN  ABA400T   C  WITH (NOLOCK) ON C.COMP_CODE        = A.COMP_CODE
+	                                                         AND C.ACCNT            = A.ACCNT
+	                   LEFT  JOIN  CBM600T   D  WITH (NOLOCK) ON D.COMP_CODE        = A.COMP_CODE
+	                                                         AND D.COST_POOL_CODE   = A.COST_POOL_CODE
+	                   LEFT  JOIN  BSA100T   E  WITH (NOLOCK) ON E.COMP_CODE        = A.COMP_CODE
+	                                                         AND E.MAIN_CODE        = N'B010'
+	                                                         AND E.SUB_CODE         = A.COST_DIRECT
+	                   LEFT  JOIN  BPR000T   M1 WITH (NOLOCK) ON M1.COMP_CODE       = A.COMP_CODE
+	                                                         AND M1.LEVEL1         != '*'
+	                                                         AND M1.LEVEL1          = A.ITEM_LEVEL1
+	                                                         AND M1.LEVEL2          = '*'
+	                                                         AND M1.LEVEL3          = '*'
+	                   LEFT  JOIN  BPR000T   M2 WITH (NOLOCK) ON M2.COMP_CODE       = A.COMP_CODE
+	                                                         AND M2.LEVEL1         != '*'
+	                                                         AND M2.LEVEL1          = A.ITEM_LEVEL1
+	                                                         AND M2.LEVEL2         != '*'
+	                                                         AND M2.LEVEL2          = A.ITEM_LEVEL2
+	                                                         AND M2.LEVEL3          = '*'
+	                   LEFT  JOIN  BPR000T   M3 WITH (NOLOCK) ON M3.COMP_CODE       = A.COMP_CODE
+	                                                         AND M3.LEVEL1         != '*'
+	                                                         AND M3.LEVEL1          = A.ITEM_LEVEL1
+	                                                         AND M3.LEVEL2         != '*'
+	                                                         AND M3.LEVEL2          = A.ITEM_LEVEL2
+	                                                         AND M3.LEVEL3         != '*'
+	                                                         AND M3.LEVEL3          = A.ITEM_LEVEL3
+	                   LEFT  JOIN  (
+	                               SELECT  COMP_CODE
+	                                     , ASST
+	                                     , SUM(TM_DPR_I)       AS TM_DPR_I
+	                                     , SUM(TM_CPT_I)       AS TM_CPT_I
+	                                     , SUM(TM_SALE_I)      AS TM_SALE_I
+	                                     , SUM(TM_REDUCE_I)    AS TM_REDUCE_I
+	                               FROM    ASC100T WITH (NOLOCK)
+	                               WHERE   COMP_CODE    = #{S_COMP_CODE}
+	                               AND     DPR_YYMM    &gt;= #{DVRY_DATE_FR}
+	                               GROUP   BY COMP_CODE, ASST
+	                               )         S1               ON S1.COMP_CODE       = A.COMP_CODE
+	                                                         AND S1.ASST            = A.ASST
+	                   LEFT  JOIN  (
+	                               SELECT  COMP_CODE
+	                                     , ASST
+	                                     , SUM(TM_DPR_I)       AS TM_DPR_I
+	                                     , SUM(TM_CPT_I)       AS TM_CPT_I
+	                                     , SUM(TM_SALE_I)      AS TM_SALE_I
+	                                     , SUM(TM_REDUCE_I)    AS TM_REDUCE_I
+	                               FROM    ASC100T WITH (NOLOCK)
+	                               WHERE   COMP_CODE    = #{S_COMP_CODE}
+	                               AND     DPR_YYMM    &gt;= #{DVRY_DATE_FR}
+	                               AND     DPR_YYMM    &lt;= #{DVRY_DATE_TO}
+	                               GROUP   BY COMP_CODE, ASST
+	                               )         S2               ON S2.COMP_CODE       = A.COMP_CODE
+	                                                         AND S2.ASST            = A.ASST
+	                   LEFT  JOIN  (
+	                               SELECT  COMP_CODE
+	                                     , ASST
+	                                     , SUM(ALTER_AMT_I)    AS ALTER_AMT_I
+	                               FROM    ASS500T WITH (NOLOCK)
+	                               WHERE   COMP_CODE    = #{S_COMP_CODE}
+	                               AND     ALTER_DATE  &gt;= #{DVRY_DATE_FR} + '01'
+	                               AND     ALTER_DATE  &lt;= #{DVRY_DATE_TO} + '31'
+	                               AND     ALTER_DIVI   = N'2'
+	                               GROUP   BY COMP_CODE, ASST
+	                               )         S3               ON S3.COMP_CODE       = A.COMP_CODE
+	                                                         AND S3.ASST            = A.ASST
+	                   LEFT  JOIN  (
+	                               SELECT  COMP_CODE
+	                                     , ASST
+	                                     , MIN(DPR_YYMM)   AS MIN_DPR_YYMM
+	                               FROM    ASC100T WITH (NOLOCK)
+	                               WHERE   COMP_CODE    = #{S_COMP_CODE}
+	                               AND     DPR_YYMM    &gt;= #{DVRY_DATE_FR}
+	                               AND     DPR_YYMM    &lt;= #{DVRY_DATE_TO}
+	                               GROUP   BY COMP_CODE, ASST
+	                               )         S4               ON S4.COMP_CODE       = A.COMP_CODE
+	                                                         AND S4.ASST            = A.ASST
+	           WHERE   A.COMP_CODE          = #{S_COMP_CODE}
+	           AND     LEFT(A.USE_DATE, 6) &lt;= #{DVRY_DATE_TO}
+	           AND     A.DPR_STS           != '5'  -- 명세제외는 안나오도록 함
+	    
+		<if test="@foren.Ognl@isNotEmpty(ACCNT)">
+	               AND A.ACCNT            = #{ACCNT}
+	    </if>
+	    
+		<if test="@foren.Ognl@isNotEmpty(DPR_STS)">
+	               AND ISNULL(A.DPR_STS2,'') = #{DPR_STS}
+	    </if>
+	    
+		<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE)">     
+			AND A.DIV_CODE IN
+			<foreach collection="ACCNT_DIV_CODE" item="item" separator="," close=")" open="(">
+				#{item}
+			</foreach>         
+		</if>
+		<if test="@foren.Ognl@isNotEmpty(ACCNT_DIV_CODE2)">     
+			AND A.DIV_CODE IN (	SELECT VALUE
+								  FROM uniLITE.fnSplit(#{ACCNT_DIV_CODE2}, ',')	)
+		</if>
+/*		uniLITE는 팝업으로 되어 있어 NAME이 있으나, Omegaplus는 콤보로 되어 있어 NAME이 없음										*/
+/*	    ElseIf bParam(EnParam.DIV_NAME) !=  Then														*/
+/*	               AND A.DIV_CODE        IN (SELECT  DIV_CODE 											*/
+/*	                                         FROM    BOR120T WITH (NOLOCK)								*/
+/*	                                         WHERE   DIV_NAME LIKE N'%  bParam(EnParam.DIV_NAME)  %')	*/
+	    
+		<if test="@foren.Ognl@isNotEmpty(PJT_CODE_FR)">
+	               AND A.PJT_CODE        &gt;= #{PJT_CODE_FR}
+	    </if>
+	    
+		<if test="@foren.Ognl@isNotEmpty(PJT_CODE_TO)">
+	               AND A.PJT_CODE        &lt;= #{PJT_CODE_TO}
+	    </if>
+	    
+		<if test="@foren.Ognl@isNotEmpty(DEPT_CODE_FR)">
+	               AND A.DEPT_CODE       &gt;= #{DEPT_CODE_FR}
+	    </if>
+	    
+		<if test="@foren.Ognl@isNotEmpty(DEPT_CODE_TO)">
+	               AND A.DEPT_CODE       &lt;= #{DEPT_CODE_TO} 
+	    </if>
+	    
+		<if test="@foren.Ognl@isNotEmpty(COST_POOL)">
+	               AND A.COST_POOL_CODE   = #{COST_POOL_NAME}
+	    </if>
+	    
+	           ) ZZ
+	           LEFT  JOIN BSA100T   M1 WITH (NOLOCK) ON M1.COMP_CODE   = ZZ.COMP_CODE
+	                                                AND M1.MAIN_CODE   = 'A035'
+	                                                AND M1.SUB_CODE    = ZZ.DPR_STS
+	    WHERE  ISNULL(ZZ.WASTE_YYYYMM, '')  = ''
+	    OR     ZZ.WASTE_YYYYMM             &gt;= #{DVRY_DATE_FR}  
+	
+	    /*--2. 기말잔액, 미상각잔액 계산*/
+	    DECLARE @CTBalnI    NUMERIC(30, 6)
+	          , @FLBalnI    NUMERIC(30, 6)
+	    SET     @CTBalnI = 0
+	    SET     @FLBalnI = 0
+	
+	    UPDATE #ASC105SKR_120703
+	    SET     @CTBalnI       = ISNULL(DRAFT_BALN_AMT, 0) + ISNULL(CUR_IN_AMT, 0) - ISNULL(CUR_DEC_AMT, 0)
+	      ,     @FLBalnI       = @CTBalnI - ISNULL(FINAL_DPR_TOT, 0)
+	      ,     FINAL_BALN_AMT = @CTBalnI
+	      ,     DPR_BALN_AMT   = @FLBalnI
+	
+	    /*/*-- 3. 합계 INSERT ------------------------------------------------------------------------------------------*/				*/
+	    /*INSERT INTO #ASC105SKR_120703(GUBUN, ACCNT_DIVI, ACCNT, ACQ_AMT_I, DRAFT_BALN_AMT, CUR_IN_AMT, CUR_DEC_AMT, CUR_DEC_AMT2		*/
+	    /*                            , FINAL_BALN_AMT, FINAL_BALN_TOT, CUR_DPR_AMT, CUR_DPR_DEC_AMT, FINAL_DPR_TOT, DPR_BALN_AMT) 		*/
+	    /*SELECT  																														*/
+	    /*       '2'                              AS GUBUN																				*/
+	    /*     , ACCNT                            AS ACCNT_DIVI																			*/
+	    /*     , '합계'						       	AS ACCNT																			*/
+	    /*     , SUM(ISNULL(ACQ_AMT_I, 0))        AS ACQ_AMT_I																			*/
+	    /*     , SUM(ISNULL(DRAFT_BALN_AMT, 0))   AS DRAFT_BALN_AMT																		*/
+	    /*     , SUM(ISNULL(CUR_IN_AMT, 0))       AS CUR_IN_AMT																			*/
+	    /*     , SUM(ISNULL(CUR_DEC_AMT, 0))      AS CUR_DEC_AMT																		*/
+	    /*     , SUM(ISNULL(CUR_DEC_AMT2, 0))     AS CUR_DEC_AMT2																		*/
+	    /*     , SUM(ISNULL(FINAL_BALN_AMT, 0))   AS FINAL_BALN_AMT																		*/
+	    /*     , SUM(ISNULL(FINAL_BALN_TOT, 0))   AS FINAL_BALN_TOT																		*/
+	    /*     , SUM(ISNULL(CUR_DPR_AMT, 0))      AS CUR_DPR_AMT																		*/
+	    /*     , SUM(ISNULL(CUR_DPR_DEC_AMT, 0))  AS CUR_DPR_DEC_AMT																	*/
+	    /*     , SUM(ISNULL(FINAL_DPR_TOT, 0))    AS FINAL_DPR_TOT																		*/
+	    /*     , SUM(ISNULL(DPR_BALN_AMT, 0))     AS DPR_BALN_AMT																		*/
+	    /*FROM   #ASC105SKR_120703 WITH (NOLOCK)																						*/
+	    /*WHERE  GUBUN = '1'																											*/
+	    /*GROUP  BY ACCNT																												*/
+		/*																																*/
+	    /*/*-- 4. 총계 INSERT ------------------------------------------------------------------------------------------*/				*/
+	    /*INSERT INTO #ASC105SKR_120703(GUBUN, ACCNT_DIVI, ACCNT, ACQ_AMT_I, DRAFT_BALN_AMT, CUR_IN_AMT, CUR_DEC_AMT, CUR_DEC_AMT2		*/
+	    /*                            , FINAL_BALN_AMT, FINAL_BALN_TOT, CUR_DPR_AMT, CUR_DPR_DEC_AMT, FINAL_DPR_TOT, DPR_BALN_AMT) 		*/
+	    /*SELECT 																														*/
+	    /*       '3'                              AS GUBUN																				*/
+	    /*     , '99999'                          AS ACCNT_DIVI																			*/
+	    /*     , '총계'						        AS ACCNT																			*/
+	    /*     , SUM(ISNULL(ACQ_AMT_I, 0))        AS ACQ_AMT_I																			*/
+	    /*     , SUM(ISNULL(DRAFT_BALN_AMT, 0))   AS DRAFT_BALN_AMT																		*/
+	    /*     , SUM(ISNULL(CUR_IN_AMT, 0))       AS CUR_IN_AMT																			*/
+	    /*     , SUM(ISNULL(CUR_DEC_AMT, 0))      AS CUR_DEC_AMT																		*/
+	    /*     , SUM(ISNULL(CUR_DEC_AMT2, 0))     AS CUR_DEC_AMT2																		*/
+	    /*     , SUM(ISNULL(FINAL_BALN_AMT, 0))   AS FINAL_BALN_AMT																		*/
+	    /*     , SUM(ISNULL(FINAL_BALN_TOT, 0))   AS FINAL_BALN_TOT																		*/
+	    /*     , SUM(ISNULL(CUR_DPR_AMT, 0))      AS CUR_DPR_AMT																		*/
+	    /*     , SUM(ISNULL(CUR_DPR_DEC_AMT, 0))  AS CUR_DPR_DEC_AMT																	*/
+	    /*     , SUM(ISNULL(FINAL_DPR_TOT, 0))    AS FINAL_DPR_TOT																		*/
+	    /*     , SUM(ISNULL(DPR_BALN_AMT, 0))     AS DPR_BALN_AMT																		*/
+	    /*FROM   #ASC105SKR_120703 WITH (NOLOCK)	    WHERE  GUBUN = '2'																*/
+	
+	    /*-- 5. 최종 쿼리 ------------------------------------------------------------------------------------------*/
+	    SELECT 
+	            GUBUN
+	         ,  ACCNT_DIVI
+	         ,  ACCNT
+	         ,  ACCNT_NAME
+	         ,  ASST
+	         ,  ASST_NAME
+	         ,  ACQ_AMT_I
+	         ,  ACQ_DATE
+	         ,  DRB_YEAR
+	         ,  DPR_STS
+	         ,  ACQ_Q
+	         ,  DRAFT_BALN_AMT
+	         ,  CUR_IN_AMT
+	         ,  CUR_DEC_AMT
+	         ,  CUR_DEC_AMT2
+	         ,  FINAL_BALN_AMT
+	         ,  FINAL_BALN_TOT
+	         ,  CUR_DPR_AMT
+	         ,  CUR_DPR_DEC_AMT
+	         ,  FINAL_DPR_TOT
+	         ,  DPR_BALN_AMT
+	         ,  WASTE_YYYYMM
+	         ,  COST_POOL_NAME
+	         ,  COST_DIRECT
+	         ,  ITEMLEVEL1_NAME
+	         ,  ITEMLEVEL2_NAME
+	         ,  ITEMLEVEL3_NAME
+	         ,  REMARK
+	    FROM   #ASC105SKR_120703 WITH (NOLOCK)
+	    ORDER   BY ACCNT_DIVI, GUBUN, ASST, ACQ_DATE
+	
+	    SET ARITHABORT OFF
+	    SET NOCOUNT OFF
+	
+	END
+	</select>
+</mapper>

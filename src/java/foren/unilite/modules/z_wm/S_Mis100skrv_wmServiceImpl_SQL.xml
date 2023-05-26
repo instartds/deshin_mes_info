@@ -1,0 +1,380 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_mis100skrv_wmServiceImpl">
+<!-- 동적 그리드 구현(공통코드(Z006)에서 컬럼 가져오는 로직) -->
+	<select id="s_mis100skrv_wmServiceImpl.selectColumns" parameterType="Map" resultType="rMap">
+		/* s_mis100skrv_wmServiceImpl.selectColumns */
+		SELECT ISNULL(A.REF_CODE1, '')   AS SUB_CODE
+		     , C1.CUSTOM_NAME            AS CODE_NAME
+		  FROM       BSA100T A  WITH(NOLOCK)
+		  INNER JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE
+		                                    AND C1.CUSTOM_CODE = A.REF_CODE1
+		 WHERE A.COMP_CODE              = '${compCode}'
+		   AND A.MAIN_CODE              = 'Z006'
+		   AND A.SUB_CODE              != '$'
+		   AND A.USE_YN                 = 'Y'
+		   AND ISNULL(A.REF_CODE1, '') != ''
+		GROUP BY A.REF_CODE1, C1.CUSTOM_NAME
+	</select>
+
+
+
+	<select id="s_mis100skrv_wmServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		/* s_mis100skrv_wmServiceImpl.selectList */
+		IF EXISTS ( 
+		            SELECT TOP 1 1
+		              FROM PMP100T A  WITH(NOLOCK)
+		             WHERE A.COMP_CODE       = #{S_COMP_CODE}
+		               AND A.DIV_CODE        = #{DIV_CODE}
+		               AND A.WKORD_STATUS   != '8'
+		               AND PRODT_WKORD_DATE  = #{DATE}
+		             GROUP BY A.COMP_CODE, A.DIV_CODE, A.WKORD_STATUS
+		)
+		BEGIN
+		    SELECT Z.COMP_CODE
+		         , Z.DIV_CODE
+		         , SUM(Z.WKORD_Q)         AS WKORD_Q
+		         , SUM(Z.ASSEMBLING)      AS ASSEMBLING
+		         , SUM(Z.ASSEMBLY_END)    AS ASSEMBLY_END
+		         , SUM(Z.PACKING_END)     AS PACKING_END
+		         , SUM(Z.SHIPPING)        AS SHIPPING
+		      FROM (
+		             SELECT A.COMP_CODE, A.DIV_CODE, A.WKORD_STATUS
+		                  , COUNT(A.WKORD_Q)     AS WKORD_Q
+		                  , CASE WHEN ISNULL(WKORD_STATUS, '1') = '1' THEN COUNT(A.WKORD_Q)
+		                         ELSE 0
+		                    END                           AS ASSEMBLING
+		                  , CASE WHEN ISNULL(WKORD_STATUS, '1') = '2' THEN COUNT(A.WKORD_Q)
+		                         ELSE 0
+		                    END                           AS ASSEMBLY_END
+		                  , CASE WHEN ISNULL(WKORD_STATUS, '1') = '3' THEN COUNT(A.WKORD_Q)
+		                         ELSE 0
+		                    END                           AS PACKING_END
+		                  , CASE WHEN ISNULL(WKORD_STATUS, '1') = '9' THEN COUNT(A.WKORD_Q)
+		                         ELSE 0
+		                    END                           AS SHIPPING
+		               FROM PMP100T A  WITH(NOLOCK)
+		              WHERE A.COMP_CODE       = #{S_COMP_CODE}
+		                AND A.DIV_CODE        = #{DIV_CODE}
+		                AND A.WKORD_STATUS   != '8'
+		                AND PRODT_WKORD_DATE  = #{DATE}
+		              GROUP BY A.COMP_CODE, A.DIV_CODE, A.WKORD_STATUS
+		      ) Z
+		     GROUP BY Z.COMP_CODE, Z.DIV_CODE
+		END
+		ELSE
+		BEGIN
+		    SELECT 0   AS WKORD_Q
+		         , 0   AS ASSEMBLING
+		         , 0   AS ASSEMBLY_END
+		         , 0   AS PACKING_END
+		         , 0   AS SHIPPING
+		END
+		
+	</select>
+
+<!-- 쇼핑몰 코드 정해지면 쇼핑몰 / 수/발주 데이터 가져오는 로직 추가 필요 -->
+	<select id="s_mis100skrv_wmServiceImpl.selectList2" parameterType="Map" resultType="rMap">
+		/* s_mis100skrv_wmServiceImpl.selectList2 */
+		SELECT ZZZ.GUBUN
+		     , ZZZ.SHOPPINGMALL + ZZZ.ORDER_QTY
+		<foreach collection="gsOrderInfoArray" item="item" separator="+" close="" open="">
+		     + ZZZ.${item}
+		</foreach>
+		                                            AS TOT_QTY
+		     , 0
+		<foreach collection="gsOrderInfoArray" item="item" separator="+" close="" open="">
+		     + ZZZ.${item}
+		</foreach>
+		                                            AS OPEN_TOT_QTY
+		     , ZZZ.SHOPPINGMALL
+		     , ZZZ.ORDER_QTY
+		<foreach collection="gsOrderInfoArray" item="item" separator="" close="" open="">
+		     , ZZZ.${item}
+		</foreach>
+		  FROM (
+		        SELECT '주문건수'          AS GUBUN
+		             , ZZ.SHOPPINGMALL
+		             , ZZ.ORDER_QTY
+		        <foreach collection="gsOrderInfoArray" item="item" separator="" close="" open="">
+		             , ZZ.${item}
+		        </foreach>
+		          FROM      BOR120T A WITH(NOLOCK)
+		          LEFT JOIN (SELECT Z.COMP_CODE
+		                          , Z.DIV_CODE
+		                          , SUM(Z.SHOPPINGMALL)  AS SHOPPINGMALL
+		                          , SUM(Z.ORDER_QTY)     AS ORDER_QTY
+		                     <foreach collection="gsOrderInfoArray" item="item" separator="" close="" open="">
+		                          , SUM(${item})         AS ${item}
+		                     </foreach>
+		                       FROM (
+		                             SELECT A1.COMP_CODE
+		                                  , A1.DIV_CODE
+		                                  , CASE WHEN A2.CUSTOM_CODE = '쇼핑몰' THEN COUNT(A1.COMP_CODE)
+		                                         ELSE 0
+		                                    END                              AS SHOPPINGMALL
+		                                  , CASE WHEN A2.CUSTOM_CODE != '쇼핑몰'
+		                                          AND A2.CUSTOM_CODE NOT IN (select value from fnSplit(#{gsOrderInfo}, ',')) THEN COUNT(A1.COMP_CODE)
+		                                         ELSE 0
+		                                    END                              AS ORDER_QTY
+		                             <foreach collection="gsOrderInfoArray2" item="item" separator="" close="" open="">
+		                                  , CASE WHEN A2.CUSTOM_CODE = #{item} THEN COUNT(A1.COMP_CODE)
+		                                         ELSE 0
+		                                    END                              AS ORDER_INFO_${item}
+		                             </foreach>
+		                               FROM       SOF110T A1 WITH(NOLOCK)
+		                               INNER JOIN SOF100T A2 WITH(NOLOCK) ON A2.COMP_CODE   = A1.COMP_CODE
+		                                                                 AND A2.DIV_CODE    = A1.DIV_CODE
+		                                                                 AND A2.ORDER_NUM   = A1.ORDER_NUM
+		                               INNER JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE   = A2.COMP_CODE
+		                                                                 AND C1.CUSTOM_CODE = A2.CUSTOM_CODE
+		                              WHERE A1.COMP_CODE  = #{S_COMP_CODE}
+		                                AND A1.DIV_CODE   = #{DIV_CODE}
+		                             <if test="@foren.Ognl@isNotEmpty(DATE)">
+		                                AND A2.ORDER_DATE = #{DATE}
+		                             </if>
+		                              GROUP BY A1.COMP_CODE, A1.DIV_CODE, A2.CUSTOM_CODE
+		                       ) Z
+		                      GROUP BY Z.COMP_CODE, Z.DIV_CODE
+		          ) ZZ ON ZZ.COMP_CODE = A.COMP_CODE
+		              AND ZZ.DIV_CODE  = A.DIV_CODE
+		         WHERE A.COMP_CODE = #{S_COMP_CODE}
+		           AND A.DIV_CODE  = #{DIV_CODE}
+                
+		        UNION ALL
+                
+		        SELECT '취소'              AS GUBUN
+		             , ZZ.SHOPPINGMALL
+		             , ZZ.ORDER_QTY
+		        <foreach collection="gsOrderInfoArray" item="item" separator="" close="" open="">
+		             , ZZ.${item}
+		        </foreach>
+		          FROM      BOR120T A WITH(NOLOCK)
+		          LEFT JOIN (SELECT Z.COMP_CODE
+		                          , Z.DIV_CODE
+		                          , SUM(Z.SHOPPINGMALL)  AS SHOPPINGMALL
+		                          , SUM(Z.ORDER_QTY)     AS ORDER_QTY
+		                     <foreach collection="gsOrderInfoArray" item="item" separator="" close="" open="">
+		                          , SUM(${item})         AS ${item}
+		                     </foreach>
+		                       FROM (
+		                             SELECT A1.COMP_CODE
+		                                  , A1.DIV_CODE
+		                                  , CASE WHEN A2.CUSTOM_CODE = '쇼핑몰' THEN COUNT(A1.COMP_CODE)
+		                                         ELSE 0
+		                                    END                              AS SHOPPINGMALL
+		                                  , CASE WHEN A2.CUSTOM_CODE != '쇼핑몰'
+		                                          AND A2.CUSTOM_CODE NOT IN (select value from fnSplit(#{gsOrderInfo}, ',')) THEN COUNT(A1.COMP_CODE)
+		                                         ELSE 0
+		                                    END                              AS ORDER_QTY
+		                             <foreach collection="gsOrderInfoArray2" item="item" separator="" close="" open="">
+		                                  , CASE WHEN A2.CUSTOM_CODE = #{item} THEN COUNT(A1.COMP_CODE)
+		                                         ELSE 0
+		                                    END                              AS ORDER_INFO_${item}
+		                             </foreach>
+		                               FROM       SOF110T A1 WITH(NOLOCK)
+		                               INNER JOIN SOF100T A2 WITH(NOLOCK) ON A2.COMP_CODE   = A1.COMP_CODE
+		                                                                 AND A2.DIV_CODE    = A1.DIV_CODE
+		                                                                 AND A2.ORDER_NUM   = A1.ORDER_NUM
+		                               INNER JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE   = A2.COMP_CODE
+		                                                                 AND C1.CUSTOM_CODE = A2.CUSTOM_CODE
+		                              WHERE A1.COMP_CODE  = #{S_COMP_CODE}
+		                                AND A1.DIV_CODE   = #{DIV_CODE}
+		                                AND ISNULL(A1.CLOSE_DATE, '') != ''
+		                             <if test="@foren.Ognl@isNotEmpty(DATE)">
+		                                AND A2.ORDER_DATE = #{DATE}
+		                             </if>
+		                              GROUP BY A1.COMP_CODE, A1.DIV_CODE, A2.CUSTOM_CODE
+		                       ) Z
+		                      GROUP BY Z.COMP_CODE, Z.DIV_CODE
+		          ) ZZ ON ZZ.COMP_CODE = A.COMP_CODE
+		              AND ZZ.DIV_CODE  = A.DIV_CODE
+		         WHERE A.COMP_CODE = #{S_COMP_CODE}
+		           AND A.DIV_CODE  = #{DIV_CODE}
+                
+		        UNION ALL
+                
+		        SELECT '반품'              AS GUBUN
+		             , ZZ.SHOPPINGMALL
+		             , ZZ.ORDER_QTY
+		        <foreach collection="gsOrderInfoArray" item="item" separator="" close="" open="">
+		             , ZZ.${item}
+		        </foreach>
+		          FROM      BOR120T A WITH(NOLOCK)
+		          LEFT JOIN (SELECT Z.COMP_CODE
+		                          , Z.DIV_CODE
+		                          , SUM(Z.SHOPPINGMALL)  AS SHOPPINGMALL
+		                          , SUM(Z.ORDER_QTY)     AS ORDER_QTY
+		                     <foreach collection="gsOrderInfoArray" item="item" separator="" close="" open="">
+		                          , SUM(${item})         AS ${item}
+		                     </foreach>
+		                       FROM (
+		                             SELECT A1.COMP_CODE
+		                                  , A1.DIV_CODE
+		                                  , CASE WHEN A1.INOUT_CODE = '쇼핑몰' THEN COUNT(A1.COMP_CODE)
+		                                         ELSE 0
+		                                    END                              AS SHOPPINGMALL
+		                                  , CASE WHEN A1.INOUT_CODE != '쇼핑몰'
+		                                          AND A1.INOUT_CODE NOT IN (select value from fnSplit(#{gsOrderInfo}, ',')) THEN COUNT(A1.COMP_CODE)
+		                                         ELSE 0
+		                                    END                              AS ORDER_QTY
+		                             <foreach collection="gsOrderInfoArray2" item="item" separator="" close="" open="">
+		                                  , CASE WHEN A1.INOUT_CODE = #{item} THEN COUNT(A1.COMP_CODE)
+		                                         ELSE 0
+		                                    END                              AS ORDER_INFO_${item}
+		                             </foreach>
+		                               FROM BTR100T A1 WITH(NOLOCK)
+		                              WHERE A1.COMP_CODE  = #{S_COMP_CODE}
+		                                AND A1.DIV_CODE   = #{DIV_CODE}
+		                                AND A1.INOUT_TYPE = '03'
+		                             <if test="@foren.Ognl@isNotEmpty(DATE)">
+		                                AND A1.INOUT_DATE = #{DATE}
+		                             </if>
+		                              GROUP BY A1.COMP_CODE, A1.DIV_CODE, A1.INOUT_CODE
+		                       ) Z
+		                      GROUP BY Z.COMP_CODE, Z.DIV_CODE
+		          ) ZZ ON ZZ.COMP_CODE = A.COMP_CODE
+		              AND ZZ.DIV_CODE  = A.DIV_CODE
+		         WHERE A.COMP_CODE = #{S_COMP_CODE}
+		           AND A.DIV_CODE  = #{DIV_CODE}
+                
+                
+		        UNION ALL
+                
+		        SELECT 'A/S'               AS GUBUN
+		             , ZZ.SHOPPINGMALL
+		             , ZZ.ORDER_QTY
+		        <foreach collection="gsOrderInfoArray" item="item" separator="" close="" open="">
+		             , ZZ.${item}
+		        </foreach>
+		          FROM      BOR120T A WITH(NOLOCK)
+		          LEFT JOIN (SELECT Z.COMP_CODE
+		                          , Z.DIV_CODE
+		                          , SUM(Z.SHOPPINGMALL)  AS SHOPPINGMALL
+		                          , SUM(Z.ORDER_QTY)     AS ORDER_QTY
+		                     <foreach collection="gsOrderInfoArray" item="item" separator="" close="" open="">
+		                          , SUM(${item})         AS ${item}
+		                     </foreach>
+		                       FROM (
+		                             SELECT A1.COMP_CODE
+		                                  , A1.DIV_CODE
+		                                  , CASE WHEN A.AS_CUSTOMER_CD = '쇼핑몰' THEN COUNT(A1.COMP_CODE)
+		                                         ELSE 0
+		                                    END                              AS SHOPPINGMALL
+		                                  , CASE WHEN A.AS_CUSTOMER_CD != '쇼핑몰'
+		                                          AND A.AS_CUSTOMER_CD NOT IN (select value from fnSplit(#{gsOrderInfo}, ',')) THEN COUNT(A1.COMP_CODE)
+		                                         ELSE 0
+		                                    END                              AS ORDER_QTY
+		                             <foreach collection="gsOrderInfoArray2" item="item" separator="" close="" open="">
+		                                  , CASE WHEN A.AS_CUSTOMER_CD = #{item} THEN COUNT(A1.COMP_CODE)
+		                                         ELSE 0
+		                                    END                              AS ORDER_INFO_${item}
+		                             </foreach>
+		                               FROM       S_EAS100T_WM A  WITH(NOLOCK)
+		                               LEFT  JOIN S_EAS110T_WM A1 WITH(NOLOCK) ON A1.COMP_CODE = A.COMP_CODE
+		                                                                      AND A1.DIV_CODE  = A.DIV_CODE
+		                                                                      AND A1.AS_NUM    = A.AS_NUM
+		                              WHERE A1.COMP_CODE  = #{S_COMP_CODE}
+		                                AND A1.DIV_CODE   = #{DIV_CODE}
+		                             <if test="@foren.Ognl@isNotEmpty(DATE)">
+		                                AND A.ACCEPT_DATE = #{DATE}
+		                             </if>
+		                              GROUP BY A1.COMP_CODE, A1.DIV_CODE, A.AS_CUSTOMER_CD
+		                       ) Z
+		                      GROUP BY Z.COMP_CODE, Z.DIV_CODE
+		          ) ZZ ON ZZ.COMP_CODE = A.COMP_CODE
+		              AND ZZ.DIV_CODE  = A.DIV_CODE
+		         WHERE A.COMP_CODE = #{S_COMP_CODE}
+		           AND A.DIV_CODE  = #{DIV_CODE}
+		  ) ZZZ
+	</select>
+
+
+
+
+
+
+
+<!-- 차트 데이터 조회 -->
+	<select id="s_mis100skrv_wmServiceImpl.selectChartData1" parameterType="Map" resultType="rMap">
+		/* s_mis100skrv_wmServiceImpl.selectChartData1 */
+		SELECT C2.CODE_NAME    AS CUSTOM_NAME
+		     , SUM(A1.ORDER_O) AS ORDER_O
+		--20201221 주석: 이마트 금액은 UNION으로 변경
+		--     , CASE WHEN C1.AGENT_TYPE != '3' THEN SUM(A1.ORDER_O)
+		--            ELSE SUM(B1.SALE_LOC_AMT_I)
+		--       END            AS ORDER_O
+		  FROM       SOF110T A1 WITH(NOLOCK)
+		  INNER JOIN SOF100T A2 WITH(NOLOCK) ON A2.COMP_CODE   = A1.COMP_CODE
+		                                    AND A2.DIV_CODE    = A1.DIV_CODE
+		                                    AND A2.ORDER_NUM   = A1.ORDER_NUM
+		--20201221 주석: 이마트 금액은 UNION으로 변경
+		--  LEFT  JOIN SSA110T B1 WITH(NOLOCK) ON B1.COMP_CODE   = A1.COMP_CODE
+		--                                    AND B1.DIV_CODE    = A1.DIV_CODE
+		--                                    AND B1.ORDER_NUM   = A1.ORDER_NUM
+		--                                    AND B1.SER_NO      = A1.SER_NO
+		  INNER JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE   = A1.COMP_CODE
+		                                    AND C1.CUSTOM_CODE = A2.CUSTOM_CODE
+		  LEFT  JOIN BSA100T C2 WITH(NOLOCK) ON C2.COMP_CODE   = A1.COMP_CODE
+		                                    AND C2.MAIN_CODE   = 'B055'
+		                                    AND C2.SUB_CODE    = C1.AGENT_TYPE
+		 WHERE A1.COMP_CODE   = #{S_COMP_CODE}
+		   AND A1.DIV_CODE    = #{DIV_CODE}
+		   AND C1.AGENT_TYPE != '3'              --20201221 추가: 이마트 금액은 UNION으로 변경
+		   AND A2.ORDER_DATE  BETWEEN #{FR_DATE} AND #{TO_DATE}
+		 GROUP BY A1.COMP_CODE, A1.DIV_CODE, C1.AGENT_TYPE, C2.CODE_NAME
+
+		--20201221 추가: 이마트 금액은 UNION으로 변경
+		UNION ALL
+
+		SELECT '이마트'                  AS CUSTOM_NAME
+		     , SUM(A1.SALE_LOC_AMT_I) AS ORDER_O
+		  FROM       SSA110T A1 WITH(NOLOCK)
+		  INNER JOIN SSA100T A2 WITH(NOLOCK) ON A2.COMP_CODE   = A1.COMP_CODE
+		                                    AND A2.DIV_CODE    = A1.DIV_CODE
+		                                    AND A2.BILL_NUM    = A1.BILL_NUM
+		  INNER JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE   = A2.COMP_CODE
+		                                    AND C1.CUSTOM_CODE = A2.SALE_CUSTOM_CODE
+		 WHERE A1.COMP_CODE    = #{S_COMP_CODE}
+		   AND A1.DIV_CODE     = #{DIV_CODE}
+		   AND C1.AGENT_TYPE   = '3'
+		   AND A2.SALE_DATE    BETWEEN #{FR_DATE} AND #{TO_DATE}
+		 GROUP BY A1.COMP_CODE, A1.DIV_CODE, C1.AGENT_TYPE
+	</select>
+	<select id="s_mis100skrv_wmServiceImpl.selectChartData2" parameterType="Map" resultType="rMap">
+		/* s_mis100skrv_wmServiceImpl.selectChartData2 */
+		SELECT C2.CODE_NAME    AS CUSTOM_NAME
+		     , SUM(A1.ORDER_O) AS ORDER_O
+		  FROM       SOF110T A1 WITH(NOLOCK)
+		  INNER JOIN SOF100T A2 WITH(NOLOCK) ON A2.COMP_CODE   = A1.COMP_CODE
+		                                    AND A2.DIV_CODE    = A1.DIV_CODE
+		                                    AND A2.ORDER_NUM   = A1.ORDER_NUM
+		  INNER JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE   = A1.COMP_CODE
+		                                    AND C1.CUSTOM_CODE = A2.CUSTOM_CODE
+		  LEFT  JOIN BSA100T C2 WITH(NOLOCK) ON C2.COMP_CODE   = A1.COMP_CODE
+		                                    AND C2.MAIN_CODE   = 'B055'
+		                                    AND C2.SUB_CODE    = C1.AGENT_TYPE
+		 WHERE A1.COMP_CODE    = #{S_COMP_CODE}
+		   AND A1.DIV_CODE     = #{DIV_CODE}
+		   AND C1.AGENT_TYPE  != '3'
+		   AND A2.ORDER_DATE   BETWEEN #{FR_DATE} AND #{TO_DATE}
+		 GROUP BY A1.COMP_CODE, A1.DIV_CODE, C1.AGENT_TYPE, C2.CODE_NAME
+	</select>
+	<select id="s_mis100skrv_wmServiceImpl.selectChartData3" parameterType="Map" resultType="rMap">
+		/* s_mis100skrv_wmServiceImpl.selectChartData3 */
+		--20201221 전체 수정: 이마트 매출금액은 수주와 관계 없음
+		SELECT C1.CUSTOM_NAME
+		     , SUM(A1.SALE_LOC_AMT_I) AS ORDER_O
+		  FROM       SSA110T A1 WITH(NOLOCK)
+		  INNER JOIN SSA100T A2 WITH(NOLOCK) ON A2.COMP_CODE   = A1.COMP_CODE
+		                                    AND A2.DIV_CODE    = A1.DIV_CODE
+		                                    AND A2.BILL_NUM    = A1.BILL_NUM
+		  INNER JOIN BCM100T C1 WITH(NOLOCK) ON C1.COMP_CODE   = A2.COMP_CODE
+		                                    AND C1.CUSTOM_CODE = A2.SALE_CUSTOM_CODE
+		 WHERE A1.COMP_CODE    = #{S_COMP_CODE}
+		   AND A1.DIV_CODE     = #{DIV_CODE}
+		   AND C1.AGENT_TYPE   = '3'
+		   AND A2.SALE_DATE    BETWEEN #{FR_DATE} AND #{TO_DATE}
+		 GROUP BY A1.COMP_CODE, A1.DIV_CODE, C1.CUSTOM_NAME
+	</select>
+</mapper>

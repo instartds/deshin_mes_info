@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="mrp140ukrvService">
+	
+	<select id="mrp140ukrvService.planYear" parameterType="Map" resultType="rMap">
+    --'계획년도의 주간 카렌더가 존재 하는지 확인
+    --sgp200ukrv.Csgp200ukrv[fnSgp200Week] Query14
+    SELECT CAL_NO
+         , START_DATE
+      FROM BCM420T 
+     WHERE COMP_CODE = #{S_COMP_CODE}
+       AND CAL_TYPE = '3' 
+       AND GETDATE() BETWEEN START_DATE AND END_DATE
+     ORDER BY CAL_NO
+    </select>
+    
+    <select id="mrp140ukrvService.defaultSet" parameterType="Map" resultType="rMap">
+    -- MRP 전개,확정,예시일자 구하기
+	BEGIN
+		
+		DECLARE  @COMP_CODE  NVARCHAR(08)
+		     	,@DIV_CODE   NVARCHAR(08)
+		
+		/*  1. 변수 값 할당 */  
+		SET @COMP_CODE  = #{S_COMP_CODE}
+		SET @DIV_CODE  = #{DIV_CODE}
+	
+		SELECT A.PLAN_PSRN                                                                                                          
+		     , M1.CODE_NAME       AS PLAN_PSRN_NAME                                                                
+		     , A.BASE_DATE                                                                                                          
+		     , A.FIRM_DATE                                                                                                          
+		     , A.PLAN_DATE                                                                                                          
+		     , A.MRP_CONTROL_NUM                                                                                                    
+		     , A.EXC_STOCK_YN                                                                                                       
+		     , A.STOCK_YN                                                                                                           
+		     , A.SAFE_STOCK_YN                                                                                                      
+		     , A.CUSTOM_STOCK_YN                                                                                                    
+		     , A.INSTOCK_PLAN_YN                                                                                                    
+		     , A.OUTSTOCK_PLAN_YN                                                                                                   
+		     , A.PLAN_YN                                                                                                            
+		     , COUNT(B.DIV_CODE)                                 AS OPEN_COUNT                                                      
+		     , SUM(CASE WHEN C.ORDER_YN = 'N' THEN 1 ELSE 0 END) AS CONVERT_COUNT                                                   
+		     , SUM(CASE WHEN C.ORDER_YN = 'Y' THEN 1 ELSE 0 END) AS DICISION_COUNT                                                  
+		FROM   (                                                                                                                    
+		       SELECT A.COMP_CODE                                                                                                   
+		            , A.DIV_CODE                                                                                                    
+		            , MAX(A.MRP_CONTROL_NUM) AS MRP_CONTROL_NUM                                                                     
+		       FROM   MRP320T A   WITH (NOLOCK)                                                                                     
+		       WHERE  A.COMP_CODE = @COMP_CODE                                                                                      
+		       AND    A.DIV_CODE  = @DIV_CODE                                                                                       
+		       GROUP BY A.COMP_CODE, A.DIV_CODE                                                                                     
+		       ) O                                                                                                                  
+		       INNER JOIN MRP320T A  WITH (NOLOCK) ON A.COMP_CODE       = O.COMP_CODE                                               
+		                                          AND A.DIV_CODE        = O.DIV_CODE                                                
+		                                          AND A.MRP_CONTROL_NUM = O.MRP_CONTROL_NUM                                         
+		       LEFT  JOIN MRP300T B  WITH (NOLOCK) ON B.COMP_CODE       = A.COMP_CODE                                               
+		                                          AND B.DIV_CODE        = A.DIV_CODE                                                
+		                                          AND B.MRP_CONTROL_NUM = A.MRP_CONTROL_NUM                                         
+		                                          AND B.MRP_STATUS      = '1'                                                       
+		       LEFT  JOIN MRP400T C  WITH (NOLOCK) ON C.COMP_CODE       = A.COMP_CODE                                               
+			                                          AND C.DIV_CODE        = A.DIV_CODE                                                
+			                                          AND C.MRP_CONTROL_NUM = A.MRP_CONTROL_NUM                                         
+			       LEFT  JOIN BSA100T M1 WITH (NOLOCK) ON M1.COMP_CODE      = A.COMP_CODE                                               
+			                                          AND M1.MAIN_CODE      = '401'                                                     
+			                                          AND M1.SUB_CODE       = A.PLAN_PSRN                                               
+			                                          AND M1.SUB_CODE      != '$'                                                       
+			                                          AND M1.USE_YN         = 'Y'                                                       
+			GROUP BY A.PLAN_PSRN, M1.CODE_NAME, A.BASE_DATE, A.FIRM_DATE, A.PLAN_DATE, A.MRP_CONTROL_NUM             
+			       , A.EXC_STOCK_YN, A.STOCK_YN, A.SAFE_STOCK_YN, A.CUSTOM_STOCK_YN, A.INSTOCK_PLAN_YN, A.OUTSTOCK_PLAN_YN, A.PLAN_YN 					   
+		
+		SET NOCOUNT ON
+		SET ARITHABORT ON
+	
+	END
+    </select>
+    
+    <select id="mrp140ukrvService.syncMaster" parameterType="Map" resultType="rMap">
+    -- mrp140ukrv.Cmrp140ukrv[fnmrp140Set] Query1
+    -- MRP 전환(전체)
+		BEGIN                                                                                                                               
+		    DECLARE         @COMP_CODE          NVARCHAR(08)                -- (필수) 법인코드                                              
+		                  , @DIV_CODE           NVARCHAR(08)                -- (필수) 사업장코드                                            
+		                  , @MRP_CONTROL_NUM    NVARCHAR(20)                -- (필수) MRP 관리번호                                          
+		--                                                                                                                                  
+		                  , @EXECUTE_TYPE       NVARCHAR(02)                -- (필수) MRP 처리 형태                                         
+		                                                                                                                                    
+		    SET NOCOUNT ON                                                                                                                  
+		    SET ARITHABORT ON                                                                                                               
+		    
+		    /*  1. 변수 값 할당 */
+		    SET @COMP_CODE       = #{S_COMP_CODE}                                                                    
+		    SET @DIV_CODE        = #{DIV_CODE}                                                               
+		    SET @MRP_CONTROL_NUM = #{MRP_CONTROL_NUM}                                                               
+		--                                                                                                                                  
+		    SET @EXECUTE_TYPE    = #{EXECUTE_TYPE}                                                              
+		                                                                                                                                    
+		-----------------------------------------------------------------------------------------------------------------------             
+		                                                                                                                                    
+		    IF @EXECUTE_TYPE = 'OK'                                                                                                         
+		        BEGIN                                                                                                                       
+		            -- MRP 전환 정보 생성                                                                                                   
+		            INSERT INTO MRP400T(COMP_CODE, DIV_CODE, MRP_CONTROL_NUM, ORDER_REQ_NUM, ITEM_CODE                                      
+		                              , BASIS_DATE, CREATE_DATE, SUPPLY_TYPE, DOM_FORIGN                                                    
+		                              , REQ_PLAN_Q, ORDER_PLAN_Q, ORDER_PLAN_DATE, CUSTOM_CODE, ORDER_YN                                    
+		                              , PROJECT_NO, LOT_NO, REMARK, MRP_YN, WK_PLAN_NUM, WORK_SHOP_CODE, ITEM_CHECK                         
+		                              , ORDER_PRSN                                                                                          
+		                              , TEMPC_01, TEMPC_02, TEMPC_03, TEMPN_01, TEMPN_02, TEMPN_03)                                         
+		            SELECT A.COMP_CODE, A.DIV_CODE, A.MRP_CONTROL_NUM, CONVERT(NVARCHAR(20), A.ITEM_CHECK) AS ORDER_REQ_NUM, A.ITEM_CODE    
+		                 , A.BASIS_DATE, CONVERT(NVARCHAR(08), GETDATE(), 112) AS CREATE_DATE, A.SUPPLY_TYPE, A.DOM_FORIGN                  
+		                 , A.TOTAL_NEED_Q, A.ORDER_PLAN_Q, A.ORDER_PLAN_DATE, B.PCUSTOM_CODE, 'N' AS ORDER_YN                               
+		                 , A.PROJECT_NO, B.LOT_NO, C.PO_NUM, 'Y' AS MRP_YN, A.WK_PLAN_NUM, B.WORK_SHOP_CODE, A.ITEM_CHECK                   
+		                 , D.ORDER_PRSN                                                                                                     
+		                 , A.TEMPC_01, A.TEMPC_02, A.TEMPC_03, A.TEMPN_01, A.TEMPN_02, A.TEMPN_03                                           
+		            FROM               MRP300T     A   WITH (NOLOCK)                                                                        
+		                   INNER JOIN  MRP350T     B   WITH (NOLOCK) ON B.COMP_CODE  = A.COMP_CODE                                          
+		                                                            AND B.ITEM_CHECK = A.ITEM_CHECK                                         
+		                   INNER JOIN  BPR200T     D   WITH (NOLOCK) ON D.COMP_CODE  = B.COMP_CODE                                          
+		                                                            AND D.DIV_CODE   = B.DIV_CODE                                           
+		                                                            AND D.ITEM_CODE  = B.ITEM_CODE                                          
+		                   LEFT  JOIN  SOF110TV1   C   WITH (NOLOCK) ON C.COMP_CODE  = B.COMP_CODE                                          
+		                                                            AND C.DIV_CODE   = B.DIV_CODE                                           
+		                                                            AND C.ORDER_NUM  = B.ORDER_NUM                                          
+		                                                            AND C.SER_NO     = B.ORDER_SEQ                                          
+		                                                            AND C.ITEM_CODE  = B.ITEM_CODE                                          
+		            WHERE  A.COMP_CODE       = @COMP_CODE                                                                                   
+		            AND    A.DIV_CODE        = @DIV_CODE                                                                                    
+		            AND    A.MRP_CONTROL_NUM = @MRP_CONTROL_NUM                                                                             
+		            AND    A.MRP_STATUS      = '1'                  -- OPEN 오더 상태                                                       
+		            AND    A.FIRM_TYPE       = '1'                  -- 확정 구간내의 'OPEN' 오더를 '전환' 처리                              
+		                                                                                                                                    
+		            -- MRP 전개이력에 해당 OPEN 오더의 전환처리 Marking                                                                     
+		            UPDATE A                                                                                                                
+		            SET    A.MRP_STATUS = '2'                                                                                               
+		            FROM   MRP300T  A  WITH (NOLOCK)                                                                                        
+		            WHERE  A.COMP_CODE       = @COMP_CODE                                                                                   
+		            AND    A.DIV_CODE        = @DIV_CODE                                                                                    
+		            AND    A.MRP_CONTROL_NUM = @MRP_CONTROL_NUM                                                                             
+		            AND    A.MRP_STATUS      = '1'                  -- OPEN 오더 상태                                                       
+		            AND    A.FIRM_TYPE       = '1'                  -- 확정 구간내의 'OPEN' 오더를 '전환' 처리                              
+		        END                                                                                                                         
+		    ELSE                                                                                                                            
+		        BEGIN                                                                                                                       
+		            -- 생산계획 MRP 반영여부 CLEAR                                                                                          
+		            UPDATE B                                                                                                                
+		            SET    B.MRP_CONTROL_NUM = NULL                                                                                         
+		            FROM              MRP300T  A  WITH (NOLOCK)                                                                             
+		                   INNER JOIN PPL100T  B  WITH (NOLOCK) ON  B.COMP_CODE        = A.COMP_CODE                                        
+		                                                       AND  B.DIV_CODE         = A.DIV_CODE                                         
+		                                                       AND  B.MRP_CONTROL_NUM  = A.MRP_CONTROL_NUM                                  
+		                                                       AND (B.WK_PLAN_NUM      = A.WK_PLAN_NUM                                      
+		                                                         OR B.PROD_WK_PLAN_NUM = A.WK_PLAN_NUM)                                     
+		            WHERE  A.COMP_CODE       = @COMP_CODE                                                                                   
+		            AND    A.DIV_CODE        = @DIV_CODE                                                                                    
+		            AND    A.MRP_CONTROL_NUM = @MRP_CONTROL_NUM                                                                             
+		            AND    A.MRP_STATUS      = '1'                                                                                          
+		                                                                                                                                    
+		            -- OPEN 오더 삭제                                                                                                       
+		            DELETE FROM MRP300T                                                                                                     
+		            WHERE  COMP_CODE       = @COMP_CODE                                                                                     
+		            AND    DIV_CODE        = @DIV_CODE                                                                                      
+		            AND    MRP_CONTROL_NUM = @MRP_CONTROL_NUM                                                                               
+		            AND    MRP_STATUS      = '1'                                                                                            
+		        END                                                                                                                         
+		                                                                                                                                    
+		    SET NOCOUNT OFF                                                                                                                 
+		    SET ARITHABORT OFF                                                                                                              
+		END 
+    </select>     
+	
+</mapper>

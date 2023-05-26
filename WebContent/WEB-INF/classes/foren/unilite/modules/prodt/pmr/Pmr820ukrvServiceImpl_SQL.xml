@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="pmr820ukrvServiceImpl">
+	<select id="pmr820ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		BEGIN       
+		    DECLARE @COMP_CODE      NVARCHAR(08)	/* 법인코드  */
+		          , @DIV_CODE		NVARCHAR(02)
+		          , @DateFormat		NVARCHAR(10)
+		        
+		    SET @COMP_CODE  = #{S_COMP_CODE}
+		    SET @DIV_CODE	= #{DIV_CODE}
+		    
+		    /* 날짜 포맷 유형 설정 */
+			SELECT TOP 1 @DateFormat = CODE_NAME
+			  FROM BSA100T WITH (NOLOCK) -- 공통코드
+			 WHERE COMP_CODE = @COMP_CODE
+			   AND MAIN_CODE = N'B044'
+			   AND REF_CODE1 = N'Y'
+
+			SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+		
+		    /* 조회  */
+		    SELECT A.DIV_CODE 						-- 사업장코드
+		    	 , (CASE WHEN ISNULL(A.PRODT_DATE, '') = ''
+			             THEN ''
+			             ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.PRODT_DATE, 1, 4))
+			                                                     , 'MM'  , SUBSTRING(A.PRODT_DATE, 5, 2))
+			                                                     , 'DD'  , SUBSTRING(A.PRODT_DATE, 7, 2))
+			       END) AS PRODT_DATE 				-- 생산일
+				 , A.PRODT_NUM 						-- 생산실적번호
+				 , A.WORK_SHOP_CODE 				-- 작업장코드
+				 , B.ITEM_CODE 						-- 품목코드
+				 , C.ITEM_NAME 						-- 품목명
+				 , D.SPEC 							-- 규격
+				 , D.STOCK_UNIT 					-- 재고단위
+				 , A.LOT_NO							-- LOT번호
+				 , C.MAN_HOUR AS STANDARD_MAN_HOUR	-- 표준공수
+				 , A.PRODT_Q						-- 생산량
+				 , A.MAN_HOUR						-- 투입공수
+				 , A.WKORD_NUM						-- 작업지시번호
+				 , B.WKORD_Q						-- 작업지시량
+				 , (CASE WHEN ISNULL(B.PRODT_WKORD_DATE, '') = ''
+			             THEN ''
+			             ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.PRODT_WKORD_DATE, 1, 4))
+			                                                     , 'MM'  , SUBSTRING(B.PRODT_WKORD_DATE, 5, 2))
+			                                                     , 'DD'  , SUBSTRING(B.PRODT_WKORD_DATE, 7, 2))
+			       END) AS PRODT_WKORD_DATE 		-- 작업지시일
+			       
+			 FROM PMR110T A WITH (NOLOCK) -- 작업지시별 작업실적 테이블
+	 		INNER JOIN PMP100T B WITH (NOLOCK) ON B.COMP_CODE	= A.COMP_CODE -- 작업지시정보 테이블
+	 										  AND B.DIV_CODE	= A.DIV_CODE
+	 										  AND B.WKORD_NUM	= A.WKORD_NUM 
+	 										  AND B.LINE_END_YN	= 'Y' -- 최종공정여부
+	 		INNER JOIN BPR200T C WITH (NOLOCK) ON C.COMP_CODE	= B.COMP_CODE -- 사업장별 품목정보 테이블
+	 										  AND C.DIV_CODE	= B.DIV_CODE 
+	 										  AND C.ITEM_CODE	= B.ITEM_CODE
+	 		INNER JOIN BPR100T D WITH (NOLOCK) ON D.COMP_CODE	= B.COMP_CODE -- 품목정보 테이블
+	 										  AND D.ITEM_CODE	= B.ITEM_CODE
+		    
+		    WHERE A.COMP_CODE	  = @COMP_CODE
+			  AND A.DIV_CODE	  = @DIV_CODE
+			  
+		    <if test="@foren.Ognl@isNotEmpty(PRODT_DATE_FR)">
+			  AND A.PRODT_DATE &gt;		= #{PRODT_DATE_FR} -- 생산일
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(PRODT_DATE_TO)">
+			  AND A.PRODT_DATE &lt;		= #{PRODT_DATE_TO} -- 생산일
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(WORK_SHOP_CODE)">
+			  AND A.WORK_SHOP_CODE   LIKE #{WORK_SHOP_CODE} + '%'
+			</if>
+		    <if test="@foren.Ognl@isNotEmpty(WKORD_NUM)">
+			  AND A.WKORD_NUM 		 LIKE #{WKORD_NUM} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+			  AND B.ITEM_CODE  	 	 LIKE #{ITEM_CODE} + '%'
+			</if>
+			
+			ORDER BY PRODT_NUM DESC
+		    
+		END 
+	</select>
+	
+	<select id="pmr820ukrvServiceImpl.selectExcelUploadSheet1" parameterType="Map" resultType="rMap">	/* 엑셀업로드 버튼 / 조회 */
+		SELECT _EXCEL_JOBID
+			 , _EXCEL_ROWNUM
+			 , _EXCEL_HAS_ERROR
+			 , _EXCEL_ERROR_MSG
+			 , PRODT_NUM			-- 생산실적번호
+			 , STANDARD_MAN_HOUR	-- 표준공수
+			 , MAN_HOUR				-- 투입공수
+		  FROM PMR820T_xls WITH(NOLOCK)
+		 WHERE _EXCEL_JOBID 	= #{_EXCEL_JOBID}
+	  ORDER BY _EXCEL_JOBID, _EXCEL_ROWNUM
+	</select>
+	
+	<insert id="pmr820ukrvServiceImpl.insertExcelPmp820T" parameterType="Map">
+		INSERT INTO PMR820T_xls
+			 (_EXCEL_JOBID
+			 , _EXCEL_ROWNUM
+			 , _EXCEL_HAS_ERROR
+			 , _EXCEL_ERROR_MSG
+			 , PRODT_NUM			-- 생산실적번호
+			 , STANDARD_MAN_HOUR	-- 표준공수
+			 , MAN_HOUR				-- 투입공수
+			 )
+		VALUES
+			 (#{_EXCEL_JOBID}
+			, #{_EXCEL_ROWNUM}
+			, #{_EXCEL_HAS_ERROR}
+			, #{_EXCEL_ERROR_MSG}
+			, #{PRODT_NUM}
+			, #{STANDARD_MAN_HOUR}
+			, #{MAN_HOUR}
+			 )
+	</insert>
+	
+	<update id="pmr820ukrvServiceImpl.updateDetail" parameterType="Map">
+		UPDATE PMR100T -- 작업실적정보 테이블
+		   SET MAN_HOUR     	= #{MAN_HOUR}
+		     , UPDATE_DB_USER 	= #{S_USER_ID}
+		     , UPDATE_DB_TIME 	= GETDATE()
+		 WHERE COMP_CODE    	= #{S_COMP_CODE}
+		   AND DIV_CODE     	= #{DIV_CODE}
+		   AND PRODT_NUM    	= #{PRODT_NUM}
+		   AND LINE_END_YN  	= 'Y'
+		   
+		UPDATE PMR110T -- 작업지시별 작업실적 테이블
+		   SET MAN_HOUR	    	= #{MAN_HOUR}
+		     , UPDATE_DB_USER 	= #{S_USER_ID}
+		     , UPDATE_DB_TIME 	= GETDATE()
+		 WHERE COMP_CODE    	= #{S_COMP_CODE}
+		   AND DIV_CODE     	= #{DIV_CODE}
+		   AND PRODT_NUM    	= #{PRODT_NUM}
+		   
+		UPDATE BPR200T -- 사업장별 품목정보 테이블
+		   SET MAN_HOUR 		= #{STANDARD_MAN_HOUR}
+		     , UPDATE_DB_USER 	= #{S_USER_ID}
+		     , UPDATE_DB_TIME 	= GETDATE()
+		 WHERE COMP_CODE 		= #{S_COMP_CODE}
+		   AND DIV_CODE 		= #{DIV_CODE}
+		   AND ITEM_CODE 		= #{ITEM_CODE}
+		   AND MAN_HOUR 		= 0 -- 표준공수
+	</update>
+</mapper>

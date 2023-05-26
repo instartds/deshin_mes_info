@@ -1,0 +1,440 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="s_biv330skrv_inServiceImpl">
+	<select id="s_biv330skrv_inServiceImpl.selectList" parameterType="Map" resultType="rMap">
+		<![CDATA[
+		/* s_biv330skrv_inServiceImpl.selectList */
+		/* 2,3포장에 따른 하위제품 출고처리
+		    재고조사등 기타출고처리
+		*/
+		DECLARE @ITEM_ACCOUNT NVARCHAR(10), @COMP_CODE NVARCHAR(10), @DIV_CODE NVARCHAR(10), @BASIS_YYYYMM NVARCHAR(6), @ITEM_CODE NVARCHAR(20), @ITEM_NAME NVARCHAR(200)
+		DECLARE @IN_Q1 NUMERIC(30,6), @IN_Q2 NUMERIC(30,6), @IN_Q3 NUMERIC(30,6), @IN_Q4 NUMERIC(30,6), @OUT_Q1 NUMERIC(30,6), @OUT_Q2 NUMERIC(30,6), @OUT_Q3 NUMERIC(30,6), @OUT_Q4 NUMERIC(30,6), @OUT_Q5 NUMERIC(30,6), @OUT_Q6 NUMERIC(30,6)
+		DECLARE @IN_Q1_2 NUMERIC(30,6), @IN_REP_Q NUMERIC(30,6), @OUT_REP_Q NUMERIC(30,6)
+
+		SET @COMP_CODE    = #{S_COMP_CODE}
+		SET @DIV_CODE     = #{DIV_CODE}
+		SET @BASIS_YYYYMM = #{BASIS_YYYYMM}
+		SET @ITEM_ACCOUNT = #{ITEM_ACCOUNT}
+		SET @ITEM_CODE    = #{ITEM_CODE}
+		SET @ITEM_NAME    = #{ITEM_NAME}
+		
+		IF EXISTS (SELECT TOP 1 1 FROM tempdb..sysobjects WHERE ID=OBJECT_ID('tempdb..#TMP_INOUT'))
+		    DROP TABLE #TMP_INOUT    
+
+		CREATE TABLE #TMP_INOUT 
+		(
+		    COMP_CODE    NVARCHAR(10) NOT NULL,
+		    DIV_CODE     NVARCHAR(10) NOT NULL,
+		    BASIS_YYYYMM NVARCHAR(6) NOT NULL,
+		    ITEM_CODE    NVARCHAR(20) NOT NULL,
+		    BASIS_Q      NUMERIC(30,6) NOT NULL DEFAULT 0,   --기초
+		    IN_Q1        NUMERIC(30,6) NOT NULL DEFAULT 0,   --입고
+		    IN_Q1_2		 NUMERIC(30,6) NOT NULL DEFAULT 0,   --입고2(기타)	--20210325
+		    IN_Q2        NUMERIC(30,6) NOT NULL DEFAULT 0,   --반품입고
+		    IN_Q3        NUMERIC(30,6) NOT NULL DEFAULT 0,   --기타입고
+		    IN_Q4        NUMERIC(30,6) NOT NULL DEFAULT 0,   --포장입고
+			IN_REP_Q	 NUMERIC(30,6) NOT NULL DEFAULT 0,   --타계정입고
+		    OUT_Q1       NUMERIC(30,6) NOT NULL DEFAULT 0,   --출고(매출)
+		    OUT_Q2       NUMERIC(30,6) NOT NULL DEFAULT 0,   --QC, QC자체사용
+		    OUT_Q3       NUMERIC(30,6) NOT NULL DEFAULT 0,   --불량폐기
+		    OUT_Q4       NUMERIC(30,6) NOT NULL DEFAULT 0,   --생산불량
+		    OUT_Q5       NUMERIC(30,6) NOT NULL DEFAULT 0,   --1중포장 출고(2,3중 포장)
+		    OUT_Q6       NUMERIC(30,6) NOT NULL DEFAULT 0,   --기타 그외 출고
+			OUT_REP_Q    NUMERIC(30,6) NOT NULL DEFAULT 0,   --타계정출고
+		    STOCK_Q AS BASIS_Q + (IN_Q1 + IN_Q1_2 + IN_Q2 + IN_Q3 + IN_Q4 + IN_REP_Q) - (OUT_Q1+OUT_Q2+OUT_Q3+OUT_Q4+OUT_Q5+OUT_Q6+OUT_REP_Q), --20210325 
+		    BASIS_AMT    NUMERIC(30,6) NOT NULL DEFAULT 0, 
+		    IN_AMT1      NUMERIC(30,6) NOT NULL DEFAULT 0, 
+		    IN_AMT1_2    NUMERIC(30,6) NOT NULL DEFAULT 0,	--20210325
+		    IN_AMT2      NUMERIC(30,6) NOT NULL DEFAULT 0, 
+		    IN_AMT3      NUMERIC(30,6) NOT NULL DEFAULT 0, 
+		    IN_AMT4      NUMERIC(30,6) NOT NULL DEFAULT 0, 
+			IN_REP_AMT   NUMERIC(30,6) NOT NULL DEFAULT 0, 
+		    OUT_AMT1     NUMERIC(30,6) NOT NULL DEFAULT 0, 
+		    OUT_AMT2     NUMERIC(30,6) NOT NULL DEFAULT 0, 
+		    OUT_AMT3     NUMERIC(30,6) NOT NULL DEFAULT 0, 
+		    OUT_AMT4     NUMERIC(30,6) NOT NULL DEFAULT 0, 
+		    OUT_AMT5     NUMERIC(30,6) NOT NULL DEFAULT 0, 
+		    OUT_AMT6     NUMERIC(30,6) NOT NULL DEFAULT 0, 
+			OUT_REP_AMT  NUMERIC(30,6) NOT NULL DEFAULT 0, 
+		    AVERAGE_P    NUMERIC(30,6) NOT NULL DEFAULT 0, 
+		    --STOCK_AMT AS BASIS_AMT + (IN_AMT1 + IN_AMT2 + IN_AMT3 + IN_AMT4) - (OUT_AMT1+OUT_AMT2+OUT_AMT3+OUT_AMT4+OUT_AMT5+OUT_AMT6)
+		    STOCK_AMT    AS ( BASIS_Q + (IN_Q1 + IN_Q1_2 + IN_Q2 + IN_Q3 + IN_Q4 + IN_REP_AMT) - (OUT_Q1+OUT_Q2+OUT_Q3+OUT_Q4+OUT_Q5+OUT_Q6+OUT_REP_Q) ) * AVERAGE_P	--20210325
+		)
+
+		INSERT INTO #TMP_INOUT (COMP_CODE, DIV_CODE, BASIS_YYYYMM, ITEM_CODE, BASIS_Q, BASIS_AMT, AVERAGE_P)
+		SELECT A.COMP_CODE, A.DIV_CODE, A.BASIS_YYYYMM, A.ITEM_CODE, SUM(A.BASIS_Q) AS BASIS_Q, SUM(A.BASIS_AMOUNT_I) AS BASIS_AMT, MAX(A.AVERAGE_P) AS AVERAGE_P
+		--FROM    BIV250TV A
+		FROM    BIV200T A WITH (NOLOCK)
+		        INNER JOIN BPR200T M1 WITH (NOLOCK) ON A.COMP_CODE=M1.COMP_CODE AND A.DIV_CODE=M1.DIV_CODE AND A.ITEM_CODE=M1.ITEM_CODE
+		        INNER JOIN BPR100T M2 WITH (NOLOCK) ON A.COMP_CODE=M2.COMP_CODE AND A.ITEM_CODE=M2.ITEM_CODE	-- 재고관리 대상품목만 조회하기 위하여 조인 추가
+		WHERE   A.COMP_CODE      = @COMP_CODE
+		AND     A.DIV_CODE       = @DIV_CODE
+		AND     A.BASIS_YYYYMM   = @BASIS_YYYYMM
+		AND     M1.ITEM_ACCOUNT  = @ITEM_ACCOUNT
+		AND     M2.STOCK_CARE_YN = 'Y'					-- 재고관리 대상품목만 조회
+		GROUP BY A.COMP_CODE, A.DIV_CODE, A.BASIS_YYYYMM, A.ITEM_CODE
+
+		IF @ITEM_ACCOUNT = '10'
+		BEGIN
+		    UPDATE A SET  @IN_Q1     = ISNULL(B.PRODT_Q,0) + ISNULL(C.QC_Q,0) + ISNULL(C.BAD_Q,0)     --총생산수량    
+		                , @IN_Q2     = ISNULL(D.RETURN_Q,0)                                           --출고반품
+		                , @IN_Q3     = ISNULL(E.ETC_IN_Q,0)    + ISNULL(E.MANUAL_IN_Q,0) + ISNULL(E.ADJ_IN_Q2,0)              --생산외 기타 입고 + 수동생산 + 재고보정입고
+		                , @IN_Q4     = ISNULL(F.PACK_IN_Q,0)                                          --포장입고
+		                , @OUT_Q1    = ISNULL(D.OUT_Q,0)                                              --정상출고(매출)
+		                , @OUT_Q2    = ISNULL(C.QC_Q,0) + ISNULL(D.QC_SELF_Q,0)                       --생산QC수량 + QC테스트,시험출고
+		                , @OUT_Q3    = ISNULL(D.SCRAP_Q,0)                                            --불량폐기
+		                , @OUT_Q4    = ISNULL(C.BAD_Q,0)                                              --생산불량
+		                , @OUT_Q5    = ISNULL(D.PRODT_OUT_Q,0)                                        --1중포장 출고(2,3중 포장)
+		                , @OUT_Q6    = ISNULL(D.WRAP_OUT_Q,0) + ISNULL(D.REPLACE_OUT_Q,0) + ISNULL(D.STOCK_ADJ_Q,0) + ISNULL(D.ETC_Q,0)           --타계정출고 + 조정출고
+		                , IN_Q1      = @IN_Q1
+		                , IN_Q2      = @IN_Q2
+		                , IN_Q3      = @IN_Q3
+		                , IN_Q4      = @IN_Q4
+		                , OUT_Q1     = @OUT_Q1 
+		                , OUT_Q2     = @OUT_Q2 
+		                , OUT_Q3     = @OUT_Q3 
+		                , OUT_Q4     = @OUT_Q4 
+		                , OUT_Q5     = @OUT_Q5 
+		                , OUT_Q6     = @OUT_Q6 
+		                , IN_AMT1    = @IN_Q1  * A.AVERAGE_P
+		                , IN_AMT2    = @IN_Q2  * A.AVERAGE_P
+		                , IN_AMT3    = @IN_Q3  * A.AVERAGE_P
+		                , IN_AMT4    = @IN_Q4  * A.AVERAGE_P
+		                , OUT_AMT1   = @OUT_Q1 * A.AVERAGE_P
+						--, OUT_AMT1  = ((@OUT_Q1 + (ISNULL(D.RETURN_Q,0)*-1)) * A.AVERAGE_P )  + ISNULL(D.RETURN_I,0)	--210317 출고금액에 반품제외
+		                , OUT_AMT2   = @OUT_Q2 * A.AVERAGE_P
+		                , OUT_AMT3   = @OUT_Q3 * A.AVERAGE_P
+		                , OUT_AMT4   = @OUT_Q4 * A.AVERAGE_P
+		                , OUT_AMT5   = @OUT_Q5 * A.AVERAGE_P
+		                , OUT_AMT6   = @OUT_Q6 * A.AVERAGE_P
+		    FROM #TMP_INOUT A
+		         LEFT JOIN (
+		                        SELECT A.COMP_CODE, A.DIV_CODE, A.PLAN_ITEM_CODE, LEFT(A.PRODT_START_DATE,6) AS BASIS_YYYYMM, SUM(ISNULL(B.WORK_Q,0)) AS PRODT_Q
+		                        FROM PMP100TV5_IN A WITH (NOLOCK)
+		                             LEFT JOIN PMR100T B WITH (NOLOCK) ON A.COMP_CODE = B.COMP_CODE AND A.DIV_CODE = B.DIV_CODE AND A.WKORD_NUM = B.WKORD_NUM AND A.PROG_WORK_CODE = B.PROG_WORK_CODE
+		                        WHERE A.COMP_CODE        = @COMP_CODE
+		                        AND A.DIV_CODE            = @DIV_CODE
+		                        AND A.PRODT_START_DATE  LIKE @BASIS_YYYYMM + '%'
+		                        AND A.PROG_WORK_CODE = 'P50'
+		                        AND ISNULL(A.PLAN_ITEM_CODE, '') != ''
+		                        GROUP BY A.COMP_CODE, A.DIV_CODE, A.PLAN_ITEM_CODE, LEFT(A.PRODT_START_DATE,6)            
+		         ) B ON A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE=B.DIV_CODE AND A.ITEM_CODE=B.PLAN_ITEM_CODE AND A.BASIS_YYYYMM=LEFT(B.BASIS_YYYYMM,6)
+		         LEFT JOIN (
+		                    SELECT S1.COMP_CODE, S1.DIV_CODE, S2.PLAN_ITEM_CODE, LEFT(S2.PRODT_START_DATE,6) AS BASIS_YYYYMM
+		                            , SUM(CASE WHEN LEFT(S1.BAD_CODE,1) NOT IN ('P','Q') AND S1.BAD_CODE != '1000' THEN ISNULL(S1.BAD_Q,0) ELSE 0 END) AS BAD_Q
+		                            , SUM(CASE WHEN S1.BAD_CODE = '1000' THEN S1.BAD_Q ELSE 0 END) AS QC_Q
+		                    FROM PMR300T S1 WITH (NOLOCK)
+		                         INNER JOIN PMP100TV5_IN S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.DIV_CODE=S2.DIV_CODE AND S1.WKORD_NUM=S2.WKORD_NUM AND S1.PROG_WORK_CODE=S2.PROG_WORK_CODE
+		                    WHERE S1.COMP_CODE        = @COMP_CODE
+		                    AND S1.DIV_CODE            = @DIV_CODE
+		                    AND S2.PRODT_START_DATE LIKE @BASIS_YYYYMM + '%'
+		                    GROUP BY S1.COMP_CODE, S1.DIV_CODE, S2.PLAN_ITEM_CODE, LEFT(S2.PRODT_START_DATE,6)
+		         ) C ON A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE=C.DIV_CODE AND A.ITEM_CODE=C.PLAN_ITEM_CODE AND A.BASIS_YYYYMM=C.BASIS_YYYYMM
+		         LEFT JOIN (
+		                    SELECT COMP_CODE, DIV_CODE, ITEM_CODE, LEFT(INOUT_DATE,6) AS BASIS_YYYYMM
+		                            , SUM(CASE WHEN CREATE_LOC='1' AND INOUT_TYPE='2' THEN INOUT_Q ELSE 0 END) AS OUT_Q
+		                            , SUM(CASE WHEN CREATE_LOC='1' AND INOUT_TYPE='3' THEN INOUT_Q ELSE 0 END) AS RETURN_Q
+		                            , SUM(CASE WHEN CREATE_LOC='2' AND INOUT_TYPE='2' AND INOUT_TYPE_DETAIL IN ('92','94') THEN INOUT_Q ELSE 0 END) AS QC_SELF_Q    --QC 테스트 , 시험출고
+		                            , SUM(CASE WHEN CREATE_LOC='2' AND INOUT_TYPE='2' AND INOUT_TYPE_DETAIL IN ('98') THEN INOUT_Q ELSE 0 END) AS SCRAP_Q    --폐기수량
+									, SUM(CASE WHEN CREATE_LOC='2' AND INOUT_TYPE='2' AND INOUT_TYPE_DETAIL NOT IN ('92','94','98') THEN INOUT_Q ELSE 0 END) AS ETC_Q      --기타출고
+		                            , SUM(CASE WHEN CREATE_LOC='3' AND INOUT_TYPE='2' THEN INOUT_Q ELSE 0 END) AS PRODT_OUT_Q    --생산 포장 출고
+		                            , SUM(CASE WHEN CREATE_LOC='4' AND INOUT_TYPE='2' AND INOUT_TYPE_DETAIL IN ('93') THEN INOUT_Q ELSE 0 END) AS WRAP_OUT_Q    --포장작업지시실적
+		                            , SUM(CASE WHEN CREATE_LOC='4' AND INOUT_TYPE='2' AND INOUT_TYPE_DETAIL IN ('96') THEN INOUT_Q ELSE 0 END) AS STOCK_ADJ_Q    --실사조정출고
+		                            , SUM(CASE WHEN CREATE_LOC='4' AND INOUT_TYPE='2' AND INOUT_TYPE_DETAIL IN ('97','81') THEN INOUT_Q ELSE 0 END) AS REPLACE_OUT_Q    --재고대체출고		--	20200529 '93' 필드명 변경, '97' 추가
+		                    FROM    BTR100T A WITH (NOLOCK)
+		                    WHERE   COMP_CODE    = @COMP_CODE
+		                    AND     DIV_CODE    = @DIV_CODE
+		                    AND     INOUT_TYPE  IN ('2','3')
+		                    AND     INOUT_DATE  LIKE @BASIS_YYYYMM + '%'
+		                    AND     CREATE_LOC  IN ('1','2','3', '4')
+		                    AND     INOUT_METH  NOT IN ('3')    --재고이동제외
+		                    GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, LEFT(INOUT_DATE,6)
+		          ) D ON A.COMP_CODE=D.COMP_CODE AND A.DIV_CODE=D.DIV_CODE AND A.ITEM_CODE=D.ITEM_CODE AND A.BASIS_YYYYMM=D.BASIS_YYYYMM
+		         LEFT JOIN (
+		                     SELECT    A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, LEFT(A.INOUT_DATE,6) AS BASIS_YYYYMM
+		                            , SUM(CASE WHEN CREATE_LOC <> '1' THEN A.INOUT_Q ELSE 0 END) AS ETC_IN_Q    --생산외입고 (타계정등)
+		                            , SUM(CASE WHEN CREATE_LOC = '1' AND INOUT_TYPE_DETAIL='11' THEN A.INOUT_Q ELSE 0 END) AS MANUAL_IN_Q    --수동생산입고
+		                            , SUM(CASE WHEN CREATE_LOC = '1' AND INOUT_TYPE_DETAIL='12' THEN A.INOUT_Q ELSE 0 END) AS ADJ_IN_Q2    --재고조정입고
+		                    FROM    BTR100T A WITH (NOLOCK)
+		                    WHERE    A.COMP_CODE=@COMP_CODE
+		                    AND      A.DIV_CODE=@DIV_CODE
+		                    AND      A.INOUT_TYPE IN ('1')
+		                    AND      A.INOUT_DATE LIKE @BASIS_YYYYMM + '%'
+		                    --AND      A.CREATE_LOC <> '1'
+		                    AND      A.INOUT_METH <> '3'
+		                    GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, LEFT(A.INOUT_DATE,6)
+		          ) E ON A.COMP_CODE=E.COMP_CODE AND A.DIV_CODE=E.DIV_CODE AND A.ITEM_CODE=E.ITEM_CODE AND A.BASIS_YYYYMM=E.BASIS_YYYYMM
+		         LEFT JOIN (
+		                    SELECT A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, LEFT(A.INOUT_DATE,6) AS BASIS_YYYYMM
+		                            , SUM(A.INOUT_Q) AS PACK_IN_Q    --생산포장입고
+		                    FROM BTR100T A WITH (NOLOCK)
+		                         INNER JOIN (
+		                                    SELECT    COMP_CODE, DIV_CODE, ITEM_CODE, LOT_NO
+		                                    FROM      PMP100TV5_IN WITH (NOLOCK)
+		                                    WHERE     COMP_CODE = @COMP_CODE
+		                                    AND       DIV_CODE=@DIV_CODE
+		                                    AND       SEMI_ITEM_CODE LIKE '500%'
+		                                    AND       LINE_END_YN='Y'
+		                                    GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, LOT_NO                      
+		                         ) B ON A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE=B.DIV_CODE AND A.ITEM_CODE=B.ITEM_CODE AND A.LOT_NO=B.LOT_NO
+		                    WHERE    A.COMP_CODE=@COMP_CODE
+		                    AND        A.DIV_CODE=@DIV_CODE
+		                    AND        A.INOUT_TYPE IN ('1')
+		                    AND        A.INOUT_DATE LIKE @BASIS_YYYYMM + '%'
+		                    AND        A.CREATE_LOC = '1'
+		                    AND        A.INOUT_TYPE_DETAIL NOT IN ('11','12')	--수동생산, 재고보정은 제외
+		                    GROUP BY A.COMP_CODE, A.DIV_CODE, A.ITEM_CODE, LEFT(A.INOUT_DATE,6)
+		          ) F ON A.COMP_CODE=F.COMP_CODE AND A.DIV_CODE=F.DIV_CODE AND A.ITEM_CODE=F.ITEM_CODE AND A.BASIS_YYYYMM=F.BASIS_YYYYMM
+
+		    --20200623 수정: 위치 이동 - 조건별로 조회로직 다르게 변경 됨
+		    SELECT A.ITEM_CODE
+		         , B.ITEM_NAME
+		         , B.SPEC
+		         , BASIS_Q                                                 --[기초]
+		         --20200623 수정: 1중 불량 수량 더하는 로직
+		         , IN_Q1 + SUM(CASE WHEN LEFT(Z.BAD_CODE, 1) IN ('P') AND Z.REF_CODE2 = 'P40'
+		                            THEN ISNULL(Z.BAD_Q, 0)
+		                            ELSE 0
+		                       END)                          AS IN_Q1      --[정상입고]
+		         , 0 AS IN_Q1_2 --정상입고(기타)
+		         , IN_Q2                                                   --[반품입고]
+		         , IN_Q3                                                   --[기타(대체)입고]
+		         , IN_Q4                                                   --[포장입고]
+		         , IN_Q1+IN_Q2+IN_Q3+IN_Q4                   AS IN_TOT_Q   --[입고합계]
+		         , OUT_Q1                                                  --[정상출고]
+		         , OUT_Q2                                                  --[QC 및 자가사용 출고]
+		         , OUT_Q3                                                  --[불량폐기 출고]
+		         --20200623 수정: 1중 불량 수량 더하는 로직
+		         , OUT_Q4 + SUM(CASE WHEN LEFT(Z.BAD_CODE, 1) IN ('P') AND Z.REF_CODE2 = 'P40'
+		                             THEN ISNULL(Z.BAD_Q, 0)
+		                             ELSE 0
+		                        END)                         AS OUT_Q4     --[생산불량 출고]
+		         , OUT_Q5                                                  --[포장출고]
+		         , OUT_Q6                                                  --[기타(대체)출고]
+		         , OUT_Q1+OUT_Q2+OUT_Q3+OUT_Q4+OUT_Q5+OUT_Q6 AS OUT_TOT_Q  --[출고합계]
+		         , STOCK_Q                                                 --[재고]
+		         , BASIS_AMT
+		         , IN_AMT1    
+		         , 0 AS IN_AMT1_2
+		         , IN_AMT2        
+		         , IN_AMT3    
+		         , IN_AMT4    
+		         , IN_AMT1+IN_AMT2+IN_AMT3+IN_AMT4           AS IN_TOT_AMT
+		         , OUT_AMT1
+		         , OUT_AMT2
+		         , OUT_AMT3
+		         , OUT_AMT4
+		         , OUT_AMT5
+		         , OUT_AMT6
+		         , OUT_AMT1+OUT_AMT2+OUT_AMT3+OUT_AMT4+OUT_AMT5+OUT_AMT6 AS OUT_TOT_AMT
+		         , AVERAGE_P
+		         , STOCK_AMT    
+		         , SUM(CASE WHEN LEFT(Z.BAD_CODE, 1) IN ('P') AND Z.REF_CODE2 = 'P40'
+		                    THEN ISNULL(Z.BAD_Q, 0)
+		                    ELSE 0
+		               END)                                                 AS BAD_1             --1중불량
+		      FROM       #TMP_INOUT A WITH(NOLOCK)
+		      INNER JOIN BPR100T    B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                          AND B.ITEM_CODE = A.ITEM_CODE
+		      --20200623 추가: 1중 불량 수량 구하는 로직
+		      LEFT  JOIN (
+		                   SELECT S1.COMP_CODE, S1.DIV_CODE, S2.PLAN_ITEM_CODE
+		                        , S1.BAD_CODE
+		                        , SUM(S1.BAD_Q) AS BAD_Q
+		                        , S3.REF_CODE2
+		                    FROM PMR300T S1 WITH (NOLOCK)
+		                         INNER JOIN PMP100TV5_IN S2 WITH (NOLOCK) ON S1.COMP_CODE=S2.COMP_CODE AND S1.DIV_CODE=S2.DIV_CODE AND S1.WKORD_NUM=S2.WKORD_NUM AND S1.PROG_WORK_CODE=S2.PROG_WORK_CODE
+		                         LEFT  JOIN BSA100T      S3 WITH (NOLOCK) ON S3.COMP_CODE=S1.COMP_CODE AND S3.MAIN_CODE='P003' AND S3.SUB_CODE=S1.BAD_CODE
+		                     WHERE S1.COMP_CODE          = @COMP_CODE
+		                       AND S1.DIV_CODE           = @DIV_CODE
+		                       AND S2.PRODT_START_DATE  LIKE @BASIS_YYYYMM + '%'
+		                    GROUP BY S1.COMP_CODE, S1.DIV_CODE, S2.PLAN_ITEM_CODE, S1.BAD_CODE, S3.REF_CODE2
+		      ) Z ON Z.COMP_CODE      = A.COMP_CODE
+		         AND Z.DIV_CODE       = A.DIV_CODE
+		         AND Z.PLAN_ITEM_CODE = A.ITEM_CODE
+		     WHERE 1=1
+		       AND ( (A.ITEM_CODE LIKE @ITEM_CODE + '%' AND ISNULL(@ITEM_CODE, '') != '') OR ISNULL(@ITEM_CODE, '') = '')
+		       AND ( (B.ITEM_NAME LIKE @ITEM_NAME + '%' AND ISNULL(@ITEM_NAME, '') != '') OR ISNULL(@ITEM_NAME, '') = '')
+		       AND ( (IN_Q1+IN_Q2+IN_Q3+IN_Q4) <> 0 OR (OUT_Q1+OUT_Q2+OUT_Q3+OUT_Q4+OUT_Q5+OUT_Q6) <> 0 OR STOCK_Q <> 0)
+		     --20200623 추가: 1중 불량 수량 구하는 로직
+		     GROUP BY A.ITEM_CODE
+		            , B.ITEM_NAME
+		            , B.SPEC
+		            , BASIS_Q                                                 --[기초]
+		            , IN_Q1                                                   --[정상입고]
+		            , IN_Q2                                                   --[반품입고]
+		            , IN_Q3                                                   --[기타(대체)입고]
+		            , IN_Q4                                                   --[포장입고]
+		            , OUT_Q1                                                  --[정상출고]
+		            , OUT_Q2                                                  --[QC 및 자가사용 출고]
+		            , OUT_Q3                                                  --[불량폐기 출고]
+		            , OUT_Q4                                                  --[생산불량 출고]
+		            , OUT_Q5                                                  --[포장출고]
+		            , OUT_Q6                                                  --[기타(대체)출고]
+		            , STOCK_Q                                                 --[재고]
+		            , BASIS_AMT
+		            , IN_AMT1
+		            , IN_AMT2
+		            , IN_AMT3
+		            , IN_AMT4
+		            , OUT_AMT1
+		            , OUT_AMT2
+		            , OUT_AMT3
+		            , OUT_AMT4
+		            , OUT_AMT5
+		            , OUT_AMT6
+		            , AVERAGE_P
+		            , STOCK_AMT
+		     ORDER BY ITEM_CODE
+		END
+		ELSE
+		BEGIN
+		    UPDATE A SET  @IN_Q1    = ISNULL(B.IN_Q,0) 
+		    			, @IN_Q1_2    = ISNULL(B.IN_Q2,0)	--20210325
+		                , @IN_Q2    = ISNULL(D.RETURN_Q,0)                                                           --출고반품
+		                , @IN_Q3    = ISNULL(B.REPLACE_IN_Q,0) + ISNULL(B.ETC_IN_Q,0)       --생산외 기타 입고 + 수동생산, 20200601 추가 (ISNULL(B.WRAP_OUT_Q,0))	--20210415
+		                , @IN_Q4    = 0
+						, @IN_REP_Q = ISNULL(B.WRAP_OUT_Q,0)														--대체입고 20210415
+		                , @OUT_Q1   = ISNULL(D.OUT_Q,0)                                                              --정상출고(매출)
+		                , @OUT_Q2   = ISNULL(D.QC_SELF_Q,0)                                                          -- QC테스트,시험출고
+		                , @OUT_Q3   = ISNULL(D.SCRAP_Q,0)                                                            --불량폐기
+		                , @OUT_Q4   = 0
+		                , @OUT_Q5   = ISNULL(D.PRODT_OUT_Q,0)                                                        --1중포장 출고(2,3중 포장)
+		                --, @OUT_Q6   = ISNULL(D.REPLACE_OUT_Q,0) + ISNULL(D.STOCK_ADJ_Q,0)                          --타계정출고 + 조정출고
+		                , @OUT_Q6    = ISNULL(D.REPLACE_OUT_Q,0) + ISNULL(D.STOCK_ADJ_Q,0)  --20200601 수정:타계정출고 + 조정출고	--20210415
+						, @OUT_REP_Q = ISNULL(D.WRAP_OUT_Q,0)	--20210415
+		                , IN_Q1     = @IN_Q1
+		                , IN_Q1_2   = @IN_Q1_2
+		                , IN_Q2     = @IN_Q2
+		                , IN_Q3     = @IN_Q3
+		                , IN_Q4     = @IN_Q4
+						, IN_REP_Q	= @IN_REP_Q
+		                , OUT_Q1    = @OUT_Q1 
+		                , OUT_Q2    = @OUT_Q2 
+		                , OUT_Q3    = @OUT_Q3 
+		                , OUT_Q4    = @OUT_Q4 
+		                , OUT_Q5    = @OUT_Q5 
+		                , OUT_Q6    = @OUT_Q6 
+						, OUT_REP_Q = @OUT_REP_Q
+		                --, BASIS_AMT = BASIS_Q * A.AVERAGE_P
+		                --, IN_AMT1   = @IN_Q1  * A.AVERAGE_P
+		                , IN_AMT1   = ISNULL(B.IN_I,0)
+		                , IN_AMT1_2   = ISNULL(B.IN_I2,0)		
+		                --, IN_AMT2   = @IN_Q2  * A.AVERAGE_P
+		                , IN_AMT2   = ISNULL(D.RETURN_I,0)
+		                --, IN_AMT3   = @IN_Q3  * A.AVERAGE_P
+						, IN_AMT3   = ISNULL(B.REPLACE_IN_I,0) + ISNULL(B.ETC_IN_I,0)	---210317
+		                , IN_AMT4   = ISNULL(B.WRAP_OUT_I,0) 
+						, IN_REP_AMT= @IN_REP_Q * A.AVERAGE_P
+		                --, OUT_AMT1  = @OUT_Q1 * A.AVERAGE_P
+		                --, OUT_AMT1  = ISNULL(D.OUT_I,0)
+						, OUT_AMT1  = ((@OUT_Q1 + (ISNULL(D.RETURN_Q,0)*-1)) * A.AVERAGE_P )  + ISNULL(D.RETURN_I,0)	--210317 출고금액에 반품제외
+		                , OUT_AMT2  = @OUT_Q2 * A.AVERAGE_P
+		                , OUT_AMT3  = @OUT_Q3 * A.AVERAGE_P
+		                , OUT_AMT4  = @OUT_Q4 * A.AVERAGE_P
+		                , OUT_AMT5  = @OUT_Q5 * A.AVERAGE_P
+		                , OUT_AMT6  = @OUT_Q6 * A.AVERAGE_P
+						, OUT_REP_AMT = @OUT_REP_Q * A.AVERAGE_P
+		    FROM #TMP_INOUT A
+		         LEFT JOIN (
+		                    SELECT COMP_CODE, DIV_CODE, ITEM_CODE, LEFT(INOUT_DATE,6)                                                       AS BASIS_YYYYMM
+		                         , SUM(CASE WHEN CREATE_LOC IN ('2','6') AND INOUT_TYPE='1' AND INOUT_TYPE_DETAIL NOT IN ('99') THEN INOUT_Q ELSE 0 END)                             AS IN_Q  --20210325
+								 , SUM(CASE WHEN CREATE_LOC IN ('2','6') AND INOUT_TYPE='1' AND INOUT_TYPE_DETAIL IN ('99') THEN INOUT_Q ELSE 0 END)                                 AS IN_Q2  --20210325
+		                         , SUM(CASE WHEN CREATE_LOC='4' AND INOUT_TYPE='1' AND INOUT_TYPE_DETAIL IN ('93') THEN INOUT_Q ELSE 0 END) AS WRAP_OUT_Q      --20200601 수정: REPLACE_IN_Q -> WRAP_OUT_Q 재고대체입고 -> 포장작업지시
+		                         , SUM(CASE WHEN CREATE_LOC='4' AND INOUT_TYPE='1' AND INOUT_TYPE_DETAIL IN ('97') THEN INOUT_Q ELSE 0 END) AS REPLACE_IN_Q    --20200601 추가: 재고대체입고
+		                         , SUM(CASE WHEN CREATE_LOC NOT IN ('2','4', '6') AND INOUT_TYPE_DETAIL NOT IN ('93') THEN INOUT_Q ELSE 0 END)   AS ETC_IN_Q
+		                         
+		                         , SUM(CASE WHEN CREATE_LOC IN ('2','6') AND INOUT_TYPE='1' AND INOUT_TYPE_DETAIL NOT IN ('99') THEN INOUT_CAL_I ELSE 0 END)                                 AS IN_I            --입고금액
+		                         , SUM(CASE WHEN CREATE_LOC IN ('2','6') AND INOUT_TYPE='1' AND INOUT_TYPE_DETAIL IN ('99') THEN INOUT_CAL_I ELSE 0 END)                                 AS IN_I2            --입고금액
+								 
+		                         , SUM(CASE WHEN CREATE_LOC='4' AND INOUT_TYPE='1' AND INOUT_TYPE_DETAIL IN ('93') THEN INOUT_CAL_I ELSE 0 END) AS WRAP_OUT_I      --20200601 수정: REPLACE_IN_Q -> WRAP_OUT_Q 재고대체입고 -> 포장작업지시
+		                         , SUM(CASE WHEN CREATE_LOC='4' AND INOUT_TYPE='1' AND INOUT_TYPE_DETAIL IN ('97') THEN INOUT_CAL_I ELSE 0 END) AS REPLACE_IN_I    --20200601 추가: 재고대체입고
+		                         , SUM(CASE WHEN CREATE_LOC NOT IN ('2','4', '6') AND INOUT_TYPE_DETAIL NOT IN ('93') THEN INOUT_CAL_I ELSE 0 END)   AS ETC_IN_I								 
+		                    FROM    BTR100T A WITH (NOLOCK)
+		                    WHERE    COMP_CODE   = @COMP_CODE
+		                    AND      DIV_CODE    = @DIV_CODE
+		                    AND      INOUT_TYPE  = '1'
+		                    AND      INOUT_DATE  LIKE @BASIS_YYYYMM + '%'
+		                    AND      CREATE_LOC  IN ('1','2','3','4','6')
+		                    AND      INOUT_METH  NOT IN ('3')    --재고이동제외
+		                    GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, LEFT(INOUT_DATE,6)
+		          ) B ON A.COMP_CODE=B.COMP_CODE AND A.DIV_CODE=B.DIV_CODE AND A.ITEM_CODE=B.ITEM_CODE AND A.BASIS_YYYYMM=B.BASIS_YYYYMM
+		         LEFT JOIN (
+		                    SELECT COMP_CODE, DIV_CODE, ITEM_CODE, LEFT(INOUT_DATE,6)                                                               AS BASIS_YYYYMM
+		                            , SUM(CASE WHEN CREATE_LOC='1' AND INOUT_TYPE='2' THEN INOUT_Q ELSE 0 END)                                      AS OUT_Q
+		                            , SUM(CASE WHEN CREATE_LOC='1' AND INOUT_TYPE='3' THEN INOUT_Q ELSE 0 END)                                      AS RETURN_Q
+		                            , SUM(CASE WHEN CREATE_LOC='2' AND INOUT_TYPE='2' AND INOUT_TYPE_DETAIL IN ('92','94') THEN INOUT_Q ELSE 0 END) AS QC_SELF_Q      --QC 테스트 , 시험출고
+		                            , SUM(CASE WHEN CREATE_LOC='2' AND INOUT_TYPE='2' AND INOUT_TYPE_DETAIL IN ('98') THEN INOUT_Q ELSE 0 END)      AS SCRAP_Q        --폐기수량
+		                            --, SUM(CASE WHEN CREATE_LOC='3' AND INOUT_TYPE='2' THEN INOUT_Q ELSE 0 END)                                      AS PRODT_OUT_Q    --생산 포장 출고
+									, SUM(CASE WHEN CREATE_LOC IN ('2','3') AND INOUT_TYPE='2' AND INOUT_TYPE_DETAIL NOT IN ('92','94','98') THEN INOUT_Q ELSE 0 END) AS PRODT_OUT_Q    --생산 포장 출고
+		                            , SUM(CASE WHEN CREATE_LOC='4' AND INOUT_TYPE='2' AND INOUT_TYPE_DETAIL IN ('93') THEN INOUT_Q ELSE 0 END)      AS WRAP_OUT_Q     --포장작업지시실적, 20200601 수정: REPLACE_OUT_Q -> WRAP_OUT_Q
+		                            , SUM(CASE WHEN CREATE_LOC='4' AND INOUT_TYPE='2' AND INOUT_TYPE_DETAIL IN ('96') THEN INOUT_Q ELSE 0 END)      AS STOCK_ADJ_Q    --실사조정출고
+		                            , SUM(CASE WHEN CREATE_LOC='4' AND INOUT_TYPE='2' AND INOUT_TYPE_DETAIL IN ('97') THEN INOUT_Q ELSE 0 END)      AS REPLACE_OUT_Q  --재고대체출고  --20200601 추가: '97' 추가
+		                            , SUM(CASE WHEN CREATE_LOC='1' AND INOUT_TYPE='2' THEN INOUT_I ELSE 0 END)                                      AS OUT_I          --출고금액
+		                            , SUM(CASE WHEN CREATE_LOC='1' AND INOUT_TYPE='3' THEN INOUT_I ELSE 0 END)                                      AS RETURN_I       --반품금액
+		                    FROM    BTR100T A WITH (NOLOCK)
+		                    WHERE    COMP_CODE   = @COMP_CODE
+		                    AND      DIV_CODE    = @DIV_CODE
+		                    AND      INOUT_TYPE  IN ('2','3')
+		                    AND      INOUT_DATE  LIKE @BASIS_YYYYMM + '%'
+		                    AND      CREATE_LOC  IN ('1','2','3', '4')
+		                    AND      INOUT_METH  NOT IN ('3')    --재고이동제외
+		                    GROUP BY COMP_CODE, DIV_CODE, ITEM_CODE, LEFT(INOUT_DATE,6)
+		          ) D ON A.COMP_CODE=D.COMP_CODE AND A.DIV_CODE=D.DIV_CODE AND A.ITEM_CODE=D.ITEM_CODE AND A.BASIS_YYYYMM=D.BASIS_YYYYMM
+
+		    --20200623 수정: 위치 이동 - 조건별로 조회로직 다르게 변경 됨
+		    SELECT A.ITEM_CODE
+		         , B.ITEM_NAME
+		         , B.SPEC
+		         , BASIS_Q                                                 --[기초]
+		         , IN_Q1                                                   --[정상입고]
+		         , IN_Q1_2                                                 --[정상입고(기타)]
+		         , IN_Q2                                                   --[반품입고]
+		         , IN_Q3                                                   --[기타(대체)입고]
+		         , IN_Q4                                                   --[포장입고]
+				 , IN_REP_Q												   --[타계정입고]
+		         , IN_Q1+IN_Q1_2+IN_Q2+IN_Q3+IN_Q4+IN_REP_Q	          AS IN_TOT_Q   --[입고합계]
+		         , OUT_Q1                                                  --[정상출고]
+		         , OUT_Q2                                                  --[QC 및 자가사용 출고]
+		         , OUT_Q3                                                  --[불량폐기 출고]
+		         , OUT_Q4                                                  --[생산불량 출고]
+		         , OUT_Q5                                                  --[포장출고]
+		         , OUT_Q6                                                  --[기타(대체)출고]
+				 , OUT_REP_Q												--[타계정출고]
+		         , OUT_Q1+OUT_Q2+OUT_Q3+OUT_Q4+OUT_Q5+OUT_Q6+OUT_REP_Q AS OUT_TOT_Q  --[출고합계]
+		         , STOCK_Q                                                 --[재고]
+		         , BASIS_AMT
+		         , IN_AMT1
+		         , IN_AMT1_2    
+		         , IN_AMT2    
+		         , IN_AMT3    
+		         , IN_AMT4    
+				 , IN_REP_AMT
+		         , IN_AMT1+IN_AMT1_2+IN_AMT2+IN_AMT3+IN_AMT4+IN_REP_AMT           AS IN_TOT_AMT
+		         , OUT_AMT1
+		         , OUT_AMT2
+		         , OUT_AMT3
+		         , OUT_AMT4
+		         , OUT_AMT5
+		         , OUT_AMT6
+				 , OUT_REP_AMT
+		         , OUT_AMT1+OUT_AMT2+OUT_AMT3+OUT_AMT4+OUT_AMT5+OUT_AMT6+OUT_REP_AMT AS OUT_TOT_AMT
+		         , AVERAGE_P
+		         , STOCK_AMT       
+		    FROM       #TMP_INOUT A WITH(NOLOCK)
+		    INNER JOIN BPR100T    B WITH(NOLOCK) ON B.COMP_CODE = A.COMP_CODE
+		                                        AND B.ITEM_CODE = A.ITEM_CODE
+		    WHERE 1=1
+		    AND ( (A.ITEM_CODE LIKE @ITEM_CODE + '%' AND ISNULL(@ITEM_CODE, '') != '') OR ISNULL(@ITEM_CODE, '') = '')
+		    AND ( (B.ITEM_NAME LIKE @ITEM_NAME + '%' AND ISNULL(@ITEM_NAME, '') != '') OR ISNULL(@ITEM_NAME, '') = '')
+		    AND ( (IN_Q1+IN_Q2+IN_Q3+IN_Q4) <> 0 OR (OUT_Q1+OUT_Q2+OUT_Q3+OUT_Q4+OUT_Q5+OUT_Q6) <> 0 OR STOCK_Q <> 0)
+		    ORDER BY ITEM_CODE
+		END
+
+		--SELECT SUM(BASIS_Q) [기초] , SUM(IN_Q1) [정상입고], SUM(IN_Q2) [반품입고], SUM(IN_Q3) [기타입고], SUM(OUT_Q1) AS [정상출고], SUM(OUT_Q3) AS [불량폐기], SUM(OUT_Q6) AS [기타], SUM(STOCK_Q) [재고] 
+		--, SUM(BASIS_AMT) [기초금액] 
+		--, SUM(STOCK_AMT) [재고금액] 
+		--FROM #TMP_INOUT
+		]]>
+	</select>
+</mapper>

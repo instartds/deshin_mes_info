@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="gac100skrvServiceImpl">
+	<select id="gac100skrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+
+	/* 데이터 조회 */
+    BEGIN
+	SET NOCOUNT ON
+	SET ARITHABORT ON
+
+	DECLARE @CompCode		NVARCHAR(08)	/* 법인코드		*/
+	      , @UserId			NVARCHAR(100)	/* 사용자ID		*/
+	      , @LangType		NVARCHAR(2)		/* 언어구분		*/
+          , @RefItem		NVARCHAR(01)
+          , @DateFormat		NVARCHAR(10)
+
+    DECLARE @DivCode            NVARCHAR(08)    /* 사업장          */
+          , @AccidentDateFr     NVARCHAR(08)    /* 사고일FR        */        
+          , @AccidentDateTo     NVARCHAR(08)    /* 사고일TO        */
+
+    DECLARE @AccidentDesc       NVARCHAR(1000)  /* 사고내역        */
+          , @CurCompCode        NVARCHAR(08)    /* 커서-법인코드   */
+          , @CurDivCode         NVARCHAR(08)    /* 커서-사업장     */
+          , @CurDriverCode      NVARCHAR(100)   /* 커서-기사코드   */
+          , @CurAccidentDate    NVARCHAR(100)   /* 커서-사고일     */
+          , @CurVehicleName     NVARCHAR(100)   /* 커서-차량명     */
+          , @CurAccidentType    NVARCHAR(100)   /* 커서-사고구분   */
+
+    SET @CompCode = #{S_COMP_CODE}
+    SET @UserId   = #{S_USER_ID}
+    SET @LangType = #{S_LANG_CODE}
+
+    SET @DivCode        = #{DIV_CODE}
+    SET @AccidentDateFr = #{ACCIDENT_DATE_FR}
+    SET @AccidentDateTo = #{ACCIDENT_DATE_TO}
+
+	/* 명칭 참조 유형 */
+    SELECT TOP 1 @RefItem = REF_ITEM
+      FROM BSA300T WITH (NOLOCK)
+     WHERE USER_ID = @UserId
+
+    SET @RefItem = ISNULL(@RefItem, N'0')
+
+	/* 날짜 포맷 유형 설정 */
+    SELECT TOP 1 @DateFormat = CODE_NAME
+      FROM BSA100T WITH (NOLOCK)
+     WHERE COMP_CODE = @CompCode
+       AND MAIN_CODE = N'B044'
+       AND REF_CODE1 = N'Y'
+
+    SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+	/* 데이터 조회 */
+    DECLARE @AccidentTABLE TABLE (
+            COMP_CODE           NVARCHAR(08)    NULL DEFAULT 'MASTER'           /* 법인코드					*/
+          , DIV_CODE            NVARCHAR(08)    NULL DEFAULT ''                 /* 사업장						*/	
+          , DRIVER_CODE         NVARCHAR(100)   NULL DEFAULT ''                 /* 기사코드					*/
+          , NAME                NVARCHAR(100)   NULL DEFAULT ''                 /* 성명						*/
+          , ACCIDENT_DESC       NVARCHAR(1000)  NULL DEFAULT ''                 /* 사고내역(사고일,차량,사고구분)	*/
+    )
+
+    INSERT INTO @AccidentTABLE
+         ( COMP_CODE    , DIV_CODE      , DRIVER_CODE   , NAME      , ACCIDENT_DESC )
+    SELECT DISTINCT
+           A.COMP_CODE  , A.DIV_CODE    , A.DRIVER_CODE , H1.NAME   , ''
+      FROM            GAC100T A WITH (NOLOCK)
+           LEFT  JOIN HUM100T H1 WITH (NOLOCK) ON H1.COMP_CODE   = A.COMP_CODE
+                                              AND H1.DIV_CODE    = A.DIV_CODE
+                                              AND H1.PERSON_NUMB = A.DRIVER_CODE
+     WHERE A.COMP_CODE            = @CompCode
+       AND A.DIV_CODE             = @DivCode
+       AND A.ACCIDENT_DATE       &gt;= @AccidentDateFr
+       AND A.ACCIDENT_DATE       &lt;= @AccidentDateTo
+       AND A.ACCIDENT_REPORT_TYPE = 'Y' 
+
+    DECLARE CUR_001 CURSOR LOCAL FOR
+        SELECT COMP_CODE, DIV_CODE, DRIVER_CODE
+          FROM @AccidentTABLE
+
+    OPEN CUR_001
+    FETCH NEXT FROM CUR_001 INTO @CurCompCode, @CurDivCode, @CurDriverCode
+    WHILE (@@FETCH_STATUS = 0)
+    BEGIN
+        DECLARE CUR_002 CURSOR LOCAL FOR
+            SELECT (CASE WHEN ISNULL(A.ACCIDENT_DATE, '') = ''
+                         THEN ''
+                         ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.ACCIDENT_DATE, 1, 4))
+                                                                 , 'MM'  , SUBSTRING(A.ACCIDENT_DATE, 5, 2))
+                                                                 , 'DD'  , SUBSTRING(A.ACCIDENT_DATE, 7, 2))
+                     END) AS ACCIDENT_DATE  /* 사고일자 */
+                 , V.VEHICLE_NAME           /* 차량명   */
+                 , C1.CODE_NAME             /* 사고구분 */
+              FROM            GAC100T A  WITH (NOLOCK)
+                   LEFT  JOIN GVE100T V  WITH (NOLOCK) ON V.COMP_CODE    = A.COMP_CODE
+                                                      AND V.DIV_CODE     = A.DIV_CODE
+                                                      AND V.VEHICLE_CODE = A.VEHICLE_CODE
+                   LEFT  JOIN BSA100T C1 WITH (NOLOCK) ON C1.COMP_CODE   = A.COMP_CODE
+                                                      AND C1.MAIN_CODE   = 'GA04'
+                                                      AND C1.SUB_CODE    = A.ACCIDENT_TYPE
+             WHERE A.COMP_CODE            = @CurCompCode
+               AND A.DIV_CODE             = @CurDivCode
+               AND A.DRIVER_CODE          = @CurDriverCode
+               AND A.ACCIDENT_DATE      &gt;= @AccidentDateFr
+               AND A.ACCIDENT_DATE      &lt;= @AccidentDateTo
+               AND A.ACCIDENT_REPORT_TYPE = 'Y' 
+             ORDER BY A.ACCIDENT_DATE
+
+        SET @AccidentDesc = ''
+
+        OPEN CUR_002
+        FETCH NEXT FROM CUR_002 INTO @CurAccidentDate, @CurVehicleName, @CurAccidentType
+        WHILE (@@FETCH_STATUS = 0)
+        BEGIN
+            SET @AccidentDesc = (CASE WHEN ISNULL(@AccidentDesc,'') = '' THEN '' ELSE @AccidentDesc + ' // ' END)
+
+            SET @AccidentDesc = @AccidentDesc
+                              + ISNULL(@CurAccidentDate,'') + (CASE WHEN ISNULL(@CurVehicleName ,'') = '' THEN '' ELSE ', ' END)
+                              + ISNULL(@CurVehicleName ,'') + (CASE WHEN ISNULL(@CurAccidentType,'') = '' THEN '' ELSE ', ' END)
+                              + @CurAccidentType
+
+            FETCH NEXT FROM CUR_002 INTO @CurAccidentDate, @CurVehicleName, @CurAccidentType
+        END
+        CLOSE CUR_002
+        DEALLOCATE CUR_002
+
+        UPDATE @AccidentTABLE
+           SET ACCIDENT_DESC = @AccidentDesc
+         WHERE COMP_CODE     = @CurCompCode
+           AND DIV_CODE      = @CurDivCode
+           AND DRIVER_CODE   = @CurDriverCode
+
+        FETCH NEXT FROM CUR_001 INTO @CurCompCode, @CurDivCode, @CurDriverCode
+    END
+    CLOSE CUR_001
+    DEALLOCATE CUR_001
+
+    SELECT COMP_CODE
+         , DIV_CODE
+         , DRIVER_CODE
+         , NAME
+         , ACCIDENT_DESC 
+      FROM @AccidentTABLE
+     ORDER BY NAME
+
+
+	SET NOCOUNT OFF
+	SET ARITHABORT OFF
+END
+
+
+		
+	</select>
+	
+</mapper>

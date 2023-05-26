@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="sof130ukrvServiceImpl">
+
+<select id="sof130ukrvServiceImpl.selectList" parameterType="Map" resultType="rMap">
+        /* sof130ukrvServiceImpl.selectList */
+        DECLARE @CompCode       NVARCHAR(08)    /* 법인코드             */
+              , @UserId         NVARCHAR(100)    /* 사용자ID                */
+              , @LangType       NVARCHAR(2)     /* 언어구분             */
+              , @RefItem        NVARCHAR(01)    /* 명칭 참조 유형     */
+              , @DateFormat     NVARCHAR(10)    /* 날짜 포맷 유형 설정  */
+
+        SET @CompCode = #{S_COMP_CODE}
+        SET @UserId   = #{S_USER_ID}
+        SET @LangType = #{S_LANG_CODE}
+
+        /* 명칭 참조 유형 */
+        SELECT TOP 1 @RefItem = REF_ITEM
+          FROM BSA300T WITH (NOLOCK)
+         WHERE USER_ID = @UserId
+
+        SET @RefItem = ISNULL(@RefItem, N'0')
+
+        /* 날짜 포맷 유형 설정 */
+        SELECT TOP 1 @DateFormat = CODE_NAME
+          FROM BSA100T WITH (NOLOCK)
+         WHERE COMP_CODE = @CompCode
+           AND MAIN_CODE = N'B044'
+           AND REF_CODE1 = N'Y'
+
+        SET @DateFormat = ISNULL(@DateFormat, 'YYYY.MM.DD')
+
+        /* 데이터 조회 */
+        SELECT A.DIV_CODE
+             , B.ITEM_CODE
+             , (CASE WHEN @RefItem = '1' THEN D.ITEM_NAME1
+                     WHEN @RefItem = '2' THEN D.ITEM_NAME2
+                                         ELSE D.ITEM_NAME
+                 END)                                               AS ITEM_NAME
+             , ISNULL(D.SPEC,'')                                    AS SPEC
+             , (CASE WHEN ISNULL(A.ORDER_DATE, '') = ''
+                     THEN ''
+                     ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(A.ORDER_DATE, 1, 4))
+                                                             , 'MM'  , SUBSTRING(A.ORDER_DATE, 5, 2))
+                                                             , 'DD'  , SUBSTRING(A.ORDER_DATE, 7, 2))
+                END)                                                AS ORDER_DATE
+             , (CASE WHEN ISNULL(B.DVRY_DATE, '') = ''
+                     THEN ''
+                     ELSE REPLACE(REPLACE(REPLACE(@DateFormat, 'YYYY', SUBSTRING(B.DVRY_DATE, 1, 4))
+                                                             , 'MM'  , SUBSTRING(B.DVRY_DATE, 5, 2))
+                                                             , 'DD'  , SUBSTRING(B.DVRY_DATE, 7, 2))
+                END)                                                AS DVRY_DATE
+             , B.ORDER_Q
+             , A.ORDER_TYPE
+             , A.ORDER_PRSN
+             , B.PO_NUM
+             , B.PO_SEQ
+             , A.ORDER_NUM
+             , B.SER_NO
+             , A.CUSTOM_CODE
+             , C.CUSTOM_NAME
+             , A.COMP_CODE
+             
+             ,B.INIT_DVRY_DATE
+             ,B.WEEK_NUM
+             ,B.REASON
+             ,B.OUT_DIV_CODE
+          FROM            SOF100T A WITH (NOLOCK)
+               INNER JOIN SOF110T B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+                                                 AND B.DIV_CODE    = A.DIV_CODE
+                                                 AND B.ORDER_NUM   = A.ORDER_NUM
+               INNER JOIN BCM100T C WITH (NOLOCK) ON C.COMP_CODE   = A.COMP_CODE
+                                                 AND C.CUSTOM_CODE = A.CUSTOM_CODE
+               INNER JOIN BPR100T D WITH (NOLOCK) ON D.COMP_CODE   = B.COMP_CODE
+                                                 AND D.ITEM_CODE   = B.ITEM_CODE
+         WHERE A.COMP_CODE      = @CompCode
+		   AND B.ORDER_STATUS != 'Y'						-- 20190620 추가: 완료된 건은 조회되지 않음
+		   AND B.ORDER_Q - B.OUTSTOCK_Q + B.RETURN_Q &gt; 0	-- 20190620 추가: 완료된 건은 조회되지 않음
+          <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+           AND A.CUSTOM_CODE LIKE #{CUSTOM_CODE} + '%'
+          </if>
+          <if test="@foren.Ognl@isNotEmpty(FR_ORDER_DATE)">
+           AND A.ORDER_DATE    &gt;= #{FR_ORDER_DATE}
+          </if>
+          <if test="@foren.Ognl@isNotEmpty(TO_ORDER_DATE)">
+           AND A.ORDER_DATE    &lt;= #{TO_ORDER_DATE}
+          </if>
+          <if test="@foren.Ognl@isNotEmpty(DIV_CODE)">
+           AND A.DIV_CODE       = #{DIV_CODE}
+          </if>
+          <if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+           AND C.CUSTOM_NAME LIKE #{CUSTOM_NAME} +'%'
+          </if>
+          <if test="@foren.Ognl@isNotEmpty(ORDER_PRSN)">	
+           AND A.ORDER_PRSN     = #{ORDER_PRSN}
+          </if>
+          <if test="@foren.Ognl@isNotEmpty(ITEM_CODE)">
+           AND B.ITEM_CODE   LIKE #{ITEM_CODE} + '%'
+          </if>
+          <if test="@foren.Ognl@isNotEmpty(ORDER_TYPE)">
+           AND A.ORDER_TYPE  LIKE #{ORDER_TYPE} + '%'
+          </if>
+          <if test="@foren.Ognl@isNotEmpty(PO_NUM)">
+           AND B.PO_NUM      LIKE #{PO_NUM} + '%'
+          </if>
+          <if test="@foren.Ognl@isNotEmpty(ORDER_NUM)">
+           AND A.ORDER_NUM      LIKE #{ORDER_NUM} + '%'
+          </if>
+	   <if test="@foren.Ognl@isNotEmpty(OUT_DIV_CODE)">
+			--20190618 출고사업장 조회조건 추가
+			AND B.OUT_DIV_CODE  = #{OUT_DIV_CODE}
+	   </if>
+         ORDER BY A.CUSTOM_CODE, A.ORDER_DATE, A.ORDER_NUM, B.SER_NO
+</select>
+
+<insert id="sof130ukrvServiceImpl.insertDetail" parameterType="Map">
+</insert>
+
+<update id="sof130ukrvServiceImpl.updateDetail" parameterType="Map">
+	UPDATE SOF110T 
+	   SET DVRY_DATE = #{DVRY_DATE}
+		 , WEEK_NUM  = #{WEEK_NUM}
+		 , REASON    = #{REASON}
+	 WHERE COMP_CODE = #{S_COMP_CODE}
+	   AND DIV_CODE  = #{DIV_CODE}
+	   AND ORDER_NUM = #{ORDER_NUM}
+	   AND SER_NO    = #{SER_NO}
+</update>
+
+<delete id="sof130ukrvServiceImpl.deleteDetail" parameterType="Map">
+</delete>
+</mapper>

@@ -1,0 +1,336 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="sco400rkrServiceImpl">
+	<select id="selectPrimaryDataList" parameterType="Map" resultType="rMap" >	
+	 /* 거래처별매출잔액현황조회	*/
+		 BEGIN
+		    SET NOCOUNT ON
+		    SET ARITHABORT ON
+		
+		    DECLARE         @COMP_CODE          NVARCHAR(08)
+		                  , @DIV_CODE           NVARCHAR(10) 
+		                  , @FR_DATE            NVARCHAR(8) 
+		                  , @TO_DATE            NVARCHAR(8) 
+		                  , @TODAY              NVARCHAR(8)
+		    
+		
+		                  , @BasisMonth         NVARCHAR(06)
+		                  , @MaxMonth           NVARCHAR(06)
+		                  , @StMonth            NVARCHAR(02)
+		                  , @QRY_YEAR           NVARCHAR(04)
+		                  , @CompanyCode        NVARCHAR(08)
+		
+		                  , @BaseDate           NVARCHAR(06)
+		
+		--  [ 변수 값 할당 ] --------------------------------------------------------------------------------------------------    
+			SET @COMP_CODE    = #{COMP_CODE}
+		    SET @DIV_CODE     = #{DIV_CODE}
+		    SET @FR_DATE      = #{FR_DATE}
+		    SET @TO_DATE      = #{TO_DATE}
+		    SET @TODAY	      = CONVERT(VARCHAR(8), GETDATE(), 112)
+
+		
+		    SET @QRY_YEAR     = LEFT(@FR_DATE, 4)
+		    SET @BaseDate     = '201508'
+		
+		--  [ 자사코드 참조 ] --------------------------------------------------------------------------------------------------    
+			SELECT  @CompanyCode = CODE_NAME
+		    FROM    BSA100T WITH (NOLOCK)  
+		    WHERE   COMP_CODE = @COMP_CODE
+		    AND     MAIN_CODE = 'T000'
+		    AND     SUB_CODE  = 'T000'
+		
+		--  [ 이월금액 기초월 참조 ] --------------------------------------------------------------------------------------------------    
+			SELECT  @StMonth = SUBSTRING(FN_DATE,5,2)
+		    FROM    BOR100T WITH (NOLOCK)
+		    WHERE   COMP_CODE = @COMP_CODE
+		
+		    SELECT  @BasisMonth = MAX(A.AC_DATE)
+		    FROM    AGB200T A  WITH (NOLOCK)
+		    WHERE   A.COMP_CODE  = @COMP_CODE
+		    AND     A.AC_DATE   &lt;= @QRY_YEAR + @StMonth
+		    AND     LEN(A.AC_DATE) = 6
+				
+            IF ( LEFT(@FR_DATE, 6) &lt; LEFT(@FR_DATE, 4) + @StMonth )
+              SET @BasisMonth = CONVERT(NVARCHAR, LEFT(@BasisMonth, 4) - 1) + @StMonth
+              				
+		    SET @BasisMonth = CASE WHEN @BasisMonth &lt; @BaseDate THEN @BaseDate
+		                           ELSE SUBSTRING(ISNULL(@BasisMonth, '190001'), 1, 6)
+		                      END
+		--SELECT @BasisMonth
+		--  [ 임시 테이블 처리 ] ----------------------------------------------------------------------------------------------    
+			DECLARE     @TypeKey                NVARCHAR(20)
+		
+		    SET @TypeKey  = REPLACE(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(30), GETDATE(), 121), '-', ''), ':', ''), '.', ''), ' ', '')
+		
+		    IF NOT EXISTS   (
+		                    SELECT TOP 1 1
+		                    FROM   T_SCO400SKRV1 WITH (NOLOCK)
+		                    WHERE  TYPE_KEY LIKE LEFT(@TypeKey, 8) + '%'
+		                    )
+		    BEGIN
+		        TRUNCATE TABLE T_SCO400SKRV1
+		    END
+		
+		--  [ 데이터 생성 ] ---------------------------------------------------------------------------------------------------
+		IF @BasisMonth = @BaseDate 
+		    -- 1.1 이월금액(회계기초데이터)
+		    INSERT  INTO T_SCO400SKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE, CUSTOM_CODE
+		                            , IWAL_OUT_AMT_I, OUT_DR_AMT_I, OUT_CR_AMT_I, OUT_JAN_AMT_I, TODAY_OUT_AMT_I)
+		    SELECT  
+		            @TypeKey                                                                    AS TYPE_KEY
+		          , N'0'                                                                        AS TYPE_FLAG
+		          , A.COMP_CODE                                                                 AS COMP_CODE
+		          , A.DIV_CODE                                                                  AS DIV_CODE
+		          , CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1 
+		                 WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2 
+		            END                                                                         AS CUSTOM_CODE
+		          , ISNULL(SUM(CASE C.JAN_DIVI WHEN '1' THEN ISNULL(A.DR_AMT_I, 0.0) - ISNULL(A.CR_AMT_I, 0.0)
+		                                       WHEN '2' THEN ISNULL(A.CR_AMT_I, 0.0) - ISNULL(A.DR_AMT_I, 0.0)
+		                       END), 0)                                                         AS IWAL_OUT_AMT_I
+		          , 0                                                                           AS OUTPUT_DR_AMT_I
+		          , 0                                                                           AS OUTPUT_CR_AMT_I
+		          , 0                                                                           AS OUT_JAN_AMT_I
+		          , ISNULL(SUM(CASE C.JAN_DIVI WHEN '1' THEN ISNULL(A.DR_AMT_I, 0.0) - ISNULL(A.CR_AMT_I, 0.0)
+		                                       WHEN '2' THEN ISNULL(A.CR_AMT_I, 0.0) - ISNULL(A.DR_AMT_I, 0.0)
+		                       END), 0)                                                         AS TODAY_OUT_AMT_I
+		    FROM               AGB200T  A  WITH (NOLOCK)
+				    LEFT  JOIN BCM100T  B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+				                                         AND B.CUSTOM_CODE = CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+		                                                                          WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2 
+		                                                                     END
+				    INNER JOIN ABA400T  C  WITH (NOLOCK) ON  C.COMP_CODE  = A.COMP_CODE
+				                                         AND C.ACCNT      = A.ACCNT
+				                                         AND C.ACCNT_SPEC = '80'
+		    WHERE   A.COMP_CODE        = @COMP_CODE
+		    AND     A.DIV_CODE         = @DIV_CODE
+		    AND     A.AC_DATE         &gt;= '201503'
+		    AND     A.AC_DATE         &lt;  @BaseDate
+		    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+			AND B.CUSTOM_CODE LIKE #{CUSTOM_CODE} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			AND B.CUSTOM_NAME LIKE '%'+ #{CUSTOM_NAME} + '%'
+			</if>
+		    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+			AND B.AGENT_TYPE LIKE '%'+ #{AGENT_TYPE} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(RECEIPT_DAY)">
+			AND B.RECEIPT_DAY LIKE '%'+ #{RECEIPT_DAY} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(COLLECT_DAY)">
+			AND B.COLLECT_DAY LIKE '%'+ #{COLLECT_DAY} + '%'
+			</if>
+		    GROUP BY A.COMP_CODE, A.DIV_CODE, A.BOOK_CODE1, A.BOOK_CODE2, A.BOOK_DATA1, A.BOOK_DATA2, C.JAN_DIVI
+		
+		ELSE
+		    -- 1.1 이월금액(회계기초데이터)
+		    INSERT  INTO T_SCO400SKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE, CUSTOM_CODE
+		                            , IWAL_OUT_AMT_I, OUT_DR_AMT_I, OUT_CR_AMT_I, OUT_JAN_AMT_I, TODAY_OUT_AMT_I)
+		    SELECT  
+		            @TypeKey                                                                    AS TYPE_KEY
+		          , N'0'                                                                        AS TYPE_FLAG
+		          , A.COMP_CODE                                                                 AS COMP_CODE
+		          , A.DIV_CODE                                                                  AS DIV_CODE
+		          , CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1 
+		                 WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2 
+		            END                                                                         AS CUSTOM_CODE
+		          , ISNULL(SUM(CASE C.JAN_DIVI WHEN '1' THEN ISNULL(A.DR_AMT_I, 0.0) - ISNULL(A.CR_AMT_I, 0.0)
+		                                       WHEN '2' THEN ISNULL(A.CR_AMT_I, 0.0) - ISNULL(A.DR_AMT_I, 0.0)
+		                       END), 0)                                                         AS IWAL_OUT_AMT_I
+		          , 0                                                                           AS OUTPUT_DR_AMT_I
+		          , 0                                                                           AS OUTPUT_CR_AMT_I
+		          , 0                                                                           AS OUT_JAN_AMT_I
+		          , ISNULL(SUM(CASE C.JAN_DIVI WHEN '1' THEN ISNULL(A.DR_AMT_I, 0.0) - ISNULL(A.CR_AMT_I, 0.0)
+		                                       WHEN '2' THEN ISNULL(A.CR_AMT_I, 0.0) - ISNULL(A.DR_AMT_I, 0.0)
+		                       END), 0)                                                         AS TODAY_OUT_AMT_I
+		    FROM               AGB200T  A  WITH (NOLOCK)
+				    LEFT  JOIN BCM100T  B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+				                                         AND B.CUSTOM_CODE = CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+		                                                                          WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2 
+		                                                                     END
+				    INNER JOIN ABA400T  C  WITH (NOLOCK) ON  C.COMP_CODE  = A.COMP_CODE
+				                                         AND C.ACCNT      = A.ACCNT
+				                                         AND C.ACCNT_SPEC = '80'
+		    WHERE   A.COMP_CODE        = @COMP_CODE
+		    AND     A.DIV_CODE         = @DIV_CODE
+		    AND     A.AC_DATE          = @BasisMonth
+		    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+			AND B.CUSTOM_CODE LIKE #{CUSTOM_CODE} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			AND B.CUSTOM_NAME LIKE '%'+ #{CUSTOM_NAME} + '%'
+			</if>
+		    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+			AND B.AGENT_TYPE LIKE '%'+ #{AGENT_TYPE} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(RECEIPT_DAY)">
+			AND B.RECEIPT_DAY LIKE '%'+ #{RECEIPT_DAY} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(COLLECT_DAY)">
+			AND B.COLLECT_DAY LIKE '%'+ #{COLLECT_DAY} + '%'
+			</if>
+		    GROUP BY A.COMP_CODE, A.DIV_CODE, A.BOOK_CODE1, A.BOOK_CODE2, A.BOOK_DATA1, A.BOOK_DATA2, C.JAN_DIVI
+		
+		    -- 1.2 매출액
+		    INSERT  INTO T_SCO400SKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE, CUSTOM_CODE
+		                            , IWAL_OUT_AMT_I, OUT_DR_AMT_I, OUT_CR_AMT_I, OUT_JAN_AMT_I, TODAY_OUT_AMT_I)
+		    SELECT  
+		            @TypeKey                                                                    AS TYPE_KEY
+		          , N'1'                                                                        AS TYPE_FLAG
+		          , A.COMP_CODE                                                                 AS COMP_CODE
+		          , A.DIV_CODE                                                                  AS DIV_CODE
+		          , A.CUSTOM_CODE                                                               AS CUSTOM_CODE
+		          , ISNULL(SUM(CASE WHEN A1.SALE_DATE >= @BasisMonth AND A1.SALE_DATE &lt; @FR_DATE
+		                                 THEN ISNULL(A.COLLECT_AMT, 0)
+		                            ELSE 0
+		                       END), 0)                                                         AS IWAL_OUT_AMT_I
+		          , ISNULL(SUM(CASE WHEN A1.SALE_DATE >= @FR_DATE AND A1.SALE_DATE &lt;= @TO_DATE
+		                                 THEN ISNULL(A.COLLECT_AMT, 0)
+		                            ELSE 0
+		                       END), 0)                                                         AS OUTPUT_DR_AMT_I
+		          , 0                                                                           AS OUTPUT_CR_AMT_I
+		          , 0                                                                           AS OUT_JAN_AMT_I
+		          , ISNULL(SUM(CASE WHEN A1.SALE_DATE >= @BasisMonth AND A1.SALE_DATE &lt;= @TODAY
+		                                 THEN ISNULL(A.COLLECT_AMT, 0)
+		                            ELSE 0
+		                       END), 0)                                                         AS TODAY_OUT_AMT_I
+		    FROM               SCO100T  A  WITH (NOLOCK)
+		            INNER JOIN SSA100T  A1 WITH (NOLOCK, INDEX(SSA100T_IDX01)) 
+		                                                 ON  A1.COMP_CODE  = A.COMP_CODE
+		                                                 AND A1.DIV_CODE   = A.DIV_CODE
+		                                                 AND A1.BILL_NUM   = A.BILL_NUM
+				    LEFT  JOIN BCM100T  B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+				                                         AND B.CUSTOM_CODE = A.CUSTOM_CODE
+		    WHERE   A.COMP_CODE        = @COMP_CODE
+		    AND     A.DIV_CODE         = @DIV_CODE
+		    AND     A1.SALE_DATE      &gt;= @BasisMonth
+		    AND     A1.SALE_DATE      &lt;= @TODAY
+		    AND     A.CUSTOM_CODE NOT LIKE @CompanyCode
+            AND   ( 
+                   ( A1.SALE_DATE BETWEEN '20100101' AND '20160831')   -- 외상
+                OR ( A1.SALE_DATE >= '20160901' AND A.COLLECT_TYPE = '40')
+                  )
+                  
+		    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+			AND B.CUSTOM_CODE LIKE #{CUSTOM_CODE} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			AND B.CUSTOM_NAME LIKE '%'+ #{CUSTOM_NAME} + '%'
+			</if>
+		    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+			AND B.AGENT_TYPE LIKE '%'+ #{AGENT_TYPE} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(RECEIPT_DAY)">
+			AND B.RECEIPT_DAY LIKE '%'+ #{RECEIPT_DAY} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(COLLECT_DAY)">
+			AND B.COLLECT_DAY LIKE '%'+ #{COLLECT_DAY} + '%'
+			</if>
+		    GROUP BY A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE
+		
+		    -- 1.3 수금액
+		    INSERT  INTO T_SCO400SKRV1(TYPE_KEY, TYPE_FLAG, COMP_CODE, DIV_CODE, CUSTOM_CODE
+		                            , IWAL_OUT_AMT_I, OUT_DR_AMT_I, OUT_CR_AMT_I, OUT_JAN_AMT_I, TODAY_OUT_AMT_I)
+		    SELECT  
+		            @TypeKey                                                                    AS TYPE_KEY
+		          , N'1'                                                                        AS TYPE_FLAG
+		          , A.COMP_CODE                                                                 AS COMP_CODE
+		          , A.DIV_CODE                                                                  AS DIV_CODE
+		          , CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1 
+		                 WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2 
+		            END                                                                         AS CUSTOM_CODE
+		          , ISNULL(SUM(CASE WHEN A.AC_DATE >= @BasisMonth AND A.AC_DATE &lt; @FR_DATE
+		                                 THEN ISNULL(CASE C.JAN_DIVI WHEN '1' THEN ISNULL(A.CR_AMT_I, 0.0) * (-1)
+		                                                             WHEN '2' THEN ISNULL(A.DR_AMT_I, 0.0) * (-1)
+		                                             END, 0)
+		                            ELSE 0
+		                       END), 0)                                                         AS IWAL_OUT_AMT_I
+		          , 0                                                                           AS OUTPUT_DR_AMT_I
+		          , ISNULL(SUM(CASE WHEN A.AC_DATE >= @FR_DATE AND A.AC_DATE &lt;= @TO_DATE
+		                                 THEN ISNULL(CASE C.JAN_DIVI WHEN '1' THEN ISNULL(A.CR_AMT_I, 0.0)
+		                                                             WHEN '2' THEN ISNULL(A.DR_AMT_I, 0.0)
+		                                             END, 0)
+		                       END), 0)                                                         AS OUTPUT_CR_AMT_I
+		          , 0                                                                           AS OUT_JAN_AMT_I
+		          , ISNULL(SUM(CASE WHEN A.AC_DATE >= @BasisMonth AND A.AC_DATE &lt;= @TODAY
+		                                 THEN ISNULL(CASE C.JAN_DIVI WHEN '1' THEN ISNULL(A.CR_AMT_I, 0.0) * (-1)
+		                                                             WHEN '2' THEN ISNULL(A.DR_AMT_I, 0.0) * (-1)
+		                                             END, 0)
+		                       END), 0)                                                         AS TODAY_OUT_AMT_I
+		    FROM               AGB200T  A  WITH (NOLOCK)
+				    LEFT  JOIN BCM100T  B  WITH (NOLOCK) ON  B.COMP_CODE   = A.COMP_CODE
+				                                         AND B.CUSTOM_CODE = CASE WHEN A.BOOK_CODE1 = 'A4' THEN A.BOOK_DATA1
+		                                                                          WHEN A.BOOK_CODE2 = 'A4' THEN A.BOOK_DATA2 
+		                                                                     END
+				    INNER JOIN ABA400T  C  WITH (NOLOCK) ON  C.COMP_CODE   = A.COMP_CODE
+				                                         AND C.ACCNT       = A.ACCNT
+				                                         AND C.ACCNT_SPEC  = '80'
+		    WHERE   A.COMP_CODE        = @COMP_CODE
+		    AND     A.DIV_CODE         = @DIV_CODE
+		    AND     A.AC_DATE         &gt;= @BasisMonth
+		    AND     A.AC_DATE         &lt;= @TODAY
+		    AND     LEN(AC_DATE)      != 6
+		    <if test="@foren.Ognl@isNotEmpty(CUSTOM_CODE)">
+			AND B.CUSTOM_CODE LIKE #{CUSTOM_CODE} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(CUSTOM_NAME)">
+			AND B.CUSTOM_NAME LIKE '%'+ #{CUSTOM_NAME} + '%'
+			</if>
+		    <if test="@foren.Ognl@isNotEmpty(AGENT_TYPE)">
+			AND B.AGENT_TYPE LIKE '%'+ #{AGENT_TYPE} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(RECEIPT_DAY)">
+			AND B.RECEIPT_DAY LIKE '%'+ #{RECEIPT_DAY} + '%'
+			</if>
+			<if test="@foren.Ognl@isNotEmpty(COLLECT_DAY)">
+			AND B.COLLECT_DAY LIKE '%'+ #{COLLECT_DAY} + '%'
+			</if>
+		    GROUP BY A.COMP_CODE, A.DIV_CODE, A.BOOK_CODE1, A.BOOK_CODE2, A.BOOK_DATA1, A.BOOK_DATA2, C.JAN_DIVI
+		
+		--  [ 데이터 조회 ] ---------------------------------------------------------------------------------------------------    
+		SELECT  
+		            A.COMP_CODE                                                                 AS COMP_CODE
+		          , A.DIV_CODE                                                                  AS DIV_CODE
+		          , E.COMP_NAME																	AS COMP_NAME
+		          , A.CUSTOM_CODE                                                               AS CUSTOM_CODE
+		          , B.CUSTOM_NAME                                                               AS CUSTOM_NAME
+		          , SUM(A.IWAL_OUT_AMT_I)                                                       AS IWAL_OUT_AMT_I
+		          , SUM(A.OUT_DR_AMT_I)                                                         AS OUTPUT_DR_AMT_I
+		          , SUM(A.OUT_CR_AMT_I)                                                         AS OUTPUT_CR_AMT_I
+		          , SUM(A.IWAL_OUT_AMT_I) + SUM(A.OUT_DR_AMT_I) - SUM(A.OUT_CR_AMT_I)           AS OUT_JAN_AMT_I
+		          , SUM(A.TODAY_OUT_AMT_I)                                                      AS TODAY_OUT_AMT_I
+				  , ISNULL(F.CODE_NAME, '')                                                   	AS RECEIPT_DAY
+				  , ISNULL(G.CODE_NAME, '')                                                   	AS BILL_TYPE
+				  , ISNULL(H.CODE_NAME, '')                                                   	AS COLLECT_DAY
+		          
+		    FROM               T_SCO400SKRV1  A WITH (NOLOCK)
+		            LEFT  JOIN BCM100T        B WITH (NOLOCK) ON B.COMP_CODE   = A.COMP_CODE
+		                                                     AND B.CUSTOM_CODE = A.CUSTOM_CODE
+		            LEFT  JOIN BOR100T        E WITH (NOLOCK) ON A.COMP_CODE   = E.COMP_CODE
+		            LEFT  JOIN BSA100T 		  F WITH (NOLOCK) ON F.COMP_CODE   = A.COMP_CODE
+	        								   				 AND F.MAIN_CODE   = 'B034'
+	        								   				 AND F.SUB_CODE   != '$'
+	        								   				 AND F.SUB_CODE    = B.RECEIPT_DAY
+	        		LEFT  JOIN BSA100T 		  G WITH (NOLOCK) ON G.COMP_CODE   = A.COMP_CODE
+	        								   				 AND G.MAIN_CODE   = 'YP36'
+	        								   				 AND G.SUB_CODE   != '$'
+	        								   				 AND G.SUB_CODE    = B.BILL_TYPE
+	      			LEFT  JOIN BSA100T 		  H WITH (NOLOCK) ON H.COMP_CODE   = A.COMP_CODE
+	        								   				 AND H.MAIN_CODE   = 'YP35'
+	        								   				 AND H.SUB_CODE   != '$'
+	        								   				 AND H.SUB_CODE    = B.COLLECT_DAY
+		    WHERE   A.TYPE_KEY  = @TypeKey
+		    GROUP BY A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE, B.CUSTOM_NAME, B.RECEIPT_DAY, B.COLLECT_DAY, B.BILL_TYPE, E.COMP_NAME, F.CODE_NAME, G.CODE_NAME, H.CODE_NAME
+			
+			<if test="CREDIT_YN == &quot;Y&quot;">
+						  HAVING (ISNULL(SUM(A.IWAL_OUT_AMT_I), 0.0) + SUM(A.OUT_DR_AMT_I) + SUM(A.OUT_CR_AMT_I)) != 0  /* 매출발생여부	*/
+			</if>
+			ORDER BY A.COMP_CODE, A.DIV_CODE, A.CUSTOM_CODE 
+			
+		    SET NOCOUNT OFF
+		    SET ARITHABORT OFF
+		END
+	</select>
+</mapper>
