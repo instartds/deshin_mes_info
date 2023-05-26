@@ -40,7 +40,7 @@ body,td {
 [<br/>
 <%
 	URL url = foren.framework.utils.FileUtil.getResource("/") ;
-	
+//1111111
 //			<div id="tabs-extDirectMapping">
 //			<jsp:include page="xinfo_extDirectMappings.jsp"></jsp:include>
 //		</div>
@@ -76,14 +76,14 @@ URL = <%=url.toExternalForm() %><br/>
 			<div id="tabs-controller">
 			<jsp:include page="xinfo_controller.jsp"></jsp:include>
 		</div>
-	
+
 		<div id="tabs-requestMappings">
 			<jsp:include page="xinfo_requestMappings.jsp"></jsp:include>
 		</div>
 		<div id="tabs-allMessages">
 			<jsp:include page="xinfo_message.jsp"></jsp:include>
 		</div>
-	
+
 	</div>
 </body>
 </html>
